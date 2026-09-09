@@ -1,0 +1,205 @@
+@import "tailwindcss";
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ALYQ Cloud POS — Option B design language (PERMANENT)
+   Clean minimal · slate neutrals · indigo primary · 2xl radii · soft shadows.
+   These tokens are the single source of truth for every ALYQ module.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@theme {
+  --font-sans:
+    "Inter", "Segoe UI", "Noto Kufi Arabic", "Noto Sans Arabic", Tahoma, system-ui,
+    -apple-system, sans-serif;
+
+  /* Radius + elevation rhythm used across all modules */
+  --radius-card: 1rem;
+  --radius-control: 0.75rem;
+
+  --shadow-card: 0 1px 2px 0 rgb(15 23 42 / 0.04), 0 1px 3px 0 rgb(15 23 42 / 0.06);
+  --shadow-raised: 0 4px 12px -2px rgb(15 23 42 / 0.1), 0 2px 4px -2px rgb(15 23 42 / 0.06);
+
+  /* Semantic text colours — tuned for AA contrast on white/slate-50 */
+  --color-alyq-heading: oklch(0.21 0.03 265); /* ≈ slate-900 */
+  --color-alyq-body: oklch(0.37 0.03 265); /* ≈ slate-700 */
+  --color-alyq-muted: oklch(0.45 0.03 265); /* ≈ slate-600 */
+  --color-alyq-faint: oklch(0.55 0.02 265); /* ≈ slate-500, decorative only */
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    font-family: var(--font-sans);
+    background-color: var(--color-slate-50);
+    color: var(--color-slate-900);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Bilingual typography: slightly larger Arabic glyphs for legibility */
+  html[lang="ar"] body {
+    font-family: "Noto Kufi Arabic", "Segoe UI", Tahoma, system-ui, sans-serif;
+  }
+
+  html[dir="rtl"] table,
+  html[dir="rtl"] th,
+  html[dir="rtl"] td {
+    text-align: start;
+  }
+
+  /* Keep numeric columns aligned even in RTL */
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background-color: var(--color-slate-300);
+    border-radius: 9999px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--color-slate-400);
+  }
+
+  :focus-visible {
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  /* ── Surfaces ─────────────────────────────────────────────────────────── */
+  .alyq-card {
+    border-radius: var(--radius-card);
+    border: 1px solid var(--color-slate-200);
+    background-color: #fff;
+    box-shadow: var(--shadow-card);
+  }
+
+  /* ── KPI tile (clarified: accent edge, strong label/value pair) ───────── */
+  .alyq-kpi {
+    position: relative;
+    overflow: hidden;
+    border-radius: var(--radius-card);
+    border: 1px solid var(--color-slate-200);
+    background-color: #fff;
+    box-shadow: var(--shadow-card);
+    padding: 1rem;
+  }
+  @media (min-width: 640px) {
+    .alyq-kpi {
+      padding: 1.125rem 1.25rem;
+    }
+  }
+  .alyq-kpi::before {
+    content: "";
+    position: absolute;
+    inset-block: 0;
+    inset-inline-start: 0;
+    width: 3px;
+    background-color: var(--color-slate-300);
+  }
+  .alyq-kpi[data-tone="success"]::before {
+    background-color: var(--color-emerald-500);
+  }
+  .alyq-kpi[data-tone="danger"]::before {
+    background-color: var(--color-rose-500);
+  }
+  .alyq-kpi[data-tone="info"]::before {
+    background-color: var(--color-sky-500);
+  }
+  .alyq-kpi[data-tone="warning"]::before {
+    background-color: var(--color-amber-500);
+  }
+  .alyq-kpi[data-tone="primary"]::before {
+    background-color: var(--color-indigo-500);
+  }
+
+  .alyq-kpi-label {
+    font-size: 0.6875rem;
+    line-height: 1.1rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--color-slate-600);
+  }
+
+  .alyq-kpi-value {
+    margin-top: 0.375rem;
+    font-size: 1.5rem;
+    line-height: 1.9rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: var(--color-slate-900);
+    font-variant-numeric: tabular-nums;
+  }
+  @media (min-width: 640px) {
+    .alyq-kpi-value {
+      font-size: 1.75rem;
+      line-height: 2.15rem;
+    }
+  }
+
+  .alyq-kpi-hint {
+    margin-top: 0.375rem;
+    font-size: 0.75rem;
+    line-height: 1rem;
+    font-weight: 600;
+    color: var(--color-slate-600);
+  }
+
+  /* ── Text roles (contrast tiers) ──────────────────────────────────────── */
+  .alyq-text-body {
+    color: var(--color-alyq-body);
+  }
+  .alyq-text-muted {
+    color: var(--color-alyq-muted);
+  }
+  .alyq-text-faint {
+    color: var(--color-alyq-faint);
+  }
+  .alyq-text-heading {
+    color: var(--color-alyq-heading);
+  }
+
+  /* ── Primary action (high-visibility CTA) ─────────────────────────────── */
+  .alyq-btn-primary {
+    background-color: var(--color-indigo-600);
+    color: #fff;
+    font-weight: 600;
+    box-shadow: var(--shadow-raised);
+  }
+  .alyq-btn-primary:hover:not(:disabled) {
+    background-color: var(--color-indigo-700);
+  }
+  .alyq-btn-primary:focus-visible {
+    outline: 2px solid var(--color-indigo-600);
+    outline-offset: 2px;
+  }
+
+  /* Full-width tap target for primary links on phones, inline from sm up. */
+  .alyq-cta {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+  }
+  @media (min-width: 640px) {
+    .alyq-cta {
+      width: auto;
+    }
+  }
+
+  /* ── Sticky action bar for forms on small screens ─────────────────────── */
+  .alyq-actionbar {
+    border-top: 1px solid var(--color-slate-200);
+    background-color: rgb(255 255 255 / 0.96);
+    backdrop-filter: blur(6px);
+  }
+}
