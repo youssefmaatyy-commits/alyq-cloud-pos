@@ -1,0 +1,160 @@
+/**
+ * POS + Sales module — domain types (Phase 4).
+ *
+ * Reuses:
+ *   - `Product`           (catalog)        for stock + pricing
+ *   - `StockMovement`     (inventory)      for sale-driven stock deductions
+ *   - `getCurrentUser`    (inventory)      for the acting cashier
+ *
+ * A sale is an immutable financial record. The only legal mutation after
+ * completion is a *void*, which is itself recorded (status change + a
+ * reversing stock movement).
+ */
+
+export const PAYMENT_METHODS = ["cash", "instapay"] as const;
+export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
+
+/** `completed` = paid & stock deducted · `pending` = InstaPay awaiting confirmation · `voided` = reversed. */
+export type SaleStatus = "completed" | "pending" | "voided";
+export type PaymentStatus = "paid" | "pending";
+export type DiscountType = "none" | "percent" | "fixed";
+
+export interface SaleItem {
+  id: string;
+  sale_id: string;
+  product_id: string;
+  /** Snapshot of the product name at sale time (historical, not a live join). */
+  name_ar: string;
+  name_en: string;
+  sku: string;
+  barcode: string | null;
+  unit_price: number;
+  quantity: number;
+  line_total: number;
+}
+
+/**
+ * One payment applied to a sale. A sale may have several payments (split
+ * payment), e.g. Cash 300 + InstaPay 200 against a 500 total.
+ *
+ * `amount` is the portion applied to the sale; the sum of all payments'
+ * `amount` must equal the sale total. Cash payments are always `paid`; an
+ * InstaPay payment starts `pending` and is confirmed via `confirmPayment`.
+ */
+export interface SalePayment {
+  id: string;
+  sale_id: string;
+  method: PaymentMethod;
+  amount: number;
+  status: PaymentStatus;
+  /** InstaPay only — when this payment was confirmed. */
+  paid_at: string | null;
+  paid_by: string | null;
+  paid_by_name: string | null;
+}
+
+/** Payment as supplied by the cashier before completion. */
+export interface SalePaymentInput {
+  method: PaymentMethod;
+  amount: number;
+  status: PaymentStatus;
+  /** Cash only — amount actually tendered; defaults to `amount` (exact change). */
+  tendered?: number;
+}
+
+export interface Sale {
+  id: string;
+  /** Human-readable sequential number, e.g. INV-000001. */
+  sale_number: string;
+  /** Client-generated idempotency key (prevents double submission). */
+  client_ref: string;
+  status: SaleStatus;
+  subtotal: number;
+  discount_type: DiscountType;
+  discount_value: number;
+  discount_amount: number;
+  total: number;
+  user_id: string;
+  user_name: string;
+  items: SaleItem[];
+  /** All payments applied to this sale (authoritative — split payment). */
+  payments: SalePayment[];
+  customer_id?: string | null;
+  customer_name?: string | null;
+  customer_phone?: string | null;
+  created_at: string;
+  voided_at: string | null;
+  void_reason: string | null;
+  /** Legacy convenience — the first payment's method (single-payment == it). */
+  payment_method: PaymentMethod;
+  /** Legacy convenience — `paid` only when every payment is paid. */
+  payment_status: PaymentStatus;
+  /** Legacy convenience — total cash tendered (sum of cash `tendered`). */
+  amount_received: number | null;
+  /** Legacy convenience — cash tendered minus cash applied. */
+  change: number | null;
+  /** Legacy convenience — when the (last) InstaPay payment was confirmed. */
+  paid_at: string | null;
+  paid_by: string | null;
+  paid_by_name: string | null;
+}
+
+/** Payload the cart sends to complete a sale. */
+export interface CompleteSaleInput {
+  client_ref: string;
+  /**
+   * Only product ids + quantities come from the client. Prices, names and
+   * totals are re-read/recalculated on the authoritative side.
+   */
+  lines: { product_id: string; qty: number }[];
+  discount_type: DiscountType;
+  discount_value: number;
+  /** One or more payments whose amounts sum exactly to the sale total. */
+  payments: SalePaymentInput[];
+  customer_id?: string | null;
+  customer_name?: string | null;
+  customer_phone?: string | null;
+  user_id: string;
+  user_name: string;
+}
+
+export interface VoidSaleInput {
+  user_id: string;
+  user_name: string;
+  reason: string | null;
+}
+
+/** Marks a pending InstaPay sale as paid. Totals/items/stock are untouched. */
+export interface ConfirmPaymentInput {
+  user_id: string;
+  user_name: string;
+}
+
+/** A line in the active cart (UI state only — never persisted as-is). */
+export interface CartLine {
+  product_id: string;
+  sku: string;
+  name_ar: string;
+  name_en: string;
+  barcode: string | null;
+  unit_price: number;
+  /** Maximum sellable quantity right now (live stock for tracked goods). */
+  max_qty: number;
+  qty: number;
+  image_url: string | null;
+}
+
+export interface CartDiscount {
+  type: DiscountType;
+  value: number;
+}
+
+export const EMPTY_DISCOUNT: CartDiscount = { type: "none", value: 0 };
+
+export function newClientRef(): string {
+  const rand =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : Math.random().toString(36).slice(2) + Date.now().toString(36);
+  return `pos-${rand}`;
+}
