@@ -50,6 +50,7 @@ import { checkCapabilityParity, checkColumnParity } from "./lib/schema-parity.mj
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const MIGRATIONS_DIR = path.join(ROOT, "supabase", "migrations");
 const SHIM_FILE = path.join(ROOT, "supabase", "tests", "supabase-shim.sql");
+const SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "scenarios.sql");
 const SRC_DIR = path.join(ROOT, "src");
 
 // ── arguments ─────────────────────────────────────────────────────────────
@@ -62,6 +63,8 @@ const option = (name) => {
 
 const REQUESTED_DRIVER = option("driver") ?? "auto";
 const VERIFY_ONLY = flag("verify-only");
+const NO_SCENARIOS = flag("no-scenarios");
+const FORCE_SCENARIOS = flag("scenarios");
 const PSQL = option("psql") ?? process.env.ALYQ_PSQL ?? "psql";
 const DATABASE_URL =
   option("url") ?? process.env.ALYQ_DATABASE_URL ?? process.env.DATABASE_URL ?? "";
@@ -84,8 +87,6 @@ const c = {
  */
 const PENDING = {
   tables: {
-    shifts: "0012_shifts_and_expenses",
-    expenses: "0012_shifts_and_expenses",
     audit_log: "0014_audit_log",
   },
   rpcs: {},
@@ -249,6 +250,38 @@ if (!VERIFY_ONLY) {
     }
   } else {
     console.log(c.dim("\nPass 2 skipped — pass 1 failed."));
+  }
+
+  // ── role scenarios ─────────────────────────────────────────────────────
+  // Default: run for the throwaway in-process database. Against a real server
+  // (--driver=psql) they are opt-in with --scenarios, because they insert test
+  // staff rows into auth.users and nobody should do that to production by
+  // following a copy-pasted command.
+  const runScenarios = !NO_SCENARIOS && (driver.shim || FORCE_SCENARIOS);
+
+  if (failures.length === 0 && runScenarios) {
+    console.log(c.bold("\nRole scenarios (RLS + triggers, as each role)"));
+    try {
+      const sql = fs.readFileSync(SCENARIOS_FILE, "utf8");
+      await driver.exec(sql, "scenarios.sql");
+      console.log(`  ${c.green("✓")} every scenario passed`);
+      // The scenario file reports each case with a NOTICE; list them from the
+      // file so the output says what was exercised. (Every scenario that runs
+      // either raises its notice or aborts the run, so this list and the run
+      // cannot diverge without a failure.)
+      for (const notice of sql.matchAll(/raise notice '([^']+)'/g)) {
+        console.log(c.dim(`      ${notice[1]}`));
+      }
+    } catch (error) {
+      console.log(`  ${c.red("✗")} a scenario failed`);
+      failures.push({ name: "role scenarios", phase: "scenario", error: String(error.message) });
+    }
+  } else if (failures.length === 0 && !runScenarios) {
+    console.log(
+      c.dim(
+        "\nRole scenarios skipped (real server; re-run with --scenarios to include them).",
+      ),
+    );
   }
 }
 
