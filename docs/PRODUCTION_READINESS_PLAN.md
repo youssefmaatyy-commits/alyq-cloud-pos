@@ -1,6 +1,7 @@
 # ALYQ Cloud POS — Production Readiness Plan
 
-**Status:** plan only — no production-readiness code written yet.
+**Status:** M0 (foundations) complete; WS1 migrations 0011+ not started.
+**Delivered so far:** CI (4 jobs), `.gitignore`, `.env.example`, root `README.md`, `docs/DEPLOYMENT.md`, `scripts/migrations.check.mjs` + `scripts/test.logic.mjs` + `scripts/test.e2e.mjs`, and four migration defects fixed (see F1 below).
 **Baseline:** branch `arena/01a08778-alyq-cloud-pos`, HEAD `01a2a35` (Phase status report).
 **Companion reading:** `docs/PHASE_STATUS.md` (where the project stands), `docs/AUTHORIZATION.md` (permission
 model), `docs/AUTHENTICATION.md` (auth as built), `docs/DESIGN_LANGUAGE.md` (UI rules).
@@ -33,7 +34,7 @@ These are facts established by reading the code, not assumptions. They drive the
 
 | # | Finding | Evidence | Impact |
 | --- | --- | --- | --- |
-| F1 | **Migration 0010 cannot be applied to a real database.** `public.payment_status` is `enum ('paid','pending')` (0007), but 0010 declares `sales_returns.refund_status` and `refund_records.status` as `public.payment_status ... default 'completed'`, and casts `'completed'` in `pos_process_return`. No migration adds a `completed` label. | `0007_pos_sales.sql:24-27`, `0010_customers_returns_refunds.sql:64,80,120,210,280` | **Blocker.** `create table` fails with *invalid input value for enum payment_status: "completed"*. Proof that migrations have never been run end-to-end. Fix in WS1-M1. |
+| F1 | **No migration file could be applied to a real database at all — the live schema had never been built anywhere.** Four independent defects, all found by `scripts/migrations.check.mjs` on its first run: (a) 0010 typed `sales_returns.refund_status` and `refund_records.status` as `public.payment_status` — an enum of `('paid','pending')` — while defaulting them to `'completed'`, so `create table` failed and the RPC's `'completed'::payment_status` cast would fail at runtime; (b) six policies across 0007, 0009 and 0010 declared `for insert … using (false)`, which PostgreSQL rejects (`only WITH CHECK expression allowed for INSERT`); (c) 0007's `raise exception 'Discount above 100%'` left the `%` unescaped, so the function would not compile (`too few parameters specified for RAISE`); (d) 0007 aborted before 0008–0010 could run, which is why nobody noticed the other three. **All four fixed** (see §2.1). | `0007:161,107,115`, `0009:40`, `0010:71-88,186,193,200` — verified by applying all ten files twice |
 | F2 | Four tables the code already queries do not exist: `shifts`, `expenses`, `audit_log`, `profiles`. The Supabase repositories are written and typed against them. | `shifts/data/supabaseRepository.ts:16-33`, `expenses/…:7-22`, `audit/…:7-16`, `lib/auth/data/supabaseRepository.ts:13-18`; `supabase/migrations/` ends at 0010 | Live mode for Phase 8 and auth is impossible. WS1. |
 | F3 | Live mode has never executed: no `.env.example`, no `.gitignore`, no root README, env vars are build-time (`import.meta.env`) and only discoverable in `client.ts`. | repo root listing; `src/lib/supabase/client.ts:14-22` | A deploy target cannot be configured from the repo. WS1-M4. |
 | F4 | Action-layer permission checks exist for only two of six write paths. | Present: `pos/hooks/PosProvider.tsx:223`, `inventory/hooks/InventoryProvider.tsx:92`. Absent: returns, refunds, expenses, shifts (UI-only gating). | A direct service/repository call bypasses the UI gate. WS3. |
@@ -57,19 +58,19 @@ Numbered after the existing 0010. Each file is idempotent and independently re-r
 
 | Migration | Purpose | Key contents |
 | --- | --- | --- |
-| `0011_repair_refund_status.sql` | **Fix F1.** Dedicated refund status enum so `'completed'` is valid. | `create type public.refund_status as enum ('pending','completed','rejected')` (guarded); `alter table sales_returns alter column refund_status type public.refund_status using refund_status::text::public.refund_status`; same for `refund_records.status`; recreate `pos_process_return` casting to the new enum. Guarded by `if exists` so it is harmless on a database where 0010 never applied. |
-| `0012_profiles_and_auth.sql` | Identities + roles. | `public.app_role` enum (`admin`,`manager`,`cashier`,`inventory_clerk`,`viewer`); `public.profiles` (`id uuid pk references auth.users on delete cascade`, `username citext/text unique`, `name`, `role app_role not null`, `active boolean default true`, `created_at`, `updated_at`); trigger `on_auth_user_created` creating a profile; `public.current_role()` and `public.current_profile()` helpers; RLS: self-select; admin select-all; role changes only through `admin_set_user_role()` (SECURITY DEFINER, admin-checked); trigger precluding self-promotion. |
-| `0013_shifts.sql` | Cashier drawer sessions. | `public.shift_status` enum (`open`,`closed`); `public.shifts` matching `ShiftRow` exactly (`shift_number text unique`, `branch`, `register`, `status`, `opening_cash numeric(14,2)`, `opening_at`, `opened_by text`, `opened_by_name`, `closing_cash`, `closed_at`, `closed_by`, `closed_by_name`, `notes`, `summary jsonb`, `adjustment_approved_by`, `adjustment_approved_by_name`, `adjustment_approved_at`, `created_at`, `updated_at`); partial unique index `one_open_shift` on `(status) where status='open'`; `shift_counters` + `next_shift_number()`; `open_shift()` / `close_shift()` / `approve_shift_adjustment()` RPCs with role checks and server-side freeze of the summary; RLS read for authenticated, **no direct write**. |
-| `0014_expenses.sql` | Shift expenses. | `public.expense_category` and `public.expense_method` enums (mirroring `expenses/types.ts`); `public.expenses` matching `ExpenseRow`; `expense_counters` + `next_expense_number()`; `create_expense()` / `update_expense()` / `delete_expense()` RPCs (add = till tier, edit = manager+, delete = admin+); RLS read + no direct write. |
-| `0015_audit_log.sql` | Append-only trail (WS6 server side). | `public.audit_entity` / `public.audit_action` enums; `public.audit_log` matching `AuditRow` (`id`, `action`, `entity`, `entity_id`, `entity_label`, `details jsonb`, `user_id`, `user_name`, `created_at`); indexes on `(created_at desc)`, `(entity, entity_id)`, `(user_id)`; **no update/delete policy, no update/delete grant**; triggers (§7.2) that write rows from the tables above; `authenticated` read restricted by role (manager/admin). |
-| `0016_payment_methods_visa.sql` | WS5 database side. | `alter type public.payment_method add value if not exists 'visa'` (separate transaction from its use); relax the `amount_received` check on `sales` to cover card; recreate `pos_complete_sale` with `'visa'` accepted; extend `sale_payments` usage. |
-| `0017_refund_settlement.sql` | WS4 database side. | `refund_records` gains `settled_at`, `settled_by`, `settled_by_name` (nullable, backfilled from `created_at` for completed rows); `pos_settle_refund(uuid, text, text)` RPC — transactional, idempotent, role-checked, only `pending → completed` (or `→ rejected`); `pos_settle_refund` writes the audit row. |
-| `0018_lookup_tables.sql` *(optional, decision D8)* | Branch / register registry instead of free text. | `public.branches`, `public.registers` with RLS read-only for authenticated; shifts and expenses reference them by name for now (`text` retained) so no app change is forced. |
+| *(none — F1 is fixed in place)* | No repair migration is needed: 0010 could never have applied anywhere, so it is corrected directly. `public.refund_status` is declared in 0010 itself (`'pending','completed','rejected'`) and both columns use it. A repair migration would have been dead code guarding a state that cannot exist. **The migration numbering below therefore starts at 0011 for new work.** | `0010_customers_returns_refunds.sql` |
+| `0011_profiles_and_auth.sql` | Identities + roles. | `public.app_role` enum (`admin`,`manager`,`cashier`,`inventory_clerk`,`viewer`); `public.profiles` (`id uuid pk references auth.users on delete cascade`, `username citext/text unique`, `name`, `role app_role not null`, `active boolean default true`, `created_at`, `updated_at`); trigger `on_auth_user_created` creating a profile; `public.current_role()` and `public.current_profile()` helpers; RLS: self-select; admin select-all; role changes only through `admin_set_user_role()` (SECURITY DEFINER, admin-checked); trigger precluding self-promotion. |
+| `0012_shifts.sql` | Cashier drawer sessions. | `public.shift_status` enum (`open`,`closed`); `public.shifts` matching `ShiftRow` exactly (`shift_number text unique`, `branch`, `register`, `status`, `opening_cash numeric(14,2)`, `opening_at`, `opened_by text`, `opened_by_name`, `closing_cash`, `closed_at`, `closed_by`, `closed_by_name`, `notes`, `summary jsonb`, `adjustment_approved_by`, `adjustment_approved_by_name`, `adjustment_approved_at`, `created_at`, `updated_at`); partial unique index `one_open_shift` on `(status) where status='open'`; `shift_counters` + `next_shift_number()`; `open_shift()` / `close_shift()` / `approve_shift_adjustment()` RPCs with role checks and server-side freeze of the summary; RLS read for authenticated, **no direct write**. |
+| `0013_expenses.sql` | Shift expenses. | `public.expense_category` and `public.expense_method` enums (mirroring `expenses/types.ts`); `public.expenses` matching `ExpenseRow`; `expense_counters` + `next_expense_number()`; `create_expense()` / `update_expense()` / `delete_expense()` RPCs (add = till tier, edit = manager+, delete = admin+); RLS read + no direct write. |
+| `0014_audit_log.sql` | Append-only trail (WS6 server side). | `public.audit_entity` / `public.audit_action` enums; `public.audit_log` matching `AuditRow` (`id`, `action`, `entity`, `entity_id`, `entity_label`, `details jsonb`, `user_id`, `user_name`, `created_at`); indexes on `(created_at desc)`, `(entity, entity_id)`, `(user_id)`; **no update/delete policy, no update/delete grant**; triggers (§7.2) that write rows from the tables above; `authenticated` read restricted by role (manager/admin). |
+| `0015_payment_methods_visa.sql` | WS5 database side. | `alter type public.payment_method add value if not exists 'visa'` (separate transaction from its use); relax the `amount_received` check on `sales` to cover card; recreate `pos_complete_sale` with `'visa'` accepted; extend `sale_payments` usage. |
+| `0016_refund_settlement.sql` | WS4 database side. | `refund_records` gains `settled_at`, `settled_by`, `settled_by_name` (nullable, backfilled from `created_at` for completed rows); `pos_settle_refund(uuid, text, text)` RPC — transactional, idempotent, role-checked, only `pending → completed` (or `→ rejected`); `pos_settle_refund` writes the audit row. |
+| `0017_lookup_tables.sql` *(optional, decision D8)* | Branch / register registry instead of free text. | `public.branches`, `public.registers` with RLS read-only for authenticated; shifts and expenses reference them by name for now (`text` retained) so no app change is forced. |
 
-**Ordering note:** enum values added in one migration must not be *used* in the same transaction
-(`0016` therefore only alters the type; the RPC that accepts `'visa'` lives in `0016b` if the target
-Postgres version requires the split — decide at implementation time by testing against the project's
-Postgres version).
+**Ordering note:** PostgreSQL refuses to *use* an enum label in the transaction that added it, so a
+file that adds a value must be followed by another that references it. `scripts/migrations.check.mjs`
+applies each file in its own transaction and fails on a violation, so this rule is enforced rather
+than remembered.
 
 ### 2.2 Repository and service-layer changes
 
@@ -87,7 +88,7 @@ Postgres version).
 | Env template | `.env.example` documenting `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_CURRENCY`; note that these are **build-time** values. |
 | Repo hygiene (previously deferred, now in scope) | `.gitignore` (`node_modules/`, `dist/`, `.env*`, `*.local`), remove or relocate the stray root `vite-env.d.ts` into `src/`, keep `vite.preview.config.ts` out of the repo (sandbox-only). |
 | Live seed | `supabase/seed.sql` — one profile per role, a branch/register pair, a small category/product set, counters at 1. Demo seed stays separate. |
-| Docs | `supabase/migrations/README.md` extended to 0018; new `docs/DEPLOYMENT.md` (provision → migrate → seed → build → host, plus rollback). |
+| Docs | `supabase/migrations/README.md` extended to 0017; new `docs/DEPLOYMENT.md` (provision → migrate → seed → build → host, plus rollback). |
 | Root README | Short: what the app is, how to run demo, how to run live, how to run the suites. |
 
 ### 2.4 Moving off the demo dependency
@@ -101,7 +102,8 @@ Demo mode is **kept** (decision D5) but demoted to an explicit, documented fallb
 
 ### 2.5 Acceptance criteria
 
-- `scripts/migrations.check.mjs` applies 0001→0018 to an empty Postgres in order, twice (idempotency), with zero errors.
+- `scripts/migrations.check.mjs` applies 0001→0017 in order, twice (idempotency), with zero errors.
+- The same script asserts the schema satisfies the code: every table/RPC the repositories name exists, RLS is on, and no enum column defaults outside its labels.
 - `supabase/seed.sql` applies cleanly after migrations.
 - With live credentials set, every screen loads and the DOM smoke suite passes against Supabase.
 - With credentials absent, every existing suite still passes unchanged (demo regression gate).
@@ -218,7 +220,7 @@ deducts cash from a shift.
 | UI | Return form gains the refund status choice (completed / pending); refund list gains a status filter and an explicit "pending" emphasis; refund detail gains **Settle** / **Reject** actions behind a confirm dialog with the amount restated. | `returns/components/ReturnFormModal.tsx`, `returns/pages/RefundsPage.tsx`, `returns/pages/RefundDetailPage.tsx` |
 | Money model | A refund must deduct from the shift in which cash actually left: window completed refunds on `settled_at` (falling back to `created_at` for legacy/backfilled rows — behaviour identical to today for all existing data). | `shifts/services/shiftCalculations.ts`, `shifts/types.ts` (summary already reports `pending_refunds`) |
 | Dashboard/audit | `pending_refunds` surfaced as an operational KPI (WS7); audit actions `refund.created`, `refund.settled`, `refund.rejected` (WS6). | `dashboard`, `audit` |
-| DB | Migration `0017`: columns + `pos_settle_refund` RPC (role-checked, idempotent, audit-writing) + status enum fix in `0011`. | `supabase/migrations/0011`, `0017` |
+| DB | Migration `0016`: columns + `pos_settle_refund` RPC (role-checked, idempotent, audit-writing). The status enum itself is already correct (`0010` declares `refund_status`). | `supabase/migrations/0016` |
 
 ### 5.3 Acceptance criteria
 
@@ -251,7 +253,7 @@ existing test and code path is byte-identical when no card amount is entered.
 | Receipts | Card line in the receipt summary and the payment-method labels (EN + AR). | `pos/services/receiptStrings.ts`, `receipt.ts`, `lib/i18n/dictionary.ts` |
 | Shift maths | `visa_sales` (and `visa_pending` if D2 chooses a pending card state) added to `ShiftSummary` + the summary grid; card money never enters expected cash (already the rule for non-cash). | `shifts/services/shiftCalculations.ts`, `shifts/components/ShiftSummaryGrid.tsx`, `shifts/types.ts` |
 | Data | Demo + Supabase sale mapping accept `visa`; demo validation updated. | `pos/data/*Repository.ts`, `returns/*` (refund method already includes visa), `expenses/*` (already includes visa) |
-| DB | Migration `0016`: enum value, relaxed `amount_received` check, `pos_complete_sale` accepting `visa`, `sale_payments` unchanged in shape. | `supabase/migrations/0016` |
+| DB | Migration `0015`: enum value, relaxed `amount_received` check, `pos_complete_sale` accepting `visa`, `sale_payments` unchanged in shape. | `supabase/migrations/0015` |
 | E2E | Card sale end-to-end, card refund, card expense, shift summary excluding card money. | `scripts/smoke.dom.mjs` (new block) |
 
 ### 6.3 Acceptance criteria
@@ -363,7 +365,7 @@ already loads.
 
 | Script | Purpose |
 | --- | --- |
-| `scripts/migrations.check.mjs` | Apply 0001→0018 in order to a scratch database, assert success, re-apply for idempotency, apply seed, then run role-based RLS assertions. Skips with a clear message when `DATABASE_URL` is absent (so local runs stay green). |
+| `scripts/migrations.check.mjs` | Apply 0001→0017 in order (each file atomic), re-apply for idempotency, then assert the schema satisfies the code. Runs against in-process PGlite by default (no Docker, no server) or `--driver=psql --url=…` for a real project. |
 | `scripts/contract.selftest.ts` | Interface parity: same inputs → same outputs for demo and live repositories; create/read/update/delete round-trips; error codes (`NOT_FOUND`, `VALIDATION`, `FORBIDDEN`, `CONFLICT` where applicable). |
 | `scripts/permissions.selftest.ts` | Table-driven allow/deny matrix across the five roles for every guarded action. |
 | `scripts/audit.coverage.selftest.ts` | Drives each auditable action and asserts the resulting trail row(s). |
@@ -413,8 +415,8 @@ New `.github/workflows/ci.yml`:
 
 | Milestone | Contents | Depends on |
 | --- | --- | --- |
-| **M0 — Foundations** | CI workflow, `.gitignore`, `.env.example`, README, `migrations.check.mjs`, fix F1 (`0011`) | — |
-| **M1 — Live schema** | `0012`–`0015` (+ optional `0018`), seed, mode helper, contract tests (WS1) | M0 |
+| **M0 — Foundations** | CI workflow, `.gitignore`, `.env.example`, README, `migrations.check.mjs`, the three migration defects (F1) | — |
+| **M1 — Live schema** | `0011`–`0014` (+ optional `0017`), seed, mode helper, contract tests (WS1) | M0 |
 | **M2 — Identity** | Live auth + session sync + user management + reset (WS2); action-layer checks (WS3) | M1 (profiles), WS3 can start in parallel |
 | **M3 — Money correctness** | Refund lifecycle (WS4) + card payments (WS5) | M1, M2 for settlement permissions |
 | **M4 — Visibility** | Audit expansion (WS6) + dashboard upgrade (WS7) | M1 (audit_log + triggers), M3 (refund/card KPIs) |
@@ -423,7 +425,7 @@ New `.github/workflows/ci.yml`:
 
 | Risk | Likelihood | Impact | Mitigation |
 | --- | --- | --- | --- |
-| Migration 0010 already applied somewhere and now diverges | Low (it cannot have applied) | Medium | `0011` is guarded and idempotent; document the check query in the deployment doc |
+| Migration 0010 already applied somewhere and now diverges | None — it could never apply | Medium | The check script reports any divergence from a fresh build; `--verify-only` inspects a deployed project |
 | Enum alteration requires a separate transaction | Medium | Medium | Split "add value" and "use value" into two migrations; test against the project's Postgres version |
 | RLS misconfiguration locks staff out of their own data | Medium | High | Role-based RLS tests in CI; a documented "break glass" (service-role) recovery path |
 | Card payments change existing POS behaviour | Medium | High | Additive optional parameter; the frozen-behaviour rule; the 34 POS assertions must pass unchanged |
