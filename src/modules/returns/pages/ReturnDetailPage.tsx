@@ -4,19 +4,24 @@ import { useI18n } from "@/lib/i18n/I18nProvider";
 import { PageHeader } from "@/components/layout/AppShell";
 import {
   Badge,
+  Button,
   Card,
   EmptyState,
   LoadingBlock,
   RotateCcwIcon,
   SectionTitle,
   StatTile,
+  useToast,
 } from "@/components/ui";
 import { useReturns } from "../hooks/ReturnProvider";
+import { buildReturnReceiptHtml, printHtmlDocument, usePos } from "@/modules/pos";
 
 export function ReturnDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { t, date, num, isRTL } = useI18n();
   const { returnsList, refundsList, loading } = useReturns();
+  const { sales } = usePos();
+  const toast = useToast();
 
   const returnRecord = useMemo(() => {
     return returnsList.find((r) => r.id === id);
@@ -26,6 +31,71 @@ export function ReturnDetailPage() {
     if (!id) return undefined;
     return refundsList.find((ref) => ref.return_id === id);
   }, [refundsList, id]);
+
+  // The return record does not store the phone; resolve it from the original
+  // sale so the receipt can show it (works in demo and Supabase mode alike).
+  const linkedSale = useMemo(() => {
+    if (!returnRecord) return undefined;
+    return sales.find((s) => s.id === returnRecord.sale_id);
+  }, [sales, returnRecord]);
+
+  /**
+   * Print the return receipt through the shared receipt service + print
+   * workflow (identical design and behaviour to the sales receipt).
+   */
+  const printReturnReceipt = () => {
+    if (!returnRecord) return;
+    toast.success(t("pos.printing"));
+
+    let html: string;
+    try {
+      html = buildReturnReceiptHtml({
+        returnRecord,
+        direction: isRTL ? "rtl" : "ltr",
+        customerPhone: linkedSale?.customer_phone ?? null,
+        refundNumber: linkedRefund?.refund_number ?? null,
+        strings: {
+          businessName: t("receipt.businessName"),
+          businessTagline: t("receipt.businessTagline"),
+          returnTitle: t("receipt.returnTitle"),
+          returnLabel: t("receipt.returnLabel"),
+          dateLabel: t("receipt.dateLabel"),
+          cashierLabel: t("receipt.cashierLabel"),
+          invoiceLabel: t("receipt.originalInvoiceLabel"),
+          customerLabel: t("receipt.customerLabel"),
+          customerPhoneLabel: t("receipt.customerPhoneLabel"),
+          itemLabel: t("receipt.itemLabel"),
+          qtyLabel: t("receipt.qtyLabel"),
+          priceLabel: t("receipt.priceLabel"),
+          refundLabel: t("receipt.refundLabel"),
+          totalQtyLabel: t("receipt.totalReturnedQtyLabel"),
+          totalRefundLabel: t("receipt.totalRefundLabel"),
+          refundMethodLabel: t("receipt.refundMethodLabel"),
+          refundNumberLabel: t("receipt.refundNumberLabel"),
+          reasonLabel: t("receipt.reasonLabel"),
+          statusLabel:
+            returnRecord.refund_status === "completed"
+              ? t("receipt.statusCompleted")
+              : t("receipt.statusPending"),
+          thankYou: t("receipt.returnThankYou"),
+        },
+      });
+    } catch (err) {
+      console.error("[receipt-print] failed to build return receipt html", {
+        return_number: returnRecord.return_number,
+        error: err instanceof Error ? err.message : err,
+      });
+      toast.error(t("pos.printFailed"));
+      return;
+    }
+
+    const outcome = printHtmlDocument(html, returnRecord.return_number);
+    if (outcome === "embedded-blocked") {
+      toast.error(t("pos.printEmbedded"));
+    } else if (outcome === "failed") {
+      toast.error(t("barcode.printBlocked"));
+    }
+  };
 
   if (loading && !returnRecord) {
     return (
@@ -60,12 +130,17 @@ export function ReturnDetailPage() {
         backTo="/returns"
         backLabel={t("returns.title")}
         actions={
-          <Link
-            to={`/pos/sales/${returnRecord.sale_id}`}
-            className="inline-flex h-10 items-center gap-1.5 rounded-xl bg-white px-4 text-sm font-semibold text-slate-800 ring-1 ring-slate-300 hover:bg-slate-50"
-          >
-            {t("returns.saleNumber")}: {returnRecord.sale_number}
-          </Link>
+          <>
+            <Button variant="secondary" onClick={printReturnReceipt}>
+              🖨 {t("returns.printReceipt")}
+            </Button>
+            <Link
+              to={`/pos/sales/${returnRecord.sale_id}`}
+              className="inline-flex h-10 items-center gap-1.5 rounded-xl bg-white px-4 text-sm font-semibold text-slate-800 ring-1 ring-slate-300 hover:bg-slate-50"
+            >
+              {t("returns.saleNumber")}: {returnRecord.sale_number}
+            </Link>
+          </>
         }
       />
 

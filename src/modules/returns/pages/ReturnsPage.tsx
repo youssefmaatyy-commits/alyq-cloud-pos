@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { PageHeader } from "@/components/layout/AppShell";
 import {
@@ -22,6 +22,7 @@ import { ReturnFormModal } from "../components/ReturnFormModal";
 
 export function ReturnsPage({ initialTab = "returns" }: { initialTab?: "returns" | "refunds" }) {
   const { t, date, num } = useI18n();
+  const navigate = useNavigate();
   const { returnsList, refundsList, loading, error, refresh } = useReturns();
 
   const [activeTab, setActiveTab] = useState<"returns" | "refunds">(initialTab);
@@ -344,6 +345,7 @@ export function ReturnsPage({ initialTab = "returns" }: { initialTab?: "returns"
         <ReturnFormModal
           open={modalOpen}
           onClose={() => setModalOpen(false)}
+          onSuccess={(returnId) => navigate(`/returns/${returnId}`)}
         />
       )}
     </div>

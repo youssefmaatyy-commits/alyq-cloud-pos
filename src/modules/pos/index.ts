@@ -28,8 +28,15 @@ export {
   MAX_DISCOUNT_PERCENT,
 } from "./services/posMath";
 export type { CartTotals, SmartPayment } from "./services/posMath";
-export { buildReceiptHtml } from "./services/receipt";
-export type { ReceiptData, ReceiptStrings } from "./services/receipt";
+export { buildReceiptHtml, buildReturnReceiptHtml, printHtmlDocument, writeAndPrint } from "./services/receipt";
+export type {
+  PrintOutcome,
+  ReceiptData,
+  ReceiptStrings,
+  ReturnReceiptData,
+  ReturnReceiptRecord,
+  ReturnReceiptStrings,
+} from "./services/receipt";
 export {
   PAYMENT_METHODS,
   EMPTY_DISCOUNT,

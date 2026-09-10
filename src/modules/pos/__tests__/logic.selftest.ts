@@ -26,7 +26,11 @@ import {
 import { getDemoSalesRepository } from "../data/demoRepository";
 import { getDemoRepository } from "@/modules/products/data/demoRepository";
 import { getDemoInventoryRepository } from "@/modules/inventory/data/demoRepository";
-import { buildReceiptHtml, paymentMethodDisplayName } from "../services/receipt";
+import {
+  buildReceiptHtml,
+  buildReturnReceiptHtml,
+  paymentMethodDisplayName,
+} from "../services/receipt";
 import type { CartLine, SalePaymentInput } from "../types";
 
 type TestCase = { name: string; fn: () => void | Promise<void> };
@@ -696,6 +700,104 @@ test("receipt branding: logo, boutique header, paid/remaining/change, contacts",
   assert.ok(rtl.includes('lang="ar"'), "arabic lang");
   assert.ok(rtl.includes("ALYQ | أَلِيق"), "wordmark in RTL too");
   assert.ok(!rtl.includes("scaleX(-1)"), "symbol never mirrored");
+});
+
+test("return receipt reuses the shared design and carries return + invoice data", () => {
+  const returnRecord = {
+    return_number: "RET-000123",
+    created_at: "2026-02-03T09:30:00.000Z",
+    sale_number: "INV-000045",
+    customer_name: "Smoke Customer",
+    user_name: "Cashier One",
+    reason: "Damaged item",
+    refund_amount: 68,
+    refund_method: "cash",
+    refund_status: "completed" as const,
+    items: [
+      {
+        id: "ri1",
+        name_ar: "قهوة",
+        name_en: "Coffee",
+        sku: "ALYQ-1001",
+        barcode: "6281000000013",
+        unit_price: 34,
+        quantity: 2,
+        line_total: 68,
+      },
+    ],
+  };
+  const strings = {
+    businessName: "ALYQ | أَلِيق",
+    businessTagline: "Inspired by you",
+    returnTitle: "Return Receipt",
+    returnLabel: "Return #",
+    dateLabel: "Date",
+    cashierLabel: "Cashier",
+    invoiceLabel: "Original invoice",
+    customerLabel: "Customer",
+    customerPhoneLabel: "Phone",
+    itemLabel: "Item",
+    qtyLabel: "Qty",
+    priceLabel: "Price",
+    refundLabel: "Refund",
+    totalQtyLabel: "Total returned qty",
+    totalRefundLabel: "Total refund",
+    refundMethodLabel: "Refund method",
+    refundNumberLabel: "Refund #",
+    reasonLabel: "Reason",
+    statusLabel: "completed",
+    thankYou: "Thanks",
+  };
+
+  const html = buildReturnReceiptHtml({
+    returnRecord,
+    direction: "ltr",
+    customerPhone: "01000000000",
+    refundNumber: "REF-000123",
+    strings,
+  });
+
+  // same shared shell/design as the sales receipt
+  assert.ok(html.includes('src="/alyq-logo.png"'), "official logo referenced");
+  assert.ok(html.includes("ALYQ | أَلِيق"), "boutique wordmark shown");
+  assert.ok(html.includes("Inspired by you"), "tagline shown");
+  assert.ok(html.includes("max-width: 76mm"), "same thermal layout");
+  for (const label of ["WhatsApp", "Facebook", "Instagram", "TikTok", "0150 0221712", "ALYQ.eg", "@alyq.eg"]) {
+    assert.ok(html.includes(label), `shared footer keeps ${label}`);
+  }
+  // return + original invoice + customer + cashier
+  assert.ok(html.includes("Return Receipt"), "return title");
+  assert.ok(html.includes("RET-000123"), "return number");
+  assert.ok(html.includes("INV-000045"), "original invoice reference");
+  assert.ok(html.includes("Smoke Customer"), "customer name");
+  assert.ok(html.includes("01000000000"), "customer phone");
+  assert.ok(html.includes("Cashier One"), "cashier name");
+  assert.ok(html.includes("REF-000123"), "linked refund number");
+  // returned items table
+  assert.ok(html.includes("ALYQ-1001"), "item SKU");
+  assert.ok(html.includes("6281000000013"), "item barcode");
+  // refund summary
+  assert.ok(html.includes("Total returned qty"), "total quantity label");
+  assert.ok(html.includes("Total refund"), "total refund label");
+  assert.ok(html.includes("68.00"), "refund amount");
+  assert.ok(html.includes("Refund method"), "refund method label");
+  assert.ok(html.includes("Cash"), "refund method value");
+  assert.ok(html.includes("<svg"), "return barcode rendered");
+  assert.ok(html.includes('dir="ltr"'), "barcode stays LTR");
+
+  // RTL output
+  const rtl = buildReturnReceiptHtml({ returnRecord, direction: "rtl", strings });
+  assert.ok(rtl.includes('lang="ar"'), "arabic lang in RTL");
+  assert.ok(rtl.includes('dir="rtl"'), "rtl direction set");
+  assert.ok(rtl.includes("قهوة"), "arabic item name in RTL");
+
+  // mixed refund methods render without changing the data model
+  const mixed = buildReturnReceiptHtml({
+    returnRecord: { ...returnRecord, refund_method: "cash,instapay" },
+    direction: "ltr",
+    strings,
+  });
+  assert.ok(mixed.includes("Cash + InstaPay"), "mixed refund method renders");
 });
 
 test("receipt payment labels cover cash, visa and instapay", () => {

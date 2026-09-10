@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { PageHeader } from "@/components/layout/AppShell";
 import {
@@ -23,6 +23,7 @@ import { canProcessRefund } from "../permissions";
 
 export function RefundsPage() {
   const { t, date, num } = useI18n();
+  const navigate = useNavigate();
   const { refundsList, loading, error, refresh } = useReturns();
 
   const [search, setSearch] = useState("");
@@ -228,6 +229,7 @@ export function RefundsPage() {
         <ReturnFormModal
           open={modalOpen}
           onClose={() => setModalOpen(false)}
+          onSuccess={(returnId) => navigate(`/returns/${returnId}`)}
         />
       )}
     </div>

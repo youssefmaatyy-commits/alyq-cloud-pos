@@ -1076,6 +1076,18 @@ async function main() {
   createReturnBtn.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
   await sleep(1200);
   assert.ok(/RET-\d{6}/.test(bodyText()), "return created with RET number");
+  // Completing a return lands on the return details view, where the receipt
+  // can be printed immediately.
+  assert.ok(
+    dom.window.location.hash.includes("/returns/"),
+    "landed on the return details view after completing the return",
+  );
+  assert.ok(
+    [...document.querySelectorAll("button")].some((b) =>
+      (b.textContent ?? "").includes("Print Return Receipt"),
+    ),
+    "Print Return Receipt available right after completion",
+  );
   console.log("  ✓ return created with stock restore");
 
   // Invalid quantity blocked: open another return for the same sale, over-return
@@ -1120,6 +1132,33 @@ async function main() {
   await navigate(retLink.getAttribute("href"));
   assert.ok(bodyText().includes("Customer Return") || bodyText().includes("مرتجع"), "return detail shows movement notice");
   console.log("  ✓ return detail + linked refund");
+
+  // ── Return receipt printing (reuses the sales receipt service) ──
+  const beforeReturnPrints = printedDocs.length;
+  const printReturnBtn = [...document.querySelectorAll("button")].find((b) =>
+    (b.textContent ?? "").includes("Print Return Receipt"),
+  );
+  assert.ok(printReturnBtn, "Print Return Receipt button in the return details view");
+  printReturnBtn.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  await sleep(400);
+  assert.equal(printedDocs.length, beforeReturnPrints + 1, "return receipt document opened");
+  const returnReceipt = printedDocs[printedDocs.length - 1];
+  assert.ok(returnReceipt.includes("Return Receipt"), "return receipt has its own title");
+  assert.ok(/RET-\d{6}/.test(returnReceipt), "return receipt carries the return number");
+  assert.ok(returnReceipt.includes(linkedInv), "return receipt references the original invoice");
+  assert.ok(returnReceipt.includes("Smoke Customer"), "return receipt shows the customer name");
+  assert.ok(returnReceipt.includes('src="/alyq-logo.png"'), "return receipt embeds the official logo");
+  assert.ok(returnReceipt.includes("ALYQ | أَلِيق"), "return receipt has the boutique wordmark");
+  assert.ok(returnReceipt.includes("<svg"), "return receipt embeds the return barcode");
+  assert.ok(/ALYQ-\d{4}/.test(returnReceipt), "return receipt lists the returned item SKU");
+  assert.ok(returnReceipt.includes("Total refund"), "return receipt has the refund summary");
+  assert.ok(returnReceipt.includes("Refund method"), "return receipt labels the refund method");
+  assert.ok(returnReceipt.includes("Cash"), "return receipt shows the refund method value");
+  assert.ok(/\d+\.\d{2}/.test(returnReceipt), "return receipt carries a monetary refund amount");
+  for (const contact of ["WhatsApp", "0150 0221712", "Facebook", "ALYQ.eg", "Instagram", "TikTok", "@alyq.eg"]) {
+    assert.ok(returnReceipt.includes(contact), `return receipt footer has ${contact}`);
+  }
+  console.log("  ✓ return receipt printed with full return + invoice data");
 
   // Customer detail shows the purchase now
   await navigate("#/customers");
