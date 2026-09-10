@@ -9,6 +9,10 @@
  *
  * Stock adjustments are restricted to internal staff (admin, manager,
  * inventory_clerk). Cashier-only roles can read stock but not mutate it.
+ *
+ * Phase 3 owns `INVENTORY_ROLES` / `ROLE_LABEL` and they are intentionally
+ * unchanged. The canonical role + capability model (including the future
+ * `cashier` role) lives in `src/lib/permissions/roles.ts`.
  */
 
 export const INVENTORY_ROLES = [
