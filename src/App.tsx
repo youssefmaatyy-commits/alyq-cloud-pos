@@ -28,6 +28,13 @@ import {
   ReturnProvider,
   ReturnsPage,
 } from "@/modules/returns";
+import { ExpenseProvider, ExpensesPage } from "@/modules/expenses";
+import {
+  ShiftDashboardPage,
+  ShiftHistoryPage,
+  ShiftProvider,
+} from "@/modules/shifts";
+import { AuditLogPage } from "@/modules/audit";
 
 /**
  * ALYQ Cloud POS — application root.
@@ -43,6 +50,8 @@ export default function App() {
             <PosProvider>
               <CustomerProvider>
                 <ReturnProvider>
+                 <ExpenseProvider>
+                  <ShiftProvider>
                   <HashRouter>
                     <AppShell>
                       <Routes>
@@ -63,10 +72,16 @@ export default function App() {
                         <Route path="/returns/:id" element={<ReturnDetailPage />} />
                         <Route path="/refunds" element={<RefundsPage />} />
                         <Route path="/refunds/:id" element={<RefundDetailPage />} />
+                        <Route path="/shifts" element={<ShiftDashboardPage />} />
+                        <Route path="/shifts/history" element={<ShiftHistoryPage />} />
+                        <Route path="/expenses" element={<ExpensesPage />} />
+                        <Route path="/audit" element={<AuditLogPage />} />
                         <Route path="*" element={<Navigate to="/" replace />} />
                       </Routes>
                     </AppShell>
                   </HashRouter>
+                  </ShiftProvider>
+                 </ExpenseProvider>
                 </ReturnProvider>
               </CustomerProvider>
             </PosProvider>

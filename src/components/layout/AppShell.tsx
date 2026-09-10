@@ -17,6 +17,9 @@ import {
   ShoppingCartIcon,
   UsersIcon,
   WarehouseIcon,
+  WalletIcon,
+  ClockIcon,
+  ClipboardIcon,
 } from "@/components/ui";
 
 function NavItem({
@@ -99,6 +102,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <NavItem to="/customers" icon={<UsersIcon />} label={t("nav.customers")} />
         <NavItem to="/returns" icon={<RotateCcwIcon />} label={t("nav.returns")} />
         <NavItem to="/refunds" icon={<RotateCcwIcon />} label={t("nav.refunds")} />
+
+        <p className="px-3 pb-1 pt-4 text-[10px] font-bold uppercase tracking-widest text-slate-500">
+          {t("app.phase8")}
+        </p>
+        <NavItem to="/shifts" icon={<WalletIcon />} label={t("nav.shiftDashboard")} end />
+        <NavItem to="/shifts/history" icon={<ClockIcon />} label={t("nav.shiftHistory")} />
+        <NavItem to="/expenses" icon={<ReceiptIcon />} label={t("nav.expenses")} />
+        <NavItem to="/audit" icon={<ClipboardIcon />} label={t("nav.audit")} />
       </nav>
 
       <div className="shrink-0 rounded-2xl border border-slate-200 bg-slate-50 p-3">

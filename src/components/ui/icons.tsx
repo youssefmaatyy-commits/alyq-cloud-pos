@@ -175,3 +175,27 @@ export const RotateCcwIcon = (props: IconProps) => (
     <path d="M3 3v5h5" />
   </svg>
 );
+
+export const WalletIcon = (props: IconProps) => (
+  <svg {...base} width="18" height="18" {...props}>
+    <path d="M3 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+    <path d="M3 9h18" />
+    <path d="M16 14h2" />
+  </svg>
+);
+
+export const ClipboardIcon = (props: IconProps) => (
+  <svg {...base} width="18" height="18" {...props}>
+    <path d="M9 4h6v3H9z" />
+    <path d="M15 5h2a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2" />
+    <path d="M9 12h6" />
+    <path d="M9 16h4" />
+  </svg>
+);
+
+export const ClockIcon = (props: IconProps) => (
+  <svg {...base} width="18" height="18" {...props}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 7v5l3 2" />
+  </svg>
+);

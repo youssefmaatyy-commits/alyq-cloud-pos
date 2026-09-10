@@ -1242,6 +1242,234 @@ async function main() {
   assert.ok(historyOk, "purchase history shows the linked sale");
   console.log("  ✓ customer purchase history updated");
 
+  // ── Phase 8 · Cashier shifts + expenses + audit ──
+  // Scenario: open a shift with 1000 float, take one cash sale and one paid
+  // InstaPay sale, record a 100 cash expense, then close and verify the
+  // expected cash only ever moves by cash movements.
+  const kpiValue = (label) => {
+    const tile = [...document.querySelectorAll(".alyq-kpi")].find((el) =>
+      (el.textContent ?? "").includes(label),
+    );
+    const raw = tile?.querySelector(".alyq-kpi-value")?.textContent ?? "";
+    const match = raw.match(/-?\d[\d,]*\.\d{2}/);
+    return match ? Number(match[0].replace(/,/g, "")) : null;
+  };
+  const findButton = (label) =>
+    [...document.querySelectorAll("button")].find((b) => (b.textContent ?? "").includes(label));
+  const clickEl = (el) => el.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  // React tracks the last value it saw — drive inputs through the native setter.
+  const typeInto = (input, value) => {
+    const proto =
+      input.tagName === "SELECT"
+        ? dom.window.HTMLSelectElement
+        : input.tagName === "TEXTAREA"
+          ? dom.window.HTMLTextAreaElement
+          : dom.window.HTMLInputElement;
+    Object.getOwnPropertyDescriptor(proto.prototype, "value").set.call(input, value);
+    input.dispatchEvent(
+      new dom.window.Event(input.tagName === "SELECT" ? "change" : "input", { bubbles: true }),
+    );
+  };
+
+  await navigate("#/shifts");
+  for (let i = 0; i < 10 && !bodyText().includes("No shift is currently open"); i += 1) {
+    await sleep(300);
+  }
+  assert.ok(bodyText().includes("No shift is currently open"), "shift dashboard starts with no open shift");
+  console.log("  ✓ shift dashboard renders the empty state");
+
+  // Open a shift with a 1000 opening float.
+  clickEl(findButton("Open shift"));
+  await sleep(350);
+  const openDialog = dialog();
+  assert.ok(openDialog?.textContent.includes("Open a new shift"), "open-shift modal appears");
+  // Empty submit is blocked.
+  clickEl([...openDialog.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === "Open shift"));
+  await sleep(250);
+  assert.ok(openDialog.textContent.includes("Branch is required"), "branch is required");
+  assert.ok(openDialog.textContent.includes("Enter the opening cash"), "opening cash is required");
+
+  const dialogInputs = [...openDialog.querySelectorAll("input")];
+  const branchInput = dialogInputs.find((i) => !i.readOnly && i.type === "text");
+  typeInto(branchInput, "Main branch");
+  const cashOpeningInput = dialogInputs.find((i) => i.inputMode === "decimal");
+  typeInto(cashOpeningInput, "1000");
+  await sleep(200);
+  clickEl([...dialog().querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === "Open shift"));
+  for (let i = 0; i < 12 && !bodyText().includes("SH-000001"); i += 1) {
+    await sleep(300);
+  }
+  assert.ok(bodyText().includes("SH-000001"), "shift SH-000001 opened");
+  assert.equal(kpiValue("Opening balance"), 1000, "opening balance KPI shows the float");
+  assert.equal(kpiValue("Expected cash"), 1000, "expected cash starts at the opening float");
+  console.log("  ✓ shift opened with a 1000 opening float");
+
+  // ── Cash sale: pay the exact total in cash ──
+  await navigate("#/pos");
+  const posCard = () =>
+    findButton("Ethiopian Specialty") ?? findButton("ALYQ-1001");
+  clickEl(posCard());
+  await sleep(300);
+  clickEl(findButton("Exact"));
+  await sleep(300);
+  const cashSaleCashValue = Number(document.querySelector('[data-testid="cash-input"]').value);
+  assert.ok(cashSaleCashValue > 0, "cash sale amount read from the till");
+  let completeSale = [...document.querySelectorAll("button")].find(
+    (b) => (b.textContent ?? "").trim().startsWith("✓") && (b.textContent ?? "").includes("Complete sale"),
+  );
+  clickEl(completeSale);
+  await sleep(1700);
+  const cashInvoice = bodyText().match(/INV-\d{6}/)?.[0];
+  assert.ok(cashInvoice, "cash sale completed with an invoice number");
+
+  // ── InstaPay sale (paid, not pending) ──
+  clickEl(findButton("New sale"));
+  await sleep(350);
+  clickEl(posCard());
+  await sleep(300);
+  toggleSwitch("Split payment");
+  await sleep(300);
+  // Same single item as the cash sale → same total; pay it entirely via InstaPay.
+  typeInto(document.querySelector('[data-testid="instapay-input"]'), String(cashSaleCashValue));
+  await sleep(300);
+  const instapayValue = Number(document.querySelector('[data-testid="instapay-input"]').value);
+  assert.equal(instapayValue, cashSaleCashValue, "InstaPay covers the full total");
+  const cashAfterSplit = document.querySelector('[data-testid="cash-input"]').value;
+  assert.ok(!cashAfterSplit || Number(cashAfterSplit) === 0, "cash cleared when InstaPay covers the total");
+  clickEl(findButton("Marked as paid"));
+  await sleep(200);
+  completeSale = [...document.querySelectorAll("button")].find(
+    (b) => (b.textContent ?? "").trim().startsWith("✓") && (b.textContent ?? "").includes("Complete sale"),
+  );
+  clickEl(completeSale);
+  await sleep(1700);
+  const instapayInvoice = bodyText().match(/INV-\d{6}/)?.[0];
+  assert.ok(instapayInvoice && instapayInvoice !== cashInvoice, "InstaPay sale completed with its own invoice");
+  const salesCountInShift = 2;
+  console.log("  ✓ two sales taken during the shift (cash + paid InstaPay)");
+
+  // ── Expense of 100 paid in cash ──
+  await navigate("#/expenses");
+  for (let i = 0; i < 10 && !bodyText().includes("Add expense"); i += 1) await sleep(300);
+  clickEl(findButton("Add expense"));
+  await sleep(350);
+  let expenseDialog = dialog();
+  assert.ok(expenseDialog?.textContent.includes("Recorded against the open shift"), "expense is linked to the open shift");
+  const nameInput = expenseDialog.querySelector("input");
+  typeInto(nameInput, "Delivery fuel");
+  const amountInput = [...expenseDialog.querySelectorAll("input")].find((i) => i.inputMode === "decimal");
+  typeInto(amountInput, "100");
+  await sleep(200);
+  clickEl([...dialog().querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === "Save"));
+  for (let i = 0; i < 12 && !bodyText().includes("EXP-000001"); i += 1) await sleep(300);
+  assert.ok(bodyText().includes("EXP-000001"), "expense EXP-000001 recorded");
+  assert.ok(bodyText().includes("Transport"), "expense category rendered");
+  console.log("  ✓ 100 cash expense recorded against the shift");
+
+  // ── Back on the dashboard: expected = opening + cash sales − cash expense ──
+  await navigate("#/shifts");
+  for (let i = 0; i < 12 && kpiValue("Expected cash") === null; i += 1) await sleep(300);
+  const expectedCash = kpiValue("Expected cash");
+  const currentSales = kpiValue("Current sales");
+  const currentExpenses = kpiValue("Current expenses");
+  assert.equal(currentExpenses, 100, "current expenses KPI shows the cash expense");
+  assert.equal(
+    currentSales,
+    Number((cashSaleCashValue + instapayValue).toFixed(2)),
+    "current sales include both sales",
+  );
+  assert.equal(
+    expectedCash,
+    Number((1000 + cashSaleCashValue - 100).toFixed(2)),
+    "expected cash = opening + cash sales − cash expenses (InstaPay excluded)",
+  );
+  assert.equal(bodyText().includes("Total returns"), true, "shift summary lists returns");
+  console.log("  ✓ expected cash excludes the InstaPay sale and deducts the cash expense");
+
+  // ── Close the shift with the exact expected cash ──
+  clickEl(findButton("Close shift"));
+  await sleep(350);
+  const closeDialog = dialog();
+  assert.ok(closeDialog?.textContent.includes("Close shift"), "close-shift modal appears");
+  const countedInput = [...closeDialog.querySelectorAll("input")].find((i) => i.inputMode === "decimal");
+  typeInto(countedInput, String(expectedCash));
+  await sleep(250);
+  assert.ok(closeDialog.textContent.includes("Balanced"), "live difference reads balanced");
+  clickEl([...dialog().querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === "Close shift"));
+  for (let i = 0; i < 12 && !bodyText().includes("No shift is currently open"); i += 1) await sleep(300);
+  assert.ok(bodyText().includes("No shift is currently open"), "shift closed and the dashboard is empty again");
+  console.log("  ✓ shift closed with a balanced drawer");
+
+  // ── Shift history carries the opening/closing detail and the difference ──
+  await navigate("#/shifts/history");
+  for (let i = 0; i < 12 && !bodyText().includes("SH-000001"); i += 1) await sleep(300);
+  assert.ok(bodyText().includes("SH-000001"), "closed shift listed in history");
+  const historyRow = [...document.querySelectorAll("tbody tr")].find((tr) =>
+    (tr.textContent ?? "").includes("SH-000001"),
+  );
+  assert.ok(historyRow, "history row for SH-000001");
+  const historyCells = [...historyRow.querySelectorAll("td")].map((td) => td.textContent.trim());
+  const parseCell = (text) => {
+    const match = text.match(/-?\d[\d,]*(?:\.\d+)?/);
+    return match ? Number(match[0].replace(/,/g, "")) : null;
+  };
+  assert.equal(parseCell(historyCells[3]), 1000, "history shows the opening balance");
+  assert.equal(parseCell(historyCells[6]), expectedCash, "history shows the expected cash");
+  assert.equal(parseCell(historyCells[7]), expectedCash, "history shows the counted cash");
+  assert.equal(parseCell(historyCells[8]), 0, "history shows a zero difference");
+  assert.ok(historyCells[8].includes("Balanced"), "difference flagged as balanced");
+
+  // Detail modal keeps the frozen snapshot and the linked expense.
+  clickEl(historyRow.querySelector("button"));
+  await sleep(400);
+  const detailDialog = [...document.querySelectorAll('[role="dialog"]')].pop();
+  assert.ok(detailDialog?.textContent.includes("SH-000001"), "shift detail modal opens");
+  assert.ok(detailDialog.textContent.includes("EXP-000001"), "detail lists the shift expense");
+  assert.ok(detailDialog.textContent.includes("Delivery fuel"), "detail names the expense");
+  assert.ok(detailDialog.textContent.includes("Figures frozen"), "detail marks the snapshot as frozen");
+  clickEl([...detailDialog.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === "Close"));
+  await sleep(300);
+  console.log("  ✓ shift history + detail keep the opening/closing details and difference");
+
+  // ── POS sales are untouched by the shift ──
+  await navigate("#/pos/sales");
+  for (let i = 0; i < 10 && !bodyText().includes("Sales history"); i += 1) await sleep(300);
+  const invoiceNumbers = bodyText().match(/INV-\d{6}/g) ?? [];
+  assert.ok(
+    new Set(invoiceNumbers).size >= salesCountInShift,
+    "the sales taken during the shift are still in sales history",
+  );
+  assert.ok(invoiceNumbers.includes(cashInvoice), "the cash sale is still listed");
+  assert.ok(invoiceNumbers.includes(instapayInvoice), "the InstaPay sale is still listed");
+  const salesRow = (invoice) =>
+    [...document.querySelectorAll("tbody tr")].find((tr) => (tr.textContent ?? "").includes(invoice));
+  const cashRow = salesRow(cashInvoice);
+  const instapayRow = salesRow(instapayInvoice);
+  assert.ok(cashRow && instapayRow, "both shift sales have history rows");
+  assert.ok(
+    (cashRow.textContent ?? "").includes("Cash"),
+    "the cash sale keeps its payment method",
+  );
+  assert.ok(
+    (instapayRow.textContent ?? "").includes("InstaPay"),
+    "the InstaPay sale keeps its payment method",
+  );
+  await navigate("#/pos/sales");
+  await sleep(400);
+  assert.ok(!bodyText().includes("Shift #"), "POS sales table has no shift columns");
+  console.log("  ✓ POS sales unaffected by the shift lifecycle");
+
+  // ── Audit log records every shift/expense action ──
+  await navigate("#/audit");
+  for (let i = 0; i < 12 && !bodyText().includes("Audit log"); i += 1) await sleep(300);
+  assert.ok(bodyText().includes("Shift opened"), "audit log records the shift opening");
+  assert.ok(bodyText().includes("Expense created"), "audit log records the expense");
+  assert.ok(bodyText().includes("Shift closed"), "audit log records the shift closing");
+  assert.ok(bodyText().includes("SH-000001"), "audit entries reference the shift");
+  assert.ok(bodyText().includes("EXP-000001"), "audit entries reference the expense");
+  assert.ok(bodyText().includes("ALYQ Admin"), "audit entries carry the acting user");
+  console.log("  ✓ audit log records shift.opened, expense.created and shift.closed");
+
   // ── Explicit Sidebar Navigation Verification ──
   // Click Customers sidebar item
   const customersNav = [...document.querySelectorAll("aside nav a")].find((a) =>
@@ -1288,6 +1516,23 @@ async function main() {
   assert.ok(bodyText().includes("سجل المبيعات"), "sales history in Arabic");
   assert.ok(/INV-\d{6}/.test(bodyText()), "sale numbers stay LTR-safe in RTL");
   console.log("  ✓ POS Arabic RTL");
+
+  await navigate("#/shifts");
+  assert.ok(
+    bodyText().includes("لوحة الوردية") || bodyText().includes("لا توجد وردية مفتوحة"),
+    "shift dashboard in Arabic",
+  );
+  await navigate("#/shifts/history");
+  assert.ok(bodyText().includes("سجل الورديات"), "shift history in Arabic");
+  await navigate("#/expenses");
+  assert.ok(bodyText().includes("المصروفات"), "expenses page in Arabic");
+  await navigate("#/audit");
+  assert.ok(bodyText().includes("سجل التدقيق"), "audit log in Arabic");
+  await navigate("#/shifts");
+  assert.ok(!bodyText().includes("Expected cash"), "no untranslated shift copy in RTL");
+  await navigate("#/expenses");
+  assert.ok(!bodyText().includes("Add expense"), "no untranslated expense copy in RTL");
+  console.log("  ✓ shifts + expenses + audit Arabic RTL");
 
   await navigate("#/products");
   assert.ok(bodyText().includes("المنتجات"), "Arabic labels rendered");

@@ -42,4 +42,7 @@ export {
   SearchIcon,
   TrashIcon,
   WarehouseIcon,
+  WalletIcon,
+  ClipboardIcon,
+  ClockIcon,
 } from "./icons";
