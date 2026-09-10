@@ -1506,6 +1506,50 @@ async function main() {
   await setRole("admin");
   console.log("  ✓ audit log stays readable for managers");
 
+  // ── The demo role switcher itself keeps working for every shipped role ──
+  const switcherRoles = () => {
+    const select = roleSwitcher();
+    return select ? [...select.options].map((o) => o.value) : [];
+  };
+  assert.deepEqual(
+    switcherRoles(),
+    ["admin", "manager", "inventory_clerk", "viewer"],
+    "the role switcher still offers exactly the four shipped roles",
+  );
+  const roleLabel = { admin: "Admin", manager: "Manager", inventory_clerk: "Inventory Clerk", viewer: "Viewer" };
+  const auditNavFor = () =>
+    [...document.querySelectorAll('aside nav a')].some((a) => (a.getAttribute("href") ?? "") === "#/audit");
+
+  for (const role of ["admin", "manager", "inventory_clerk", "viewer"]) {
+    await setRole(role);
+    assert.equal(
+      roleSwitcher().value,
+      role,
+      `switching to ${role} applies to the switcher`,
+    );
+    assert.ok(
+      bodyText().includes(`Viewing as ${roleLabel[role]}`),
+      `switching to ${role} updates the permission banner`,
+    );
+    // Only oversight roles get the audit entry; nothing else changes.
+    assert.equal(
+      auditNavFor(),
+      role === "admin" || role === "manager",
+      `audit nav visibility is correct for ${role}`,
+    );
+    // The rest of the app still works for every role (POS + shift screens render).
+    await navigate("#/pos");
+    for (let i = 0; i < 10 && !bodyText().includes("ALYQ-1001"); i += 1) await sleep(300);
+    assert.ok(bodyText().includes("ALYQ-1001"), `POS still renders as ${role}`);
+    await navigate("#/shifts");
+    for (let i = 0; i < 10 && !bodyText().includes("Shift"); i += 1) await sleep(300);
+    assert.ok(!bodyText().includes("Something went wrong"), `shift dashboard still renders as ${role}`);
+  }
+  await setRole("admin");
+  assert.equal(roleSwitcher().value, "admin", "role restored to admin for the remaining checks");
+  assert.equal(auditNavFor(), true, "audit nav is back for admin");
+  console.log("  ✓ demo role switcher works for all four roles (audit nav gated, app unaffected)");
+
   // ── Explicit Sidebar Navigation Verification ──
   // Click Customers sidebar item
   const customersNav = [...document.querySelectorAll("aside nav a")].find((a) =>
