@@ -27,7 +27,13 @@ import {
   canViewAllShifts,
   canViewAuditLog,
 } from "../permissions";
-import { queryAuditLog } from "@/modules/audit/services/auditService";
+import { queryAuditLog, recordAudit } from "@/modules/audit/services/auditService";
+import { createSession } from "@/lib/auth/services/authService";
+import {
+  clearStoredSession,
+  resetSessionCache,
+  writeStoredSession,
+} from "@/lib/auth/services/sessionStore";
 import { AUDIT_ACTIONS } from "@/modules/audit/types";
 import type { Sale } from "@/modules/pos/types";
 import type { RefundRecord, SalesReturn } from "@/modules/returns/types";
@@ -614,6 +620,53 @@ test("audit repository is append-only and queryable", async () => {
   assert.equal(filtered.length, 1);
   const none = queryAuditLog(all, { search: "", action: "expense.deleted" });
   assert.equal(none.length, 0, "no expense.deleted entry recorded yet");
+});
+
+test("audit entries carry the signed-in user (Authentication phase)", async () => {
+  // Phase 8 wrote entries from a fabricated demo identity; now the actor comes
+  // from the real session. With no session the entry is still written, but it is
+  // never attributed to anybody — the fail-closed behaviour the audit screen
+  // relies on. A minimal in-memory storage stub keeps this headless.
+  const store = new Map<string, string>();
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+    },
+  });
+  resetSessionCache();
+
+  const anonymous = await recordAudit({
+    action: "expense.created",
+    entity: "expense",
+    entity_id: "exp-anon",
+    entity_label: "EXP-000101",
+    details: { amount: 10 },
+  });
+  assert.equal(anonymous?.user_id, "", "no phantom actor when signed out");
+  assert.equal(anonymous?.user_name, "");
+
+  writeStoredSession(
+    createSession(
+      { id: "user-cashier", username: "cashier", name: "Cashier One", role: "cashier" },
+      false,
+    ),
+    "session",
+  );
+  const attributed = await recordAudit({
+    action: "expense.created",
+    entity: "expense",
+    entity_id: "exp-cashier",
+    entity_label: "EXP-000102",
+    details: { amount: 25 },
+  });
+  assert.equal(attributed?.user_id, "user-cashier", "the session user is recorded as the actor");
+  assert.equal(attributed?.user_name, "Cashier One");
+
+  clearStoredSession();
+  resetSessionCache();
 });
 
 // runner — sequential so each test sees a consistent repository state

@@ -152,7 +152,11 @@ user-visible consequences.
 
 ## 3. Remaining authentication requirements (next phase)
 
-Not started. Listed here as the backlog for that phase.
+> **Status: implemented** in the Authentication phase — see
+> [`AUTHENTICATION.md`](./AUTHENTICATION.md) for what was built, how it is
+> tested and what is still open. The list below is kept as the original backlog
+> this phase was measured against; every functional requirement in §3.1 is now
+> met, and the permission matrix in §2 was carried over unchanged.
 
 ### 3.1 Functional requirements
 

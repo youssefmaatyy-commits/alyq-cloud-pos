@@ -16,7 +16,8 @@ import {
   loadInventory,
   type InventoryAdjustmentResult,
 } from "../services/inventoryService";
-import { getCurrentUser, setCurrentUser, canAdjustStock, type InventoryUser } from "../permissions";
+import { getCurrentUser, canAdjustStock, type InventoryUser } from "../permissions";
+import { useAuth } from "@/lib/auth";
 import type { StockMovement, StockMovementType, StockReason } from "../types";
 
 export interface InventoryContextValue {
@@ -37,11 +38,12 @@ export interface InventoryContextValue {
   /** Convenience selectors. */
   productById: (id: string) => Product | undefined;
   movementsForProduct: (id: string) => StockMovement[];
-  /** Permission helpers. */
+  /**
+   * Permission helpers. `user` is the signed-in user from the auth session
+   * (Authentication phase) and changes only on sign-in / sign-out.
+   */
   user: InventoryUser;
   canAdjust: boolean;
-  /** Switch the acting user (Phase 3 stand-in for real auth). */
-  setUser: (user: InventoryUser) => void;
   /** Read-only derived status. */
   statusOf: (id: string) => StockStatus;
 }
@@ -54,7 +56,8 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
   const [movements, setMovements] = useState<StockMovement[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<AppError | null>(null);
-  const [user, setUser] = useState<InventoryUser>(() => getCurrentUser());
+  const { user: authUser } = useAuth();
+  const user = useMemo<InventoryUser>(() => getCurrentUser(), [authUser]);
 
   const repository = useMemo(() => getInventoryRepository(), []);
   const mode = useMemo(() => getInventoryMode(), []);
@@ -99,11 +102,6 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
     [user],
   );
 
-  const changeUser = useCallback((next: InventoryUser) => {
-    setCurrentUser(next);
-    setUser(next);
-  }, []);
-
   const productById = useCallback(
     (id: string) => products.find((p) => p.id === id),
     [products],
@@ -138,9 +136,8 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
       user,
       canAdjust: canAdjustStock(user),
       statusOf,
-      setUser: changeUser,
     }),
-    [mode, repository, products, movements, loading, error, refresh, adjustStock, productById, movementsForProduct, user, statusOf, changeUser],
+    [mode, repository, products, movements, loading, error, refresh, adjustStock, productById, movementsForProduct, user, statusOf],
   );
 
   return <InventoryContext.Provider value={value}>{children}</InventoryContext.Provider>;

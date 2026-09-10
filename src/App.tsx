@@ -1,5 +1,6 @@
 import { HashRouter, Navigate, Route, Routes } from "react-router-dom";
 import { I18nProvider } from "@/lib/i18n/I18nProvider";
+import { AuthProvider, LoginRoute, RequireAuth } from "@/lib/auth";
 import { ToastProvider } from "@/components/ui";
 import { AppShell } from "@/components/layout/AppShell";
 import { CatalogProvider } from "@/modules/products";
@@ -40,19 +41,42 @@ import { AuditLogPage, RequireAuditAccess } from "@/modules/audit";
  * ALYQ Cloud POS — application root.
  * HashRouter keeps deep links working from any static host (including the
  * single-file production build).
+ *
+ * Routing (Authentication phase) has exactly two branches:
+ *   /login   public — rendered outside the shell, with no module providers
+ *            mounted, so nothing loads business data before a session exists;
+ *   *        everything else — `RequireAuth` first, then the module providers
+ *            and the shell. The shell's `RouteGuard` then applies the
+ *            role → screen capability table, and `/audit` adds its own copy.
  */
 export default function App() {
   return (
     <I18nProvider>
-      <ToastProvider>
-        <CatalogProvider>
-          <InventoryProvider>
-            <PosProvider>
-              <CustomerProvider>
-                <ReturnProvider>
-                 <ExpenseProvider>
+      <AuthProvider>
+        <ToastProvider>
+          <HashRouter>
+            <Routes>
+              <Route path="/login" element={<LoginRoute />} />
+              <Route path="*" element={<AuthenticatedApp />} />
+            </Routes>
+          </HashRouter>
+        </ToastProvider>
+      </AuthProvider>
+    </I18nProvider>
+  );
+}
+
+/** The signed-in application: session guard, providers, shell, screens. */
+function AuthenticatedApp() {
+  return (
+    <RequireAuth>
+      <CatalogProvider>
+        <InventoryProvider>
+          <PosProvider>
+            <CustomerProvider>
+              <ReturnProvider>
+                <ExpenseProvider>
                   <ShiftProvider>
-                  <HashRouter>
                     <AppShell>
                       <Routes>
                         <Route path="/" element={<DashboardPage />} />
@@ -86,15 +110,13 @@ export default function App() {
                         <Route path="*" element={<Navigate to="/" replace />} />
                       </Routes>
                     </AppShell>
-                  </HashRouter>
                   </ShiftProvider>
-                 </ExpenseProvider>
-                </ReturnProvider>
-              </CustomerProvider>
-            </PosProvider>
-          </InventoryProvider>
-        </CatalogProvider>
-      </ToastProvider>
-    </I18nProvider>
+                </ExpenseProvider>
+              </ReturnProvider>
+            </CustomerProvider>
+          </PosProvider>
+        </InventoryProvider>
+      </CatalogProvider>
+    </RequireAuth>
   );
 }

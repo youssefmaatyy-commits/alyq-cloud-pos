@@ -3,7 +3,10 @@ import { Link, NavLink, useLocation } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { useCatalog } from "@/modules/products/hooks/CatalogProvider";
 import { useInventory } from "@/modules/inventory/hooks/InventoryProvider";
-import { canViewAuditLog } from "@/modules/shifts/permissions";
+import { useAuth } from "@/lib/auth";
+import { ROLE_LABELS, hasCapability } from "@/lib/permissions/roles";
+import { capabilityForPath } from "@/lib/permissions/routes";
+import { RouteGuard } from "./RouteGuard";
 import { cn } from "@/utils/cn";
 import {
   BoxIcon,
@@ -29,12 +32,15 @@ function NavItem({
   icon,
   label,
   end,
+  visible = true,
 }: {
   to: string;
   icon: React.ReactNode;
   label: string;
   end?: boolean;
+  visible?: boolean;
 }) {
+  if (!visible) return null;
   return (
     <NavLink
       to={to}
@@ -59,9 +65,15 @@ function NavItem({
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { t, lang, toggleLang } = useI18n();
   const { mode } = useCatalog();
-  // Sidebar visibility follows the acting role (lead/oversight entries hide).
+  // Sidebar visibility follows the signed-in role: an entry is shown only when
+  // the same capability table the route guard reads allows the screen.
   const { user } = useInventory();
-  const canViewAudit = canViewAuditLog(user);
+  const { signOut, endReason } = useAuth();
+  const canOpen = (path: string) => {
+    const required = capabilityForPath(path);
+    return !required || hasCapability(user.role, required);
+  };
+  const roleLabel = ROLE_LABELS[user.role as keyof typeof ROLE_LABELS] ?? user.role;
   const location = useLocation();
   const [open, setOpen] = useState(false);
 
@@ -96,28 +108,49 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <p className="px-3 pb-1 pt-4 text-[10px] font-bold uppercase tracking-widest text-slate-500">
           {t("app.phase3")}
         </p>
-        <NavItem to="/inventory" icon={<WarehouseIcon />} label={t("nav.inventory")} />
-        <NavItem to="/inventory/movements" icon={<HistoryIcon />} label={t("nav.movements")} />
+        <NavItem to="/inventory" icon={<WarehouseIcon />} label={t("nav.inventory")} visible={canOpen("/inventory")} />
+        <NavItem to="/inventory/movements" icon={<HistoryIcon />} label={t("nav.movements")} visible={canOpen("/inventory/movements")} />
 
         <p className="px-3 pb-1 pt-4 text-[10px] font-bold uppercase tracking-widest text-slate-500">
           {t("nav.salesOps")}
         </p>
-        <NavItem to="/pos" icon={<ShoppingCartIcon />} label={t("nav.register")} />
-        <NavItem to="/pos/sales" icon={<ReceiptIcon />} label={t("nav.sales")} />
+        <NavItem to="/pos" icon={<ShoppingCartIcon />} label={t("nav.register")} visible={canOpen("/pos")} />
+        <NavItem to="/pos/sales" icon={<ReceiptIcon />} label={t("nav.sales")} visible={canOpen("/pos/sales")} />
         <NavItem to="/customers" icon={<UsersIcon />} label={t("nav.customers")} />
-        <NavItem to="/returns" icon={<RotateCcwIcon />} label={t("nav.returns")} />
-        <NavItem to="/refunds" icon={<RotateCcwIcon />} label={t("nav.refunds")} />
+        <NavItem to="/returns" icon={<RotateCcwIcon />} label={t("nav.returns")} visible={canOpen("/returns")} />
+        <NavItem to="/refunds" icon={<RotateCcwIcon />} label={t("nav.refunds")} visible={canOpen("/refunds")} />
 
         <p className="px-3 pb-1 pt-4 text-[10px] font-bold uppercase tracking-widest text-slate-500">
           {t("app.phase8")}
         </p>
-        <NavItem to="/shifts" icon={<WalletIcon />} label={t("nav.shiftDashboard")} end />
-        <NavItem to="/shifts/history" icon={<ClockIcon />} label={t("nav.shiftHistory")} />
-        <NavItem to="/expenses" icon={<ReceiptIcon />} label={t("nav.expenses")} />
-        {canViewAudit ? (
-          <NavItem to="/audit" icon={<ClipboardIcon />} label={t("nav.audit")} />
-        ) : null}
+        <NavItem to="/shifts" icon={<WalletIcon />} label={t("nav.shiftDashboard")} end visible={canOpen("/shifts")} />
+        <NavItem to="/shifts/history" icon={<ClockIcon />} label={t("nav.shiftHistory")} visible={canOpen("/shifts/history")} />
+        <NavItem to="/expenses" icon={<ReceiptIcon />} label={t("nav.expenses")} visible={canOpen("/expenses")} />
+        <NavItem to="/audit" icon={<ClipboardIcon />} label={t("nav.audit")} visible={canOpen("/audit")} />
       </nav>
+
+      {/* Signed-in user — the acting role comes from the auth session. */}
+      <div className="shrink-0 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+        <p className="text-[11px] font-bold uppercase tracking-widest text-slate-500">
+          {t("auth.signedInAs")}
+        </p>
+        <p className="mt-1 truncate text-xs font-bold text-slate-800">{user.name}</p>
+        <p className="mt-0.5 flex flex-wrap items-center gap-1.5">
+          <span className="rounded-md bg-indigo-50 px-1.5 py-0.5 text-[10px] font-bold text-indigo-700">
+            {roleLabel}
+          </span>
+          {user.username ? (
+            <span className="truncate text-[10px] font-medium text-slate-500">@{user.username}</span>
+          ) : null}
+        </p>
+        <button
+          type="button"
+          onClick={() => void signOut()}
+          className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+        >
+          {t("auth.signOut")}
+        </button>
+      </div>
 
       <div className="shrink-0 rounded-2xl border border-slate-200 bg-slate-50 p-3">
         <p className="flex items-center gap-2 text-xs font-bold text-slate-800">
@@ -173,7 +206,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </button>
 
           <div className="min-w-0 flex-1">
-            <p className="truncate text-xs font-semibold text-slate-700">{t("app.phase")}</p>
+            <p className="truncate text-xs font-semibold text-slate-700">
+              {endReason === "expired" ? t("auth.sessionExpired") : t("app.phase")}
+            </p>
           </div>
 
           <button
@@ -191,7 +226,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </span>
         </header>
 
-        <main className="mx-auto w-full max-w-7xl px-3 py-4 sm:px-6 sm:py-6 lg:px-8">{children}</main>
+        <main className="mx-auto w-full max-w-7xl px-3 py-4 sm:px-6 sm:py-6 lg:px-8">
+          <RouteGuard>{children}</RouteGuard>
+        </main>
       </div>
     </div>
   );

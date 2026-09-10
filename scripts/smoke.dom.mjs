@@ -28,8 +28,18 @@ const errors = [];
 
 globalThis.window = dom.window;
 globalThis.document = dom.window.document;
-globalThis.navigator = dom.window.navigator;
+// Node 22 owns `navigator`; jsdom's copy is only needed if it can be set (same
+// workaround as `scripts/auth.flow.mjs`).
+try {
+  Object.defineProperty(globalThis, "navigator", { value: dom.window.navigator, configurable: true });
+} catch {
+  /* node owns navigator */
+}
 globalThis.localStorage = dom.window.localStorage;
+globalThis.sessionStorage = dom.window.sessionStorage;
+// React's form submission builds `new FormData(form, submitter)`; Node's own
+// FormData refuses a jsdom form element, so use jsdom's implementation.
+globalThis.FormData = dom.window.FormData;
 globalThis.HTMLElement = dom.window.HTMLElement;
 globalThis.HTMLInputElement = dom.window.HTMLInputElement;
 globalThis.HTMLSelectElement = dom.window.HTMLSelectElement;
@@ -127,6 +137,34 @@ const toggleSwitch = (label) => {
   return sw;
 };
 const rows = () => document.querySelectorAll("tbody tr").length;
+
+/* ── Authentication helpers (session-guarded app) ────────────────────────────
+ * The app now boots on the login screen: nothing below can run until someone
+ * signs in. `signInAs` is therefore the first thing the suite does, and the
+ * role checks further down re-run it to prove what each role may reach.
+ */
+const DEMO_PASSWORD = "alyq1234";
+const usernameField = () => document.querySelector("input[autocomplete='username']");
+const isSignedIn = () => bodyText().includes("Signed in as");
+const signOut = async () => {
+  if (!isSignedIn()) return;
+  click("Sign out");
+  for (let i = 0; i < 20 && !usernameField(); i += 1) await sleep(200);
+  await sleep(200);
+};
+const signInAs = async (username, password = DEMO_PASSWORD) => {
+  await signOut();
+  for (let i = 0; i < 25 && !usernameField(); i += 1) await sleep(200);
+  setField("input[autocomplete='username']", username);
+  setField("input[autocomplete='current-password']", password);
+  click("Sign in");
+  for (let i = 0; i < 25 && !isSignedIn(); i += 1) await sleep(200);
+  await sleep(400);
+};
+/** Sidebar entries the current role is offered. */
+const navHrefs = () =>
+  [...document.querySelectorAll("aside nav a")].map((a) => a.getAttribute("href") ?? "");
+const denied = () => bodyText().includes("You do not have access");
 const makeImageFile = (name, type) => new dom.window.File(["x"], name, { type });
 const setInputFiles = (input, files) => {
   Object.defineProperty(input, "files", { value: files, configurable: true });
@@ -135,6 +173,14 @@ const setInputFiles = (input, files) => {
 async function main() {
   console.log("\nPhase 2 · DOM smoke test");
   await sleep(500);
+
+  // 0 ─ the app now starts signed out: everything below runs as an admin
+  assert.ok(usernameField(), "app boots on the login screen, not the dashboard");
+  assert.ok(!bodyText().includes("ALYQ-1001"), "no business data is loaded before sign-in");
+  await signInAs("admin");
+  assert.ok(isSignedIn(), "admin signed in");
+  assert.ok(bodyText().includes("Admin"), "the signed-in role is shown in the shell");
+  console.log("  ✓ sign-in gates the app and admin lands in the shell");
 
   // 1 ─ products list
   await navigate("#/products");
@@ -588,24 +634,25 @@ async function main() {
   );
   console.log("  ✓ out-of-stock status auto-flips when stock reaches 0");
 
-  // Permission: switch to Viewer, button is disabled
-  const roleSelect = [...document.querySelectorAll("select")].find((s2) =>
-    [...s2.options].some((o) => o.value === "viewer"),
+  // Permission: a viewer signs in — the acting role comes from the session.
+  await signInAs("viewer");
+  await navigate("#/inventory");
+  for (let i = 0; i < 15 && !bodyText().includes("Viewing as"); i += 1) await sleep(300);
+  assert.ok(bodyText().includes("Viewing as Viewer"), "viewer sees the read-only banner");
+  const viewerAdjust = [...document.querySelectorAll("main button")].find(
+    (b) => (b.textContent ?? "").trim() === "Adjust stock",
   );
-  assert.ok(roleSelect, "role switcher present");
-  // direct dispatch
-  Object.getOwnPropertyDescriptor(dom.window.HTMLSelectElement.prototype, "value").set.call(roleSelect, "viewer");
-  roleSelect.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
-  await sleep(200);
-  const adjustAsViewer = [...document.querySelectorAll("main button")].find((b) =>
-    (b.textContent ?? "").trim() === "Adjust stock",
+  assert.ok(
+    !viewerAdjust || viewerAdjust.disabled === true,
+    "viewer cannot adjust stock (button disabled or hidden)",
   );
-  assert.ok(adjustAsViewer && adjustAsViewer.disabled === true, "Viewer role disables adjust button");
+  assert.ok(!bodyText().includes("Something went wrong"), "inventory still renders for a viewer");
   console.log("  ✓ permission gate: viewers cannot adjust stock");
-  // Restore admin role
-  Object.getOwnPropertyDescriptor(dom.window.HTMLSelectElement.prototype, "value").set.call(roleSelect, "admin");
-  roleSelect.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
-  await sleep(150);
+
+  // Back to admin for the remaining inventory checks.
+  await signInAs("admin");
+  await navigate("#/inventory");
+  await sleep(300);
 
   // Validation: empty quantity
   setField('input[type="search"]', "ALYQ-1001");
@@ -1471,84 +1518,189 @@ async function main() {
   console.log("  ✓ audit log records shift.opened, expense.created and shift.closed");
 
   // ── Audit trail is an oversight screen: managers/admins only ──
-  const roleSwitcher = () =>
-    [...document.querySelectorAll("select")].find((s2) => [...s2.options].some((o) => o.value === "viewer"));
-  const setRole = async (role) => {
-    await navigate("#/inventory");
-    for (let i = 0; i < 10 && !roleSwitcher(); i += 1) await sleep(300);
-    const select = roleSwitcher();
-    Object.getOwnPropertyDescriptor(dom.window.HTMLSelectElement.prototype, "value").set.call(select, role);
-    select.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
-    await sleep(400);
-  };
-
-  await setRole("viewer");
-  const auditNavVisible = [...document.querySelectorAll('aside nav a')].some(
-    (a) => (a.getAttribute("href") ?? "") === "#/audit",
-  );
-  assert.equal(auditNavVisible, false, "viewer does not see the audit log in the sidebar");
+  // Authentication phase: the acting role now comes from the session, so the
+  // check signs in as each user instead of flipping a demo role switcher.
+  await signInAs("viewer");
+  assert.ok(!navHrefs().includes("#/audit"), "viewer does not see the audit log in the sidebar");
   await navigate("#/audit");
-  await sleep(500);
+  for (let i = 0; i < 10 && !bodyText().includes("Audit log is restricted"); i += 1) await sleep(300);
   assert.ok(bodyText().includes("Audit log is restricted"), "viewer is denied when typing #/audit directly");
   assert.ok(bodyText().includes("Only managers and admins"), "denial explains who may read the trail");
   assert.ok(!bodyText().includes("Shift closed"), "viewer never sees audit entries");
   assert.ok(!/EXP-\d{6}/.test(bodyText()), "no expense records leak into the denied view");
   console.log("  ✓ audit log is blocked for viewers (nav hidden + route denied)");
 
-  await setRole("manager");
-  const managerNavVisible = [...document.querySelectorAll('aside nav a')].some(
-    (a) => (a.getAttribute("href") ?? "") === "#/audit",
-  );
-  assert.equal(managerNavVisible, true, "manager sees the audit log entry");
+  await signInAs("manager");
+  assert.ok(navHrefs().includes("#/audit"), "manager sees the audit log entry");
   await navigate("#/audit");
   for (let i = 0; i < 12 && !bodyText().includes("Shift closed"); i += 1) await sleep(300);
   assert.ok(bodyText().includes("Shift closed"), "manager can read the audit trail");
-  await setRole("admin");
   console.log("  ✓ audit log stays readable for managers");
 
-  // ── The demo role switcher itself keeps working for every shipped role ──
-  const switcherRoles = () => {
-    const select = roleSwitcher();
-    return select ? [...select.options].map((o) => o.value) : [];
-  };
-  assert.deepEqual(
-    switcherRoles(),
-    ["admin", "manager", "inventory_clerk", "viewer"],
-    "the role switcher still offers exactly the four shipped roles",
+  // ── Authentication: session, identity, logout and per-role access ──
+  // Wrong password is rejected and keeps the user on the login screen.
+  await signOut();
+  await signInAs("admin", "wrong-password");
+  assert.ok(
+    bodyText().includes("Incorrect username or password"),
+    "wrong password is rejected with a message",
   );
-  const roleLabel = { admin: "Admin", manager: "Manager", inventory_clerk: "Inventory Clerk", viewer: "Viewer" };
-  const auditNavFor = () =>
-    [...document.querySelectorAll('aside nav a')].some((a) => (a.getAttribute("href") ?? "") === "#/audit");
+  assert.ok(usernameField(), "still on the login screen after a failed attempt");
+  assert.ok(!bodyText().includes("ALYQ-1001"), "no data leaks on a failed sign-in");
+  console.log("  ✓ wrong password rejected, session not created");
 
-  for (const role of ["admin", "manager", "inventory_clerk", "viewer"]) {
-    await setRole(role);
-    assert.equal(
-      roleSwitcher().value,
-      role,
-      `switching to ${role} applies to the switcher`,
-    );
-    assert.ok(
-      bodyText().includes(`Viewing as ${roleLabel[role]}`),
-      `switching to ${role} updates the permission banner`,
-    );
-    // Only oversight roles get the audit entry; nothing else changes.
-    assert.equal(
-      auditNavFor(),
-      role === "admin" || role === "manager",
-      `audit nav visibility is correct for ${role}`,
-    );
-    // The rest of the app still works for every role (POS + shift screens render).
-    await navigate("#/pos");
-    for (let i = 0; i < 10 && !bodyText().includes("ALYQ-1001"); i += 1) await sleep(300);
-    assert.ok(bodyText().includes("ALYQ-1001"), `POS still renders as ${role}`);
-    await navigate("#/shifts");
-    for (let i = 0; i < 10 && !bodyText().includes("Shift"); i += 1) await sleep(300);
-    assert.ok(!bodyText().includes("Something went wrong"), `shift dashboard still renders as ${role}`);
+  // Correct credentials create a session and reach the requested screen.
+  setField("input[autocomplete='current-password']", DEMO_PASSWORD);
+  click("Sign in");
+  for (let i = 0; i < 25 && !isSignedIn(); i += 1) await sleep(200);
+  assert.ok(isSignedIn(), "correct password signs in");
+  assert.ok(bodyText().includes("ALYQ Admin"), "the acting user is the signed-in account");
+  console.log("  ✓ successful login creates a session and identifies the user");
+
+  // The session survives a reload (persisted, not just in-memory).
+  assert.ok(
+    dom.window.localStorage.getItem("alyq.auth.session.v1") ||
+      dom.window.sessionStorage.getItem("alyq.auth.session.v1"),
+    "the session is persisted for the next page load",
+  );
+
+  // Logout ends the session and returns to the login screen.
+  await signOut();
+  assert.ok(usernameField(), "logout returns to the login screen");
+  assert.ok(bodyText().includes("You have been signed out"), "logout is explained to the user");
+  assert.ok(
+    !dom.window.localStorage.getItem("alyq.auth.session.v1") &&
+      !dom.window.sessionStorage.getItem("alyq.auth.session.v1"),
+    "logout clears the stored session",
+  );
+  // A deep link attempted while signed out is preserved for after sign-in.
+  await navigate("#/expenses");
+  assert.ok(usernameField(), "protected screens are unreachable signed out");
+  assert.ok(
+    decodeURIComponent(dom.window.location.hash).includes("next=/expenses"),
+    "the attempted route is remembered in the login URL",
+  );
+  console.log("  ✓ logout clears the session and protected routes redirect to login");
+
+  // Route protection: every protected screen, typed directly, needs a session.
+  await signInAs("admin");
+  for (const route of [
+    "#/",
+    "#/pos",
+    "#/pos/sales",
+    "#/returns",
+    "#/refunds",
+    "#/inventory",
+    "#/inventory/movements",
+    "#/audit",
+    "#/shifts",
+    "#/shifts/history",
+    "#/expenses",
+  ]) {
+    await navigate(route);
+    assert.ok(!usernameField(), `${route} renders for a signed-in admin`);
+    assert.ok(!bodyText().includes("Something went wrong"), `${route} renders without an error`);
   }
-  await setRole("admin");
-  assert.equal(roleSwitcher().value, "admin", "role restored to admin for the remaining checks");
-  assert.equal(auditNavFor(), true, "audit nav is back for admin");
-  console.log("  ✓ demo role switcher works for all four roles (audit nav gated, app unaffected)");
+  console.log("  ✓ every protected screen requires — and accepts — an active session");
+
+  // ── Cashier: runs the till, but no oversight or stock authority ──
+  await signInAs("cashier");
+  assert.ok(isSignedIn(), "cashier signed in");
+  const cashierNav = navHrefs();
+  assert.ok(cashierNav.includes("#/pos"), "cashier sees the register");
+  assert.ok(cashierNav.includes("#/returns"), "cashier sees returns");
+  assert.ok(cashierNav.includes("#/refunds"), "cashier sees refunds");
+  assert.ok(!cashierNav.includes("#/audit"), "cashier does not see the audit log");
+  await navigate("#/pos");
+  for (let i = 0; i < 12 && !bodyText().includes("ALYQ-1001"); i += 1) await sleep(300);
+  assert.ok(bodyText().includes("ALYQ-1001"), "cashier can open the register (sell capability)");
+  assert.ok(!denied(), "the register is not denied for cashiers");
+  await navigate("#/audit");
+  await sleep(400);
+  assert.ok(bodyText().includes("Audit log is restricted"), "cashier is denied the audit trail");
+  await navigate("#/inventory");
+  for (let i = 0; i < 12 && !bodyText().includes("Viewing as"); i += 1) await sleep(300);
+  assert.ok(
+    bodyText().includes("Viewing as Cashier"),
+    "cashier sees inventory read-only (no stock authority)",
+  );
+  await navigate("#/expenses");
+  await sleep(400);
+  assert.ok(!denied(), "cashier may record expenses");
+  console.log("  ✓ cashier: register + returns + refunds yes, audit + stock adjustments no");
+
+  // ── Viewer: read-only, and no till at all ──
+  await signInAs("viewer");
+  const viewerNav = navHrefs();
+  assert.ok(!viewerNav.includes("#/pos"), "viewer does not see the register");
+  assert.ok(!viewerNav.includes("#/returns"), "viewer does not see returns");
+  assert.ok(!viewerNav.includes("#/refunds"), "viewer does not see refunds");
+  assert.ok(!viewerNav.includes("#/audit"), "viewer does not see the audit log");
+  assert.ok(viewerNav.includes("#/inventory"), "viewer keeps read access to inventory");
+  for (const route of ["#/pos", "#/returns", "#/refunds", "#/audit"]) {
+    await navigate(route);
+    await sleep(400);
+    assert.ok(
+      denied() || bodyText().includes("Audit log is restricted"),
+      `${route} is denied for a viewer`,
+    );
+  }
+  await navigate("#/pos");
+  await sleep(400);
+  assert.ok(!bodyText().includes("ALYQ-1001"), "no POS data leaks into the viewer's denial");
+  await navigate("#/inventory");
+  await sleep(500);
+  assert.ok(!denied(), "viewer can still read inventory");
+  console.log("  ✓ viewer: read-only screens only, till and refunds denied");
+
+  // ── Session lifetime invariants ──
+  // Actual expiry/eviction is exercised in `scripts/auth.flow.mjs`, which can
+  // boot the app on a seeded session. Here the UI contract is checked: the
+  // session is persisted with a future expiry, remember-me selects the store,
+  // and a chosen registration outlives the tab only when asked to.
+  await signInAs("manager");
+  const readStored = () => {
+    const raw =
+      dom.window.localStorage.getItem("alyq.auth.session.v1") ??
+      dom.window.sessionStorage.getItem("alyq.auth.session.v1");
+    return raw ? JSON.parse(raw) : null;
+  };
+  const plain = readStored();
+  assert.ok(plain, "a session record is persisted after sign-in");
+  assert.ok(
+    new Date(plain.session.expires_at).getTime() > Date.now(),
+    "the stored session expires in the future",
+  );
+  assert.equal(plain.persistence, "session", "without remember-me the session is tab-scoped");
+  assert.equal(plain.session.remember, false, "remember-me flag recorded as off");
+
+  await signOut();
+  setField("input[autocomplete='username']", "manager");
+  setField("input[autocomplete='current-password']", DEMO_PASSWORD);
+  // The remember-me checkbox is the only checkbox on the login form.
+  const remember = document.querySelector("input[type='checkbox']");
+  assert.ok(remember, "the login form offers remember-me");
+  remember.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  await sleep(100);
+  click("Sign in");
+  for (let i = 0; i < 25 && !isSignedIn(); i += 1) await sleep(200);
+  const remembered = readStored();
+  assert.equal(remembered.persistence, "local", "remember-me moves the session to localStorage");
+  assert.equal(remembered.session.remember, true, "remember-me flag recorded as on");
+  assert.ok(
+    !dom.window.sessionStorage.getItem("alyq.auth.session.v1"),
+    "the session is never kept in both stores at once",
+  );
+  assert.ok(
+    new Date(remembered.session.expires_at).getTime() >
+      new Date(plain.session.expires_at).getTime(),
+    "remember-me grants the longer idle lifetime",
+  );
+  console.log("  ✓ session persistence: tab-scoped by default, localStorage when remembered");
+
+  await signInAs("admin");
+  assert.ok(navHrefs().includes("#/audit"), "admin restored the oversight entry");
+  console.log("  ✓ role changes are driven by the signed-in session, not a demo switcher");
 
   // ── Explicit Sidebar Navigation Verification ──
   // Click Customers sidebar item

@@ -11,7 +11,6 @@ import {
   SelectInput,
   StatTile,
   TextInput,
-  useToast,
   BoxIcon,
   HistoryIcon,
   SearchIcon,
@@ -29,12 +28,11 @@ import {
 } from "../services/inventoryQuery";
 import { StockStatusBadge } from "../components/StockStatusBadge";
 import { StockAdjustmentModal } from "../components/StockAdjustmentModal";
-import { ALL_ROLES, ROLE_LABEL, type InventoryRole } from "../permissions";
+import { ROLE_LABEL } from "../permissions";
 import type { StockStatus } from "@/modules/products/types";
 
 export function InventoryPage() {
   const { t, pick, num, date } = useI18n();
-  const toast = useToast();
   const {
     products,
     movements,
@@ -43,7 +41,6 @@ export function InventoryPage() {
     refresh,
     user,
     canAdjust,
-    setUser,
   } = useInventory();
 
   const [filters, setFilters] = useState<InventoryFiltersValue>(EMPTY_INVENTORY_FILTERS);
@@ -80,11 +77,6 @@ export function InventoryPage() {
     return undefined;
   };
 
-  const onRoleChange = (next: InventoryRole) => {
-    setUser({ ...user, role: next });
-    toast.push(t("inventory.roleSwitcher") + ": " + ROLE_LABEL[next], "info");
-  };
-
   return (
     <div>
       <PageHeader
@@ -106,32 +98,20 @@ export function InventoryPage() {
         }
       />
 
-      {/* Role / permission banner — always visible, helps demos without auth */}
+      {/* Signed-in identity + what this role may do (Authentication phase:
+          replaces the Phase 3 role switcher — the acting role now comes from
+          the session and can only change by signing in as someone else). */}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700">
         <span className="flex items-center gap-2">
           <span
             className={`h-2 w-2 rounded-full ${canAdjust ? "bg-emerald-500" : "bg-amber-500"}`}
             aria-hidden
           />
-          {t("inventory.perm.banner", { role: ROLE_LABEL[user.role] })}
+          {t("inventory.perm.banner", { role: ROLE_LABEL[user.role] ?? user.role })}
         </span>
-        <label className="flex items-center gap-1.5">
-          <span className="text-[11px] uppercase tracking-wider text-slate-500">
-            {t("inventory.roleSwitcher")}:
-          </span>
-          <SelectInput
-            value={user.role}
-            onChange={(e) => onRoleChange(e.target.value as InventoryRole)}
-            className="h-8 w-auto min-w-32 py-1 text-xs font-semibold"
-            aria-label={t("inventory.roleSwitcher")}
-          >
-            {ALL_ROLES.map((role) => (
-              <option key={role} value={role}>
-                {ROLE_LABEL[role]}
-              </option>
-            ))}
-          </SelectInput>
-        </label>
+        <span className="text-[11px] text-slate-500">
+          {t("auth.signedInAs")}: <span className="font-bold text-slate-700">{user.name}</span>
+        </span>
       </div>
 
       {/* KPI tiles */}

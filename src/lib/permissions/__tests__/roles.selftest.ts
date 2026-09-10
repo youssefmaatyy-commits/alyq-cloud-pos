@@ -128,13 +128,12 @@ test("cashier runs the till but holds no manager-level capability", () => {
   }
 });
 
-test("known pre-auth difference: POS canCompleteSale does not accept cashier yet", () => {
-  // The returns and shifts helpers already recognise `cashier`; the POS helper
-  // does not, because no UI can select the role today. The matrix defines the
-  // intended answer; this assertion documents the difference so the gap cannot
-  // be forgotten when the cashier role becomes a login role.
+test("the POS gate agrees with the matrix for the cashier role", () => {
+  // Pre-auth this helper listed roles by hand and omitted `cashier`, even though
+  // the matrix granted it `sell`. The Authentication phase made every helper ask
+  // the matrix, so the gap is closed and stays closed.
   assert.equal(hasCapability("cashier", "sell"), true, "matrix says a cashier sells");
-  assert.equal(canCompleteSale(userWith("cashier")), false, "POS helper still says no");
+  assert.equal(canCompleteSale(userWith("cashier")), true, "the POS gate agrees");
 });
 
 test("cashier inherits the clerk's till capabilities minus stock authority", () => {
@@ -196,6 +195,54 @@ test("oversight capabilities are limited to admin + manager", () => {
       `${capability} is manager/admin only`,
     );
   }
+});
+
+test("the cashier role is a first-class till role (authentication phase)", () => {
+  // The Authentication phase replaced the demo switcher with real accounts, so
+  // the hand-written role lists that used to omit `cashier` were replaced by the
+  // matrix. This pins the outcome: a signed-in cashier runs the register.
+  const cashier = userWith("cashier");
+  assert.equal(canCompleteSale(cashier), true, "a cashier can complete a sale");
+  assert.equal(canConfirmPayment(cashier), true, "a cashier can confirm an InstaPay payment");
+  assert.equal(canProcessReturn(cashier), true);
+  assert.equal(canProcessRefund(cashier), true);
+  assert.equal(canOpenShift(cashier), true);
+  assert.equal(canCloseShift(cashier), true);
+  assert.equal(canAddExpense(cashier), true);
+  assert.equal(canApplyDiscount(cashier), false, "discounts stay manager-level");
+  assert.equal(canVoidSale(cashier), false, "voiding stays manager-level");
+  assert.equal(canAdjustStock(cashier), false, "stock stays with clerks and above");
+  assert.equal(canEditExpense(cashier), false);
+  assert.equal(canDeleteExpense(cashier), false);
+  assert.equal(canApproveAdjustment(cashier), false);
+  assert.equal(canViewAuditLog(cashier), false, "the audit trail stays oversight-only");
+});
+
+test("a signed-out user is denied by every helper", () => {
+  // `ANONYMOUS_USER` carries an empty role, which is not a model role.
+  const anonymous = { id: "", name: "", role: "" } as InventoryUser;
+  const helpers = [
+    canViewInventory,
+    canAdjustStock,
+    canCompleteSale,
+    canApplyDiscount,
+    canVoidSale,
+    canConfirmPayment,
+    canProcessReturn,
+    canProcessRefund,
+    canOpenShift,
+    canCloseShift,
+    canAddExpense,
+    canEditExpense,
+    canDeleteExpense,
+    canViewAllShifts,
+    canApproveAdjustment,
+    canViewAuditLog,
+  ];
+  for (const helper of helpers) {
+    assert.equal(helper(anonymous), false, `${helper.name} denies a signed-out user`);
+  }
+  assert.equal(canViewAllShifts(userWith("viewer")), true, "a viewer may still read shift history");
 });
 
 let passed = 0;
