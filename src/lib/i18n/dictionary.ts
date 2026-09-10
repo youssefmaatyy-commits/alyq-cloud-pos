@@ -765,6 +765,9 @@ export const en = {
   "audit.action.expense.updated": "Expense updated",
   "audit.action.expense.deleted": "Expense deleted",
   "audit.action.shift.adjustment.approved": "Adjustment approved",
+  "audit.action.refund.created": "Refund created",
+  "audit.action.refund.settled": "Refund settled",
+  "audit.action.refund.rejected": "Refund rejected",
 } as const;
 
 export type TranslationKey = keyof typeof en;
@@ -1527,6 +1530,9 @@ export const ar: Record<TranslationKey, string> = {
   "audit.action.expense.updated": "تعديل مصروف",
   "audit.action.expense.deleted": "حذف مصروف",
   "audit.action.shift.adjustment.approved": "اعتماد تسوية",
+  "audit.action.refund.created": "إنشاء استرداد",
+  "audit.action.refund.settled": "تسوية استرداد",
+  "audit.action.refund.rejected": "رفض استرداد",
 };
 
 export const dictionaries = { en, ar } as const;

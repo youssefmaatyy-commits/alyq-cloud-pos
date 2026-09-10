@@ -15,12 +15,20 @@ export const AUDIT_ACTIONS = [
   "expense.updated",
   "expense.deleted",
   "shift.adjustment.approved",
+  // Refund lifecycle (WS4). `refund.created` is written by WS6 when a return is
+  // recorded; `refund.settled` / `refund.rejected` are written by the
+  // settlement RPC in migration 0016, which is why the vocabulary is extended
+  // here and in `public.audit_actions` together — the parity check fails if
+  // either side moves alone.
+  "refund.created",
+  "refund.settled",
+  "refund.rejected",
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
 /** What kind of record the action happened to. */
-export const AUDIT_ENTITIES = ["shift", "expense"] as const;
+export const AUDIT_ENTITIES = ["shift", "expense", "refund"] as const;
 export type AuditEntity = (typeof AUDIT_ENTITIES)[number];
 
 export interface AuditLogEntry {

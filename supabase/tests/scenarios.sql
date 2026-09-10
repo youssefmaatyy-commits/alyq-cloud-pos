@@ -86,7 +86,8 @@ begin
   if not public.can('open_shift') then
     raise exception 'a cashier should hold open_shift';
   end if;
-  if public.can('edit_expense') or public.can('view_audit_log') or public.can('apply_discount') then
+  if public.can('edit_expense') or public.can('view_audit_log') or public.can('apply_discount')
+     or public.can('approve_refund') then
     raise exception 'a cashier holds a manager-only capability';
   end if;
 
@@ -855,6 +856,244 @@ begin
   end;
 
   raise notice 'pos payments — cash, InstaPay and card on one till';
+end
+$$;
+
+-- ── refunds: owed, settled once, and never twice ──────────────────────────
+-- 0016 gives the refund lifecycle its exit. The interesting cases are the ones
+-- that decide whether money is owed at all: a pending refund reserves the sale's
+-- refundable amount, a rejected one gives it back, and only `approve_refund`
+-- may take either decision.
+--
+-- The sale below is deliberately discounted (two 10.00 units sold for 12.00), so
+-- that "the cap came back" is a claim the test can actually distinguish: the
+-- remaining refundable amount after the rejection is 12.00, not 2.00.
+do $$
+declare
+  v_cashier   uuid := '00000000-0000-4000-8000-0000000000c1';
+  v_manager   uuid;
+  v_product   uuid := '00000000-0000-4000-8000-0000000000f2';
+  v_sale      jsonb;
+  v_return    jsonb;
+  v_sale_id   uuid;
+  v_line_id   uuid;
+  v_refund_id uuid;
+  v_row       public.refund_records%rowtype;
+  v_count     integer;
+begin
+  -- the lookup needs oversight: `profiles` is readable as yourself, your own
+  -- row, or with `view_audit_log` — a cashier cannot browse the staff list.
+  perform pg_temp.become('00000000-0000-4000-8000-0000000000a1');
+  select p.id into v_manager from public.profiles p where p.username = 'manager';
+  if v_manager is null then
+    raise exception 'the seeded manager profile is missing';
+  end if;
+
+  -- a discounted cash sale: 2 × 10.00 less 8.00 = 12.00
+  perform pg_temp.become(v_cashier);
+  v_sale := public.pos_complete_sale(jsonb_build_object(
+    'client_ref',    'refn-sale-1',
+    'user_id',       v_cashier::text,
+    'user_name',     'Karim Cashier',
+    'discount_type', 'fixed',
+    'discount_value', 8.00,
+    'payments',      jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', 12.00, 'tendered', 20.00)),
+    'lines',         jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 2))
+  ));
+  v_sale_id := (v_sale->>'sale_id')::uuid;
+  select id into v_line_id from public.sale_items where sale_id = v_sale_id;
+
+  -- 1. the cashier records a return whose refund is owed, not paid
+  v_return := public.pos_process_return(jsonb_build_object(
+    'sale_id',       v_sale_id::text,
+    'reason',        'Damaged on the way out',
+    'refund_method', 'cash',
+    'refund_status', 'pending',
+    'user_id',       v_cashier::text,
+    'user_name',     'Karim Cashier',
+    'items',         jsonb_build_array(jsonb_build_object('sale_item_id', v_line_id::text, 'quantity', 1))
+  ));
+  v_refund_id := (v_return->>'refund_id')::uuid;
+
+  select * into v_row from public.refund_records where id = v_refund_id;
+  if v_row.status <> 'pending' then
+    raise exception 'a return recorded as pending produced a % refund', v_row.status;
+  end if;
+  if v_row.amount <> 10.00 then
+    raise exception 'the refund is % rather than the 10.00 line price', v_row.amount;
+  end if;
+  if v_row.settled_at is not null or v_row.settled_by is not null or v_row.rejection_reason is not null then
+    raise exception 'a pending refund carries a settlement stamp';
+  end if;
+  -- the numbering defect fixed in 0016 (b): these are real numbers, not errors
+  if v_row.refund_number !~ '^REF-[0-9]{6}$' then
+    raise exception 'the refund number is malformed: %', v_row.refund_number;
+  end if;
+  if (select return_number from public.sales_returns where id = v_row.return_id)
+     !~ '^RET-[0-9]{6}$' then
+    raise exception 'the return number is malformed';
+  end if;
+
+  -- 2. a pending refund still claims the money: the remaining 2.00 cannot cover
+  --    a second 10.00 return
+  begin
+    perform public.pos_process_return(jsonb_build_object(
+      'sale_id',       v_sale_id::text,
+      'reason',        'And the second one too',
+      'refund_method', 'cash',
+      'refund_status', 'pending',
+      'user_id',       v_cashier::text,
+      'user_name',     'Karim Cashier',
+      'items',         jsonb_build_array(jsonb_build_object('sale_item_id', v_line_id::text, 'quantity', 1))
+    ));
+    raise exception 'a pending refund did not reserve the money';
+  exception when check_violation then
+    null;
+  end;
+
+  -- 3. the cashier cannot release it, by RPC or by direct write
+  begin
+    perform public.pos_settle_refund(v_refund_id, v_cashier::text, 'Karim Cashier');
+    raise exception 'a cashier settled a refund';
+  exception when insufficient_privilege then
+    null;
+  end;
+  begin
+    update public.refund_records set status = 'completed' where id = v_refund_id;
+    raise exception 'a cashier completed a refund with a direct UPDATE';
+  exception when insufficient_privilege then
+    null;
+  end;
+
+  -- 4. the manager rejects it, with a reason
+  perform pg_temp.become(v_manager);
+  v_return := public.pos_settle_refund(
+    v_refund_id, v_manager::text, 'Mona Manager', 'rejected', 'The unit was not ours'
+  );
+  if (v_return->>'already_settled')::boolean then
+    raise exception 'the first decision reported already_settled';
+  end if;
+
+  select * into v_row from public.refund_records where id = v_refund_id;
+  if v_row.status <> 'rejected' then
+    raise exception 'the rejection left the refund %', v_row.status;
+  end if;
+  if v_row.rejection_reason <> 'The unit was not ours' then
+    raise exception 'the rejection reason was not recorded';
+  end if;
+  if v_row.settled_at is null then
+    raise exception 'a decided refund has no decision time';
+  end if;
+  -- the trigger stamps the decider from the session, not from the parameter
+  if v_row.settled_by <> v_manager::text
+     or v_row.settled_by_name <> (select name from public.profiles where id = v_manager) then
+    raise exception 'the decision was attributed to % / %', v_row.settled_by, v_row.settled_by_name;
+  end if;
+
+  -- rejection is an audit event with the entity derived from the vocabulary
+  select count(*) into v_count from public.audit_log
+   where action = 'refund.rejected' and entity_id = v_refund_id::text;
+  if v_count <> 1 then
+    raise exception 'the rejection wrote % audit rows', v_count;
+  end if;
+  if (select entity from public.audit_log
+       where action = 'refund.rejected' and entity_id = v_refund_id::text) <> 'refund' then
+    raise exception 'the rejection audit row has the wrong entity';
+  end if;
+
+  -- 5. the money is available again: a rejected refund no longer consumes the
+  --    sale's refundable amount, so the same 10.00 return is now allowed
+  perform pg_temp.become(v_cashier);
+  v_return := public.pos_process_return(jsonb_build_object(
+    'sale_id',       v_sale_id::text,
+    'reason',        'Returned anyway, with the right paperwork',
+    'refund_method', 'cash',
+    'refund_status', 'pending',
+    'user_id',       v_cashier::text,
+    'user_name',     'Karim Cashier',
+    'items',         jsonb_build_array(jsonb_build_object('sale_item_id', v_line_id::text, 'quantity', 1))
+  ));
+  v_refund_id := (v_return->>'refund_id')::uuid;
+
+  -- 6. the manager settles this one: it completes, once
+  perform pg_temp.become(v_manager);
+  v_return := public.pos_settle_refund(v_refund_id, v_manager::text, 'Mona Manager');
+  if (v_return->>'status') <> 'completed' then
+    raise exception 'settling returned %', v_return->>'status';
+  end if;
+
+  select * into v_row from public.refund_records where id = v_refund_id;
+  if v_row.status <> 'completed' or v_row.settled_at is null or v_row.settled_by <> v_manager::text then
+    raise exception 'the settled refund is wrong (% / % / %)', v_row.status, v_row.settled_at, v_row.settled_by;
+  end if;
+
+  select count(*) into v_count from public.audit_log
+   where action = 'refund.settled' and entity_id = v_refund_id::text;
+  if v_count <> 1 then
+    raise exception 'the settlement wrote % audit rows', v_count;
+  end if;
+
+  -- settling again is idempotent and writes nothing
+  v_return := public.pos_settle_refund(v_refund_id, v_manager::text, 'Mona Manager');
+  if not (v_return->>'already_settled')::boolean then
+    raise exception 'settling twice did not report already_settled';
+  end if;
+  select count(*) into v_count from public.audit_log
+   where action = 'refund.settled' and entity_id = v_refund_id::text;
+  if v_count <> 1 then
+    raise exception 'settling twice wrote % audit rows', v_count;
+  end if;
+
+  -- and a decision is final: a settled refund cannot be re-decided
+  begin
+    perform public.pos_settle_refund(v_refund_id, v_manager::text, 'Mona Manager', 'rejected', 'changed my mind');
+    raise exception 'a settled refund was re-decided';
+  exception when check_violation then
+    null;
+  end;
+
+  -- the money itself is immutable. `authenticated` holds no UPDATE on this
+  -- table at all (the grant is the first refusal), and behind it stands
+  -- `enforce_refund_invariants()`, which refuses a rewritten amount for a
+  -- writer that does have the privilege — a legacy project, or service_role.
+  begin
+    update public.refund_records set amount = 999.00 where id = v_refund_id;
+    raise exception 'a refund amount was rewritten';
+  exception when insufficient_privilege then
+    null;
+  end;
+  if (select amount from public.refund_records where id = v_refund_id) <> 10.00 then
+    raise exception 'the refund amount moved anyway';
+  end if;
+
+  -- 7. a refund paid over the counter is stamped as settled at the moment it
+  --    was recorded — no approval step, and no empty settlement stamp
+  perform pg_temp.become(v_cashier);
+  v_sale := public.pos_complete_sale(jsonb_build_object(
+    'client_ref', 'refn-sale-2',
+    'user_id',    v_cashier::text,
+    'user_name',  'Karim Cashier',
+    'payments',   jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', 10.00, 'tendered', 10.00)),
+    'lines',      jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 1))
+  ));
+  select id into v_line_id from public.sale_items where sale_id = (v_sale->>'sale_id')::uuid;
+  v_return := public.pos_process_return(jsonb_build_object(
+    'sale_id',       v_sale->>'sale_id',
+    'reason',        'Wrong flavour',
+    'refund_method', 'cash',
+    'user_id',       v_cashier::text,
+    'user_name',     'Karim Cashier',
+    'items',         jsonb_build_array(jsonb_build_object('sale_item_id', v_line_id::text, 'quantity', 1))
+  ));
+  select * into v_row from public.refund_records where id = (v_return->>'refund_id')::uuid;
+  if v_row.status <> 'completed' then
+    raise exception 'a counter refund defaulted to % instead of completed', v_row.status;
+  end if;
+  if v_row.settled_at is null or v_row.settled_by <> v_cashier::text then
+    raise exception 'a counter refund was not stamped as settled when it was paid';
+  end if;
+
+  raise notice 'refunds — owed, settled once, rejected without moving money';
 end
 $$;
 

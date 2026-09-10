@@ -89,6 +89,13 @@ export const CAPABILITIES = [
   "process_return",
   /** Issue a refund against a return. */
   "process_refund",
+  /**
+   * Settle a refund that is waiting for approval (WS4): move it to `completed`
+   * or `rejected`. Deliberately separate from `process_refund` — a cashier
+   * records the return and the money is owed, but releasing it is a manager's
+   * decision (plan decision D1).
+   */
+  "approve_refund",
   /** Open a cashier shift (count the opening float). */
   "open_shift",
   /** Close a cashier shift (count the drawer). */

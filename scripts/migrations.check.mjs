@@ -417,6 +417,50 @@ async function checkExpectations() {
   ]);
   report("row level security is enabled on those tables", rlsOff);
   report(`every RPC the repositories call exists (${rpcs.size} named in src/)`, missingRpcs);
+
+  // Existing is not the same as reachable. Supabase stopped granting privileges
+  // on new `public` tables to `authenticated` on 2026-04-28, so a table can
+  // exist, carry RLS and the right policies, and still answer
+  // `permission denied` to the application (F13). Nothing short of asking
+  // Postgres who may read it catches that.
+  const unreachable = [];
+  const unexecutable = [];
+  if (missing.length === 0 && missingRpcs.length === 0) {
+    const deniedTables = new Set(
+      (
+        await driver.query(
+          `select c.relname
+             from pg_class c join pg_namespace n on n.oid = c.relnamespace
+            where n.nspname = 'public'
+              and c.relkind in ('r', 'v')
+              and not has_table_privilege('authenticated', c.oid, 'SELECT')`,
+        )
+      ).map((r) => r[0]),
+    );
+    for (const table of [...tables.keys()].sort()) {
+      if (deniedTables.has(table)) {
+        unreachable.push(`${table}  — no grant select to authenticated`);
+      }
+    }
+
+    const deniedRpcs = new Set(
+      (
+        await driver.query(
+          `select p.proname
+             from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+            where n.nspname = 'public'
+              and not has_function_privilege('authenticated', p.oid, 'EXECUTE')`,
+        )
+      ).map((r) => r[0]),
+    );
+    for (const rpc of [...rpcs.keys()].sort()) {
+      if (deniedRpcs.has(rpc)) {
+        unexecutable.push(`${rpc}()  — no grant execute to authenticated`);
+      }
+    }
+  }
+  report("every table the repositories query is selectable by authenticated", unreachable);
+  report("every RPC the repositories call is executable by authenticated", unexecutable);
   report("no enum column defaults to a value outside its own labels", badDefaults);
 
   // The refund enum by name: 0010 got this wrong, and the failure was invisible

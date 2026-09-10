@@ -1,7 +1,7 @@
 # ALYQ Cloud POS — Production Readiness Plan
 
-**Status:** M0 (foundations) and M1 (WS1 migrations 0011–0015) complete. Next: `0016_refund_settlement` (DB), the WS5 register UI slice, then WS2–WS7.
-**Delivered so far:** CI (5 jobs), `.gitignore`, `.env.example`, root `README.md`, `docs/DEPLOYMENT.md`, the check/test runners, four migration defects fixed (F1) plus three more found by running a sale (F11–F13 — the live register could not complete a sale, could not complete a split sale, and could not read itself back), and migrations 0011–0015 — identity and the capability matrix, shifts and expenses, the audit trail, the onboarding/seed policies, and card payment at the register. The database now enforces the permission matrix, and `npm run db:check` proves it on every run with four parity checks and fourteen role scenarios.
+**Status:** M0 (foundations) and M1 (WS1 migrations 0011–0016) complete. Next: the WS4 and WS5 application slices, then WS2–WS7.
+**Delivered so far:** CI (5 jobs), `.gitignore`, `.env.example`, root `README.md`, `docs/DEPLOYMENT.md`, the check/test runners, four migration defects fixed (F1) plus three more found by running a sale (F11–F13 — the live register could not complete a sale, could not complete a split sale, and could not read itself back), and migrations 0011–0016 — identity and the capability matrix, shifts and expenses, the audit trail, the onboarding/seed policies, card payment at the register, and the refund lifecycle. The database now enforces the permission matrix, and `npm run db:check` proves it on every run with four parity checks, two reachability checks and fifteen role scenarios.
 **Baseline:** branch `arena/01a08778-alyq-cloud-pos`, HEAD `01a2a35` (Phase status report).
 **Companion reading:** `docs/PHASE_STATUS.md` (where the project stands), `docs/AUTHORIZATION.md` (permission
 model), `docs/AUTHENTICATION.md` (auth as built), `docs/DESIGN_LANGUAGE.md` (UI rules).
@@ -38,15 +38,15 @@ These are facts established by reading the code, not assumptions. They drive the
 | F2 | Four tables the code already queries do not exist: `shifts`, `expenses`, `audit_log`, `profiles`. The Supabase repositories are written and typed against them. | `shifts/data/supabaseRepository.ts:16-33`, `expenses/…:7-22`, `audit/…:7-16`, `lib/auth/data/supabaseRepository.ts:13-18`; `supabase/migrations/` ends at 0010 | Live mode for Phase 8 and auth is impossible. WS1. |
 | F3 | Live mode has never executed: no `.env.example`, no `.gitignore`, no root README, env vars are build-time (`import.meta.env`) and only discoverable in `client.ts`. | repo root listing; `src/lib/supabase/client.ts:14-22` | A deploy target cannot be configured from the repo. WS1-M4. |
 | F4 | Action-layer permission checks exist for only two of six write paths. | Present: `pos/hooks/PosProvider.tsx:223`, `inventory/hooks/InventoryProvider.tsx:92`. Absent: returns, refunds, expenses, shifts (UI-only gating). | A direct service/repository call bypasses the UI gate. WS3. |
-| F5 | The refund `pending` state is unreachable from the UI and unsettleable once present. | `returns/components/ReturnFormModal.tsx:188` hardcodes `refund_status: "completed"`; `returns/pages/RefundsPage.tsx` + `RefundDetailPage.tsx` are read-only; `ReturnRepository` has no settle method; the DB/RPC already accept `refund_status` from the payload (`0010:210`) | Money can be "owed" in the data model but never released. WS4. |
+| F5 | The refund `pending` state is unreachable from the UI and unsettleable once present. **DB half done in `0016`** — `pos_settle_refund()`, the `approve_refund` capability and the invariant trigger exist; the returns UI still hardcodes `completed`. | `returns/components/ReturnFormModal.tsx:188` hardcodes `refund_status: "completed"`; `returns/pages/RefundsPage.tsx` + `RefundDetailPage.tsx` are read-only; `ReturnRepository` has no settle method; the DB/RPC already accept `refund_status` from the payload (`0010:210`) | Money can be "owed" in the data model but never released. WS4. |
 | F6 | No card/Visa payment at the register, and the database would reject one anyway. **DB half done in `0015`** — the RPC takes `visa`, the cash constraint admits card and split sales. The register UI still offers cash and InstaPay only. | `pos/types.ts:14` `PAYMENT_METHODS = ["cash","instapay"]`; `0007:24` enum; `0007:57` check requires `amount_received >= total` for non-InstaPay; `0007:163` RPC whitelist | Card sales are not yet possible from the UI. WS5. |
-| F7 | The audit trail covers 6 actions across 2 entities, has no table, and is attributed client-side. | `audit/types.ts:11-23`; call sites only in `ExpenseProvider.tsx` (3) and `ShiftProvider.tsx` (3); `recordAudit()` takes the actor from the browser session | Sales, returns, refunds, customers and catalog changes leave no trail. WS6. |
+| F7 | The audit trail covers 6 actions across 3 entities in the vocabulary (`refund.*` added by `0016`; `refund.created` waits for its call site in WS6), the table exists, and entries are still attributed client-side. | `audit/types.ts:11-23`; call sites only in `ExpenseProvider.tsx` (3) and `ShiftProvider.tsx` (3); `recordAudit()` takes the actor from the browser session | Sales, returns, refunds, customers and catalog changes leave no trail. WS6. |
 | F8 | The dashboard is Phase-1 scoped. | `dashboard/DashboardPage.tsx` reads only `useCatalog()` (4 catalog tiles) | No operational picture on the landing screen. WS7. |
 | F9 | No CI, no automated migration validation. | no `.github/`; suites are hand-rolled esbuild/jsdom scripts run manually | Regressions are caught only when someone runs the scripts. §9. |
 | F10 | No server-side identities: users live in `demoUsers.ts`; `opened_by`, `user_id`, `created_by` columns are free text. | `lib/auth/demoUsers.ts`; `0007`/`0010` `user_id text not null` | Nothing ties a row to a real authenticated principal. WS1/WS2. |
 | F11 | **`pos_complete_sale` could never record a sale.** `lpad(next_value::text - 1, 6, '0')` — `::text` binds tighter than `-`, so Postgres parses `text - integer` and raises `operator does not exist: text - integer` on every completion. | `0007:229`, `0009:173` (the same spelling at `0010:286,288` for `RET-`/`REF-`) | Live sales were dead on arrival; only demo mode hid it. Both fixed (`0015`, `0016`). Found by executing a sale, not by reading the file. |
 | F12 | `sales_cash_received_covers_total` required `amount_received >= total` for any sale whose first payment was cash, which silently outlawed every cash-first split — including the ones the register's own `smartPaymentCalc` builds. | `0007:57` | Split payment worked in the UI and failed in the database. Fixed in `0015`. |
-| F13 | The `0007`/`0009`/`0010` tables have RLS policies but **no `grant`** to `authenticated`. Supabase stopped auto-granting new `public` tables on 2026-04-28, so on a current project the whole register read path answers `permission denied` even after a sale is recorded. | all tables in `0007`, `0009`, `0010` | Fixed for the POS tables in `0015`; returns/refunds grants + a permanent schema check in `0016`. |
+| F13 | The `0007`/`0009`/`0010` tables have RLS policies but **no `grant`** to `authenticated`. Supabase stopped auto-granting new `public` tables on 2026-04-28, so on a current project the whole register and returns read path answers `permission denied` even after a sale is recorded. | all tables in `0007`, `0009`, `0010` | Fixed: POS in `0015`, returns/refunds in `0016`, and both are now checked on every run. |
 
 ---
 
@@ -67,7 +67,7 @@ Numbered after the existing 0010. Each file is idempotent and independently re-r
 | `0013_expenses.sql` | Shift expenses. | `public.expense_category` and `public.expense_method` enums (mirroring `expenses/types.ts`); `public.expenses` matching `ExpenseRow`; `expense_counters` + `next_expense_number()`; `create_expense()` / `update_expense()` / `delete_expense()` RPCs (add = till tier, edit = manager+, delete = admin+); RLS read + no direct write. |
 | `0014_audit_log.sql` | Append-only trail (WS6 server side). | `public.audit_entity` / `public.audit_action` enums; `public.audit_log` matching `AuditRow` (`id`, `action`, `entity`, `entity_id`, `entity_label`, `details jsonb`, `user_id`, `user_name`, `created_at`); indexes on `(created_at desc)`, `(entity, entity_id)`, `(user_id)`; **no update/delete policy, no update/delete grant**; triggers (§7.2) that write rows from the tables above; `authenticated` read restricted by role (manager/admin). |
 | `0015_pos_card_payments.sql` ✅ | WS5 database side. The enum value was already there — `0012` added `visa` to `public.payment_method` because the expenses and refunds modules offered card payments while the enum did not. The POS path is now open: `pos_complete_sale` accepts `visa`, a card payment is always captured (`paid`), the cash constraint admits card and split sales, the sale-number defect (F11) is fixed, and the POS tables are granted to `authenticated` (F13). |
-| `0016_refund_settlement.sql` | WS4 database side. | `refund_records` gains `settled_at`, `settled_by`, `settled_by_name` (nullable, backfilled from `created_at` for completed rows); `pos_settle_refund(uuid, text, text)` RPC — transactional, idempotent, role-checked, only `pending → completed` (or `→ rejected`); `pos_settle_refund` writes the audit row. |
+| `0016_refund_settlement.sql` ✅ | WS4 database side. `refund_records` gained `settled_at`, `settled_by`, `settled_by_name`, `rejection_reason` (backfilled from `created_at` for completed rows, enforced consistent by a CHECK); `pos_settle_refund(uuid, text, text, text default 'completed', text default null)` — transactional, idempotent, capability-checked, only `pending → completed` (or `→ rejected`); the RPC writes the audit row, and a trigger enforces the same rules for writers that bypass it. Two extra parameters were added to the sketched signature (defaulted, so a three-argument call still works) because a rejection needs a reason. |
 | `0017_lookup_tables.sql` *(optional, decision D8)* | Branch / register registry instead of free text. | `public.branches`, `public.registers` with RLS read-only for authenticated; shifts and expenses reference them by name for now (`text` retained) so no app change is forced. |
 
 **Ordering note:** PostgreSQL refuses to *use* an enum label in the transaction that added it, so a
@@ -231,6 +231,9 @@ deducts cash from a shift.
 - A later settlement (manager, per D1) moves the refund to `completed`, stamps who/when, writes an audit
   row, and reduces the expected cash **of the shift open at settlement time**.
 - Double-settling is idempotent; a rejected refund never affects cash; the per-sale cap still holds.
+  *(The database half is proven by the `refunds — owed, settled once, rejected without moving money`
+  scenario, which also pins the cap rule: a rejected refund gives the sale's refundable amount back, a
+  pending one holds it.)*
 - Existing behaviour is unchanged for refunds that are created `completed` (the current default) — the
   returns self-test (9/9) and the smoke return/refund sections must pass untouched.
 
@@ -256,7 +259,7 @@ existing test and code path is byte-identical when no card amount is entered.
 | Receipts | Card line in the receipt summary and the payment-method labels (EN + AR). | `pos/services/receiptStrings.ts`, `receipt.ts`, `lib/i18n/dictionary.ts` |
 | Shift maths | `visa_sales` (and `visa_pending` if D2 chooses a pending card state) added to `ShiftSummary` + the summary grid; card money never enters expected cash (already the rule for non-cash). | `shifts/services/shiftCalculations.ts`, `shifts/components/ShiftSummaryGrid.tsx`, `shifts/types.ts` |
 | Data | Demo + Supabase sale mapping accept `visa`; demo validation updated. | `pos/data/*Repository.ts`, `returns/*` (refund method already includes visa), `expenses/*` (already includes visa) |
-| DB | Migration `0015`: enum value, relaxed `amount_received` check, `pos_complete_sale` accepting `visa`, `sale_payments` unchanged in shape. | `supabase/migrations/0015` |
+| DB | Migration `0015` ✅: `pos_complete_sale` accepting `visa`, the relaxed `amount_received` check, `sale_payments` unchanged in shape — plus the sale-numbering fix and the POS read grants. | `supabase/migrations/0015` |
 | E2E | Card sale end-to-end, card refund, card expense, shift summary excluding card money. | `scripts/smoke.dom.mjs` (new block) |
 
 ### 6.3 Acceptance criteria
@@ -357,7 +360,7 @@ already loads.
 | Layer | What it proves | How | Runs |
 | --- | --- | --- | --- |
 | **L1** Pure logic self-tests | Money math, validation, state machines | existing esbuild + `node` harness (`src/**/__tests__/*.selftest.ts`) | always |
-| **L2** Repository contract tests | the schema provides what the repositories read and write | **built:** column parity (every `…Row` field must be a real column), capability/vocabulary/alias parity, and the role scenarios in `scripts/migrations.check.mjs` | always |
+| **L2** Repository contract tests | the schema provides what the repositories read and write | **built:** column parity (every `…Row` field must be a real column), capability/vocabulary/alias parity, table reachability (selectable by `authenticated`) and RPC executability, plus the role scenarios in `scripts/migrations.check.mjs` | always |
 | **L3** Migration tests | migrations apply from scratch, in order, twice; seeds apply; RLS denies the wrong role | new `scripts/migrations.check.mjs` against a Postgres service container | CI |
 | **L4** DOM smoke | the real UI works end to end in demo mode | `scripts/smoke.dom.mjs` (jsdom) — extended per workstream | always |
 | **L5** Live E2E | the same flows against a real Supabase project | `scripts/smoke.live.mjs` (L4 against live credentials) | CI (nightly / on demand) |
@@ -419,7 +422,7 @@ New `.github/workflows/ci.yml`:
 | Milestone | Contents | Depends on |
 | --- | --- | --- |
 | **M0 — Foundations** ✅ | CI workflow, `.gitignore`, `.env.example`, README, `migrations.check.mjs`, the three migration defects (F1) | — |
-| **M1 — Live schema** ✅ | `0011`–`0015`, seed, contract/parity checks, role scenarios (WS1) | M0 |
+| **M1 — Live schema** ✅ | `0011`–`0016`, seed, contract/parity/reachability checks, role scenarios (WS1) | M0 |
 | **M2 — Identity** | Live auth + session sync + user management + reset (WS2); action-layer checks (WS3) | M1 (profiles), WS3 can start in parallel |
 | **M3 — Money correctness** | Refund lifecycle (WS4) + card payments (WS5) | M1, M2 for settlement permissions |
 | **M4 — Visibility** | Audit expansion (WS6) + dashboard upgrade (WS7) | M1 (audit_log + triggers), M3 (refund/card KPIs) |

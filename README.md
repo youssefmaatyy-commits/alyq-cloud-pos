@@ -100,10 +100,10 @@ components. Two rules keep it maintainable: UI never talks to Supabase directly
 
 Feature phases 1–8 are implemented and covered by the suites above. The current
 focus is **production readiness**: the live schema now covers identity, roles,
-shifts, expenses, the audit trail and card payment at the register, and the
-database enforces the permission matrix itself. Still to come: the register UI
-for card payments, refund settlement, wider audit coverage and a dashboard
-upgrade. The plan, acceptance criteria and
+shifts, expenses, the audit trail, card payment at the register and the refund
+lifecycle, and the database enforces the permission matrix itself. Still to
+come: the application slices for card payments and refund settlement, wider
+audit coverage and a dashboard upgrade. The plan, acceptance criteria and
 testing strategy live in
 [`docs/PRODUCTION_READINESS_PLAN.md`](docs/PRODUCTION_READINESS_PLAN.md).
 

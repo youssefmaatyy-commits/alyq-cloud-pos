@@ -105,6 +105,12 @@ Everything else — `categories`, `products`, `stock_movements`, `sales`,
 `sale_items`, `sale_payments`, `customers`, `sales_returns`, `return_items`,
 `refund_records`, and the RPCs that write them — is created by the migrations.
 
+One Supabase behaviour is worth stating plainly, because it bit this schema:
+since **2026-04-28** a new table in `public` is *not* granted to `authenticated`
+automatically. A table can exist with RLS, the right policies and still answer
+`permission denied`. Every application table therefore carries an explicit
+`grant select`, and `db:check` fails if one is missing.
+
 When the migration check runs locally there is no Supabase, so
 [`supabase/tests/supabase-shim.sql`](../supabase/tests/supabase-shim.sql)
 supplies stand-ins for the row above — the schemas, the three roles, `auth.uid()`
@@ -125,6 +131,7 @@ DATABASE enforces the permission matrix rather than just the UI:
 | expense rules | attribution is stamped to the caller, is immutable, and editing/deleting needs manager rights |
 | audit trail | append-only under an RLS bypass, entity derived from the action, read access is oversight-only |
 | admin maintenance | backfill, demo seed and retention purge are admin-only and idempotent |
+| refund lifecycle | a return recorded as `pending` reserves the sale's refundable amount without stamping a settlement; only `approve_refund` may settle or reject; a rejected refund frees the amount again; settling twice writes one audit row; a decision is final; a counter refund is stamped settled when it is recorded |
 | pos payments | cash, InstaPay and card side by side: a card sale completes without touching the drawer, cash still records tender and change, InstaPay still waits to be confirmed, and a split of cash and card still sums to the total |
 
 They run automatically against the local in-process database. Against a real
