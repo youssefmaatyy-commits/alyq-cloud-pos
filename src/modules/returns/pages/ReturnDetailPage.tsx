@@ -19,6 +19,7 @@ import {
   buildReturnReceiptHtml,
   customerInfoIssue,
   printHtmlDocument,
+  returnReceiptStrings,
   usePos,
 } from "@/modules/pos";
 
@@ -92,31 +93,7 @@ export function ReturnDetailPage() {
         direction: isRTL ? "rtl" : "ltr",
         customerPhone,
         refundNumber: linkedRefund?.refund_number ?? null,
-        strings: {
-          businessName: t("receipt.businessName"),
-          businessTagline: t("receipt.businessTagline"),
-          returnTitle: t("receipt.returnTitle"),
-          returnLabel: t("receipt.returnLabel"),
-          dateLabel: t("receipt.dateLabel"),
-          cashierLabel: t("receipt.cashierLabel"),
-          invoiceLabel: t("receipt.originalInvoiceLabel"),
-          customerLabel: t("receipt.customerLabel"),
-          customerPhoneLabel: t("receipt.customerPhoneLabel"),
-          itemLabel: t("receipt.itemLabel"),
-          qtyLabel: t("receipt.qtyLabel"),
-          priceLabel: t("receipt.priceLabel"),
-          refundLabel: t("receipt.refundLabel"),
-          totalQtyLabel: t("receipt.totalReturnedQtyLabel"),
-          totalRefundLabel: t("receipt.totalRefundLabel"),
-          refundMethodLabel: t("receipt.refundMethodLabel"),
-          refundNumberLabel: t("receipt.refundNumberLabel"),
-          reasonLabel: t("receipt.reasonLabel"),
-          statusLabel:
-            returnRecord.refund_status === "completed"
-              ? t("receipt.statusCompleted")
-              : t("receipt.statusPending"),
-          thankYou: t("receipt.returnThankYou"),
-        },
+        strings: returnReceiptStrings(t, returnRecord.refund_status),
       });
     } catch (err) {
       console.error("[receipt-print] failed to build return receipt html", {

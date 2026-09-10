@@ -29,6 +29,7 @@ export {
 } from "./services/posMath";
 export type { CartTotals, SmartPayment } from "./services/posMath";
 export { buildReceiptHtml, buildReturnReceiptHtml, printHtmlDocument, writeAndPrint, customerInfoIssue } from "./services/receipt";
+export { salesReceiptStrings, returnReceiptStrings } from "./services/receiptStrings";
 export type {
   CustomerInfoIssue,
   PrintOutcome,

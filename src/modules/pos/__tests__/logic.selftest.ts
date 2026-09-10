@@ -24,6 +24,7 @@ import {
   autoBalanceOther,
 } from "../services/posMath";
 import { getDemoSalesRepository } from "../data/demoRepository";
+import { getDemoReturnRepository } from "@/modules/returns/data/demoRepository";
 import { getDemoRepository } from "@/modules/products/data/demoRepository";
 import { getDemoInventoryRepository } from "@/modules/inventory/data/demoRepository";
 import {
@@ -32,7 +33,13 @@ import {
   customerInfoIssue,
   paymentMethodDisplayName,
 } from "../services/receipt";
+import { salesReceiptStrings, returnReceiptStrings } from "../services/receiptStrings";
+import { en, ar } from "@/lib/i18n/dictionary";
 import type { CartLine, SalePaymentInput } from "../types";
+
+function money2(value: number): string {
+  return value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
 
 type TestCase = { name: string; fn: () => void | Promise<void> };
 const tests: TestCase[] = [];
@@ -715,6 +722,154 @@ test("customer info guard: customer-linked receipts require name AND phone", () 
   assert.equal(customerInfoIssue("Test Customer", null), "missingPhone", "name without phone blocked");
   assert.equal(customerInfoIssue("Test Customer", "   "), "missingPhone", "blank phone blocked");
   assert.equal(customerInfoIssue(null, "0599111222"), "missingName", "phone without name blocked");
+});
+
+// Real dictionary labels drive the receipt strings, so the assertions below
+// verify the actual printed wording rather than test-only strings.
+const enT = ((key: string) => (en as Record<string, string>)[key] ?? key) as never;
+const arT = ((key: string) => (ar as Record<string, string>)[key] ?? key) as never;
+
+test("full flow: sales + return receipt data matches the transaction records", async () => {
+  const salesRepo = getDemoSalesRepository();
+  const returnRepo = getDemoReturnRepository();
+
+  // Start from pristine stock so the full flow (sale → return) is deterministic.
+  catalog.reset();
+  inventory.reset();
+
+  const product = await bySku("ALYQ-1001");
+  const unitPrice = product.selling_price;
+  const qty = 3;
+  const lineTotal = round2(unitPrice * qty);
+  const discountValue = 2;
+  const total = round2(lineTotal - discountValue);
+
+  // ── A customer-linked sale with a discount and a split payment ──
+  const sale = await salesRepo.completeSale({
+    client_ref: `verify-${Date.now()}`,
+    lines: [{ product_id: product.id, qty }],
+    discount_type: "fixed",
+    discount_value: discountValue,
+    payments: [cash(round2(total / 2), total), insta(round2(total / 2))],
+    customer_id: "cust-verify",
+    customer_name: "Test Customer",
+    customer_phone: "Test Phone Number",
+    user_id: "u-verify",
+    user_name: "Verify Cashier",
+  });
+
+  const salesHtml = buildReceiptHtml({
+    sale,
+    direction: "ltr",
+    strings: salesReceiptStrings(enT),
+  });
+
+  // invoice number, date/time, cashier
+  assert.ok(salesHtml.includes(sale.sale_number), "sales: invoice number");
+  assert.ok(salesHtml.includes("/"), "sales: date rendered");
+  assert.ok(salesHtml.includes("Verify Cashier"), "sales: cashier name");
+  // customer name + phone
+  assert.ok(salesHtml.includes("Test Customer"), "sales: customer name");
+  assert.ok(salesHtml.includes("Test Phone Number"), "sales: customer phone");
+  // items, quantities, prices, line totals
+  const itemName = sale.items[0].name_en || sale.items[0].name_ar;
+  assert.ok(salesHtml.includes(itemName), "sales: item name");
+  assert.ok(salesHtml.includes(sale.items[0].sku), "sales: item SKU");
+  assert.ok(salesHtml.includes(`>${qty}<`), "sales: quantity");
+  assert.ok(salesHtml.includes(money2(unitPrice)), "sales: unit price");
+  assert.ok(salesHtml.includes(money2(lineTotal)), "sales: line total");
+  // discounts + total
+  assert.ok(salesHtml.includes(money2(sale.subtotal)), "sales: subtotal");
+  assert.ok(salesHtml.includes(`−${money2(discountValue)}`), "sales: discount amount");
+  assert.ok(salesHtml.includes(money2(total)), "sales: grand total");
+  // payment methods
+  assert.ok(salesHtml.includes("Cash"), "sales: cash payment listed");
+  assert.ok(salesHtml.includes("InstaPay"), "sales: instapay payment listed");
+  assert.ok(salesHtml.includes("Paid"), "sales: paid row");
+  assert.ok(salesHtml.includes("Remaining"), "sales: remaining row");
+  // barcodes: invoice barcode + product barcode on the item line
+  assert.ok(salesHtml.includes("<svg"), "sales: invoice barcode rendered");
+  assert.ok(salesHtml.includes("<rect"), "sales: barcode has bars (no broken render)");
+  if (sale.items[0].barcode) {
+    assert.ok(salesHtml.includes(sale.items[0].barcode!), "sales: product barcode on the item line");
+  }
+
+  // ── A return against that same invoice: stock restored + refund created ──
+  const stockBefore = (await bySku("ALYQ-1001")).stock_quantity;
+  const returnQty = 1;
+  const { returnRecord, refundRecord } = await returnRepo.createReturn({
+    sale_id: sale.id,
+    reason: "Damaged item",
+    refund_method: "cash",
+    items: [{ sale_item_id: sale.items[0].id, product_id: product.id, quantity: returnQty }],
+    user_id: "u-verify",
+    user_name: "Verify Cashier",
+  });
+  const stockAfter = (await bySku("ALYQ-1001")).stock_quantity;
+  assert.equal(stockAfter, stockBefore + returnQty, "return restores stock");
+  assert.ok(refundRecord.amount > 0, "refund record created");
+  assert.equal(returnRecord.refund_amount, refundRecord.amount, "return + refund amounts agree");
+
+  const returnHtml = buildReturnReceiptHtml({
+    returnRecord,
+    direction: "ltr",
+    customerPhone: sale.customer_phone,
+    refundNumber: refundRecord.refund_number,
+    strings: returnReceiptStrings(enT, returnRecord.refund_status),
+  });
+
+  // return number + original invoice + customer + cashier
+  assert.ok(returnHtml.includes(returnRecord.return_number), "return: return number");
+  assert.ok(returnHtml.includes(sale.sale_number), "return: original invoice number");
+  assert.ok(returnHtml.includes("Test Customer"), "return: inherited customer name");
+  assert.ok(returnHtml.includes("Test Phone Number"), "return: inherited customer phone");
+  assert.ok(returnHtml.includes("Verify Cashier"), "return: cashier name");
+  // returned items + quantities + refund amount + method
+  assert.ok(returnHtml.includes(itemName), "return: returned item name");
+  assert.ok(returnHtml.includes(sale.items[0].sku), "return: returned item SKU");
+  assert.ok(returnHtml.includes(`>${returnQty}<`), "return: returned quantity");
+  assert.ok(returnHtml.includes(money2(returnRecord.refund_amount)), "return: refund amount");
+  assert.ok(returnHtml.includes("Total refund"), "return: refund summary label");
+  assert.ok(returnHtml.includes("Cash"), "return: refund method value");
+  assert.ok(returnHtml.includes(refundRecord.refund_number), "return: linked refund number");
+  assert.ok(returnHtml.includes("<svg") && returnHtml.includes("<rect"), "return: barcode rendered");
+  // thermal layout + no missing fields
+  assert.ok(returnHtml.includes("max-width: 76mm"), "return: thermal width");
+  assert.ok(salesHtml.includes("max-width: 76mm"), "sales: thermal width");
+
+  // ── Arabic RTL: real Arabic labels + right alignment ──
+  const salesAr = buildReceiptHtml({ sale, direction: "rtl", strings: salesReceiptStrings(arT) });
+  assert.ok(salesAr.includes('dir="rtl"'), "sales AR: rtl direction");
+  assert.ok(salesAr.includes("الإجمالي"), "sales AR: arabic total label");
+  assert.ok(salesAr.includes("العميل"), "sales AR: arabic customer label");
+  assert.ok(salesAr.includes("text-align: right"), "sales AR: right-aligned tables");
+  assert.ok(salesAr.includes("Test Customer"), "sales AR: customer data preserved");
+
+  const returnAr = buildReturnReceiptHtml({
+    returnRecord,
+    direction: "rtl",
+    customerPhone: sale.customer_phone,
+    refundNumber: refundRecord.refund_number,
+    strings: returnReceiptStrings(arT, returnRecord.refund_status),
+  });
+  assert.ok(returnAr.includes('dir="rtl"'), "return AR: rtl direction");
+  assert.ok(returnAr.includes("إيصال مرتجع"), "return AR: arabic return title");
+  assert.ok(returnAr.includes("الفاتورة الأصلية"), "return AR: arabic original-invoice label");
+  assert.ok(returnAr.includes("text-align: right"), "return AR: right-aligned tables");
+  assert.ok(returnAr.includes(sale.sale_number), "return AR: invoice number preserved");
+  assert.ok(returnAr.includes("Test Phone Number"), "return AR: phone preserved");
+
+  // ── Reprint determinism: same transaction → identical receipt ──
+  const salesAgain = buildReceiptHtml({ sale, direction: "ltr", strings: salesReceiptStrings(enT) });
+  assert.equal(salesAgain, salesHtml, "reprinting a sale yields the identical receipt");
+  const returnAgain = buildReturnReceiptHtml({
+    returnRecord,
+    direction: "ltr",
+    customerPhone: sale.customer_phone,
+    refundNumber: refundRecord.refund_number,
+    strings: returnReceiptStrings(enT, returnRecord.refund_status),
+  });
+  assert.equal(returnAgain, returnHtml, "reprinting a return yields the identical receipt");
 });
 
 test("sales receipt renders customer name + phone only when linked", () => {

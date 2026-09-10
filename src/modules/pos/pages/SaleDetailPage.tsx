@@ -17,7 +17,8 @@ import { Link } from "react-router-dom";
 import { usePos } from "../hooks/PosProvider";
 import { canVoidSale, canConfirmPayment } from "../permissions";
 import type { Sale } from "../types";
-import { buildReceiptHtml } from "../services/receipt";
+import { buildReceiptHtml, customerInfoIssue, printHtmlDocument } from "../services/receipt";
+import { salesReceiptStrings } from "../services/receiptStrings";
 import { getSalesRepository } from "../data";
 import { getCurrentUser } from "@/modules/inventory/permissions";
 import { useReturns } from "@/modules/returns";
@@ -49,43 +50,52 @@ export function SaleDetailPage() {
     setSale(found);
   }, [sales, id]);
 
+  /**
+   * Reprint the sales receipt from a completed transaction. Uses the shared
+   * print workflow so a reprint behaves exactly like the receipt printed at
+   * the till (popup, then hidden in-page frame fallback).
+   */
   const print = useCallback(() => {
     if (!sale) return;
-    const html = buildReceiptHtml({
-      sale,
-      direction: isRTL ? "rtl" : "ltr",
-      strings: {
-        businessName: t("receipt.businessName"),
-        businessTagline: t("receipt.businessTagline"),
-        saleLabel: t("receipt.saleLabel"),
-        dateLabel: t("receipt.dateLabel"),
-        cashierLabel: t("receipt.cashierLabel"),
-        itemLabel: t("receipt.itemLabel"),
-        qtyLabel: t("receipt.qtyLabel"),
-        priceLabel: t("receipt.priceLabel"),
-        totalLabel: t("receipt.totalLabel"),
-        subtotalLabel: t("receipt.subtotalLabel"),
-        discountLabel: t("receipt.discountLabel"),
-        paymentLabel: t("receipt.paymentLabel"),
-        receivedLabel: t("receipt.receivedLabel"),
-        changeLabel: t("receipt.changeLabel"),
-        customerLabel: t("receipt.customerLabel"),
-        customerPhoneLabel: t("receipt.customerPhoneLabel"),
-        paidLabel: t("pos.paid"),
-        remainingLabel: t("pos.remaining"),
-        statusLabel: t("receipt.statusLabel"),
-        thankYou: t("receipt.thankYou"),
-        voidedNotice: t("receipt.voidedNotice"),
-      },
-    });
-    const win = window.open("", "_blank", "width=420,height=640");
-    if (!win) {
-      toast.error(t("barcode.printBlocked"));
+
+    // Customer-linked receipts must carry BOTH the customer name and phone.
+    // Anonymous/guest sales keep their existing behaviour.
+    const issue = customerInfoIssue(sale.customer_name, sale.customer_phone);
+    if (issue) {
+      console.error("[receipt-print] abort: incomplete customer information", {
+        sale_number: sale.sale_number,
+        issue,
+      });
+      toast.error(
+        t(issue === "missingName" ? "receipt.customerNameMissing" : "receipt.customerPhoneMissing"),
+      );
       return;
     }
-    win.document.open();
-    win.document.write(html);
-    win.document.close();
+
+    toast.success(t("pos.printing"));
+
+    let html: string;
+    try {
+      html = buildReceiptHtml({
+        sale,
+        direction: isRTL ? "rtl" : "ltr",
+        strings: salesReceiptStrings(t),
+      });
+    } catch (err) {
+      console.error("[receipt-print] failed to build receipt html", {
+        sale_number: sale.sale_number,
+        error: err instanceof Error ? err.message : err,
+      });
+      toast.error(t("pos.printFailed"));
+      return;
+    }
+
+    const outcome = printHtmlDocument(html, sale.sale_number);
+    if (outcome === "embedded-blocked") {
+      toast.error(t("pos.printEmbedded"));
+    } else if (outcome === "failed") {
+      toast.error(t("barcode.printBlocked"));
+    }
   }, [sale, isRTL, t, toast]);
 
   const voidSale = useCallback(async () => {

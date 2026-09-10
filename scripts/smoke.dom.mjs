@@ -890,6 +890,33 @@ async function main() {
   assert.ok(!bodyText().includes("Confirm Payment"), "confirm action gone after confirmation");
   console.log("  ✓ InstaPay payment confirmed to paid");
 
+  // ── Reprint: open a completed transaction and print the receipt again ──
+  const openInvoice = bodyText().match(/INV-\d{6}/)?.[0];
+  assert.ok(openInvoice, "completed-sale detail shows its invoice number");
+  const findReprintBtn = () =>
+    [...document.querySelectorAll("button")].find((b) =>
+      (b.textContent ?? "").includes("Print receipt"),
+    );
+  const beforeReprint = printedDocs.length;
+  assert.ok(findReprintBtn(), "reprint action available on the completed-sale detail view");
+  findReprintBtn().dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  await sleep(400);
+  assert.equal(printedDocs.length, beforeReprint + 1, "reprint opened a receipt document");
+  const reprintDoc = printedDocs[printedDocs.length - 1];
+  assert.ok(reprintDoc.includes(openInvoice), "reprint carries the on-screen invoice number");
+  assert.ok(/\d+\.\d{2}/.test(reprintDoc), "reprint carries monetary totals");
+  assert.ok(reprintDoc.includes("<svg") && reprintDoc.includes("<rect"), "reprint keeps a rendered barcode");
+  assert.ok(reprintDoc.includes("Thank you for your purchase"), "reprint keeps the shared footer");
+  // Printing the same transaction again must reproduce the same document.
+  findReprintBtn().dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  await sleep(400);
+  assert.equal(
+    printedDocs[printedDocs.length - 1],
+    reprintDoc,
+    "reprinting the same sale yields the original transaction data",
+  );
+  console.log("  ✓ sales receipt reprint from the completed transaction");
+
   // History updates and no duplicate sale is created; totals stay identical.
   await navigate("#/pos/sales");
   const refreshedRow = [...document.querySelectorAll("tbody tr")].find((tr) =>
@@ -1179,6 +1206,22 @@ async function main() {
     assert.ok(returnReceipt.includes(contact), `return receipt footer has ${contact}`);
   }
   console.log("  ✓ return receipt printed with full return + invoice data");
+
+  // ── Reprint the return receipt: identical content, original data intact ──
+  const beforeReturnReprint = printedDocs.length;
+  const reprintReturnBtn = [...document.querySelectorAll("button")].find((b) =>
+    (b.textContent ?? "").includes("Print Return Receipt"),
+  );
+  assert.ok(reprintReturnBtn, "return reprint available on the return details view");
+  reprintReturnBtn.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  await sleep(400);
+  assert.equal(printedDocs.length, beforeReturnReprint + 1, "return reprint opened a document");
+  assert.equal(
+    printedDocs[printedDocs.length - 1],
+    returnReceipt,
+    "return reprint is identical to the original return receipt",
+  );
+  console.log("  ✓ return receipt reprint from the completed return");
 
   // Customer detail shows the purchase now
   await navigate("#/customers");

@@ -2,6 +2,7 @@ import { useI18n } from "@/lib/i18n/I18nProvider";
 import { Button, Modal, useToast } from "@/components/ui";
 import { usePos } from "../hooks/PosProvider";
 import { buildReceiptHtml, customerInfoIssue, printHtmlDocument } from "../services/receipt";
+import { salesReceiptStrings } from "../services/receiptStrings";
 
 /**
  * Shown after a successful sale: the sale number, totals and a print action.
@@ -53,29 +54,7 @@ export function SaleCompletedModal() {
       html = buildReceiptHtml({
         sale: completedSale,
         direction: isRTL ? "rtl" : "ltr",
-        strings: {
-          businessName: t("receipt.businessName"),
-          businessTagline: t("receipt.businessTagline"),
-          saleLabel: t("receipt.saleLabel"),
-          dateLabel: t("receipt.dateLabel"),
-          cashierLabel: t("receipt.cashierLabel"),
-          itemLabel: t("receipt.itemLabel"),
-          qtyLabel: t("receipt.qtyLabel"),
-          priceLabel: t("receipt.priceLabel"),
-          totalLabel: t("receipt.totalLabel"),
-          subtotalLabel: t("receipt.subtotalLabel"),
-          discountLabel: t("receipt.discountLabel"),
-          paymentLabel: t("receipt.paymentLabel"),
-          receivedLabel: t("receipt.receivedLabel"),
-          changeLabel: t("receipt.changeLabel"),
-          customerLabel: t("receipt.customerLabel"),
-          customerPhoneLabel: t("receipt.customerPhoneLabel"),
-          paidLabel: t("pos.paid"),
-          remainingLabel: t("pos.remaining"),
-          statusLabel: t("receipt.statusLabel"),
-          thankYou: t("receipt.thankYou"),
-          voidedNotice: t("receipt.voidedNotice"),
-        },
+        strings: salesReceiptStrings(t),
       });
     } catch (err) {
       console.error("[receipt-print] failed to build receipt html", {
