@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { useCatalog } from "@/modules/products/hooks/CatalogProvider";
+import { useInventory } from "@/modules/inventory/hooks/InventoryProvider";
+import { canViewAuditLog } from "@/modules/shifts/permissions";
 import { cn } from "@/utils/cn";
 import {
   BoxIcon,
@@ -57,6 +59,9 @@ function NavItem({
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { t, lang, toggleLang } = useI18n();
   const { mode } = useCatalog();
+  // Sidebar visibility follows the acting role (lead/oversight entries hide).
+  const { user } = useInventory();
+  const canViewAudit = canViewAuditLog(user);
   const location = useLocation();
   const [open, setOpen] = useState(false);
 
@@ -109,7 +114,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <NavItem to="/shifts" icon={<WalletIcon />} label={t("nav.shiftDashboard")} end />
         <NavItem to="/shifts/history" icon={<ClockIcon />} label={t("nav.shiftHistory")} />
         <NavItem to="/expenses" icon={<ReceiptIcon />} label={t("nav.expenses")} />
-        <NavItem to="/audit" icon={<ClipboardIcon />} label={t("nav.audit")} />
+        {canViewAudit ? (
+          <NavItem to="/audit" icon={<ClipboardIcon />} label={t("nav.audit")} />
+        ) : null}
       </nav>
 
       <div className="shrink-0 rounded-2xl border border-slate-200 bg-slate-50 p-3">

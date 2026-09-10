@@ -34,7 +34,7 @@ import {
   ShiftHistoryPage,
   ShiftProvider,
 } from "@/modules/shifts";
-import { AuditLogPage } from "@/modules/audit";
+import { AuditLogPage, RequireAuditAccess } from "@/modules/audit";
 
 /**
  * ALYQ Cloud POS — application root.
@@ -75,7 +75,14 @@ export default function App() {
                         <Route path="/shifts" element={<ShiftDashboardPage />} />
                         <Route path="/shifts/history" element={<ShiftHistoryPage />} />
                         <Route path="/expenses" element={<ExpensesPage />} />
-                        <Route path="/audit" element={<AuditLogPage />} />
+                        <Route
+                          path="/audit"
+                          element={
+                            <RequireAuditAccess>
+                              <AuditLogPage />
+                            </RequireAuditAccess>
+                          }
+                        />
                         <Route path="*" element={<Navigate to="/" replace />} />
                       </Routes>
                     </AppShell>

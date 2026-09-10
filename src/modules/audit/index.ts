@@ -3,6 +3,7 @@
  * Append-only trail for shift + expense operations.
  */
 export { AuditLogPage } from "./pages/AuditLogPage";
+export { RequireAuditAccess } from "./components/RequireAuditAccess";
 export {
   recordAudit,
   loadAuditLog,

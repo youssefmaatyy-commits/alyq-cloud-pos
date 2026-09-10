@@ -17,6 +17,16 @@ import { getDemoExpenseRepository } from "@/modules/expenses/data/demoRepository
 import { EMPTY_EXPENSE_FORM } from "@/modules/expenses/types";
 import { validateExpense, roundMoney } from "@/modules/expenses/validation";
 import { getDemoAuditRepository } from "@/modules/audit/data/demoRepository";
+import {
+  canAddExpense,
+  canApproveAdjustment,
+  canCloseShift,
+  canDeleteExpense,
+  canEditExpense,
+  canOpenShift,
+  canViewAllShifts,
+  canViewAuditLog,
+} from "../permissions";
 import { queryAuditLog } from "@/modules/audit/services/auditService";
 import { AUDIT_ACTIONS } from "@/modules/audit/types";
 import type { Sale } from "@/modules/pos/types";
@@ -410,6 +420,39 @@ test("expense validation: name, positive amount, category, method", () => {
 
   const bad = validateExpense({ ...EMPTY_EXPENSE_FORM, name: "X", amount: "0", category: "transport" });
   assert.equal(bad.errors.amount, "expenses.error.amountPositive");
+});
+
+test("permission matrix: till actions are staff-level, oversight stays manager/admin", () => {
+  const user = (role: string) => ({ id: `u-${role}`, name: role, role }) as never;
+
+  // Till work: admin, manager, inventory clerk (and a cashier where offered).
+  for (const role of ["admin", "manager", "inventory_clerk", "cashier"]) {
+    assert.equal(canOpenShift(user(role)), true, `${role} may open a shift`);
+    assert.equal(canCloseShift(user(role)), true, `${role} may close a shift`);
+    assert.equal(canAddExpense(user(role)), true, `${role} may add an expense`);
+  }
+  assert.equal(canOpenShift(user("viewer")), false, "viewer may not open a shift");
+  assert.equal(canCloseShift(user("viewer")), false, "viewer may not close a shift");
+  assert.equal(canAddExpense(user("viewer")), false, "viewer may not add an expense");
+
+  // Oversight: managers and admins only.
+  for (const role of ["inventory_clerk", "cashier", "viewer"]) {
+    assert.equal(canApproveAdjustment(user(role)), false, `${role} may not approve adjustments`);
+    assert.equal(canEditExpense(user(role)), false, `${role} may not edit an expense`);
+    assert.equal(canDeleteExpense(user(role)), false, `${role} may not delete an expense`);
+    assert.equal(canViewAuditLog(user(role)), false, `${role} may not read the audit log`);
+  }
+  for (const role of ["admin", "manager"]) {
+    assert.equal(canApproveAdjustment(user(role)), true, `${role} may approve adjustments`);
+    assert.equal(canEditExpense(user(role)), true, `${role} may edit an expense`);
+    assert.equal(canDeleteExpense(user(role)), true, `${role} may delete an expense`);
+    assert.equal(canViewAuditLog(user(role)), true, `${role} may read the audit log`);
+  }
+
+  // Reading shift history is allowed for every internal role.
+  for (const role of ["admin", "manager", "inventory_clerk", "viewer"]) {
+    assert.equal(canViewAllShifts(user(role)), true, `${role} may read shift history`);
+  }
 });
 
 test("audit action list covers every Phase 8 event", () => {

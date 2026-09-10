@@ -1470,6 +1470,42 @@ async function main() {
   assert.ok(bodyText().includes("ALYQ Admin"), "audit entries carry the acting user");
   console.log("  ✓ audit log records shift.opened, expense.created and shift.closed");
 
+  // ── Audit trail is an oversight screen: managers/admins only ──
+  const roleSwitcher = () =>
+    [...document.querySelectorAll("select")].find((s2) => [...s2.options].some((o) => o.value === "viewer"));
+  const setRole = async (role) => {
+    await navigate("#/inventory");
+    for (let i = 0; i < 10 && !roleSwitcher(); i += 1) await sleep(300);
+    const select = roleSwitcher();
+    Object.getOwnPropertyDescriptor(dom.window.HTMLSelectElement.prototype, "value").set.call(select, role);
+    select.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    await sleep(400);
+  };
+
+  await setRole("viewer");
+  const auditNavVisible = [...document.querySelectorAll('aside nav a')].some(
+    (a) => (a.getAttribute("href") ?? "") === "#/audit",
+  );
+  assert.equal(auditNavVisible, false, "viewer does not see the audit log in the sidebar");
+  await navigate("#/audit");
+  await sleep(500);
+  assert.ok(bodyText().includes("Audit log is restricted"), "viewer is denied when typing #/audit directly");
+  assert.ok(bodyText().includes("Only managers and admins"), "denial explains who may read the trail");
+  assert.ok(!bodyText().includes("Shift closed"), "viewer never sees audit entries");
+  assert.ok(!/EXP-\d{6}/.test(bodyText()), "no expense records leak into the denied view");
+  console.log("  ✓ audit log is blocked for viewers (nav hidden + route denied)");
+
+  await setRole("manager");
+  const managerNavVisible = [...document.querySelectorAll('aside nav a')].some(
+    (a) => (a.getAttribute("href") ?? "") === "#/audit",
+  );
+  assert.equal(managerNavVisible, true, "manager sees the audit log entry");
+  await navigate("#/audit");
+  for (let i = 0; i < 12 && !bodyText().includes("Shift closed"); i += 1) await sleep(300);
+  assert.ok(bodyText().includes("Shift closed"), "manager can read the audit trail");
+  await setRole("admin");
+  console.log("  ✓ audit log stays readable for managers");
+
   // ── Explicit Sidebar Navigation Verification ──
   // Click Customers sidebar item
   const customersNav = [...document.querySelectorAll("aside nav a")].find((a) =>
