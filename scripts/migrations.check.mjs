@@ -45,6 +45,7 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { checkCapabilityParity, checkColumnParity } from "./lib/schema-parity.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const MIGRATIONS_DIR = path.join(ROOT, "supabase", "migrations");
@@ -83,9 +84,8 @@ const c = {
  */
 const PENDING = {
   tables: {
-    profiles: "0011_profiles_and_auth",
-    shifts: "0012_shifts",
-    expenses: "0013_expenses",
+    shifts: "0012_shifts_and_expenses",
+    expenses: "0012_shifts_and_expenses",
     audit_log: "0014_audit_log",
   },
   rpcs: {},
@@ -422,6 +422,29 @@ if (failures.length === 0) {
     const detail = String(error?.message ?? error).split("\n")[0];
     console.log(`  ${c.red("✗")} could not inspect the schema: ${detail}`);
     failures.push({ name: "schema inspection", phase: "expectation", error: detail });
+  }
+}
+
+// Parity checks compare the schema against the code it has to serve. Both are
+// skipped when an earlier stage already failed, so the output stays readable.
+if (failures.length === 0) {
+  const context = {
+    driver,
+    c,
+    failures,
+    log: (...args) => console.log(...args),
+    sources: walk(SRC_DIR).filter((f) => /\.ts$/.test(f) && !f.includes("__tests__")),
+    root: ROOT,
+    rolesFile: path.join(SRC_DIR, "lib", "permissions", "roles.ts"),
+  };
+  for (const stage of [checkColumnParity, checkCapabilityParity]) {
+    try {
+      await stage(context);
+    } catch (error) {
+      const detail = String(error?.message ?? error).split("\n")[0];
+      console.log(`  ${c.red("✗")} ${stage.name} failed: ${detail}`);
+      failures.push({ name: stage.name, phase: "expectation", error: detail });
+    }
   }
 }
 
