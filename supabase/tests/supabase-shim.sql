@@ -38,11 +38,34 @@ $$;
 create schema if not exists auth;
 
 -- Mirrors the columns the migrations reference: `auth.users(id)` as a foreign
--- key target.
+-- key target, plus the metadata columns `handle_new_user()` reads and the
+-- credential columns `seed_demo_staff()` writes. Supabase's real table has many
+-- more; these are the ones the repository depends on.
 create table if not exists auth.users (
-  id         uuid primary key default gen_random_uuid(),
-  email      text unique,
-  created_at timestamptz not null default now()
+  id                 uuid primary key default gen_random_uuid(),
+  instance_id        uuid,
+  aud                text,
+  role               text,
+  email              text unique,
+  encrypted_password text,
+  email_confirmed_at timestamptz,
+  raw_app_meta_data  jsonb default '{}'::jsonb,
+  raw_user_meta_data jsonb default '{}'::jsonb,
+  created_at         timestamptz not null default now(),
+  updated_at         timestamptz not null default now()
+);
+
+-- GoTrue needs an identity row for the email provider to accept a password
+-- sign-in. Column set as of current Supabase; see the note in migration 0014.
+create table if not exists auth.identities (
+  id            uuid primary key default gen_random_uuid(),
+  provider_id   text,
+  user_id       uuid not null references auth.users (id) on delete cascade,
+  identity_data jsonb not null default '{}'::jsonb,
+  provider      text not null,
+  last_sign_in_at timestamptz,
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now()
 );
 
 -- Supabase reads the caller from the request JWT. Real Supabase stores the
@@ -75,6 +98,7 @@ $$;
 
 grant usage on schema auth to anon, authenticated, service_role;
 grant select on auth.users to authenticated, service_role;
+grant select on auth.identities to service_role;
 
 -- ── storage schema ────────────────────────────────────────────────────────
 create schema if not exists storage;

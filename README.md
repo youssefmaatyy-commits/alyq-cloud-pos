@@ -57,8 +57,12 @@ npm run test:all     # typecheck + logic + e2e
 ```
 
 `npm run db:check` runs a WebAssembly PostgreSQL in-process, so no Docker or
-database server is required. Point it at a real one with
-`--driver=psql --url=postgres://…` to check a project before deploying.
+database server is required. It applies every migration (twice), runs the role
+scenarios as each of the five roles, and asserts that the schema matches the
+code: every table and RPC the repositories name, every column of every `…Row`
+interface, RLS enabled everywhere, and the capability matrix, audit vocabulary
+and role aliases identical on both sides. Point it at a real project with
+`--driver=psql --url=postgres://… --verify-only` to check what is deployed.
 
 ## Layout
 
@@ -95,8 +99,10 @@ components. Two rules keep it maintainable: UI never talks to Supabase directly
 ## Status
 
 Feature phases 1–8 are implemented and covered by the suites above. The current
-focus is **production readiness**: completing the live Supabase schema and auth,
-hardening authorization at the action layer, finishing the refund lifecycle,
-adding card payments, widening audit coverage and upgrading the dashboard. The
-plan, acceptance criteria and testing strategy live in
+focus is **production readiness**: the live schema now covers identity, roles,
+shifts, expenses and the audit trail, and the database enforces the permission
+matrix itself. Still to come: card payments at the register, refund settlement,
+wider audit coverage and a dashboard upgrade. The plan, acceptance criteria and
+testing strategy live in
 [`docs/PRODUCTION_READINESS_PLAN.md`](docs/PRODUCTION_READINESS_PLAN.md).
+

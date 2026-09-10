@@ -234,3 +234,53 @@ export async function checkAuditVocabularyParity({ driver, failures, c, log, aud
     `  ${c.green("✓")} public.audit_actions matches AUDIT_ACTIONS (${actions.length} actions over ${entities.size} entities)`,
   );
 }
+
+/**
+ * Role-alias parity — does the database resolve an outside role string the same
+ * way TypeScript does?
+ *
+ * `ROLE_ALIASES` in roles.ts maps legacy/imported spellings onto the app roles
+ * ("owner" → admin, "clerk" → inventory clerk). `public.role_aliases` is what
+ * `normalize_app_role()` consults when a profile is created from Supabase
+ * metadata. If the two disagree, the same account would have different powers
+ * depending on whether it was created through the UI or the database — and an
+ * alias that maps to a *more* powerful role on one side would be a privilege
+ * escalation.
+ */
+export async function checkRoleAliasParity({ driver, failures, c, log, rolesFile }) {
+  log(c.bold("\nRole alias parity"));
+
+  const source = fs.readFileSync(rolesFile, "utf8");
+  const block = source.match(/const ROLE_ALIASES[^=]*= \{([\s\S]*?)\n\};/);
+  if (!block) {
+    const error = "could not parse ROLE_ALIASES from roles.ts";
+    log(`  ${c.red("✗")} ${error}`);
+    failures.push({ name: "role alias parity", phase: "expectation", error });
+    return;
+  }
+
+  const expected = new Map(
+    [...block[1].matchAll(/(\w+):\s*"(\w+)"/g)].map((m) => [m[1], m[2]]),
+  );
+  const actual = new Map(
+    await driver.query(`select alias, role::text from public.role_aliases`),
+  );
+
+  const problems = [];
+  for (const [alias, role] of expected) {
+    const stored = actual.get(alias);
+    if (stored === undefined) problems.push(`roles.ts accepts '${alias}' → ${role}, the database does not`);
+    else if (stored !== role) problems.push(`'${alias}' is ${role} in roles.ts but ${stored} in the database`);
+  }
+  for (const alias of actual.keys()) {
+    if (!expected.has(alias)) problems.push(`the database accepts '${alias}', roles.ts does not`);
+  }
+
+  if (problems.length > 0) {
+    for (const problem of problems) log(`  ${c.red("✗")} ${problem}`);
+    failures.push({ name: "role alias parity", phase: "expectation", error: problems[0] });
+    return;
+  }
+
+  log(`  ${c.green("✓")} public.role_aliases matches ROLE_ALIASES (${actual.size} aliases)`);
+}

@@ -1,7 +1,7 @@
 # ALYQ Cloud POS — Production Readiness Plan
 
-**Status:** M0 (foundations) complete; WS1 migrations 0011+ not started.
-**Delivered so far:** CI (4 jobs), `.gitignore`, `.env.example`, root `README.md`, `docs/DEPLOYMENT.md`, `scripts/migrations.check.mjs` + `scripts/test.logic.mjs` + `scripts/test.e2e.mjs`, and four migration defects fixed (see F1 below).
+**Status:** M0 (foundations) and M1 (WS1 migrations 0011–0014) complete. Next: `0015_pos_card_payments`, `0016_refund_settlement`, then WS2–WS7.
+**Delivered so far:** CI (5 jobs), `.gitignore`, `.env.example`, root `README.md`, `docs/DEPLOYMENT.md`, the check/test runners, four migration defects fixed (F1), and migrations 0011–0014 — identity and the capability matrix, shifts and expenses, the audit trail, and the onboarding/seed policies. The database now enforces the permission matrix, and `npm run db:check` proves it on every run with four parity checks and thirteen role scenarios.
 **Baseline:** branch `arena/01a08778-alyq-cloud-pos`, HEAD `01a2a35` (Phase status report).
 **Companion reading:** `docs/PHASE_STATUS.md` (where the project stands), `docs/AUTHORIZATION.md` (permission
 model), `docs/AUTHENTICATION.md` (auth as built), `docs/DESIGN_LANGUAGE.md` (UI rules).
@@ -63,7 +63,7 @@ Numbered after the existing 0010. Each file is idempotent and independently re-r
 | `0012_shifts.sql` | Cashier drawer sessions. | `public.shift_status` enum (`open`,`closed`); `public.shifts` matching `ShiftRow` exactly (`shift_number text unique`, `branch`, `register`, `status`, `opening_cash numeric(14,2)`, `opening_at`, `opened_by text`, `opened_by_name`, `closing_cash`, `closed_at`, `closed_by`, `closed_by_name`, `notes`, `summary jsonb`, `adjustment_approved_by`, `adjustment_approved_by_name`, `adjustment_approved_at`, `created_at`, `updated_at`); partial unique index `one_open_shift` on `(status) where status='open'`; `shift_counters` + `next_shift_number()`; `open_shift()` / `close_shift()` / `approve_shift_adjustment()` RPCs with role checks and server-side freeze of the summary; RLS read for authenticated, **no direct write**. |
 | `0013_expenses.sql` | Shift expenses. | `public.expense_category` and `public.expense_method` enums (mirroring `expenses/types.ts`); `public.expenses` matching `ExpenseRow`; `expense_counters` + `next_expense_number()`; `create_expense()` / `update_expense()` / `delete_expense()` RPCs (add = till tier, edit = manager+, delete = admin+); RLS read + no direct write. |
 | `0014_audit_log.sql` | Append-only trail (WS6 server side). | `public.audit_entity` / `public.audit_action` enums; `public.audit_log` matching `AuditRow` (`id`, `action`, `entity`, `entity_id`, `entity_label`, `details jsonb`, `user_id`, `user_name`, `created_at`); indexes on `(created_at desc)`, `(entity, entity_id)`, `(user_id)`; **no update/delete policy, no update/delete grant**; triggers (§7.2) that write rows from the tables above; `authenticated` read restricted by role (manager/admin). |
-| `0015_payment_methods_visa.sql` | WS5 database side. | `alter type public.payment_method add value if not exists 'visa'` (separate transaction from its use); relax the `amount_received` check on `sales` to cover card; recreate `pos_complete_sale` with `'visa'` accepted; extend `sale_payments` usage. |
+| `0015_pos_card_payments.sql` | WS5 database side. The enum value is already there — `0012` added `visa` to `public.payment_method` because the expenses and refunds modules offered card payments while the enum did not. What remains is the POS path: relax the `amount_received` check on `sales` (today every non-InstaPay sale is treated as cash) and recreate `pos_complete_sale` with `'visa'` accepted. |
 | `0016_refund_settlement.sql` | WS4 database side. | `refund_records` gains `settled_at`, `settled_by`, `settled_by_name` (nullable, backfilled from `created_at` for completed rows); `pos_settle_refund(uuid, text, text)` RPC — transactional, idempotent, role-checked, only `pending → completed` (or `→ rejected`); `pos_settle_refund` writes the audit row. |
 | `0017_lookup_tables.sql` *(optional, decision D8)* | Branch / register registry instead of free text. | `public.branches`, `public.registers` with RLS read-only for authenticated; shifts and expenses reference them by name for now (`text` retained) so no app change is forced. |
 
@@ -102,7 +102,7 @@ Demo mode is **kept** (decision D5) but demoted to an explicit, documented fallb
 
 ### 2.5 Acceptance criteria
 
-- `scripts/migrations.check.mjs` applies 0001→0017 in order, twice (idempotency), with zero errors.
+- `scripts/migrations.check.mjs` applies 0001→0017 in order, twice (idempotency), with zero errors. **Done for 0001→0014.**
 - The same script asserts the schema satisfies the code: every table/RPC the repositories name exists, RLS is on, and no enum column defaults outside its labels.
 - `supabase/seed.sql` applies cleanly after migrations.
 - With live credentials set, every screen loads and the DOM smoke suite passes against Supabase.
@@ -354,11 +354,11 @@ already loads.
 | Layer | What it proves | How | Runs |
 | --- | --- | --- | --- |
 | **L1** Pure logic self-tests | Money math, validation, state machines | existing esbuild + `node` harness (`src/**/__tests__/*.selftest.ts`) | always |
-| **L2** Repository contract tests | demo and Supabase repositories obey the same interface and semantics | new `scripts/contract.selftest.ts`: one table of assertions per module, executed against both implementations | always (demo), CI (live) |
+| **L2** Repository contract tests | the schema provides what the repositories read and write | **built:** column parity (every `…Row` field must be a real column), capability/vocabulary/alias parity, and the role scenarios in `scripts/migrations.check.mjs` | always |
 | **L3** Migration tests | migrations apply from scratch, in order, twice; seeds apply; RLS denies the wrong role | new `scripts/migrations.check.mjs` against a Postgres service container | CI |
 | **L4** DOM smoke | the real UI works end to end in demo mode | `scripts/smoke.dom.mjs` (jsdom) — extended per workstream | always |
 | **L5** Live E2E | the same flows against a real Supabase project | `scripts/smoke.live.mjs` (L4 against live credentials) | CI (nightly / on demand) |
-| **L6** Permission matrix | action-level guards for every (action, role) pair, client and server | `scripts/permissions.selftest.ts` + CI SQL role tests | always |
+| **L6** Permission matrix | action-level guards for every (action, role) pair, client and server | `supabase/tests/scenarios.sql` (13 scenarios run as each role, client-side matrix in `roles.selftest.ts`) | always |
 | **L7** Audit coverage | every auditable action writes exactly one row with the right actor | `scripts/audit.coverage.selftest.ts` | always |
 
 ### 9.2 New/extended scripts
@@ -415,8 +415,8 @@ New `.github/workflows/ci.yml`:
 
 | Milestone | Contents | Depends on |
 | --- | --- | --- |
-| **M0 — Foundations** | CI workflow, `.gitignore`, `.env.example`, README, `migrations.check.mjs`, the three migration defects (F1) | — |
-| **M1 — Live schema** | `0011`–`0014` (+ optional `0017`), seed, mode helper, contract tests (WS1) | M0 |
+| **M0 — Foundations** ✅ | CI workflow, `.gitignore`, `.env.example`, README, `migrations.check.mjs`, the three migration defects (F1) | — |
+| **M1 — Live schema** ✅ | `0011`–`0014`, seed, contract/parity checks, role scenarios (WS1) | M0 |
 | **M2 — Identity** | Live auth + session sync + user management + reset (WS2); action-layer checks (WS3) | M1 (profiles), WS3 can start in parallel |
 | **M3 — Money correctness** | Refund lifecycle (WS4) + card payments (WS5) | M1, M2 for settlement permissions |
 | **M4 — Visibility** | Audit expansion (WS6) + dashboard upgrade (WS7) | M1 (audit_log + triggers), M3 (refund/card KPIs) |

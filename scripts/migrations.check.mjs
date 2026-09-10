@@ -49,6 +49,7 @@ import {
   checkAuditVocabularyParity,
   checkCapabilityParity,
   checkColumnParity,
+  checkRoleAliasParity,
 } from "./lib/schema-parity.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -473,7 +474,12 @@ if (failures.length === 0) {
     rolesFile: path.join(SRC_DIR, "lib", "permissions", "roles.ts"),
     auditTypesFile: path.join(SRC_DIR, "modules", "audit", "types.ts"),
   };
-  for (const stage of [checkColumnParity, checkCapabilityParity, checkAuditVocabularyParity]) {
+  for (const stage of [
+    checkColumnParity,
+    checkCapabilityParity,
+    checkAuditVocabularyParity,
+    checkRoleAliasParity,
+  ]) {
     try {
       await stage(context);
     } catch (error) {

@@ -31,11 +31,18 @@ insert into auth.users (id, email) values
   ('00000000-0000-4000-8000-0000000000e1', 'viewer@alyq.local')
 on conflict (id) do nothing;
 
+-- The inserts above fire `handle_new_user()`, which creates a viewer profile
+-- for any account without role metadata; the upsert below then states the test
+-- identities outright.
 insert into public.profiles (id, username, name, role, active) values
   ('00000000-0000-4000-8000-0000000000a1', 'admin',    'Amina Admin',   'admin',   true),
   ('00000000-0000-4000-8000-0000000000c1', 'cashier',  'Karim Cashier', 'cashier', true),
   ('00000000-0000-4000-8000-0000000000e1', 'viewer',   'Vera Viewer',   'viewer',  true)
-on conflict (id) do nothing;
+on conflict (id) do update
+  set username = excluded.username,
+      name     = excluded.name,
+      role     = excluded.role,
+      active   = excluded.active;
 
 /** Impersonate a user: sets the identity claim, and optionally the role. */
 create or replace function pg_temp.become(p_user uuid, p_role text default null)
@@ -236,8 +243,46 @@ begin
     raise exception 'the audit row was modified';
   end if;
 
+  -- ── staff onboarding (owner: this models Supabase creating the account) ──
+  -- no metadata → viewer, inactive: the fail-closed default when public sign-up
+  -- is left enabled by mistake
+  insert into auth.users (id, email) values ('00000000-0000-4000-8000-0000000000f1', 'newbie@alyq.local');
+  if (select role::text from public.profiles where id = '00000000-0000-4000-8000-0000000000f1') <> 'viewer'
+     or (select active from public.profiles where id = '00000000-0000-4000-8000-0000000000f1') is not false then
+    raise exception 'an account without role metadata should become an inactive viewer';
+  end if;
+  if (select username from public.profiles where id = '00000000-0000-4000-8000-0000000000f1') <> 'newbie' then
+    raise exception 'the username was not derived from the email';
+  end if;
+
+  -- role metadata (through an alias) → active with that role
+  insert into auth.users (id, email, raw_user_meta_data) values
+    ('00000000-0000-4000-8000-0000000000f2', 'nadia@alyq.local', '{"role":"clerk","name":"Nadia Clerk","username":"nadia"}'::jsonb);
+  if (select role::text from public.profiles where id = '00000000-0000-4000-8000-0000000000f2') <> 'inventory_clerk' then
+    raise exception 'the role alias "clerk" was not mapped to inventory_clerk';
+  end if;
+  if (select active from public.profiles where id = '00000000-0000-4000-8000-0000000000f2') is not true then
+    raise exception 'an account with role metadata should be active';
+  end if;
+
+  insert into auth.users (id, email, raw_user_meta_data) values
+    ('00000000-0000-4000-8000-0000000000f3', 'boss@alyq.local', '{"role":"superadmin"}'::jsonb);
+  if (select role::text from public.profiles where id = '00000000-0000-4000-8000-0000000000f3') <> 'admin' then
+    raise exception 'the role alias "superadmin" was not mapped to admin';
+  end if;
+
+  -- an account that predates the trigger (no profile) → backfilled later
+  insert into auth.users (id, email, raw_user_meta_data) values
+    ('00000000-0000-4000-8000-0000000000f4', 'orphan@alyq.local', '{"role":"cashier"}'::jsonb);
+  delete from public.profiles where id = '00000000-0000-4000-8000-0000000000f4';
+
+  -- an audit row old enough to be purged
+  insert into public.audit_log (action, entity, entity_id, entity_label, user_id, user_name, created_at)
+  values ('shift.opened', 'shift', 'old-shift', 'SH-000001', 'x', 'x', now() - interval '3 years');
+
   raise notice 'invariant triggers hold without RLS (viewer refused, constraints enforced)';
   raise notice 'audit log is append-only and takes its entity from the action';
+  raise notice 'staff onboarding — role metadata decides the role, absence means inactive viewer';
 end
 $$;
 
@@ -516,6 +561,109 @@ begin
   end if;
 
   raise notice 'the audit trail is oversight-only, append-only and correctly attributed';
+end
+$$;
+
+-- ── admin maintenance: backfill, demo seed and retention ─────────────────
+do $$
+declare
+  v_backfilled integer;
+  v_seeded     integer;
+  v_purged     integer;
+  v_role       text;
+begin
+  -- these are admin-only
+  perform pg_temp.become('00000000-0000-4000-8000-0000000000e1');
+  begin
+    perform public.backfill_staff_profiles();
+    raise exception 'a non-admin ran backfill_staff_profiles';
+  exception when insufficient_privilege then
+    null;
+  end;
+  begin
+    perform public.seed_demo_staff();
+    raise exception 'a non-admin ran seed_demo_staff';
+  exception when insufficient_privilege then
+    null;
+  end;
+  begin
+    perform public.purge_audit_log();
+    raise exception 'a non-admin ran purge_audit_log';
+  exception when insufficient_privilege then
+    null;
+  end;
+
+  perform pg_temp.become('00000000-0000-4000-8000-0000000000a1');
+
+  -- the orphaned account gets its profile back, with the role from its metadata
+  v_backfilled := public.backfill_staff_profiles();
+  if v_backfilled <> 1 then
+    raise exception 'backfill_staff_profiles() created % profile(s), expected 1', v_backfilled;
+  end if;
+  if (select role::text from public.profiles where id = '00000000-0000-4000-8000-0000000000f4') <> 'cashier' then
+    raise exception 'the backfilled profile has the wrong role';
+  end if;
+  if public.backfill_staff_profiles() <> 0 then
+    raise exception 'backfill_staff_profiles() is not idempotent';
+  end if;
+
+  -- three of the five demo accounts already exist as fixtures, so two are new
+  v_seeded := public.seed_demo_staff('alyq1234');
+  if v_seeded <> 2 then
+    raise exception 'seed_demo_staff() created % account(s), expected 2', v_seeded;
+  end if;
+  if public.seed_demo_staff('alyq1234') <> 0 then
+    raise exception 'seed_demo_staff() is not idempotent';
+  end if;
+
+  -- all five roles are reachable through the username the login screen sends
+  for v_role in select unnest(array['admin', 'manager', 'cashier', 'inventory_clerk', 'viewer'])
+  loop
+    if not exists (
+      select 1 from public.profiles p
+       where p.username = v_role and p.role::text = v_role and p.active
+    ) then
+      raise exception 'the demo account for % is missing or wrong', v_role;
+    end if;
+  end loop;
+
+  -- The password is a real bcrypt hash of the demo password — checked on an
+  -- account the seed created in this run (manager), not on one of the fixture
+  -- accounts, which the seed deliberately leaves alone.
+  if not exists (
+    select 1 from auth.users u
+     where u.email = 'manager@alyq.local'
+       and u.encrypted_password = crypt('alyq1234', u.encrypted_password)
+  ) then
+    raise exception 'the seeded password does not verify';
+  end if;
+
+  -- …and an existing account's credentials are not overwritten
+  if (select encrypted_password from auth.users where email = 'admin@alyq.local') is not null then
+    raise exception 'the seed overwrote an existing account''s credentials';
+  end if;
+
+  -- retention: exactly one row is old enough, and the purge reports it
+  v_purged := public.purge_audit_log(now() - interval '24 months');
+  if v_purged <> 1 then
+    raise exception 'purge_audit_log() removed % row(s), expected 1', v_purged;
+  end if;
+  if exists (select 1 from public.audit_log where entity_id = 'old-shift') then
+    raise exception 'the old audit row survived the purge';
+  end if;
+  if exists (select 1 from public.audit_log where entity_id in ('exp-probe', 'shift-probe')) = false then
+    raise exception 'the purge removed more than it should have';
+  end if;
+
+  -- and a cut-off in the future is refused
+  begin
+    perform public.purge_audit_log(now() + interval '1 day');
+    raise exception 'a future cut-off was accepted';
+  exception when check_violation then
+    null;
+  end;
+
+  raise notice 'admin maintenance — backfill, demo seed and retention purge';
 end
 $$;
 

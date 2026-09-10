@@ -107,25 +107,77 @@ Everything else — `categories`, `products`, `stock_movements`, `sales`,
 
 When the migration check runs locally there is no Supabase, so
 [`supabase/tests/supabase-shim.sql`](../supabase/tests/supabase-shim.sql)
-supplies minimal stand-ins for the row above. It is a test fixture, never
-applied to a real project.
+supplies stand-ins for the row above — the schemas, the three roles, `auth.uid()`
+and the `auth.users` / `auth.identities` / `storage.*` columns the migrations
+touch. It is a test fixture, never applied to a real project.
+
+`supabase/tests/scenarios.sql` then exercises the result as each role. Because
+it drives the real policies and triggers, it is the check that proves the
+DATABASE enforces the permission matrix rather than just the UI:
+
+| Scenario | Proves |
+| --- | --- |
+| capability resolution | cashier / viewer / admin / anonymous / no-profile each resolve to the right capabilities, and an unknown role resolves to none |
+| deactivation | deactivating a profile revokes everything; reactivating restores it |
+| invariant triggers | with RLS bypassed (owner + impersonated claim) a viewer still cannot open a shift or record an expense, and the table constraints still hold |
+| staff onboarding | `handle_new_user()` reads the role from metadata (through the aliases), and creates an inactive viewer when there is none |
+| shift lifecycle | one open shift installation-wide, close, freeze, and an approval that can happen once and only with `approve_shift_adjustment` |
+| expense rules | attribution is stamped to the caller, is immutable, and editing/deleting needs manager rights |
+| audit trail | append-only under an RLS bypass, entity derived from the action, read access is oversight-only |
+| admin maintenance | backfill, demo seed and retention purge are admin-only and idempotent |
+
+They run automatically against the local in-process database. Against a real
+server they are opt-in (`--scenarios`), because they insert test staff rows into
+`auth.users`.
 
 ---
 
-## 5. Initial data
+## 5. Initial data and the first sign-in
 
-Migrations 0003 and 0010 seed a small demo catalog (categories, products) and
-leave it alone if the SKUs already exist, so applying them to a project that
+Application data — users, and therefore roles — lives in Supabase Auth, and each
+user needs a matching row in `public.profiles` before they can sign in. The
+schema now handles that:
+
+1. **Create the first admin by hand.** An installation cannot bootstrap its own
+   first identity: use the Dashboard (Authentication → Users → *Add user*), set
+   the password, and give the account role metadata:
+
+   ```json
+   { "role": "admin", "username": "admin", "name": "Your Name" }
+   ```
+
+   The `on_auth_user_created` trigger (migration `0014`) creates the profile
+   from that metadata, resolving the role through the same alias table the app
+   uses (`owner` and `super_admin` also mean admin).
+
+   **No metadata means an inactive viewer.** That is deliberate: turning public
+   sign-up on by accident would otherwise give every visitor read access. An
+   admin activates or promotes the account afterwards with
+   `upsert_staff_profile()` — or from the staff screen, once it exists.
+
+2. **Seed the rest, on a development project.** As the admin:
+
+   ```sql
+   select public.seed_demo_staff('alyq1234');   -- admin, manager, cashier,
+                                               -- inventory_clerk, viewer
+   ```
+
+   It is idempotent, leaves existing accounts (and their passwords) alone, and
+   uses the `<username>@alyq.local` email the login screen builds from a typed
+   username. Do not run it on production.
+
+3. **Accounts that already exist** get profiles with:
+
+   ```sql
+   select public.backfill_staff_profiles();     -- admin only, idempotent
+   ```
+
+4. **Then disable public sign-up** in Authentication → Providers, unless you
+   actually want anyone who can reach the site to have an account.
+
+Migrations 0003 and 0010 also seed a small demo catalog (categories, products)
+and skip it when the SKUs already exist, so applying them to a project that
 already has data is safe.
-
-Application data — users, and therefore roles — is created in Supabase Auth, and
-each user needs a matching profile row before they can sign in. These are **new**
-tables in the production-readiness workstream (migration
-`0011_profiles_and_auth`); until it lands, sign-in runs against the demo
-repository only. See
-[`docs/PRODUCTION_READINESS_PLAN.md`](PRODUCTION_READINESS_PLAN.md).
-
----
 
 ## 6. Build and release
 

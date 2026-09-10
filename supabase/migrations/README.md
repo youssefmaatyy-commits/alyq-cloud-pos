@@ -27,6 +27,10 @@ satisfies what the application code queries.
 | `0008_instapay_confirmation.sql` | InstaPay confirmation audit columns + transactional `pos_confirm_payment` RPC |
 | `0009_split_payments.sql` | `sale_payments` table, payment-aware completion/confirmation RPCs |
 | `0010_customers_returns_refunds.sql` | `customers`, `sales_returns` + `return_items`, `refund_records`, counters, sales customer linkage, transactional `pos_process_return` RPC |
+| `0011_profiles_and_auth.sql` | `app_role` enum, `profiles`, `role_capabilities` (the permission matrix as data), `current_user_role()` / `can()`, admin-guarded role RPCs |
+| `0012_shifts_and_expenses.sql` | `shift_status` enum, card added to `payment_method`, `shifts` + `expenses` with generated `SH-`/`EXP-` numbers, invariant triggers, RLS policies |
+| `0013_audit_log.sql` | `audit_actions` (the action vocabulary), `audit_log`, append-only trigger, oversight-only read policy |
+| `0014_audit_policies_and_seed.sql` | `role_aliases` + `normalize_app_role()`, `handle_new_user()` (profile on signup), `backfill_staff_profiles()`, `seed_demo_staff()`, `purge_audit_log()` |
 
 ## Column reference — `products`
 
@@ -84,23 +88,45 @@ Table names and RPC names used by the application are read straight out of
 `src/**` by the check script, so a repository that queries a table no migration
 creates fails CI by name.
 
-## Planned migrations
+## What is left to migrate
 
-The production-readiness workstream adds, in order (see
+The production-readiness workstream has three schema steps left (see
 [`docs/PRODUCTION_READINESS_PLAN.md`](../../docs/PRODUCTION_READINESS_PLAN.md)):
 
 | Migration | Purpose |
 | --- | --- |
-| `0011_profiles_and_auth` | `app_role` enum, `profiles`, role helpers, admin role management RPC |
-| `0012_shifts` | cashier shift sessions and their RPCs |
-| `0013_expenses` | expense ledger and its RPCs |
-| `0014_audit_log` | append-only audit trail plus the triggers that write it |
-| `0015_payment_methods_visa` | card payment method for the register |
-| `0016_refund_settlement` | `refund_records` settlement columns and RPC |
+| `0015_pos_card_payments` | let the register take card payment: the `sales.amount_received` CHECK currently treats every non-InstaPay sale as cash, and `pos_complete_sale` only accepts `cash` / `instapay` |
+| `0016_refund_settlement` | `refund_records` settlement columns (`settled_at`, `settled_by`) and a `pos_settle_refund()` RPC, so a pending refund can be approved or rejected |
 
-`scripts/migrations.check.mjs` lists these as *pending* — it reports them
-without failing, and fails if an entry becomes stale, so the list cannot be
-forgotten once the migrations land.
+`0012` already added `visa` to `public.payment_method`, because the expenses and
+refunds modules offered card payments while the enum did not.
+
+## Verification
+
+`npm run db:check` is the contract between this directory and the application.
+It applies every file in order (twice, for idempotency), runs the role
+scenarios, and then asserts four things:
+
+1. **Every table and RPC the repositories name exists** — read out of `src/**`,
+   so a repository querying something no migration creates fails by name.
+2. **Column parity** — the `…Row` interfaces in the Supabase repositories are
+   parsed and every field must be a real column. This is what would have caught
+   the 0010 defects before deployment.
+3. **Row level security is enabled** on every application table.
+4. **No enum-typed column defaults to a value outside its own labels.**
+
+Plus three parity checks that exist because the same fact is maintained in two
+languages, and drift is only a matter of time:
+
+| Check | Database | TypeScript |
+| --- | --- | --- |
+| Capability matrix | `role_capabilities` | `ROLE_CAPABILITIES` in `lib/permissions/roles.ts` |
+| Audit vocabulary | `audit_actions` | `AUDIT_ACTIONS` / `AUDIT_ENTITIES` in `modules/audit/types.ts` |
+| Role aliases | `role_aliases` | `ROLE_ALIASES` in `lib/permissions/roles.ts` |
+
+`supabase/tests/scenarios.sql` goes further and runs the policies and triggers
+as each role (viewer, cashier, manager, admin, anonymous, no-profile) — see
+[`docs/DEPLOYMENT.md`](../../docs/DEPLOYMENT.md) §4.
 
 ## Environment variables
 
@@ -130,9 +156,20 @@ that the server trusts.
 `stock_movements` is append-only by construction: no update or delete policy
 exists, so the ledger cannot be rewritten.
 
-## Still missing (scheduled)
+## Who may write what, continued
 
-Recorded here so the gap is explicit rather than implied: `profiles`, `shifts`,
-`expenses` and `audit_log` are queried by the application today and have no
-migration yet — the six files in *Planned migrations* above create them. Until
-then, live mode cannot authenticate a user or record a shift.
+The five capability gates added in `0011`–`0013`:
+
+| Table | Insert | Update | Delete |
+| --- | --- | --- | --- |
+| `shifts` | `open_shift` | `close_shift` or `approve_shift_adjustment` | nobody (refused) |
+| `expenses` | `add_expense` | `edit_expense` | `delete_expense` |
+| `audit_log` | any signed-in user (attribution is stamped) | nobody, ever | nobody, except `purge_audit_log()` |
+| `profiles` | nobody | nobody | nobody — only the admin-guarded RPCs |
+| `role_capabilities`, `audit_actions`, `role_aliases` | nobody | nobody | nobody (reference data) |
+
+Crucially, `0012` also repeats those checks in **invariant triggers**, so the
+rules hold for a writer that bypasses RLS entirely — `service_role`, `psql`, a
+migration, a future server-side job. RLS decides what a browser may do; the
+triggers decide what the accounting permits. Both are exercised by the scenario
+tests.
