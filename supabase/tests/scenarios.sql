@@ -44,6 +44,23 @@ on conflict (id) do update
       role     = excluded.role,
       active   = excluded.active;
 
+-- A catalog row for the POS payment scenarios: one item at 10.00, plenty of
+-- stock, so a sale total is easy to reason about.
+insert into public.categories (id, name_ar, name_en) values
+  ('00000000-0000-4000-8000-0000000000f1', 'مشروبات', 'Beverages')
+on conflict (id) do nothing;
+
+insert into public.products (
+  id, sku, barcode, name_ar, name_en, category_id,
+  selling_price, cost_price, stock_quantity
+) values (
+  '00000000-0000-4000-8000-0000000000f2', 'SCN-001', '6291000000011', 'ماء', 'Water',
+  '00000000-0000-4000-8000-0000000000f1', 10.00, 5.00, 500
+)
+on conflict (id) do update
+  set selling_price  = excluded.selling_price,
+      stock_quantity = excluded.stock_quantity;
+
 /** Impersonate a user: sets the identity claim, and optionally the role. */
 create or replace function pg_temp.become(p_user uuid, p_role text default null)
 returns void
@@ -664,6 +681,180 @@ begin
   end;
 
   raise notice 'admin maintenance — backfill, demo seed and retention purge';
+end
+$$;
+
+-- ── pos_complete_sale: cash, InstaPay and card side by side ───────────────
+-- 0015 accepts a card payment at the register without disturbing the two
+-- methods that were already there. This block exercises all three, plus the
+-- two ways a payment can still be refused.
+do $$
+declare
+  v_cashier   uuid := '00000000-0000-4000-8000-0000000000c1';
+  v_product   uuid := '00000000-0000-4000-8000-0000000000f2';
+  v_sale      jsonb;
+  v_sale_id   uuid;
+  v_row       public.sales%rowtype;
+  v_pay       public.sale_payments%rowtype;
+  v_pay_count integer;
+begin
+  perform pg_temp.become(v_cashier);
+
+  -- 1. a card sale: no cash in the drawer, captured at the terminal
+  v_sale := public.pos_complete_sale(jsonb_build_object(
+    'client_ref', 'scn-card-1',
+    'user_id',    v_cashier::text,
+    'user_name',  'Karim Cashier',
+    'payments',   jsonb_build_array(jsonb_build_object('method', 'visa', 'amount', 20.00)),
+    'lines',      jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 2))
+  ));
+  v_sale_id := (v_sale->>'sale_id')::uuid;
+
+  select * into v_row from public.sales where id = v_sale_id;
+  if v_row.payment_method <> 'visa' then
+    raise exception 'a card sale recorded payment_method %', v_row.payment_method;
+  end if;
+  if v_row.status <> 'completed' or v_row.payment_status <> 'paid' then
+    raise exception 'a card sale was not completed and paid (% / %)', v_row.status, v_row.payment_status;
+  end if;
+  if v_row.amount_received is not null or v_row.change is not null then
+    raise exception 'a card sale put cash in the drawer';
+  end if;
+
+  select * into v_pay from public.sale_payments where sale_id = v_sale_id;
+  if v_pay.method <> 'visa' or v_pay.status <> 'paid' or v_pay.paid_at is null then
+    raise exception 'the card payment row is wrong (% / % / %)', v_pay.method, v_pay.status, v_pay.paid_at;
+  end if;
+
+  -- card is money in hand: it never joins the pending InstaPay queue
+  perform public.pos_confirm_payment(v_sale_id, v_cashier::text, 'Karim Cashier');
+  select * into v_row from public.sales where id = v_sale_id;
+  if v_row.payment_status <> 'paid' then
+    raise exception 'confirming a card sale changed its state';
+  end if;
+
+  -- 2. a client cannot park a card sale in `pending`
+  v_sale := public.pos_complete_sale(jsonb_build_object(
+    'client_ref', 'scn-card-2',
+    'user_id',    v_cashier::text,
+    'user_name',  'Karim Cashier',
+    'payments',   jsonb_build_array(jsonb_build_object('method', 'visa', 'amount', 10.00, 'status', 'pending')),
+    'lines',      jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 1))
+  ));
+  select * into v_row from public.sales where id = (v_sale->>'sale_id')::uuid;
+  if v_row.payment_status <> 'paid' then
+    raise exception 'a card payment was accepted as pending';
+  end if;
+
+  -- 3. InstaPay is untouched: still pending, still confirmed by hand
+  v_sale := public.pos_complete_sale(jsonb_build_object(
+    'client_ref', 'scn-instapay',
+    'user_id',    v_cashier::text,
+    'user_name',  'Karim Cashier',
+    'payments',   jsonb_build_array(jsonb_build_object('method', 'instapay', 'amount', 10.00, 'status', 'pending')),
+    'lines',      jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 1))
+  ));
+  v_sale_id := (v_sale->>'sale_id')::uuid;
+
+  select * into v_row from public.sales where id = v_sale_id;
+  if v_row.status <> 'pending' or v_row.payment_status <> 'pending' then
+    raise exception 'an awaiting InstaPay sale is no longer pending (% / %)', v_row.status, v_row.payment_status;
+  end if;
+  select * into v_pay from public.sale_payments where sale_id = v_sale_id;
+  if v_pay.status <> 'pending' or v_pay.paid_at is not null then
+    raise exception 'the InstaPay payment row is wrong (% / %)', v_pay.status, v_pay.paid_at;
+  end if;
+
+  perform public.pos_confirm_payment(v_sale_id, v_cashier::text, 'Karim Cashier');
+  select * into v_row from public.sales where id = v_sale_id;
+  if v_row.status <> 'completed' or v_row.payment_status <> 'paid' then
+    raise exception 'confirming an InstaPay sale failed (% / %)', v_row.status, v_row.payment_status;
+  end if;
+
+  -- 4. cash still records what was tendered and the change handed back
+  v_sale := public.pos_complete_sale(jsonb_build_object(
+    'client_ref', 'scn-cash',
+    'user_id',    v_cashier::text,
+    'user_name',  'Karim Cashier',
+    'payments',   jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', 20.00, 'tendered', 30.00)),
+    'lines',      jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 2))
+  ));
+  select * into v_row from public.sales where id = (v_sale->>'sale_id')::uuid;
+  if v_row.amount_received <> 30.00 or v_row.change <> 10.00 then
+    raise exception 'a cash sale lost its tender/change (% / %)', v_row.amount_received, v_row.change;
+  end if;
+
+  -- 5. cash short of the total is still refused, and writes nothing
+  begin
+    perform public.pos_complete_sale(jsonb_build_object(
+      'client_ref', 'scn-cash-short',
+      'user_id',    v_cashier::text,
+      'user_name',  'Karim Cashier',
+      'payments',   jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', 20.00, 'tendered', 5.00)),
+      'lines',      jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 2))
+    ));
+    raise exception 'a cash sale under the total was accepted';
+  exception when check_violation then
+    null;
+  end;
+  if exists (select 1 from public.sales where client_ref = 'scn-cash-short') then
+    raise exception 'the refused cash sale was written anyway';
+  end if;
+
+  -- 6. an unknown method is still refused
+  begin
+    perform public.pos_complete_sale(jsonb_build_object(
+      'client_ref', 'scn-bogus',
+      'user_id',    v_cashier::text,
+      'user_name',  'Karim Cashier',
+      'payments',   jsonb_build_array(jsonb_build_object('method', 'crypto', 'amount', 20.00)),
+      'lines',      jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 2))
+    ));
+    raise exception 'an unknown payment method was accepted';
+  exception when check_violation then
+    null;
+  end;
+
+  -- 7. a split of cash and card: the first method labels the sale, and the
+  --    payment rows must still sum to the total, which is validated first
+  v_sale := public.pos_complete_sale(jsonb_build_object(
+    'client_ref', 'scn-split',
+    'user_id',    v_cashier::text,
+    'user_name',  'Karim Cashier',
+    'payments',   jsonb_build_array(
+                    jsonb_build_object('method', 'cash', 'amount', 5.00, 'tendered', 10.00),
+                    jsonb_build_object('method', 'visa', 'amount', 15.00)
+                  ),
+    'lines',      jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 2))
+  ));
+  v_sale_id := (v_sale->>'sale_id')::uuid;
+  select * into v_row from public.sales where id = v_sale_id;
+  if v_row.payment_method <> 'cash' or v_row.amount_received <> 10.00 or v_row.change <> 5.00 then
+    raise exception 'a cash+card split is wrong (% / % / %)', v_row.payment_method, v_row.amount_received, v_row.change;
+  end if;
+  select count(*) into v_pay_count from public.sale_payments where sale_id = v_sale_id;
+  if v_pay_count <> 2 then
+    raise exception 'a cash+card split wrote % payment rows', v_pay_count;
+  end if;
+  if (select sum(amount) from public.sale_payments where sale_id = v_sale_id) <> v_row.total then
+    raise exception 'the split payments no longer sum to the total';
+  end if;
+
+  -- and payments that do not sum to the total are still refused
+  begin
+    perform public.pos_complete_sale(jsonb_build_object(
+      'client_ref', 'scn-mismatch',
+      'user_id',    v_cashier::text,
+      'user_name',  'Karim Cashier',
+      'payments',   jsonb_build_array(jsonb_build_object('method', 'visa', 'amount', 19.00)),
+      'lines',      jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 2))
+    ));
+    raise exception 'payments that do not sum to the total were accepted';
+  exception when check_violation then
+    null;
+  end;
+
+  raise notice 'pos payments — cash, InstaPay and card on one till';
 end
 $$;
 

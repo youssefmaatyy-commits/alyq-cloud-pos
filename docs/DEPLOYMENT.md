@@ -125,6 +125,7 @@ DATABASE enforces the permission matrix rather than just the UI:
 | expense rules | attribution is stamped to the caller, is immutable, and editing/deleting needs manager rights |
 | audit trail | append-only under an RLS bypass, entity derived from the action, read access is oversight-only |
 | admin maintenance | backfill, demo seed and retention purge are admin-only and idempotent |
+| pos payments | cash, InstaPay and card side by side: a card sale completes without touching the drawer, cash still records tender and change, InstaPay still waits to be confirmed, and a split of cash and card still sums to the total |
 
 They run automatically against the local in-process database. Against a real
 server they are opt-in (`--scenarios`), because they insert test staff rows into

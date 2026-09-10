@@ -31,6 +31,7 @@ satisfies what the application code queries.
 | `0012_shifts_and_expenses.sql` | `shift_status` enum, card added to `payment_method`, `shifts` + `expenses` with generated `SH-`/`EXP-` numbers, invariant triggers, RLS policies |
 | `0013_audit_log.sql` | `audit_actions` (the action vocabulary), `audit_log`, append-only trigger, oversight-only read policy |
 | `0014_audit_policies_and_seed.sql` | `role_aliases` + `normalize_app_role()`, `handle_new_user()` (profile on signup), `backfill_staff_profiles()`, `seed_demo_staff()`, `purge_audit_log()` |
+| `0015_pos_card_payments.sql` | card accepted at the register: `pos_complete_sale` takes `visa`, the `sales` cash constraint admits split and card sales, the sale-number bug is fixed, and the POS tables finally get their `select` grant |
 
 ## Column reference — `products`
 
@@ -95,11 +96,24 @@ The production-readiness workstream has three schema steps left (see
 
 | Migration | Purpose |
 | --- | --- |
-| `0015_pos_card_payments` | let the register take card payment: the `sales.amount_received` CHECK currently treats every non-InstaPay sale as cash, and `pos_complete_sale` only accepts `cash` / `instapay` |
-| `0016_refund_settlement` | `refund_records` settlement columns (`settled_at`, `settled_by`) and a `pos_settle_refund()` RPC, so a pending refund can be approved or rejected |
+| `0016_refund_settlement` | `refund_records` settlement columns (`settled_at`, `settled_by`) and a `pos_settle_refund()` RPC, so a pending refund can be approved or rejected — plus the same two fixes 0015 needed on the sales side (`next_value::text - 1` in the `RET-`/`REF-` numbering, and the `select` grant for `sales_returns`, `return_items` and `refund_records`) |
 
 `0012` already added `visa` to `public.payment_method`, because the expenses and
 refunds modules offered card payments while the enum did not.
+
+### Defects the executed chain found
+
+Running the migrations is not a formality. Three faults survived the static
+review of `0007`–`0010` and only appeared once a scenario actually completed a
+sale. All three are fixed in `0015`, and the first two would have hit a live
+deployment on its first transaction (or its first split), or — for the third —
+on the first read after its Supabase project was created.
+
+| # | Defect | Effect |
+| --- | --- | --- |
+| 1 | `lpad(next_value::text - 1, 6, '0')` in `pos_complete_sale` — `::text` binds tighter than `-`, so Postgres parsed `text - integer` and raised `operator does not exist` | **Every** completion failed: no sale could be recorded against a real database. Demo mode hid it. The same spelling sits in `0010`'s `RET-`/`REF-` numbering. |
+| 2 | `sales_cash_received_covers_total` required `amount_received >= total` on any sale whose *first* payment was cash | Every cash-first split was rejected — including the ones the register's own `smartPaymentCalc` builds, which always adds the cash leg first. |
+| 3 | No `select` grant on the `0007`/`0009` tables for `authenticated` | On a Supabase project created after 2026-04-28, new `public` tables are no longer auto-granted, so the entire register read path answers `permission denied`. |
 
 ## Verification
 
@@ -155,6 +169,22 @@ that the server trusts.
 
 `stock_movements` is append-only by construction: no update or delete policy
 exists, so the ledger cannot be rewritten.
+
+### The grant, not just the policy
+
+RLS decides what a signed-in user may do *with* a table; it does not decide
+whether the table is reachable at all. Supabase stopped granting privileges on
+new `public` tables to `authenticated` on **2026-04-28**, so a table created
+without an explicit `grant` no longer answers the Data API, whatever its
+policies say. `0011`–`0014` grant explicitly; `0015` closes the gap for the POS
+tables (`products`, `categories`, `customers`, `sales`, `sale_items`,
+`sale_payments`, `stock_movements`) — `select` only, because every write goes
+through a `security definer` RPC.
+
+`sales_returns`, `return_items` and `refund_records` are still without a grant;
+`0016` adds them, together with a schema-expectation check that fails when a
+table the repositories query is not selectable by `authenticated`. That check is
+the permanent guard for this class of defect.
 
 ## Who may write what, continued
 
