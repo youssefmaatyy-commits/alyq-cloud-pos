@@ -197,7 +197,47 @@ begin
 
   delete from public.expenses where name = 'Card expense probe';
 
+  -- audit_log: an unknown action cannot be written at all (foreign key into
+  -- the vocabulary), and the entity is derived from the action rather than
+  -- believed
+  begin
+    insert into public.audit_log (action, entity, entity_id, entity_label, user_id, user_name)
+    values ('sale.completed', 'sale', 'sale-1', 'INV-000001', 'x', 'x');
+    raise exception 'an unknown audit action was accepted';
+  exception when foreign_key_violation then
+    null;
+  end;
+
+  insert into public.audit_log (action, entity, entity_id, entity_label, user_id, user_name)
+  values ('shift.opened', 'expense', 'shift-probe', 'SH-000001', 'forged', 'Forged');
+
+  if (select entity from public.audit_log where entity_id = 'shift-probe') <> 'shift' then
+    raise exception 'the audit entity was taken from the payload instead of the action';
+  end if;
+  if (select user_id from public.audit_log where entity_id = 'shift-probe') <> '00000000-0000-4000-8000-0000000000c1' then
+    raise exception 'the audit row was attributed to the client-supplied user';
+  end if;
+
+  -- append-only, even for the owner: this is what protects service_role, psql
+  -- and any future migration from rewriting history
+  begin
+    update public.audit_log set entity_label = 'tampered' where entity_id = 'shift-probe';
+    raise exception 'the audit log allowed an UPDATE';
+  exception when insufficient_privilege then
+    null;
+  end;
+  begin
+    delete from public.audit_log where entity_id = 'shift-probe';
+    raise exception 'the audit log allowed a DELETE';
+  exception when insufficient_privilege then
+    null;
+  end;
+  if (select entity_label from public.audit_log where entity_id = 'shift-probe') <> 'SH-000001' then
+    raise exception 'the audit row was modified';
+  end if;
+
   raise notice 'invariant triggers hold without RLS (viewer refused, constraints enforced)';
+  raise notice 'audit log is append-only and takes its entity from the action';
 end
 $$;
 
@@ -431,6 +471,51 @@ begin
   perform public.set_staff_role('00000000-0000-4000-8000-0000000000e1', 'viewer');
 
   raise notice 'RLS — only an admin changes roles, and never their own';
+end
+$$;
+
+-- ── the audit trail is readable only with oversight rights ───────────────
+do $$
+declare
+  v_visible integer;
+begin
+  -- a cashier may write an audit row (the app records what they just did)…
+  perform pg_temp.become('00000000-0000-4000-8000-0000000000c1');
+  insert into public.audit_log (action, entity, entity_id, entity_label, user_id, user_name)
+  values ('expense.created', 'expense', 'exp-probe', 'EXP-000001', 'forged', 'Forged');
+
+  select count(*) into v_visible from public.audit_log;
+  if v_visible <> 0 then
+    raise exception 'a cashier could read % audit row(s)', v_visible;
+  end if;
+
+  -- …and is stamped as the author regardless
+  perform pg_temp.become('00000000-0000-4000-8000-0000000000a1');
+  if (select user_id from public.audit_log where entity_id = 'exp-probe')
+     <> '00000000-0000-4000-8000-0000000000c1' then
+    raise exception 'the audit row was not attributed to the authenticated author';
+  end if;
+  -- the name comes from the AUTHOR's profile at insert time, not from the admin
+  -- who is reading now, and not from the client
+  if (select user_name from public.audit_log where entity_id = 'exp-probe') <> 'Karim Cashier' then
+    raise exception 'the audit row kept the forged name (%)',
+      (select user_name from public.audit_log where entity_id = 'exp-probe');
+  end if;
+
+  -- an admin reads everything
+  select count(*) into v_visible from public.audit_log;
+  if v_visible < 2 then
+    raise exception 'an admin should read the whole trail, saw % row(s)', v_visible;
+  end if;
+
+  -- a viewer sees nothing
+  perform pg_temp.become('00000000-0000-4000-8000-0000000000e1');
+  select count(*) into v_visible from public.audit_log;
+  if v_visible <> 0 then
+    raise exception 'a viewer could read % audit row(s)', v_visible;
+  end if;
+
+  raise notice 'the audit trail is oversight-only, append-only and correctly attributed';
 end
 $$;
 

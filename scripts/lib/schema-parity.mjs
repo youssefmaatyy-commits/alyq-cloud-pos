@@ -176,3 +176,61 @@ export async function checkCapabilityParity({ driver, failures, c, log, rolesFil
     `  ${c.green("✓")} public.role_capabilities matches ROLE_CAPABILITIES (${actual.size} roles, ${total} grants)`,
   );
 }
+
+/**
+ * Audit vocabulary parity — can every action the app can emit actually be
+ * written, and is every entity in the enum used by one?
+ *
+ * `AUDIT_ACTIONS` / `AUDIT_ENTITIES` in src/modules/audit/types.ts are what the
+ * UI offers and what `recordAudit()` sends; `public.audit_actions` is the
+ * foreign-key target of `audit_log.action`. A missing row means the audit write
+ * fails at runtime — after the money has moved.
+ */
+export async function checkAuditVocabularyParity({ driver, failures, c, log, auditTypesFile }) {
+  log(c.bold("\nAudit vocabulary parity"));
+
+  const source = fs.readFileSync(auditTypesFile, "utf8");
+  const actionsMatch = source.match(/export const AUDIT_ACTIONS = \[([\s\S]*?)\] as const;/);
+  const entitiesMatch = source.match(/export const AUDIT_ENTITIES = \[([\s\S]*?)\] as const;/);
+  if (!actionsMatch || !entitiesMatch) {
+    const error = "could not parse AUDIT_ACTIONS / AUDIT_ENTITIES from audit/types.ts";
+    log(`  ${c.red("✗")} ${error}`);
+    failures.push({ name: "audit vocabulary parity", phase: "expectation", error });
+    return;
+  }
+
+  const actions = [...actionsMatch[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+  const entities = new Set([...entitiesMatch[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]));
+
+  const rows = await driver.query(`select action, entity from public.audit_actions`);
+  const actual = new Map(rows.map(([action, entity]) => [action, entity]));
+
+  const problems = [];
+  for (const action of actions) {
+    const entity = actual.get(action);
+    if (entity === undefined) {
+      problems.push(`types.ts can emit '${action}', public.audit_actions has no such action`);
+    } else if (!entities.has(entity)) {
+      problems.push(`'${action}' is stored against entity '${entity}', which AUDIT_ENTITIES does not list`);
+    }
+  }
+  for (const action of actual.keys()) {
+    if (!actions.includes(action)) {
+      problems.push(`public.audit_actions has '${action}', types.ts cannot emit it`);
+    }
+  }
+  const covered = new Set([...actual.values()]);
+  for (const entity of entities) {
+    if (!covered.has(entity)) problems.push(`AUDIT_ENTITIES lists '${entity}', which no action uses`);
+  }
+
+  if (problems.length > 0) {
+    for (const problem of problems) log(`  ${c.red("✗")} ${problem}`);
+    failures.push({ name: "audit vocabulary parity", phase: "expectation", error: problems[0] });
+    return;
+  }
+
+  log(
+    `  ${c.green("✓")} public.audit_actions matches AUDIT_ACTIONS (${actions.length} actions over ${entities.size} entities)`,
+  );
+}

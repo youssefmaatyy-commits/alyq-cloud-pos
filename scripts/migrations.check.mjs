@@ -45,7 +45,11 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { checkCapabilityParity, checkColumnParity } from "./lib/schema-parity.mjs";
+import {
+  checkAuditVocabularyParity,
+  checkCapabilityParity,
+  checkColumnParity,
+} from "./lib/schema-parity.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const MIGRATIONS_DIR = path.join(ROOT, "supabase", "migrations");
@@ -86,9 +90,7 @@ const c = {
  * very migration's pull request.
  */
 const PENDING = {
-  tables: {
-    audit_log: "0014_audit_log",
-  },
+  tables: {},
   rpcs: {},
 };
 
@@ -469,8 +471,9 @@ if (failures.length === 0) {
     sources: walk(SRC_DIR).filter((f) => /\.ts$/.test(f) && !f.includes("__tests__")),
     root: ROOT,
     rolesFile: path.join(SRC_DIR, "lib", "permissions", "roles.ts"),
+    auditTypesFile: path.join(SRC_DIR, "modules", "audit", "types.ts"),
   };
-  for (const stage of [checkColumnParity, checkCapabilityParity]) {
+  for (const stage of [checkColumnParity, checkCapabilityParity, checkAuditVocabularyParity]) {
     try {
       await stage(context);
     } catch (error) {
