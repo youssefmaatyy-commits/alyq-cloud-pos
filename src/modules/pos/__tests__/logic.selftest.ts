@@ -29,6 +29,7 @@ import { getDemoInventoryRepository } from "@/modules/inventory/data/demoReposit
 import {
   buildReceiptHtml,
   buildReturnReceiptHtml,
+  customerInfoIssue,
   paymentMethodDisplayName,
 } from "../services/receipt";
 import type { CartLine, SalePaymentInput } from "../types";
@@ -700,6 +701,109 @@ test("receipt branding: logo, boutique header, paid/remaining/change, contacts",
   assert.ok(rtl.includes('lang="ar"'), "arabic lang");
   assert.ok(rtl.includes("ALYQ | أَلِيق"), "wordmark in RTL too");
   assert.ok(!rtl.includes("scaleX(-1)"), "symbol never mirrored");
+});
+
+test("customer info guard: customer-linked receipts require name AND phone", () => {
+  // anonymous / guest — must stay printable (no behaviour change)
+  assert.equal(customerInfoIssue(null, null), null, "guest with neither field is allowed");
+  assert.equal(customerInfoIssue("", ""), null, "empty strings are treated as guest");
+  assert.equal(customerInfoIssue(undefined, undefined), null, "undefined is treated as guest");
+  assert.equal(customerInfoIssue("   ", "  "), null, "whitespace only is treated as guest");
+  // fully populated customer
+  assert.equal(customerInfoIssue("Test Customer", "0599111222"), null, "name + phone is allowed");
+  // customer-linked but incomplete
+  assert.equal(customerInfoIssue("Test Customer", null), "missingPhone", "name without phone blocked");
+  assert.equal(customerInfoIssue("Test Customer", "   "), "missingPhone", "blank phone blocked");
+  assert.equal(customerInfoIssue(null, "0599111222"), "missingName", "phone without name blocked");
+});
+
+test("sales receipt renders customer name + phone only when linked", () => {
+  const base = {
+    id: "s1",
+    sale_number: "INV-000777",
+    client_ref: "c1",
+    status: "completed" as const,
+    subtotal: 30,
+    discount_type: "none" as const,
+    discount_value: 0,
+    discount_amount: 0,
+    total: 30,
+    user_id: "u1",
+    user_name: "Cashier One",
+    items: [
+      {
+        id: "i1",
+        sale_id: "s1",
+        product_id: "p1",
+        name_ar: "قهوة",
+        name_en: "Coffee",
+        sku: "ALYQ-1001",
+        barcode: "6281000000013",
+        unit_price: 30,
+        quantity: 1,
+        line_total: 30,
+      },
+    ],
+    payments: [
+      {
+        id: "pay1",
+        sale_id: "s1",
+        method: "cash" as const,
+        amount: 30,
+        status: "paid" as const,
+        paid_at: null,
+        paid_by: null,
+        paid_by_name: null,
+      },
+    ],
+    created_at: "2026-03-01T08:00:00.000Z",
+    voided_at: null,
+    void_reason: null,
+    payment_method: "cash" as const,
+    payment_status: "paid" as const,
+    amount_received: 30,
+    change: 0,
+    paid_at: null,
+    paid_by: null,
+    paid_by_name: null,
+  };
+  const strings = {
+    businessName: "ALYQ | أَلِيق",
+    businessTagline: "Inspired by you",
+    saleLabel: "Sale #",
+    dateLabel: "Date",
+    cashierLabel: "Cashier",
+    itemLabel: "Item",
+    qtyLabel: "Qty",
+    priceLabel: "Price",
+    totalLabel: "Total",
+    subtotalLabel: "Subtotal",
+    discountLabel: "Discount",
+    paymentLabel: "Payment",
+    receivedLabel: "Received",
+    changeLabel: "Change",
+    customerLabel: "Customer",
+    customerPhoneLabel: "Phone",
+    paidLabel: "Paid",
+    remainingLabel: "Remaining",
+    statusLabel: "Status",
+    thankYou: "Thanks",
+    voidedNotice: "Voided",
+  };
+
+  // linked customer → both fields present
+  const linked = buildReceiptHtml({
+    sale: { ...base, customer_id: "cust-1", customer_name: "Test Customer", customer_phone: "0599111222" },
+    direction: "ltr",
+    strings,
+  });
+  assert.ok(linked.includes("Test Customer"), "sales receipt shows customer name");
+  assert.ok(linked.includes("0599111222"), "sales receipt shows customer phone");
+
+  // guest sale → no customer block, unchanged behaviour
+  const guest = buildReceiptHtml({ sale: base, direction: "ltr", strings });
+  assert.ok(!guest.includes("0599111222"), "guest receipt has no customer phone");
+  assert.ok(!guest.includes('>Customer<') && !guest.includes(">Phone<"), "guest receipt has no customer rows");
 });
 
 test("return receipt reuses the shared design and carries return + invoice data", () => {

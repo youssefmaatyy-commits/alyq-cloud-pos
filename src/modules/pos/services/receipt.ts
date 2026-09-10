@@ -46,6 +46,36 @@ export function paymentMethodDisplayName(method: string): string {
   return method.charAt(0).toUpperCase() + method.slice(1);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Customer information on receipts
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Why a customer-linked receipt may not be printed yet.
+ * - `missingName`  — a customer is linked but the name is absent
+ * - `missingPhone` — a customer is linked but the phone is absent
+ * - `null`         — fine (either fully populated, or an anonymous/guest
+ *                    transaction which keeps its existing behaviour)
+ */
+export type CustomerInfoIssue = "missingName" | "missingPhone" | null;
+
+/**
+ * A receipt is customer-linked when it carries a customer name or phone.
+ * Customer-linked receipts must show BOTH the name and the phone; anonymous
+ * (guest) receipts have neither and are always allowed.
+ */
+export function customerInfoIssue(
+  customerName: string | null | undefined,
+  customerPhone: string | null | undefined,
+): CustomerInfoIssue {
+  const hasName = Boolean(customerName && customerName.trim());
+  const hasPhone = Boolean(customerPhone && customerPhone.trim());
+  if (!hasName && !hasPhone) return null; // guest sale — unchanged behaviour
+  if (!hasName) return "missingName";
+  if (!hasPhone) return "missingPhone";
+  return null;
+}
+
 export interface ReceiptStrings {
   businessName: string;
   businessTagline: string;

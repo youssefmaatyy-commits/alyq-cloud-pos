@@ -1,7 +1,7 @@
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { Button, Modal, useToast } from "@/components/ui";
 import { usePos } from "../hooks/PosProvider";
-import { buildReceiptHtml, printHtmlDocument } from "../services/receipt";
+import { buildReceiptHtml, customerInfoIssue, printHtmlDocument } from "../services/receipt";
 
 /**
  * Shown after a successful sale: the sale number, totals and a print action.
@@ -20,6 +20,25 @@ export function SaleCompletedModal() {
     if (!completedSale.sale_number || !completedSale.items?.length) {
       console.error("[receipt-print] abort: no completed sale / receipt data", { completedSale });
       toast.error(t("pos.printFailed"));
+      return;
+    }
+
+    // Customer-linked receipts must carry BOTH the customer name and phone.
+    // Anonymous/guest sales have neither and keep their existing behaviour.
+    const customerIssue = customerInfoIssue(
+      completedSale.customer_name,
+      completedSale.customer_phone,
+    );
+    if (customerIssue) {
+      console.error("[receipt-print] abort: incomplete customer information", {
+        sale_number: completedSale.sale_number,
+        issue: customerIssue,
+        customer_name: completedSale.customer_name ?? null,
+        customer_phone: completedSale.customer_phone ?? null,
+      });
+      toast.error(
+        t(customerIssue === "missingName" ? "receipt.customerNameMissing" : "receipt.customerPhoneMissing"),
+      );
       return;
     }
 

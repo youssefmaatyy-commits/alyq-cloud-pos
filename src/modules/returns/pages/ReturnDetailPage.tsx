@@ -14,13 +14,20 @@ import {
   useToast,
 } from "@/components/ui";
 import { useReturns } from "../hooks/ReturnProvider";
-import { buildReturnReceiptHtml, printHtmlDocument, usePos } from "@/modules/pos";
+import { useCustomers } from "@/modules/customers";
+import {
+  buildReturnReceiptHtml,
+  customerInfoIssue,
+  printHtmlDocument,
+  usePos,
+} from "@/modules/pos";
 
 export function ReturnDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { t, date, num, isRTL } = useI18n();
   const { returnsList, refundsList, loading } = useReturns();
   const { sales } = usePos();
+  const { customerById } = useCustomers();
   const toast = useToast();
 
   const returnRecord = useMemo(() => {
@@ -40,19 +47,50 @@ export function ReturnDetailPage() {
   }, [sales, returnRecord]);
 
   /**
+   * The return receipt inherits the customer from the original invoice. The
+   * return record stores the name; the phone is resolved from the linked sale
+   * first, then from the customer record as a fallback.
+   */
+  const linkedCustomer = useMemo(() => {
+    if (!returnRecord?.customer_id) return undefined;
+    return customerById(returnRecord.customer_id);
+  }, [customerById, returnRecord]);
+
+  const customerName = returnRecord?.customer_name ?? linkedCustomer?.name ?? null;
+  const customerPhone = linkedSale?.customer_phone ?? linkedCustomer?.phone ?? null;
+
+  /**
    * Print the return receipt through the shared receipt service + print
    * workflow (identical design and behaviour to the sales receipt).
    */
   const printReturnReceipt = () => {
     if (!returnRecord) return;
+
+    // A customer-linked return receipt must carry BOTH the customer name and
+    // phone (inherited from the original invoice). Anonymous returns keep the
+    // existing behaviour.
+    const issue = customerInfoIssue(customerName, customerPhone);
+    if (issue) {
+      console.error("[receipt-print] abort: incomplete customer information", {
+        return_number: returnRecord.return_number,
+        issue,
+        customer_name: customerName,
+        customer_phone: customerPhone,
+      });
+      toast.error(
+        t(issue === "missingName" ? "receipt.customerNameMissing" : "receipt.customerPhoneMissing"),
+      );
+      return;
+    }
+
     toast.success(t("pos.printing"));
 
     let html: string;
     try {
       html = buildReturnReceiptHtml({
-        returnRecord,
+        returnRecord: { ...returnRecord, customer_name: customerName },
         direction: isRTL ? "rtl" : "ltr",
-        customerPhone: linkedSale?.customer_phone ?? null,
+        customerPhone,
         refundNumber: linkedRefund?.refund_number ?? null,
         strings: {
           businessName: t("receipt.businessName"),

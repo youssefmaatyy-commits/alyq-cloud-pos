@@ -1023,6 +1023,22 @@ async function main() {
   const invMatch = bodyText().match(/INV-\d{6}/);
   assert.ok(invMatch, "linked sale completed");
   const linkedInv = invMatch[0];
+
+  // ── Sales receipt for a CUSTOMER-LINKED sale: name + phone must appear ──
+  const beforeLinkedPrint = printedDocs.length;
+  const linkedPrintBtn = [...document.querySelectorAll("button")].find((b) =>
+    (b.textContent ?? "").includes("Print receipt"),
+  );
+  assert.ok(linkedPrintBtn, "print receipt available on the completed modal");
+  linkedPrintBtn.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  await sleep(400);
+  assert.equal(printedDocs.length, beforeLinkedPrint + 1, "customer-linked sales receipt opened");
+  const linkedReceipt = printedDocs[printedDocs.length - 1];
+  assert.ok(linkedReceipt.includes(linkedInv), "sales receipt shows the invoice number");
+  assert.ok(linkedReceipt.includes("Smoke Customer v2"), "sales receipt shows the customer NAME");
+  assert.ok(linkedReceipt.includes("0599111222"), "sales receipt shows the customer PHONE");
+  console.log("  ✓ sales receipt shows customer name + phone");
+
   click("New sale");
   await sleep(300);
   console.log("  ✓ customer linked to POS sale");
@@ -1146,7 +1162,11 @@ async function main() {
   assert.ok(returnReceipt.includes("Return Receipt"), "return receipt has its own title");
   assert.ok(/RET-\d{6}/.test(returnReceipt), "return receipt carries the return number");
   assert.ok(returnReceipt.includes(linkedInv), "return receipt references the original invoice");
-  assert.ok(returnReceipt.includes("Smoke Customer"), "return receipt shows the customer name");
+  assert.ok(returnReceipt.includes("Smoke Customer"), "return receipt shows the customer name (inherited)");
+  assert.ok(
+    returnReceipt.includes("0599111222"),
+    "return receipt shows the customer phone (inherited from the invoice)",
+  );
   assert.ok(returnReceipt.includes('src="/alyq-logo.png"'), "return receipt embeds the official logo");
   assert.ok(returnReceipt.includes("ALYQ | أَلِيق"), "return receipt has the boutique wordmark");
   assert.ok(returnReceipt.includes("<svg"), "return receipt embeds the return barcode");
