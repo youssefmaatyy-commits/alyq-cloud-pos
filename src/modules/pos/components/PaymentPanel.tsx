@@ -196,11 +196,22 @@ export function PaymentPanel() {
 
       {/* Live summary — always visible */}
       <div className="mt-3 space-y-1.5 rounded-xl bg-slate-50 px-3 py-2.5 text-sm">
-        <div className="flex justify-between text-slate-600">
+        <div className="flex justify-between font-bold text-slate-900">
           <span>{t("pos.total")}</span>
           <span className="tabular-nums">{num(total, 2)}</span>
         </div>
-        <div className="flex justify-between text-slate-600">
+        {/* Per-method breakdown: how much of the total is covered by each tender. */}
+        <div className="space-y-1 rounded-lg bg-white/70 px-2.5 py-1.5">
+          <div className="flex justify-between text-slate-600">
+            <span>💵 {t("pos.paidCash")}</span>
+            <span className="tabular-nums">{num(calc.cashApplied, 2)}</span>
+          </div>
+          <div className="flex justify-between text-slate-600">
+            <span>📱 {t("pos.paidInstapay")}</span>
+            <span className="tabular-nums">{num(calc.instapay, 2)}</span>
+          </div>
+        </div>
+        <div className="flex justify-between border-t border-slate-200 pt-1.5 font-semibold text-slate-800">
           <span>{t("pos.paid")}</span>
           <span className="tabular-nums">{num(calc.paid, 2)}</span>
         </div>

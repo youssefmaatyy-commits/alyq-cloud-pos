@@ -62,8 +62,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, [location.pathname]);
 
   const sidebar = (
-    <div className="flex h-full flex-col gap-6 p-4">
-      <Link to="/" className="flex items-center gap-3 px-1">
+    <div className="flex h-full flex-col gap-6 overflow-hidden p-4">
+      <Link to="/" className="flex shrink-0 items-center gap-3 px-1">
         <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-600 text-white shadow-md shadow-indigo-200">
           <BoxIcon />
         </span>
@@ -73,7 +73,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </span>
       </Link>
 
-      <nav className="flex flex-1 flex-col gap-1">
+      <nav className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
         <p className="px-3 pb-1 text-[10px] font-bold uppercase tracking-widest text-slate-500">
           {t("nav.phase1")}
         </p>
@@ -101,7 +101,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <NavItem to="/refunds" icon={<RotateCcwIcon />} label={t("nav.refunds")} />
       </nav>
 
-      <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+      <div className="shrink-0 rounded-2xl border border-slate-200 bg-slate-50 p-3">
         <p className="flex items-center gap-2 text-xs font-bold text-slate-800">
           <span
             className={cn(
