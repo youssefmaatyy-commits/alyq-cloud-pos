@@ -60,7 +60,6 @@ export { AppError, toAppError } from "./data/repository";
 export type { AppErrorCode, CatalogRepository } from "./data/repository";
 export {
   importProductsFromCsv,
-  importProductsFromExcel,
   importProductsFromFile,
   generateExcelTemplate,
   resolveCategoryIds,

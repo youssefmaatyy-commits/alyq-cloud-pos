@@ -85,7 +85,7 @@ assert(map6["3"] === "selling_price", "Arabic price column mapped");
 assert(map6["4"] === "stock_quantity", "Arabic stock column mapped");
 
 // Test 7: Mixed bilingual headers (template format)
-const headers7 = TEMPLATE_COLUMNS.map((col) => `${col.ar} / ${col.en}`);
+const headers7 = TEMPLATE_COLUMNS.map((col: { ar: string; en: string }) => `${col.ar} / ${col.en}`);
 const map7 = buildColumnMap(headers7);
 assert(Object.keys(map7).length > 0, "Template headers should map to fields");
 
@@ -186,7 +186,7 @@ console.log("Testing Template Columns...");
 // Test 18: Template columns structure
 assert(TEMPLATE_COLUMNS.length > 0, "Template should have columns");
 assert(
-  TEMPLATE_COLUMNS.every((col) => col.en && col.ar && col.example),
+  TEMPLATE_COLUMNS.every((col: { en: string; ar: string; example: string }) => col.en && col.ar && col.example),
   "All template columns should have en, ar, and example"
 );
 
@@ -196,10 +196,10 @@ const requiredFields = [
   { field: "name_en", keywords: ["name", "english", "إنجليزي"] },
   { field: "selling_price", keywords: ["price", "sale", "البيع"] },
 ];
-const templateHeaders = TEMPLATE_COLUMNS.map((col) => `${col.en} ${col.ar}`.toLowerCase());
+const templateHeaders = TEMPLATE_COLUMNS.map((col: { en: string; ar: string }) => `${col.en} ${col.ar}`.toLowerCase());
 requiredFields.forEach(({ field, keywords }) => {
   assert(
-    templateHeaders.some((th) => keywords.some((kw) => th.includes(kw))),
+    templateHeaders.some((th: string) => keywords.some((kw) => th.includes(kw))),
     `Template should include ${field}`
   );
 });

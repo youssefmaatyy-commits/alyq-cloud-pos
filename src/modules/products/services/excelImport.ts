@@ -478,6 +478,23 @@ export function resolveCategoryIds(
 }
 
 /**
+ * Template column definitions for Excel import/export.
+ * Each column has Arabic and English names for bilingual support.
+ */
+export const TEMPLATE_COLUMNS = [
+  { ar: "اسم المنتج (عربي)", en: "Product Name (Arabic)", field: "name_ar", example: "منتج مثال" },
+  { ar: "اسم المنتج (إنجليزي)", en: "Product Name (English)", field: "name_en", example: "Example Product" },
+  { ar: "رمز المنتج", en: "SKU", field: "sku", example: "SKU-001" },
+  { ar: "الباركود", en: "Barcode", field: "barcode", example: "1234567890123" },
+  { ar: "الفئة", en: "Category", field: "category", example: "Electronics" },
+  { ar: "سعر التكلفة", en: "Cost Price", field: "cost_price", example: "50.00" },
+  { ar: "سعر البيع", en: "Selling Price", field: "selling_price", example: "100.00" },
+  { ar: "الكمية بالمخزون", en: "Stock Quantity", field: "stock_quantity", example: "10" },
+  { ar: "تتبع المخزون", en: "Stock Tracking Enabled", field: "stock_tracking_enabled", example: "true" },
+  { ar: "الوحدة", en: "Unit", field: "unit", example: "piece" },
+] as const;
+
+/**
  * Import products from a File object (Excel or CSV).
  */
 export async function importProductsFromFile(file: File): Promise<ImportResult> {
