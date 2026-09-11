@@ -125,19 +125,19 @@ export type ColumnMap = Record<string, ImportableField>;
 
 /** Default header aliases — covers English, Arabic and common variants. */
 const HEADER_ALIASES: Record<ImportableField, string[]> = {
-  sku: ["sku", "code", "كود", "رمز"],
-  barcode: ["barcode", "باركود", "الباركود"],
-  name_ar: ["name_ar", "name ar", "namear", "الاسم", "اسم عربي", "name arabic"],
-  name_en: ["name_en", "name en", "nameen", "name", "اسم انجليزي", "name english", "product"],
+  sku: ["sku", "code", "كود", "رمز", "رمز المنتج / sku"],
+  barcode: ["barcode", "باركود", "الباركود", "الباركود / barcode"],
+  name_ar: ["name_ar", "name ar", "namear", "الاسم", "اسم عربي", "الاسم (عربي)", "name arabic", "name (arabic)", "اسم المنتج (عربي) / product name (arabic)"],
+  name_en: ["name_en", "name en", "nameen", "name", "اسم انجليزي", "name english", "name (english)", "product", "اسم المنتج (إنجليزي) / product name (english)"],
   description_ar: ["description_ar", "description ar", "الوصف", "وصف عربي"],
   description_en: ["description_en", "description en", "description", "وصف انجليزي"],
-  selling_price: ["selling_price", "price", "السعر", "سعر البيع", "selling price"],
-  cost_price: ["cost_price", "cost", "التكلفة", "سعر التكلفة", "cost price"],
+  selling_price: ["selling_price", "price", "السعر", "سعر البيع", "selling price", "سعر البيع / selling price"],
+  cost_price: ["cost_price", "cost", "التكلفة", "سعر التكلفة", "cost price", "سعر التكلفة / cost price"],
   tax_rate: ["tax_rate", "tax", "الضريبة", "نسبة الضريبة", "tax rate", "vat"],
-  stock_quantity: ["stock_quantity", "stock", "qty", "quantity", "الكمية", "المخزون", "stock quantity"],
+  stock_quantity: ["stock_quantity", "stock", "qty", "quantity", "الكمية", "المخزون", "stock quantity", "الكمية بالمخزون / stock quantity"],
   low_stock_level: ["low_stock_level", "low stock", "low_stock", "الحد الأدنى", "حد المخزون"],
   product_type: ["product_type", "type", "النوع", "نوع المنتج"],
-  category_name: ["category", "category_name", "التصنيف", "الفئة"],
+  category_name: ["category", "category_name", "التصنيف", "الفئة", "الفئة / category"],
 };
 
 /** Build a column map from a header row by matching against known aliases. */
@@ -182,11 +182,21 @@ export interface ImportRowResult {
 
 function parseNumber(raw: string): number {
   if (!raw.trim()) return NaN;
-  const cleaned = raw.replace(/[^\d.,-]/g, "").replace(/,/g, ".");
-  const normalized =
-    cleaned.indexOf(".") !== cleaned.lastIndexOf(".")
-      ? cleaned.replace(/\./g, "").replace(",", ".") // European: 1.234,56
-      : cleaned;
+  const cleaned = raw.replace(/[^\d.,-]/g, "");
+  
+  // Detect European format: 1.234,56 (dots as thousands, comma as decimal)
+  // Check if there's a comma followed by exactly 2 digits at the end
+  const hasEuropeanFormat = /,\d{2}$/.test(cleaned) && cleaned.includes(".");
+  
+  let normalized: string;
+  if (hasEuropeanFormat) {
+    // European: remove dots (thousands), replace comma with dot (decimal)
+    normalized = cleaned.replace(/\./g, "").replace(",", ".");
+  } else {
+    // US/Standard: remove commas (thousands), keep dots (decimal)
+    normalized = cleaned.replace(/,/g, "");
+  }
+  
   const value = Number(normalized);
   return Number.isFinite(value) ? value : NaN;
 }
