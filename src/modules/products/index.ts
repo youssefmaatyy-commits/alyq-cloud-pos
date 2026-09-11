@@ -41,6 +41,7 @@ export {
 } from "./services/imageStorage";
 export type { ProductImageItem } from "./types";
 export { BarcodePreview } from "./components/BarcodePreview";
+export { ExcelImportModal } from "./components/ExcelImportModal";
 export {
   deriveBarcodeFromSku,
   isDerivedFromSku,
@@ -57,3 +58,20 @@ export type { BarcodeLabelData, BarcodeLabelStrings } from "./services/barcodeLa
 export { getCatalogRepository, getCatalogMode } from "./data";
 export { AppError, toAppError } from "./data/repository";
 export type { AppErrorCode, CatalogRepository } from "./data/repository";
+export {
+  importProductsFromCsv,
+  importProductsFromExcel,
+  importProductsFromFile,
+  generateExcelTemplate,
+  resolveCategoryIds,
+  buildColumnMap,
+  parseCsv,
+  TEMPLATE_COLUMNS,
+} from "./services/excelImport";
+export type {
+  ImportResult,
+  ImportRowResult,
+  ImportRowError,
+  ImportableField,
+  ColumnMap,
+} from "./services/excelImport";

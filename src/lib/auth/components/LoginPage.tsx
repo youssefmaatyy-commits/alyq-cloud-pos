@@ -36,7 +36,9 @@ export function LoginPage() {
     clearError();
   }, [clearError]);
 
-  if (status === "authenticated") return <Navigate to={next} replace />;
+  if (status === "authenticated") {
+    return <Navigate to={next} replace />;
+  }
 
   const message = errorMessage(error, t);
 

@@ -56,7 +56,9 @@ export function LoginRoute() {
   const { status } = useAuth();
   const [params] = useSearchParams();
 
-  if (status === "loading") return <BootScreen />;
+  if (status === "loading") {
+    return <BootScreen />;
+  }
   if (status === "authenticated") {
     return <Navigate to={resolveNextTarget(params.get("next"))} replace />;
   }
