@@ -8,13 +8,15 @@ import type { SalePaymentInput } from "../types";
 /**
  * Smart split-payment panel.
  *
- * A sale is paid by one or two methods: Cash and/or InstaPay. While split
- * payment is enabled, entering an amount in either method automatically fills
- * the other with the remaining balance (e.g. Total 1000, Cash 500 → InstaPay
- * 500). The summary always shows Total, Paid, Remaining and Change, and the
+ * A sale is paid by one to three methods: Cash, InstaPay and/or Visa (card).
+ * While split payment is enabled, additional methods become available and
+ * entering an amount in any method automatically fills the others with the
+ * remaining balance (e.g. Total 1000, Cash 500 → InstaPay 500).
+ * The summary always shows Total, Paid, Remaining and Change, and the
  * "Complete sale" button is locked until nothing remains unpaid.
  *
- * Cash may overpay (change is returned); InstaPay is clamped to the total.
+ * Cash may overpay (change is returned); InstaPay and Visa are clamped to
+ * the total. Visa is always paid (never pending).
  */
 export function PaymentPanel() {
   const { t, num } = useI18n();
@@ -23,6 +25,7 @@ export function PaymentPanel() {
   const [split, setSplit] = useState(false);
   const [cash, setCash] = useState("");
   const [instapay, setInstapay] = useState("");
+  const [visa, setVisa] = useState("");
   const [instapayStatus, setInstapayStatus] = useState<"paid" | "pending">("paid");
 
   // Reset between sales (cart emptied).
@@ -31,6 +34,7 @@ export function PaymentPanel() {
       setSplit(false);
       setCash("");
       setInstapay("");
+      setVisa("");
       setInstapayStatus("paid");
     }
   }, [isEmpty]);
@@ -38,9 +42,10 @@ export function PaymentPanel() {
   const total = totals.total;
   const cashNum = round2(Number(cash) || 0);
   const instaNum = round2(Number(instapay) || 0);
+  const visaNum = round2(Number(visa) || 0);
   const calc = useMemo(
-    () => smartPaymentCalc(total, cashNum, split ? instaNum : 0),
-    [total, cashNum, instaNum, split],
+    () => smartPaymentCalc(total, cashNum, split ? instaNum : 0, split ? visaNum : 0),
+    [total, cashNum, instaNum, visaNum, split],
   );
 
   // ── auto-balance: last-edited field wins, the other fills the remainder ──
@@ -85,8 +90,11 @@ export function PaymentPanel() {
     if (calc.instapay > 0) {
       list.push({ method: "instapay", amount: calc.instapay, status: instapayStatus });
     }
+    if (calc.visa > 0) {
+      list.push({ method: "visa", amount: calc.visa, status: "paid" });
+    }
     return list;
-  }, [calc.cashApplied, calc.cashTendered, calc.instapay, instapayStatus]);
+  }, [calc.cashApplied, calc.cashTendered, calc.instapay, calc.visa, instapayStatus]);
 
   const balanced = calc.remaining === 0 && payments.length > 0;
   const canComplete = !isEmpty && !completing && canSell && balanced;
@@ -157,39 +165,58 @@ export function PaymentPanel() {
       </div>
 
       {split ? (
-        <div className="mt-2 space-y-1.5 rounded-xl border border-slate-200 p-2.5">
-          <label htmlFor="instapay-input" className="text-xs font-bold text-slate-700">
-            📱 {t("pos.payment.instapay")}
-          </label>
-          <TextInput
-            id="instapay-input"
-            data-testid="instapay-input"
-            dir="ltr"
-            inputMode="decimal"
-            value={instapay}
-            onChange={(e) => onInstaChange(e.target.value)}
-            placeholder="0.00"
-            className="h-10 font-mono text-sm"
-          />
-          <div className="grid grid-cols-2 gap-1 rounded-lg bg-slate-100 p-0.5">
-            <button
-              type="button"
-              onClick={() => setInstapayStatus("paid")}
-              className={`h-8 rounded-md text-xs font-bold transition ${
-                instapayStatus === "paid" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"
-              }`}
-            >
-              ✓ {t("pos.instapay.paid")}
-            </button>
-            <button
-              type="button"
-              onClick={() => setInstapayStatus("pending")}
-              className={`h-8 rounded-md text-xs font-bold transition ${
-                instapayStatus === "pending" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"
-              }`}
-            >
-              ⏳ {t("pos.instapay.pending")}
-            </button>
+        <div className="mt-2 space-y-2">
+          <div className="space-y-1.5 rounded-xl border border-slate-200 p-2.5">
+            <label htmlFor="instapay-input" className="text-xs font-bold text-slate-700">
+              📱 {t("pos.payment.instapay")}
+            </label>
+            <TextInput
+              id="instapay-input"
+              data-testid="instapay-input"
+              dir="ltr"
+              inputMode="decimal"
+              value={instapay}
+              onChange={(e) => onInstaChange(e.target.value)}
+              placeholder="0.00"
+              className="h-10 font-mono text-sm"
+            />
+            <div className="grid grid-cols-2 gap-1 rounded-lg bg-slate-100 p-0.5">
+              <button
+                type="button"
+                onClick={() => setInstapayStatus("paid")}
+                className={`h-8 rounded-md text-xs font-bold transition ${
+                  instapayStatus === "paid" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"
+                }`}
+              >
+                ✓ {t("pos.instapay.paid")}
+              </button>
+              <button
+                type="button"
+                onClick={() => setInstapayStatus("pending")}
+                className={`h-8 rounded-md text-xs font-bold transition ${
+                  instapayStatus === "pending" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"
+                }`}
+              >
+                ⏳ {t("pos.instapay.pending")}
+              </button>
+            </div>
+          </div>
+
+          {/* Visa / Card */}
+          <div className="space-y-1.5 rounded-xl border border-slate-200 p-2.5">
+            <label htmlFor="visa-input" className="text-xs font-bold text-slate-700">
+              💳 {t("pos.payment.visa")}
+            </label>
+            <TextInput
+              id="visa-input"
+              data-testid="visa-input"
+              dir="ltr"
+              inputMode="decimal"
+              value={visa}
+              onChange={(e) => setVisa(e.target.value)}
+              placeholder="0.00"
+              className="h-10 font-mono text-sm"
+            />
           </div>
         </div>
       ) : null}
@@ -210,6 +237,12 @@ export function PaymentPanel() {
             <span>📱 {t("pos.paidInstapay")}</span>
             <span className="tabular-nums">{num(calc.instapay, 2)}</span>
           </div>
+          {calc.visa > 0 ? (
+            <div className="flex justify-between text-slate-600">
+              <span>💳 {t("pos.paidVisa")}</span>
+              <span className="tabular-nums">{num(calc.visa, 2)}</span>
+            </div>
+          ) : null}
         </div>
         <div className="flex justify-between border-t border-slate-200 pt-1.5 font-semibold text-slate-800">
           <span>{t("pos.paid")}</span>

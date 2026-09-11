@@ -37,17 +37,22 @@ import {
 } from "@/modules/shifts";
 import { AuditLogPage, RequireAuditAccess } from "@/modules/audit";
 
+import { StorefrontHomePage } from "@/modules/storefront/pages/StorefrontHomePage";
+import { StorefrontProductsPage } from "@/modules/storefront/pages/StorefrontProductsPage";
+import { StorefrontProductPage } from "@/modules/storefront/pages/StorefrontProductPage";
+
 /**
  * ALYQ Cloud POS — application root.
  * HashRouter keeps deep links working from any static host (including the
  * single-file production build).
  *
- * Routing (Authentication phase) has exactly two branches:
- *   /login   public — rendered outside the shell, with no module providers
- *            mounted, so nothing loads business data before a session exists;
- *   *        everything else — `RequireAuth` first, then the module providers
- *            and the shell. The shell's `RouteGuard` then applies the
- *            role → screen capability table, and `/audit` adds its own copy.
+ * Routing (Authentication phase) has three branches:
+ *   /login     public — rendered outside the shell, with no module providers
+ *              mounted, so nothing loads business data before a session exists;
+ *   /store/*   public — customer-facing storefront, no auth required;
+ *   *          everything else — `RequireAuth` first, then the module providers
+ *              and the shell. The shell's `RouteGuard` then applies the
+ *              role → screen capability table, and `/audit` adds its own copy.
  */
 export default function App() {
   return (
@@ -56,7 +61,11 @@ export default function App() {
         <ToastProvider>
           <HashRouter>
             <Routes>
+              <Route path="/" element={<Navigate to="/store" replace />} />
               <Route path="/login" element={<LoginRoute />} />
+              <Route path="/store" element={<StorefrontHomePage />} />
+              <Route path="/store/products" element={<StorefrontProductsPage />} />
+              <Route path="/store/products/:id" element={<StorefrontProductPage />} />
               <Route path="*" element={<AuthenticatedApp />} />
             </Routes>
           </HashRouter>

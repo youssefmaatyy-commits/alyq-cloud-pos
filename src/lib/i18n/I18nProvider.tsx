@@ -109,7 +109,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     (value: number | null | undefined) => {
       const amount = typeof value === "number" && Number.isFinite(value) ? value : 0;
       const locale = lang === "ar" ? "ar-EG" : "en-US";
-      const currency = (import.meta.env.VITE_CURRENCY || "SAR").toUpperCase();
+      const currency = (import.meta.env.VITE_CURRENCY || "EGP").toUpperCase();
       try {
         return new Intl.NumberFormat(locale, {
           style: "currency",

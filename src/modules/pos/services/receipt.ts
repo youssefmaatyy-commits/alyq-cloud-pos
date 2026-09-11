@@ -1,6 +1,7 @@
 import { encodeCode128, barcodeToSvgString, escapeXml } from "./barcodeHelpers";
 import { round2 } from "./posMath";
 import type { Sale } from "../types";
+import alyqLogoUrl from "@/assets/alyq-logo.png";
 
 /**
  * Printable receipt builders — ALYQ boutique edition.
@@ -15,9 +16,9 @@ import type { Sale } from "../types";
  * - scannable: Code 128 symbol sized to fit 58mm media, never mirrored in RTL
  */
 
-/** Official ALYQ logo file. Place the attached artwork at `public/alyq-logo.png`
- *  (exact name, unmodified — the receipt only resizes it for print). */
-export const RECEIPT_LOGO_SRC = "/alyq-logo.png";
+/** Official ALYQ logo — imported as a Vite asset so the singlefile build
+ *  inlines it as a data URL (works offline / in standalone HTML). */
+export const RECEIPT_LOGO_SRC = alyqLogoUrl;
 
 /** Contact footer — English labels exactly as specified by the brand. */
 export const RECEIPT_CONTACTS = [

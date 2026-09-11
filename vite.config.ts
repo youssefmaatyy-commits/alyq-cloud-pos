@@ -11,9 +11,17 @@ const __dirname = path.dirname(__filename);
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), tailwindcss(), viteSingleFile()],
+  server: {
+    allowedHosts: true,
+  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "src"),
     },
+  },
+  build: {
+    // Inline the ALYQ logo as a data URL so the singlefile plugin produces
+    // a fully self-contained HTML document.
+    assetsInlineLimit: 100_000,
   },
 });

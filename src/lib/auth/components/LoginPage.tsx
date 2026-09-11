@@ -6,6 +6,7 @@ import { DEMO_CREDENTIAL_HINT, DEMO_PASSWORD } from "../demoUsers";
 import { useAuth } from "../hooks/AuthProvider";
 import { resolveNextTarget } from "./RequireAuth";
 import type { AuthErrorCode } from "../types";
+import alyqLogoUrl from "@/assets/alyq-logo.png";
 
 /**
  * Login screen.
@@ -56,7 +57,7 @@ export function LoginPage() {
       <div className="w-full max-w-md">
         <div className="mb-5 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <img src="/alyq-logo.png" alt="" className="h-10 w-10 rounded-xl" />
+            <img src={alyqLogoUrl} alt="" className="h-10 w-10 rounded-xl" />
             <div>
               <p className="text-sm font-bold text-slate-900">{t("app.name")}</p>
               <p className="text-[11px] font-medium text-slate-600">{t("app.tagline")}</p>

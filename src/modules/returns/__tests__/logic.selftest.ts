@@ -283,6 +283,121 @@ test("search original sale invoices by invoice number, customer name, phone, dat
   assert.equal(byFutureDate.length, 0, "future date filter correctly returns no sales");
 });
 
+// ── Returns & Customer reports ─────────────────────────────────────────────
+
+console.log("\nPhase 7 · returns & customer reports");
+
+await (async () => {
+  const { computeCustomerAnalytics, computeReturnsAnalytics } = await import(
+    "../services/returnsReports"
+  );
+  type Customer = { id: string; name: string; phone: string; address: string | null; notes: string | null; created_at: string; updated_at: string };
+
+  function cust(id: string, name: string): Customer {
+    return { id, name, phone: "0100000000", address: null, notes: null, created_at: "2026-01-01", updated_at: "2026-01-01" };
+  }
+
+  function mkSale(id: string, customerId: string | null, total: number, status: "completed" | "voided" = "completed"): Sale {
+    return {
+      id, sale_number: `INV-${id}`, client_ref: `ref-${id}`, status,
+      subtotal: total, discount_type: "none", discount_value: 0, discount_amount: 0, total,
+      user_id: "u1", user_name: "Cashier", items: [], payments: [],
+      customer_id: customerId, created_at: "2026-09-10T12:00:00Z",
+      voided_at: null, void_reason: null, payment_method: "cash", payment_status: "paid",
+      amount_received: total, change: 0, paid_at: "2026-09-10", paid_by: "u1", paid_by_name: "Cashier",
+    } as Sale;
+  }
+
+  test("customer analytics: empty data", () => {
+    const report = computeCustomerAnalytics([], [], []);
+    assert.equal(report.activeCustomers, 0);
+    assert.equal(report.totalRevenue, 0);
+  });
+
+  test("customer analytics: computes per-customer totals", () => {
+    const customers = [cust("c1", "Alice"), cust("c2", "Bob")];
+    const sales = [
+      mkSale("s1", "c1", 100),
+      mkSale("s2", "c1", 200),
+      mkSale("s3", "c2", 50),
+    ];
+    const report = computeCustomerAnalytics(customers, sales, []);
+    assert.equal(report.activeCustomers, 2);
+    assert.equal(report.totalRevenue, 350);
+    const alice = report.customers.find((c) => c.customer_id === "c1")!;
+    assert.equal(alice.totalSpent, 300);
+    assert.equal(alice.totalPurchases, 2);
+    assert.equal(alice.averageOrderValue, 150);
+  });
+
+  test("customer analytics: voided sales excluded", () => {
+    const customers = [cust("c1", "Alice")];
+    const sales = [mkSale("s1", "c1", 100), mkSale("s2", "c1", 500, "voided")];
+    const report = computeCustomerAnalytics(customers, sales, []);
+    const alice = report.customers[0];
+    assert.equal(alice.totalSpent, 100);
+    assert.equal(alice.totalPurchases, 1);
+  });
+
+  test("customer analytics: returns deducted from net", () => {
+    const customers = [cust("c1", "Alice")];
+    const sales = [mkSale("s1", "c1", 100)];
+    const returns = [{
+      id: "r1", return_number: "RET-1", sale_id: "s1", sale_number: "INV-s1",
+      customer_id: "c1", customer_name: "Alice", reason: "test",
+      refund_amount: 30, refund_method: "cash", refund_status: "completed",
+      user_id: "u1", user_name: "Cashier", items: [], created_at: "2026-09-10",
+    }];
+    const report = computeCustomerAnalytics(customers, sales, returns as any);
+    assert.equal(report.customers[0].netSpent, 70);
+    assert.equal(report.totalRefunded, 30);
+  });
+
+  test("customer analytics: top N customers", () => {
+    const customers = [cust("c1", "A"), cust("c2", "B"), cust("c3", "C")];
+    const sales = [mkSale("s1", "c1", 100), mkSale("s2", "c2", 300), mkSale("s3", "c3", 200)];
+    const report = computeCustomerAnalytics(customers, sales, [], 2);
+    assert.equal(report.topCustomers.length, 2);
+    assert.equal(report.topCustomers[0].name, "B"); // highest spender
+  });
+
+  test("returns analytics: empty data", () => {
+    const report = computeReturnsAnalytics([], []);
+    assert.equal(report.totalReturns, 0);
+    assert.equal(report.totalRefundAmount, 0);
+  });
+
+  test("returns analytics: aggregates by method", () => {
+    const refunds = [
+      { id: "r1", refund_number: "REF-1", sale_id: "s1", sale_number: "INV-1", return_id: null, amount: 50, payment_method: "cash", status: "completed", reason: null, user_id: "u1", user_name: "Cashier", created_at: "2026-09-10" },
+      { id: "r2", refund_number: "REF-2", sale_id: "s2", sale_number: "INV-2", return_id: null, amount: 30, payment_method: "visa", status: "pending", reason: null, user_id: "u1", user_name: "Cashier", created_at: "2026-09-10" },
+    ];
+    const report = computeReturnsAnalytics([], refunds as any);
+    const cash = report.byMethod.find((m) => m.method === "cash")!;
+    assert.equal(cash.completedAmount, 50);
+    const visa = report.byMethod.find((m) => m.method === "visa")!;
+    assert.equal(visa.pendingAmount, 30);
+    assert.equal(report.pendingRefunds, 1);
+  });
+
+  test("returns analytics: most returned products", () => {
+    const returns = [{
+      id: "r1", return_number: "RET-1", sale_id: "s1", sale_number: "INV-1",
+      customer_id: null, customer_name: null, reason: "test",
+      refund_amount: 100, refund_method: "cash", refund_status: "completed",
+      user_id: "u1", user_name: "Cashier",
+      items: [
+        { id: "i1", return_id: "r1", sale_item_id: "si1", product_id: "p1", name_ar: "", name_en: "Coffee", sku: "C-1", barcode: null, unit_price: 10, quantity: 3, line_total: 30 },
+        { id: "i2", return_id: "r1", sale_item_id: "si2", product_id: "p2", name_ar: "", name_en: "Tea", sku: "T-1", barcode: null, unit_price: 5, quantity: 1, line_total: 5 },
+      ],
+      created_at: "2026-09-10T12:00:00Z",
+    }];
+    const report = computeReturnsAnalytics(returns as any, []);
+    assert.equal(report.topReturnedProducts[0].name_en, "Coffee");
+    assert.equal(report.topReturnedProducts[0].totalReturned, 3);
+  });
+})();
+
 // runner — sequential so each test sees a consistent in-memory catalog
 let passed = 0;
 async function main(): Promise<void> {

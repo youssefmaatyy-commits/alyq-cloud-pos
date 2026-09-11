@@ -515,7 +515,7 @@ test("barcode label HTML contains name, SKU, barcode and price", () => {
       nameEn: "Arabic Coffee",
       sku: "ALYQ-1001",
       barcode: "ALYQ-1001",
-      price: "SAR 32.50",
+      price: "EGP 32.50",
       copies: 2,
       direction: "rtl",
     },
@@ -530,7 +530,7 @@ test("barcode label HTML contains name, SKU, barcode and price", () => {
   assert.ok(html.includes("قهوة عربية"), "Arabic name present");
   assert.ok(html.includes("Arabic Coffee"), "English name present");
   assert.ok(html.includes("ALYQ-1001"), "SKU present");
-  assert.ok(html.includes("SAR 32.50"), "price present");
+  assert.ok(html.includes("EGP 32.50"), "price present");
   assert.ok(html.includes("<svg"), "barcode symbol embedded");
   assert.ok(html.includes('dir="rtl"'), "RTL direction honoured");
   assert.equal(html.split('class="label"').length - 1, 2, "renders the requested copies");
@@ -674,6 +674,120 @@ async function main(): Promise<void> {
       await repo.deleteCategory(created.id);
       const cats = await repo.listCategories();
       assert.ok(!cats.some((c) => c.id === created.id));
+    });
+  })();
+
+  // ── Excel/CSV import ─────────────────────────────────────────────────────
+
+  await (async () => {
+    const { parseCsv, buildColumnMap, importProductsFromCsv, resolveCategoryIds } = await import(
+      "@/modules/products/services/excelImport"
+    );
+
+    test("parseCsv: basic comma-separated values", () => {
+      const rows = parseCsv("a,b,c\n1,2,3\n4,5,6");
+      assert.equal(rows.length, 3);
+      assert.deepEqual(rows[0], ["a", "b", "c"]);
+      assert.deepEqual(rows[1], ["1", "2", "3"]);
+    });
+
+    test("parseCsv: quoted fields with commas", () => {
+      const rows = parseCsv('name,desc\n"Hello, World","A ""quoted"" thing"');
+      assert.equal(rows[1][0], "Hello, World");
+      assert.equal(rows[1][1], 'A "quoted" thing');
+    });
+
+    test("parseCsv: embedded newlines in quoted fields", () => {
+      const rows = parseCsv('a,b\n"line1\nline2",c');
+      assert.equal(rows.length, 2);
+      assert.equal(rows[1][0], "line1\nline2");
+      assert.equal(rows[1][1], "c");
+    });
+
+    test("parseCsv: strips BOM", () => {
+      const rows = parseCsv("\uFEFFa,b\n1,2");
+      assert.equal(rows[0][0], "a");
+    });
+
+    test("parseCsv: handles Windows line endings", () => {
+      const rows = parseCsv("a,b\r\n1,2\r\n3,4");
+      assert.equal(rows.length, 3);
+    });
+
+    test("buildColumnMap: matches English headers", () => {
+      const map = buildColumnMap(["SKU", "Name", "Price", "Cost", "Stock"]);
+      assert.equal(map["0"], "sku");
+      assert.equal(map["1"], "name_en");
+      assert.equal(map["2"], "selling_price");
+      assert.equal(map["3"], "cost_price");
+      assert.equal(map["4"], "stock_quantity");
+    });
+
+    test("buildColumnMap: matches Arabic headers", () => {
+      const map = buildColumnMap(["كود", "الاسم", "السعر", "الكمية"]);
+      assert.equal(map["0"], "sku");
+      assert.equal(map["1"], "name_ar");
+      assert.equal(map["2"], "selling_price");
+      assert.equal(map["3"], "stock_quantity");
+    });
+
+    test("importProductsFromCsv: valid rows parsed correctly", () => {
+      const csv = "SKU,Name,Price,Cost,Stock\nALYQ-001,Coffee,32.50,15.00,10\nALYQ-002,Tea,25.00,10.00,20";
+      const result = importProductsFromCsv(csv);
+      assert.equal(result.totalRows, 2);
+      assert.equal(result.validRows.length, 2);
+      assert.equal(result.invalidRows.length, 0);
+      assert.equal(result.validRows[0].data.sku, "ALYQ-001");
+      assert.equal(result.validRows[0].data.selling_price, 32.50);
+      assert.equal(result.validRows[0].data.cost_price, 15.00);
+      assert.equal(result.validRows[0].data.stock_quantity, 10);
+      assert.equal(result.validRows[1].data.sku, "ALYQ-002");
+    });
+
+    test("importProductsFromCsv: missing SKU flagged as error", () => {
+      const csv = "SKU,Name,Price\n,Coffee,32.50";
+      const result = importProductsFromCsv(csv);
+      assert.equal(result.invalidRows.length, 1);
+      assert.equal(result.invalidRows[0].errors[0].code, "required");
+    });
+
+    test("importProductsFromCsv: duplicate SKU within file", () => {
+      const csv = "SKU,Name,Price\nDUP-1,Coffee,10\nDUP-1,Tea,20";
+      const result = importProductsFromCsv(csv);
+      assert.equal(result.validRows.length, 1);
+      assert.equal(result.invalidRows.length, 1);
+      assert.ok(result.invalidRows[0].errors.some((e) => e.code === "duplicateSku"));
+    });
+
+    test("importProductsFromCsv: negative price rejected", () => {
+      const csv = "SKU,Name,Price\nX-1,Coffee,-5";
+      const result = importProductsFromCsv(csv);
+      assert.equal(result.invalidRows.length, 1);
+      assert.ok(result.invalidRows[0].errors.some((e) => e.code === "nonnegative"));
+    });
+
+    test("importProductsFromCsv: empty file", () => {
+      const result = importProductsFromCsv("");
+      assert.equal(result.totalRows, 0);
+      assert.ok(result.globalErrors.length > 0);
+    });
+
+    test("resolveCategoryIds: matches by name", () => {
+      const csv = "SKU,Name,Price,Category\nX-1,Coffee,10,Beverages";
+      const result = importProductsFromCsv(csv);
+      const resolved = resolveCategoryIds(
+        result.validRows,
+        [{ id: "cat-1", name_ar: "مشروبات", name_en: "Beverages" }],
+        null,
+      );
+      assert.equal(resolved[0].data.category_id, "cat-1");
+    });
+
+    test("resolveCategoryIds: falls back to default", () => {
+      const csv = "SKU,Name,Price,Category\nX-1,Coffee,10,Unknown";
+      const result = importProductsFromCsv(csv);
+      const resolved = resolveCategoryIds(result.validRows, [], "default-cat");
+      assert.equal(resolved[0].data.category_id, "default-cat");
     });
   })();
 

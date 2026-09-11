@@ -86,9 +86,10 @@ export function paymentsRemaining(total: number, payments: { amount: number }[])
 /**
  * Smart split-payment calculation.
  *
- * Given the sale total, the cash tendered and the InstaPay amount, it derives
+ * Given the sale total and up to three payment methods, it derives
  * the authoritative distribution:
- *   - cash is applied first (capped by total minus InstaPay)
+ *   - visa is applied first (always paid, no change)
+ *   - cash is applied next (capped by total minus visa and InstaPay)
  *   - InstaPay is clamped so the total is never exceeded
  *   - `change` is the cash over its applied portion (cash-only overpayment)
  *   - `remaining` is what's still unpaid and must be zero before completing
@@ -99,6 +100,7 @@ export interface SmartPayment {
   cashApplied: number;
   cashTendered: number;
   instapay: number;
+  visa: number;
   paid: number;
   remaining: number;
   change: number;
@@ -108,14 +110,21 @@ export function smartPaymentCalc(
   total: number,
   cashTendered: number,
   instapay: number,
+  visa: number = 0,
 ): SmartPayment {
   const t = round2(Math.max(0, total));
   const cash = round2(Math.max(0, cashTendered));
   const insta = round2(Math.max(0, instapay));
+  const visaAmt = round2(Math.min(Math.max(0, visa), t));
 
-  const cashApplied = round2(Math.max(0, Math.min(cash, t - insta)));
-  const instaApplied = round2(Math.min(insta, t - cashApplied));
-  const paid = round2(cashApplied + instaApplied);
+  // Visa is applied first (always paid, no change).
+  const visaApplied = visaAmt;
+  const afterVisa = round2(t - visaApplied);
+
+  // Cash is applied next, capped by what's left after visa and instapay.
+  const cashApplied = round2(Math.max(0, Math.min(cash, afterVisa - insta)));
+  const instaApplied = round2(Math.min(insta, afterVisa - cashApplied));
+  const paid = round2(cashApplied + instaApplied + visaApplied);
   const remaining = round2(t - paid);
   const change = round2(cash - cashApplied);
 
@@ -123,6 +132,7 @@ export function smartPaymentCalc(
     cashApplied,
     cashTendered: cash,
     instapay: instaApplied,
+    visa: visaApplied,
     paid,
     remaining,
     change,

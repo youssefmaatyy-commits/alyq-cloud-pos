@@ -128,7 +128,7 @@ No component, guard or permission helper knows which one is active.
 
 | Suite | Command | Result |
 | --- | --- | --- |
-| Authentication logic (17) | `npx esbuild src/lib/auth/__tests__/auth.selftest.ts --bundle --format=esm --platform=node --outfile=/tmp/alyq-auth.mjs --define:import.meta.env='{"VITE_CURRENCY":"SAR"}' && node /tmp/alyq-auth.mjs` | 17/17 |
+| Authentication logic (17) | `npx esbuild src/lib/auth/__tests__/auth.selftest.ts --bundle --format=esm --platform=node --outfile=/tmp/alyq-auth.mjs --define:import.meta.env='{"VITE_CURRENCY":"EGP"}' && node /tmp/alyq-auth.mjs` | 17/17 |
 | Role model (12) | same pattern on `src/lib/permissions/__tests__/roles.selftest.ts` | 12/12 |
 | Phase 8 shifts (17) | same pattern on `src/modules/shifts/__tests__/logic.selftest.ts` | 17/17 |
 | POS (34) / Returns (9) / Products (36) | same pattern per module | green |

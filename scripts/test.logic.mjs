@@ -63,7 +63,7 @@ const DEFINE = {
   // Supabase client). Node ESM has no such property, so it is inlined the same
   // way the documented `npx esbuild --define:import.meta.env=…` recipe does.
   "import.meta.env": JSON.stringify({
-    VITE_CURRENCY: process.env.VITE_CURRENCY ?? "SAR",
+    VITE_CURRENCY: process.env.VITE_CURRENCY ?? "EGP",
       // Passed through when present, so the same suites can run against a real
     // project (the CI `live` job). Absent → the app takes its demo path.
     ...(process.env.VITE_SUPABASE_URL ? { VITE_SUPABASE_URL: process.env.VITE_SUPABASE_URL } : {}),
@@ -98,7 +98,7 @@ for (const suite of suites) {
       platform: "node",
       target: "node20",
       define: DEFINE,
-      loader: { ".css": "empty" },
+      loader: { ".css": "empty", ".png": "dataurl", ".jpg": "dataurl", ".jpeg": "dataurl", ".svg": "dataurl" },
       logLevel: "silent",
     });
   } catch (error) {

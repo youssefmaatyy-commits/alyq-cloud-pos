@@ -11,7 +11,7 @@
  * reversing stock movement).
  */
 
-export const PAYMENT_METHODS = ["cash", "instapay"] as const;
+export const PAYMENT_METHODS = ["cash", "instapay", "visa"] as const;
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 
 /** `completed` = paid & stock deducted · `pending` = InstaPay awaiting confirmation · `voided` = reversed. */

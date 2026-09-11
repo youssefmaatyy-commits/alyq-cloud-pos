@@ -29,7 +29,7 @@ cp .env.example .env
 ```ini
 VITE_SUPABASE_URL=https://<ref>.supabase.co
 VITE_SUPABASE_ANON_KEY=<anon-key>
-VITE_CURRENCY=SAR
+VITE_CURRENCY=EGP
 ```
 
 Vite inlines `VITE_*` at **build** time. Two consequences that catch people out:

@@ -12,7 +12,7 @@
  * Build the bundle first:
  *   npx esbuild src/main.tsx --bundle --format=esm --platform=node \
  *     --outfile=/tmp/alyq-app.mjs --loader:.css=empty \
- *     --define:import.meta.env='{"VITE_CURRENCY":"SAR"}'
+ *     --define:import.meta.env='{"VITE_CURRENCY":"EGP"}'
  *   node scripts/smoke.dom.mjs
  */
 import { JSDOM } from "jsdom";

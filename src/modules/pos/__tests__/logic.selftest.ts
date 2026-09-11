@@ -32,6 +32,7 @@ import {
   buildReturnReceiptHtml,
   customerInfoIssue,
   paymentMethodDisplayName,
+  RECEIPT_LOGO_SRC,
 } from "../services/receipt";
 import { salesReceiptStrings, returnReceiptStrings } from "../services/receiptStrings";
 import { en, ar } from "@/lib/i18n/dictionary";
@@ -683,7 +684,7 @@ test("receipt branding: logo, boutique header, paid/remaining/change, contacts",
   const html = buildReceiptHtml({ sale, direction: "ltr", strings });
 
   // brand block: official logo file (centered, fixed print size) + wordmark + tagline
-  assert.ok(html.includes('src="/alyq-logo.png"'), "official logo referenced");
+  assert.ok(html.includes(RECEIPT_LOGO_SRC), "official logo referenced");
   assert.ok(html.includes('class="logo"'), "logo has print sizing class");
   assert.ok(html.includes("ALYQ | أَلِيق"), "bilingual wordmark shown");
   assert.ok(html.includes("Inspired by you"), "tagline shown");
@@ -1017,7 +1018,7 @@ test("return receipt reuses the shared design and carries return + invoice data"
   });
 
   // same shared shell/design as the sales receipt
-  assert.ok(html.includes('src="/alyq-logo.png"'), "official logo referenced");
+  assert.ok(html.includes(RECEIPT_LOGO_SRC), "official logo referenced");
   assert.ok(html.includes("ALYQ | أَلِيق"), "boutique wordmark shown");
   assert.ok(html.includes("Inspired by you"), "tagline shown");
   assert.ok(html.includes("max-width: 76mm"), "same thermal layout");

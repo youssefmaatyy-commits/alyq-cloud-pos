@@ -62,7 +62,7 @@ try {
     target: "node20",
     define: {
       "import.meta.env": JSON.stringify({
-        VITE_CURRENCY: process.env.VITE_CURRENCY ?? "SAR",
+        VITE_CURRENCY: process.env.VITE_CURRENCY ?? "EGP",
       // Passed through when present, so the same suites can run against a real
         // project (the CI `live` job). Absent → the app takes its demo path.
         ...(process.env.VITE_SUPABASE_URL ? { VITE_SUPABASE_URL: process.env.VITE_SUPABASE_URL } : {}),
