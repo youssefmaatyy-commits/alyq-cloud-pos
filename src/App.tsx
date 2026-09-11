@@ -61,7 +61,7 @@ export default function App() {
         <ToastProvider>
           <HashRouter>
             <Routes>
-              <Route path="/" element={<Navigate to="/store" replace />} />
+              <Route path="/" element={<Navigate to="/login" replace />} />
               <Route path="/login" element={<LoginRoute />} />
               <Route path="/store" element={<StorefrontHomePage />} />
               <Route path="/store/products" element={<StorefrontProductsPage />} />

@@ -75,7 +75,15 @@ try {
         SSR: false,
       }),
     },
-    loader: { ".css": "empty" },
+    loader: {
+      ".css": "empty",
+      ".png": "dataurl",
+      ".jpg": "dataurl",
+      ".jpeg": "dataurl",
+      ".gif": "dataurl",
+      ".svg": "dataurl",
+      ".webp": "dataurl",
+    },
     logLevel: "silent",
   });
 } catch (error) {
