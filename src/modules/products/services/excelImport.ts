@@ -476,3 +476,70 @@ export function resolveCategoryIds(
     };
   });
 }
+
+/**
+ * Import products from a File object (Excel or CSV).
+ */
+export async function importProductsFromFile(file: File): Promise<ImportResult> {
+  const text = await file.text();
+  return importProductsFromCsv(text);
+}
+
+/**
+ * Generate an Excel template for product import.
+ * Returns a buffer containing the Excel file data.
+ */
+export async function generateExcelTemplate(): Promise<ArrayBuffer> {
+  // Dynamic import to avoid loading xlsx in the main bundle
+  const XLSX = await import("xlsx");
+  
+  const templateData = [
+    [
+      "Product Name (Arabic)",
+      "Product Name (English)",
+      "SKU",
+      "Barcode",
+      "Category",
+      "Cost Price",
+      "Selling Price",
+      "Stock Quantity",
+      "Stock Tracking Enabled",
+      "Unit",
+    ],
+    [
+      "منتج مثال",
+      "Example Product",
+      "SKU-001",
+      "1234567890123",
+      "Electronics",
+      "50.00",
+      "100.00",
+      "10",
+      "true",
+      "piece",
+    ],
+  ];
+
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.aoa_to_sheet(templateData);
+  
+  // Set column widths
+  ws["!cols"] = [
+    { wch: 25 }, // Product Name (Arabic)
+    { wch: 25 }, // Product Name (English)
+    { wch: 15 }, // SKU
+    { wch: 20 }, // Barcode
+    { wch: 20 }, // Category
+    { wch: 12 }, // Cost Price
+    { wch: 12 }, // Selling Price
+    { wch: 15 }, // Stock Quantity
+    { wch: 20 }, // Stock Tracking Enabled
+    { wch: 15 }, // Unit
+  ];
+
+  XLSX.utils.book_append_sheet(wb, ws, "Products Template");
+  
+  // Write to buffer
+  const buffer = XLSX.write(wb, { type: "array", bookType: "xlsx" });
+  return buffer;
+}
