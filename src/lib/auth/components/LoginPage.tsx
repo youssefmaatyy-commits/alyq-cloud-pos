@@ -47,8 +47,15 @@ export function LoginPage() {
     setSubmitted(true);
     if (!username.trim() || !password) return;
     setSubmitting(true);
-    await signIn({ username, password, remember });
-    setSubmitting(false);
+    try {
+      await signIn({ username, password, remember });
+    } finally {
+      // Cleared on every path, not just the happy one. A refused credential is
+      // handled inside `signIn` and shown on the form; anything that *rejects*
+      // used to leave this button spinning forever with no message — and this is
+      // the one screen where a wedged control means nobody can get in at all.
+      setSubmitting(false);
+    }
   }
 
   return (

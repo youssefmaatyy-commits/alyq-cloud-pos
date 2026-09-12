@@ -299,7 +299,7 @@ export function RankBars({ rows, color = CHART_COLORS[4] }: { rows: RankBarRow[]
               />
             </svg>
           </span>
-          <span className="w-24 shrink-0 text-right text-[11px] font-bold tabular-nums text-slate-900">
+          <span className="w-24 shrink-0 text-end text-[11px] font-bold tabular-nums text-slate-900">
             {row.hint ?? String(row.value)}
           </span>
         </li>

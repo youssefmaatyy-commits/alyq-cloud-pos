@@ -429,7 +429,7 @@ export function DashboardPage() {
                 {snapshot.openShift.branch || "—"} · {snapshot.openShift.opened_by_name}
               </p>
             </div>
-            <div className="flex flex-wrap gap-4 text-right">
+            <div className="flex flex-wrap gap-4 text-end">
               <div>
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                   {t("dashboard.cashSales")}
@@ -498,7 +498,7 @@ export function DashboardPage() {
                     </p>
                   </div>
                 </div>
-                <div className="text-right shrink-0">
+                <div className="text-end shrink-0">
                   <p className="text-sm font-bold text-slate-900">{money(sale.total)}</p>
                   <Badge
                     tone={sale.status === "completed" ? "success" : "warning"}

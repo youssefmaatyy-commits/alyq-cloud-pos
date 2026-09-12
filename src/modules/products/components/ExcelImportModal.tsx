@@ -385,10 +385,10 @@ export function ExcelImportModal({
                   <table className="w-full text-xs">
                     <thead className="sticky top-0 bg-emerald-100">
                       <tr>
-                        <th className="px-2 py-1 text-left">{t("import.sku")}</th>
-                        <th className="px-2 py-1 text-left">{t("import.name")}</th>
-                        <th className="px-2 py-1 text-right">{t("import.price")}</th>
-                        <th className="px-2 py-1 text-right">{t("import.stock")}</th>
+                        <th className="px-2 py-1 text-start">{t("import.sku")}</th>
+                        <th className="px-2 py-1 text-start">{t("import.name")}</th>
+                        <th className="px-2 py-1 text-end">{t("import.price")}</th>
+                        <th className="px-2 py-1 text-end">{t("import.stock")}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -396,8 +396,8 @@ export function ExcelImportModal({
                         <tr key={row.row} className="border-b border-emerald-200">
                           <td className="px-2 py-1 font-mono">{row.data._sku}</td>
                           <td className="px-2 py-1">{pick(row.data.name_ar ?? "", row.data.name_en ?? "")}</td>
-                          <td className="px-2 py-1 text-right">{row.data.selling_price}</td>
-                          <td className="px-2 py-1 text-right">{row.data.stock_quantity}</td>
+                          <td className="px-2 py-1 text-end">{row.data.selling_price}</td>
+                          <td className="px-2 py-1 text-end">{row.data.stock_quantity}</td>
                         </tr>
                       ))}
                     </tbody>
