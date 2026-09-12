@@ -306,3 +306,58 @@ npm run db:check -- --driver=psql --url="$DATABASE_URL" --verify-only   # deploy
   it silently runs in demo mode. Treat "Supabase unreachable → app still boots"
   as a feature of the codebase but a misconfiguration in production: check the
   deployment's environment before releasing.
+
+## 9. Backups and recovery in production
+
+Migration `0029_backup_and_recovery.sql` adds a `backups` table and the functions
+the panel calls. Nothing else in the release depends on a scheduler, so the app is
+deployable without one — but without one, "automatic" means "the first time an
+admin opens **Settings → Backup & recovery** after a snapshot falls due".
+
+**Take the automatic schedule seriously.** `public.automatic_backup_if_due()` takes
+a snapshot when the stored policy says one is due, applies retention, and writes
+the audit entry. It is idempotent and safe to call often. Schedule it with pg_cron
+(or any external scheduler) rather than relying on an admin opening the panel:
+
+```sql
+create extension if not exists pg_cron with schema pg_catalog;
+select cron.schedule(
+  'alyq-backup',
+  '17 3 * * *',                 -- 03:17 daily; the function itself decides
+  $$select public.automatic_backup_if_due()$$   -- whether a snapshot is due
+);
+```
+
+Run it as a role that passes `public.can('create_backup')` — the function refuses
+otherwise, which is the point. A weekly policy is honoured by the same daily call:
+the function reads the stored settings and skips the days the policy does not want.
+
+**Who may do what.** All five capabilities are admin-only by default except
+`view_backups`, `create_backup` and `run_health_check`, which a manager also holds.
+`restore_backup` and `export_backup` are admin-only through the role matrix — grant
+them in the Permission Builder if an installation wants a second person able to
+recover it, and understand that a backup file contains the user directory and the
+audit trail, not just the catalogue.
+
+**Restoring.** Settings → Backup & recovery → *Restore* on a snapshot, or *Restore
+from a file* for one downloaded earlier. It requires typing `RESTORE`, validates
+the document (format, schema version, mode, every table present, non-empty, and the
+md5 the database took) and refuses a document from the other mode — an offline JSON
+file cannot be poured into the live database, nor the reverse. Before anything is
+deleted it stores a `pre_restore` snapshot of the current state, so the restore can
+itself be undone by restoring that row. The audit log is carried by a snapshot but
+never rewritten by a restore: it is append-only evidence, enforced by
+`audit_log_enforce_invariants` and by the `audit_log_no_update` policy.
+
+**Off-database copies.** *Download* (`export_backup`) hands an admin a JSON file,
+and *Export everything* builds one workbook of the business as it stands using the
+same builders as every other export. Keep the downloaded files somewhere this
+database cannot reach: a snapshot stored only in the database it protects is not a
+backup. Retention never deletes a snapshot somebody took by hand, nor the newest
+`pre_restore`.
+
+**Before a risky migration.** Take a manual snapshot first — it is the fastest way
+back if a migration and the application disagree. `npm run db:check` verifies that
+all 29 migrations apply cleanly, are idempotent, and still match the app's row
+types, role grants, audit vocabulary and seed; run it in CI on every change to
+`supabase/migrations/`.

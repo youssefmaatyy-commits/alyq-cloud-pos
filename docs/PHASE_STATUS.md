@@ -634,3 +634,95 @@ Deliberately not done, and why:
   is the thing under test), and the settings suite has always stubbed it. Fixing the older suite
   means giving it the same stub and re-checking 12 assertions that have never actually run
   authorised, which is a change of its own rather than a rider on this one.
+
+## Verification snapshot after Phase 20
+
+Phases 18 (backup, recovery and data safety, commit `71409fc`), 19 (full system QA
+and hardening, `59928b9`) and 20 (production readiness) are the first three phases
+that added no new selling surface: they protect the installation, prove what is
+already there, and document it. The numbers below are the ones taken at the end of
+phase 20.
+
+| Check | Result |
+| --- | --- |
+| `npm run typecheck` | clean — and the EN/AR dictionary is 2793 keys on both sides, with no key on one side only and none that translates to nothing |
+| `npm run build` | green — single self-contained HTML document, 2,434.65 kB (652.09 kB gzip) |
+| `npm test` | 24/24 suites — including 28/28 Phase 18 backup and recovery, 24/24 Phase 17 access control, 6/6 Phase 19 system-QA invariants, 27/27 settings, 15/15 role model, 12/12 enforcement |
+| `npm run db:check` | migrations 0001–0029 apply, are idempotent, and match the app's row types, its role model (5 roles, 139 grants), the audit vocabulary (55 actions over 16 entities) and the seed — plus behaviour probes for the custom-role overlay, per-user exceptions and the customer-book gate |
+| `npm run test:e2e` | 4/4 suites — smoke, auth, store, and the 9-step backup/recovery flow · 0 console errors · 0 network calls |
+
+### What phase 18 added
+
+A snapshot of the whole installation in both modes the app runs in. Offline it is
+a JSON document in this browser's storage; live, migration 0029 builds it inside
+one statement, in foreign-key order, with the database's own md5 over the payload.
+Restore is admin-only through the matrix, needs a typed word and exactly one
+source, validates format/version/mode/completeness/checksum before touching
+anything, and first snapshots the state it is about to replace — so rollback is a
+row in the list (`pre_restore`) rather than a promise. The audit log is carried by
+a snapshot but never rewritten by a restore. Five capabilities
+(`view_backups`, `create_backup`, `restore_backup`, `export_backup`,
+`run_health_check`) sit in a new Data safety group; a manager may protect the
+installation and may not replace it or carry it out. The emergency export reuses
+the existing workbook builders and the existing `export_data` capability — there is
+no second export engine.
+
+It also fixed a routing bug the acceptance flow could not work around:
+`<Route path="/settings">` had no splat, so React Router never handed it a deeper
+path and every settings URL — Users, Roles, Approval rules — fell through to the
+catch-all and landed on the dashboard.
+
+### What phase 19 found and fixed
+
+Two defects, both medium, both fixed and both pinned by a new invariant suite
+(`src/lib/qa/__tests__/systemQa.selftest.ts`): the login form cleared its busy flag
+only on the success path, so a rejection wedged the Sign in button forever; and
+nine physical alignment utilities (`text-left`/`text-right`) did not flip in Arabic
+against an app that uses logical utilities in 258 other places. The suite also
+holds dictionary parity and sidebar-to-route parity, and each invariant was
+mutation-tested — reintroducing either defect fails it by file and line.
+
+Everything else came back hardened: dates are local-calendar everywhere so no day
+boundary drifts; self-lockout is refused on the client and in SQL for all three
+vectors; the audit log is append-only by trigger and by policy; `recordAudit`
+cannot break the act it records; no console output carries a token, password or
+session; and the client only ever holds the Supabase anon key.
+
+### What phase 20 reviewed and deliberately left alone
+
+* `src/main.tsx` keeps its five-line boot trace, and `receipt.ts` keeps two
+  `[receipt-print]` diagnostics. None carries sensitive data, and the print path
+  fails silently in the field (popup blockers), so the breadcrumbs are worth more
+  than the quiet. The boot trace is also retained by explicit instruction.
+* `importOpeningStock` is reachable only from its tests, and 348 dictionary keys
+  are declared but unreferenced. Both are recorded rather than deleted: the parser
+  is exercised and correct, and deleting keys risks breaking a dynamic lookup for
+  no user-visible gain.
+* The single-file build inlines the dynamic `xlsx` import — one 2,259 kB script, no
+  external references — so its bytes ship and parse at first paint although it only
+  executes when an export runs. Splitting it would mean giving up the single-file
+  deliverable, which is a deployment decision rather than an optimisation.
+* `view_cost` is enforced in the screen and the service, but in live mode
+  `cost_price` rides along on a row the reader may already select: Postgres
+  row-level security has no column-level equivalent. Closing it needs a cost-free
+  view and a client that reads it.
+
+### Known limitations carried into production
+
+1. There are no `suppliers` or `purchases` tables in this schema, so neither can be
+   backed up or reported on. Payments are covered through `sale_payments`.
+2. Offline snapshots live in the browser's own storage: another device is another
+   installation, and the storage quota is a real ceiling (detected and reported, not
+   extended).
+3. Offline automatic backups fire the first time an admin opens the panel after one
+   falls due — a browser has no background job. Live mode exposes
+   `public.automatic_backup_if_due()`, but scheduling it needs pg_cron or an
+   external scheduler, which a migration cannot install. See
+   [`DEPLOYMENT.md`](DEPLOYMENT.md) §9.
+4. A live restore is one transaction; an offline restore can fail partway and cannot
+   undo itself, so it names the `pre_restore` snapshot that can.
+5. Backup files are plain JSON, not encrypted. They contain users and the audit
+   trail, which is why `export_backup` is admin-only.
+6. Schema compatibility is a single version number. A future version needs an
+   explicit upgrade path; today a mismatch is refused rather than guessed at.
+7. The data-health report diagnoses and never repairs, by design.
