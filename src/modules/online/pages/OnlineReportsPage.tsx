@@ -16,9 +16,9 @@
  * the stock ledger draws.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { canActAs } from "@/lib/permissions/enforce";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { useAuth } from "@/lib/auth";
-import { hasCapability } from "@/lib/permissions/roles";
 import { useCatalog } from "@/modules/products";
 import { PageHeader } from "@/components/layout/AppShell";
 import {
@@ -62,7 +62,7 @@ export function OnlineReportsPage() {
   const { products } = useCatalog();
   const ordersRepository = useMemo(() => getOnlineOrdersRepository(), []);
   const websiteRepository = useMemo(() => getWebsiteRepository(), []);
-  const canManage = hasCapability(user?.role, "manage_online_orders");
+  const canManage = canActAs(user, "manage_online_orders");
 
   const [orders, setOrders] = useState<OnlineOrder[]>([]);
   const [loading, setLoading] = useState(true);

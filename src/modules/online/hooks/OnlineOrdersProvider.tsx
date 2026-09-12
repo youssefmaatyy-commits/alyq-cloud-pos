@@ -22,8 +22,8 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { canActAs } from "@/lib/permissions/enforce";
 import { useAuth } from "@/lib/auth";
-import { hasCapability } from "@/lib/permissions/roles";
 import { getCurrentUser } from "@/modules/inventory/permissions";
 import type { Product } from "@/modules/products/types";
 import { getDemoRepository } from "@/modules/products/data/demoRepository";
@@ -112,11 +112,11 @@ export function OnlineOrdersProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const canManage = hasCapability(user?.role, "manage_online_orders");
+  const canManage = canActAs(user, "manage_online_orders");
   // Unwinding an approved order voids its sale and restores the stock, so it
   // needs the same authority as voiding at the till.
-  const canVoidSale = hasCapability(user?.role, "void_sale");
-  const canVerifyPayment = hasCapability(user?.role, "confirm_payment");
+  const canVoidSale = canActAs(user, "void_sale");
+  const canVerifyPayment = canActAs(user, "confirm_payment");
 
   const actor = useMemo(() => getCurrentUser(), [user]);
 

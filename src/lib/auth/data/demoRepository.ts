@@ -33,6 +33,8 @@ import type {
   AuthUserSummary,
   LiveSessionInfo,
   PasswordUpdateResult,
+  RecoveryLinkParts,
+  RecoveryLinkResult,
   UserRepository,
 } from "./repository";
 import type { AuthUser, PasswordResetOutcome } from "../types";
@@ -137,6 +139,18 @@ export class DemoUserRepository implements UserRepository {
     // account exists, so the form cannot be used to enumerate the directory; the
     // screen explains what to do instead (ask an admin, who can reset it here).
     return { ok: true, channel: "demo" };
+  }
+
+  /**
+   * Offline there is no email and therefore no link: the only recovery path is a
+   * person who is already signed in changing their own password (or an admin
+   * resetting it from Settings → Users). Anything else is reported as
+   * unauthenticated rather than pretending a link was consumed.
+   */
+  async consumeRecoveryLink(_parts: RecoveryLinkParts): Promise<RecoveryLinkResult> {
+    void _parts;
+    const session = getCachedSession() ?? readStoredSession()?.session ?? null;
+    return session ? { ok: true } : { ok: false, code: "not_authenticated" };
   }
 
   async updatePassword(newPassword: string): Promise<PasswordUpdateResult> {

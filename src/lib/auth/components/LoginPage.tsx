@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Navigate, useSearchParams } from "react-router-dom";
+import { Link, Navigate, useSearchParams } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { Button, Card, Field, GlobeIcon, TextInput } from "@/components/ui";
 import { DEMO_CREDENTIAL_HINT, DEMO_PASSWORD } from "../demoUsers";
@@ -155,6 +155,15 @@ export function LoginPage() {
             <Button type="submit" className="w-full" disabled={submitting}>
               {submitting ? t("auth.signingIn") : t("auth.signIn")}
             </Button>
+
+            {/* Recovery is offered on the screen where its absence is felt. It is
+                a link rather than a button so the flow's "click Sign in" step
+                still finds exactly one sign-in control. */}
+            <p className="text-center text-xs font-semibold">
+              <Link to="/forgot-password" className="text-indigo-700 underline-offset-2 hover:underline">
+                {t("auth.forgot.link")}
+              </Link>
+            </p>
           </form>
 
           {mode === "demo" ? (
@@ -189,5 +198,10 @@ function errorMessage(
   if (code === "missing_username") return t("auth.error.usernameRequired");
   if (code === "missing_password") return t("auth.error.passwordRequired");
   if (code === "network") return t("auth.error.network");
+  // A deactivated account is told the truth: "incorrect password" would send the
+  // person back to a form that can never succeed, and to a manager who cannot
+  // work out why. It reveals only that the account exists and is switched off,
+  // which an employee is entitled to know about their own.
+  if (code === "user_inactive") return t("auth.error.user_inactive");
   return t("auth.error.invalid");
 }

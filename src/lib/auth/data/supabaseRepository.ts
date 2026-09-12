@@ -25,6 +25,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseClient } from "@/lib/supabase/client";
 import { buildAuthUser, usernameToEmail } from "../services/identity";
+import { recoveryParams } from "../services/recoveryUrl";
 import { getCachedSession, readStoredSession } from "../services/sessionStore";
 import type { AuthUser, PasswordResetOutcome } from "../types";
 import type {
@@ -33,6 +34,8 @@ import type {
   AuthUserSummary,
   LiveSessionInfo,
   PasswordUpdateResult,
+  RecoveryLinkParts,
+  RecoveryLinkResult,
   UserRepository,
 } from "./repository";
 
@@ -292,13 +295,72 @@ export class SupabaseUserRepository implements UserRepository {
       const { error } = await this.client().auth.resetPasswordForEmail(usernameToEmail(handle), {
         redirectTo,
       });
-      if (error) return { ok: false, code: "network" };
+      if (error) {
+        // Throttling is worth naming: "try again in a minute" is a different
+        // instruction from "we cannot reach the server".
+        const message = `${error.message ?? ""}`.toLowerCase();
+        if (message.includes("rate limit") || message.includes("too many") || message.includes("60 seconds")) {
+          return { ok: false, code: "rate_limited" };
+        }
+        return { ok: false, code: "network" };
+      }
     } catch {
       return { ok: false, code: "network" };
     }
     // Supabase answers the same way whether or not the address exists, and so
     // does this: the screen says "if that account exists, a link is on its way".
     return { ok: true, channel: "email" };
+  }
+
+  /**
+   * Consume a recovery link.
+   *
+   * Both of Supabase's flows are handled, because which one arrives depends on
+   * the project's auth configuration rather than on this app: PKCE gives a
+   * `?code=` to exchange, the implicit flow gives an access and refresh token in
+   * the fragment. Either way the result is the same — a session the provider
+   * recognises as "this person proved control of their inbox" — and only then may
+   * `updatePassword` be called.
+   *
+   * Everything that can go wrong (expired, already used, tampered with) is
+   * reported as `expired`, because that is the only useful thing to tell someone
+   * standing on a reset page: ask for a new link.
+   */
+  async consumeRecoveryLink(parts: RecoveryLinkParts): Promise<RecoveryLinkResult> {
+    const client = this.client();
+    const params = recoveryParams(parts);
+
+    const code = params.get("code");
+    const accessToken = params.get("access_token");
+    const refreshToken = params.get("refresh_token");
+
+    if (!code && !(accessToken && refreshToken)) {
+      // No recovery material in the URL: fall back to whatever session the
+      // provider already holds, which covers a link followed in a browser that
+      // was signed in all along.
+      const existing = await this.currentSession().catch(() => null);
+      return existing ? { ok: true } : { ok: false, code: "not_authenticated" };
+    }
+
+    try {
+      if (code) {
+        const { error } = await client.auth.exchangeCodeForSession(code);
+        if (error) return { ok: false, code: "expired" };
+      } else {
+        const { error } = await client.auth.setSession({
+          access_token: accessToken as string,
+          refresh_token: refreshToken as string,
+        });
+        if (error) return { ok: false, code: "expired" };
+      }
+    } catch {
+      return { ok: false, code: "network" };
+    }
+
+    // A token is not an identity: the profile still has to exist and be active,
+    // or a deactivated account could reset its way back in.
+    const session = await this.currentSession().catch(() => null);
+    return session?.user ? { ok: true } : { ok: false, code: "expired" };
   }
 
   async updatePassword(newPassword: string): Promise<PasswordUpdateResult> {

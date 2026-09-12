@@ -94,6 +94,38 @@ export function assertCapability(capability: Capability, message?: string): void
   );
 }
 
+/**
+ * Capability check that tolerates the legacy `user` argument.
+ *
+ * The module permission helpers (`canCompleteSale`, `canAdjustStock`, …) were
+ * written when a role was the whole story, so they take a user object that
+ * carries only `role`. The session now carries the *resolved* capability list —
+ * custom role included — and it describes the same person, so the argument is
+ * acknowledged and the session decides.
+ *
+ * Routing every one of those helpers through here is what makes a custom role
+ * reach the whole app at once: without it, an "Accountant" role could be denied
+ * the register in the database and still see an enabled Void button, because the
+ * button asked the system matrix instead of the session.
+ */
+export function canActAs(user: unknown, capability: Capability): boolean {
+  const identity = user as (Pick<AuthUser, "role" | "capabilities"> & { id?: string }) | null | undefined;
+  if (!identity) return canAct(capability);
+
+  // The object a module helper is handed describes the same person as the
+  // session, but it predates custom roles: it carries `role` and not the resolved
+  // capability list. When the ids match, the session is the better-informed
+  // source, so it decides — that is what makes an "Accountant" overlay actually
+  // remove the Void button instead of leaving it enabled.
+  const session = actingUser();
+  if (identity.id && session.id && identity.id === session.id) return canAct(capability);
+
+  // Any other identity (a fixture, a row being reported on, a signed-out caller)
+  // is answered from what it carries: its resolved list if it has one, otherwise
+  // the system matrix for its role. Pure, and fail-closed for an empty role.
+  return userCan(identity, capability);
+}
+
 /** Refuse unless the acting user holds *every* capability listed. */
 export function assertAllCapabilities(capabilities: readonly Capability[], message?: string): void {
   for (const capability of capabilities) assertCapability(capability, message);

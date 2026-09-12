@@ -64,6 +64,21 @@ export type AuthChangeEvent =
 
 export type PasswordUpdateResult = { ok: true } | { ok: false; code: PasswordResetErrorCode };
 
+/**
+ * The part of the URL a reset email landed on.
+ *
+ * Supabase appends recovery material either as a query (`?code=…`, PKCE) or as a
+ * fragment (`#access_token=…&type=recovery`, implicit flow). This app routes on
+ * the *hash*, so both shapes have to be handed over and parsed by the repository
+ * rather than assumed by a page.
+ */
+export interface RecoveryLinkParts {
+  search: string;
+  hash: string;
+}
+
+export type RecoveryLinkResult = { ok: true } | { ok: false; code: PasswordResetErrorCode };
+
 export interface UserRepository {
   readonly kind: "demo" | "supabase";
 
@@ -95,6 +110,13 @@ export interface UserRepository {
 
   /** Self-service "I forgot my password". */
   requestPasswordReset(identifier: string, redirectTo?: string): Promise<PasswordResetOutcome>;
+
+  /**
+   * Turn a reset link into a usable session, so `updatePassword` has something to
+   * act on. Demo mode has no links to consume: it succeeds only when a session
+   * already exists, which is the self-service change case.
+   */
+  consumeRecoveryLink(parts: RecoveryLinkParts): Promise<RecoveryLinkResult>;
 
   /** Set a new password on the signed-in (or recovering) session. */
   updatePassword(newPassword: string): Promise<PasswordUpdateResult>;

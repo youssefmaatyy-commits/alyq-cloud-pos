@@ -99,11 +99,42 @@ export type PasswordResetErrorCode =
   | "not_configured"
   | "weak_password"
   | "not_authenticated"
+  /**
+   * A recovery link that expired, was already used, or does not parse. All three
+   * report the same code on purpose: the only action anyone can take is "ask for
+   * a new link", and distinguishing them would tell a stranger how close they got.
+   */
+  | "expired"
+  /** Supabase throttles reset requests; "try again in a minute" is the honest answer. */
+  | "rate_limited"
   | "unknown";
 
 export type PasswordResetOutcome =
   | { ok: true; /** Demo mode has no mail server, so it says what it did instead. */ channel: "email" | "demo" }
   | { ok: false; code: PasswordResetErrorCode };
+
+/**
+ * Password policy vocabulary.
+ *
+ * It lives with the auth model rather than in the settings module because three
+ * different screens apply it: an admin creating an account, an admin resetting
+ * one, and a person following a reset link. Sharing one rule set is the point —
+ * the alternative is three slightly different bars, and the weakest becomes the
+ * real policy.
+ */
+export type PasswordRuleKey = "length" | "letter" | "digit" | "not_username" | "not_common";
+
+export interface PasswordRuleResult {
+  key: PasswordRuleKey;
+  ok: boolean;
+}
+
+export interface PasswordVerdict {
+  ok: boolean;
+  /** How many of the rules passed — the strength meter's input. */
+  score: number;
+  rules: PasswordRuleResult[];
+}
 
 export class AuthError extends Error {
   readonly code: AuthErrorCode;

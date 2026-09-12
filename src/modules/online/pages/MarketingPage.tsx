@@ -15,9 +15,9 @@
  * themselves pay.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { canActAs } from "@/lib/permissions/enforce";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { useAuth } from "@/lib/auth";
-import { hasCapability } from "@/lib/permissions/roles";
 import { useCatalog } from "@/modules/products";
 import { PageHeader } from "@/components/layout/AppShell";
 import {
@@ -54,7 +54,7 @@ export function MarketingPage() {
   const { user } = useAuth();
   const { products } = useCatalog();
   const repository = useMemo(() => getWebsiteRepository(), []);
-  const canManage = hasCapability(user?.role, "manage_website");
+  const canManage = canActAs(user, "manage_website");
 
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [coupons, setCoupons] = useState<Coupon[]>([]);

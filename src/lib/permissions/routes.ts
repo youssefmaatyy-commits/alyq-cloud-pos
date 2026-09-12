@@ -42,6 +42,15 @@ export const ROUTE_CAPABILITIES: ReadonlyArray<readonly [string, Capability]> = 
   ["/online/marketing", "manage_website"],
   ["/online/content", "manage_website"],
   ["/audit", "view_audit_log"],
+  // Settings (Phase 10). Three capabilities rather than one, so a role can be
+  // given the area without being given the directory inside it: `manage_settings`
+  // opens the hub, `manage_users` the accounts, `manage_roles` the permission
+  // model itself. Longest prefix wins, so an admin (who holds all three) reaches
+  // every screen and a hypothetical "HR only" role could be given users but not
+  // roles. Each is also asserted again in `modules/settings/services`.
+  ["/settings/users", "manage_users"],
+  ["/settings/roles", "manage_roles"],
+  ["/settings", "manage_settings"],
 ];
 
 /**

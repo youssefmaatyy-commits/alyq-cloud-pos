@@ -16,9 +16,9 @@
  * able to repaint the shop.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { canActAs } from "@/lib/permissions/enforce";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { useAuth } from "@/lib/auth";
-import { hasCapability } from "@/lib/permissions/roles";
 import { getCurrentUser } from "@/modules/inventory/permissions";
 import { useCatalog } from "@/modules/products";
 import { PageHeader } from "@/components/layout/AppShell";
@@ -112,7 +112,7 @@ export function WebsiteSettingsPage() {
   const { user } = useAuth();
   const { products } = useCatalog();
   const repository = useMemo(() => getWebsiteRepository(), []);
-  const canManage = hasCapability(user?.role, "manage_website");
+  const canManage = canActAs(user, "manage_website");
 
   const [saved, setSaved] = useState<WebsiteSettings | null>(null);
   const [draft, setDraft] = useState<WebsiteSettings | null>(null);

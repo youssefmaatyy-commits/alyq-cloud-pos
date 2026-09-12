@@ -26,15 +26,22 @@
  * rather than at the next reload.
  */
 import { getUserRepository, getAuthMode } from "../data";
+import { staffEntryToAuthUser } from "../data/demoRepository";
+import { findStaffById } from "../data/staffDirectory";
 import type {
   AuthErrorCode,
   AuthSession,
   AuthUser,
   Credentials,
+  PasswordResetErrorCode,
   PasswordResetOutcome,
   SessionEndReason,
 } from "../types";
-import type { LiveSessionInfo, PasswordUpdateResult } from "../data/repository";
+import type {
+  LiveSessionInfo,
+  PasswordUpdateResult,
+  RecoveryLinkParts,
+} from "../data/repository";
 import {
   clearStoredSession,
   getCachedSession,
@@ -316,6 +323,80 @@ export function forgetSession(): void {
   clearStoredSession();
 }
 
+/** Do two identities differ in any way a permission check would notice? */
+function identityChanged(previous: AuthUser, next: AuthUser): boolean {
+  if (previous.role !== next.role) return true;
+  if (previous.custom_role_id !== next.custom_role_id) return true;
+  if (previous.active !== next.active) return true;
+  if (previous.name !== next.name) return true;
+  if (previous.email !== next.email || previous.phone !== next.phone) return true;
+  if (previous.capabilities.length !== next.capabilities.length) return true;
+  return previous.capabilities.some((capability, index) => capability !== next.capabilities[index]);
+}
+
+/**
+ * Re-resolve the signed-in identity from the source of truth.
+ *
+ * Needed because an administrator can change somebody's authority while that
+ * person is signed in — in another tab, or on another machine. Without this, the
+ * answer to "can this cashier still void a sale?" would be whatever their session
+ * happened to contain when they signed in, which is exactly the stale-permission
+ * bug a role system must not have.
+ *
+ *   live : ask the provider, which re-reads `profiles` and `custom_roles`;
+ *   demo : rebuild from the staff directory and the custom-role store.
+ *
+ * A deactivated or vanished account ends the session here, so the change takes
+ * effect at the next heartbeat (≤ 60 s) rather than at the next reload.
+ */
+export async function resyncCurrentIdentity(now: Date = new Date()): Promise<{
+  session: AuthSession | null;
+  changed: boolean;
+  signedOut: boolean;
+}> {
+  const current = getCachedSession() ?? readStoredSession()?.session ?? null;
+  if (!current) return { session: null, changed: false, signedOut: false };
+  const persistence = readStoredSession()?.persistence ?? (current.remember ? "local" : "session");
+
+  if (getAuthMode() === "supabase") {
+    try {
+      const live = await getUserRepository().currentSession();
+      if (!live || !live.user || live.user.active === false) {
+        clearStoredSession();
+        return { session: null, changed: true, signedOut: true };
+      }
+      const next = sessionFromProvider(live, current.remember, now);
+      const changed = identityChanged(current.user, next.user) || next.token !== current.token;
+      writeStoredSession(next, persistence);
+      return { session: next, changed, signedOut: false };
+    } catch {
+      // Offline or provider error: keep what we have and try again later.
+      return { session: current, changed: false, signedOut: false };
+    }
+  }
+
+  const entry = findStaffById(current.user.id);
+  if (!entry || !entry.active) {
+    clearStoredSession();
+    return { session: null, changed: true, signedOut: true };
+  }
+  const user = staffEntryToAuthUser(entry);
+  if (!user.role) {
+    clearStoredSession();
+    return { session: null, changed: true, signedOut: true };
+  }
+  if (!identityChanged(current.user, user)) return { session: current, changed: false, signedOut: false };
+
+  const next: AuthSession = {
+    ...current,
+    // Keep the sign-in timestamp this browser observed: the absolute cap and the
+    // "last login" column both describe the session, not the identity edit.
+    user: { ...user, last_login_at: current.user.last_login_at ?? user.last_login_at },
+  };
+  writeStoredSession(next, persistence);
+  return { session: next, changed: true, signedOut: false };
+}
+
 /** True when a usable session exists right now. */
 export function hasActiveSession(now: Date = new Date()): boolean {
   const session = getCachedSession() ?? readStoredSession()?.session ?? null;
@@ -357,6 +438,33 @@ export async function updatePassword(newPassword: string): Promise<PasswordUpdat
   } catch {
     return { ok: false, code: "network" };
   }
+}
+
+/**
+ * Follow a reset link: exchange whatever the provider put in the URL for a
+ * session, then adopt it so the rest of the app sees a signed-in person who may
+ * set a new password.
+ *
+ * Called once, by the reset page, before it renders the form.
+ */
+export async function consumePasswordRecoveryLink(
+  parts: RecoveryLinkParts,
+): Promise<{ ok: true; session: AuthSession | null } | { ok: false; code: PasswordResetErrorCode }> {
+  const repository = getUserRepository();
+  let result;
+  try {
+    result = await repository.consumeRecoveryLink(parts);
+  } catch {
+    return { ok: false, code: "network" };
+  }
+  if (!result.ok) return result;
+
+  if (repository.kind === "supabase") {
+    const live = await repository.currentSession().catch(() => null);
+    if (live?.user) return { ok: true, session: adoptProviderSession(live, false) };
+    return { ok: true, session: getCachedSession() ?? readStoredSession()?.session ?? null };
+  }
+  return { ok: true, session: getCachedSession() ?? readStoredSession()?.session ?? null };
 }
 
 /**

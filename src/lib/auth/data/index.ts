@@ -24,6 +24,8 @@ export type {
   AuthChangeEvent,
   LiveSessionInfo,
   PasswordUpdateResult,
+  RecoveryLinkParts,
+  RecoveryLinkResult,
 } from "./repository";
 
 /** Test seam: drop the repository singletons so the next call re-reads state. */

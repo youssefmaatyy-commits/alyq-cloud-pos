@@ -2,7 +2,9 @@ import type { ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { Button, Card, EmptyState } from "@/components/ui";
-import { ROLE_LABELS, hasCapability } from "@/lib/permissions/roles";
+import { ROLE_LABELS } from "@/lib/permissions/roles";
+import { canAct } from "@/lib/permissions/enforce";
+import { getCurrentAuthUser } from "@/lib/auth/services/sessionStore";
 import { capabilityForPath, isSelfGuardedPath } from "@/lib/permissions/routes";
 import { useInventory } from "@/modules/inventory/hooks/InventoryProvider";
 
@@ -31,9 +33,16 @@ export function RouteGuard({ children }: { children: ReactNode }) {
   if (isSelfGuardedPath(location.pathname)) return <>{children}</>;
 
   const required = capabilityForPath(location.pathname);
-  if (!required || hasCapability(user.role, required)) return <>{children}</>;
+  // The session's *resolved* capabilities, not the system matrix: a custom role
+  // replaces the matrix, so asking the role alone would deny a screen the
+  // database grants (and offer one it refuses).
+  if (!required || canAct(required)) return <>{children}</>;
 
-  const roleLabel = ROLE_LABELS[user.role as keyof typeof ROLE_LABELS] ?? user.role;
+  // Named after what the person actually is. An accountant wearing a custom role
+  // should read "Accountant cannot open this screen", not "Manager cannot…".
+  const session = getCurrentAuthUser();
+  const roleLabel =
+    session.custom_role_name || ROLE_LABELS[user.role as keyof typeof ROLE_LABELS] || user.role;
 
   return (
     <Card>

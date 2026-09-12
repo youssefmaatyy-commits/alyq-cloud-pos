@@ -247,13 +247,20 @@ export function draftFromSystemRole(role: AppRole, keyHint?: string): CustomRole
  * anyone wants on a Tuesday. Each is a draft, never a seeded row: an admin
  * creates the ones they want, edits them, and owns them.
  */
+/**
+ * Starting points, not seeded rows.
+ *
+ * They exist because "build a role from nothing" is not what an administrator
+ * actually wants to do at 9am: the Roles screen offers these as one-click drafts,
+ * and nothing is stored until the form is saved.
+ */
 export const CUSTOM_ROLE_PRESETS: readonly {
   presetKey: string;
   name_en: string;
   name_ar: string;
   base_role: AppRole;
   capabilities: Capability[];
-}[] = [
+}[] = ([
   {
     presetKey: "sales_manager",
     name_en: "Sales Manager",
@@ -324,4 +331,10 @@ export const CUSTOM_ROLE_PRESETS: readonly {
     base_role: "inventory_clerk",
     capabilities: ["view_inventory", "adjust_stock", "import_data", "export_data"],
   },
-];
+] as const).map((preset) => ({
+  ...preset,
+  // Canonical order, so a role created from a preset is identical to the same
+  // role built by hand — which is what makes the audit log's capability strings
+  // comparable, and two equal roles compare equal in the picker.
+  capabilities: sanitizeCapabilities(preset.capabilities),
+}));

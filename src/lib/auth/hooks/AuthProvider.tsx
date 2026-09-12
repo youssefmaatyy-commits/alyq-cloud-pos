@@ -21,6 +21,7 @@ import {
   adoptProviderSession,
   forgetSession,
   revalidateSession,
+  resyncCurrentIdentity,
   restoreSession,
   signIn as signInRequest,
   signOut as signOutRequest,
@@ -52,8 +53,8 @@ export interface AuthContextValue {
   clearError: () => void;
   /** Re-check expiry now (used by tests and by the route guard). */
   revalidate: () => void;
-  /** Self-service password recovery. */
-  requestPasswordReset: (identifier: string) => Promise<PasswordResetOutcome>;
+  /** Self-service password recovery. `redirectTo` is where the link lands. */
+  requestPasswordReset: (identifier: string, redirectTo?: string) => Promise<PasswordResetOutcome>;
   /** Set a new password on the current (or recovering) session. */
   updatePassword: (password: string) => Promise<PasswordUpdateResult>;
   /** True while a provider session is being read back on boot. */
@@ -194,10 +195,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     window.addEventListener("popstate", onNavigate);
     document.addEventListener("visibilitychange", onVisible);
     const timer = window.setInterval(revalidate, HEARTBEAT_MS);
+    // Identity is re-resolved on focus as well as expiry: coming back to a tab
+    // left open overnight is exactly when a role change should apply.
+    const resync = () => {
+      if (document.visibilityState === "hidden") return;
+      void (async () => {
+        const { session: next, changed, signedOut } = await resyncCurrentIdentity();
+        if (signedOut || !next) {
+          setSession(null);
+          setStatus("anonymous");
+          setEndReason("signed_out");
+          return;
+        }
+        if (changed) setSession(next);
+      })();
+    };
+    window.addEventListener("focus", resync);
     return () => {
       window.removeEventListener("hashchange", onNavigate);
       window.removeEventListener("popstate", onNavigate);
       document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", resync);
       window.clearInterval(timer);
     };
   }, [status, revalidate]);
@@ -245,6 +263,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setStatus("anonymous");
           setEndReason("signed_out");
         }
+        return;
+      }
+
+      if (event.kind === "session_changed") {
+        // Somebody's authority changed — an admin edited a role, deactivated an
+        // account, or reset a password in another tab. Re-resolve this session's
+        // identity from the source of truth instead of keeping a stale capability
+        // list, and end the session if the account no longer may use it.
+        void (async () => {
+          const { session: next, changed, signedOut } = await resyncCurrentIdentity();
+          if (signedOut || !next) {
+            setSession(null);
+            setStatus("anonymous");
+            setEndReason("signed_out");
+            return;
+          }
+          if (changed) setSession(next);
+        })();
       }
     });
 
@@ -305,8 +341,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
   }, [session]);
 
-  const requestPasswordReset = useCallback(async (identifier: string) => {
-    const outcome = await requestResetRequest(identifier);
+  const requestPasswordReset = useCallback(async (identifier: string, redirectTo?: string) => {
+    const outcome = await requestResetRequest(identifier, redirectTo);
     if (outcome.ok) {
       void recordAudit({
         action: "user.password_reset_requested",

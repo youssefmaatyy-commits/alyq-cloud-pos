@@ -11,7 +11,8 @@
  * the checks below delegate to it.
  */
 import { getCurrentAuthUser } from "@/lib/auth/services/sessionStore";
-import { hasCapability, type AppRole } from "@/lib/permissions/roles";
+import { canActAs } from "@/lib/permissions/enforce";
+import { type AppRole } from "@/lib/permissions/roles";
 
 /** The canonical role type (kept under the historic name for call sites). */
 export type InventoryRole = AppRole;
@@ -60,12 +61,12 @@ export function setCurrentUser(): never {
 
 /** True when the current user is allowed to create stock movements. */
 export function canAdjustStock(user: InventoryUser = getCurrentUser()): boolean {
-  return hasCapability(user?.role, "adjust_stock");
+  return canActAs(user, "adjust_stock");
 }
 
 /** True when the current user is allowed to read stock + movement history. */
 export function canViewInventory(user: InventoryUser = getCurrentUser()): boolean {
-  return hasCapability(user?.role, "view_inventory");
+  return canActAs(user, "view_inventory");
 }
 
 /** All roles, ordered (labels come from the canonical model). */

@@ -37,6 +37,7 @@ interface StubOptions {
   signInError?: { message: string } | null;
   session?: Record<string, unknown> | null;
   refreshError?: { message: string } | null;
+  exchangeError?: { message: string } | null;
   resetError?: { message: string } | null;
   updateError?: { message: string } | null;
   rpcError?: { message: string } | null;
@@ -186,6 +187,18 @@ function makeStub(options: StubOptions = {}) {
         calls.push(`signOut:${scope ?? "local"}`);
         signOutScopes.push(scope ?? "local");
         return { error: null };
+      },
+      exchangeCodeForSession: async (code: string) => {
+        calls.push(`exchangeCodeForSession:${code}`);
+        maybeThrow("exchangeCodeForSession");
+        if (options.exchangeError) return { data: null, error: options.exchangeError };
+        return { data: { session }, error: null };
+      },
+      setSession: async ({ access_token }: { access_token: string; refresh_token: string }) => {
+        calls.push(`setSession:${access_token}`);
+        maybeThrow("setSession");
+        if (options.exchangeError) return { data: null, error: options.exchangeError };
+        return { data: { session }, error: null };
       },
       resetPasswordForEmail: async (email: string, opts?: { redirectTo?: string }) => {
         resetCalls.push({ email, redirectTo: opts?.redirectTo });
@@ -376,17 +389,81 @@ test("an unknown address answers exactly like a known one (no enumeration oracle
   assert.deepEqual(await repository.requestPasswordReset("not an address!"), { ok: false, code: "invalid_email" });
 });
 
-test("a provider or network failure during a reset request is reported as a network failure", async () => {
-  const errored = makeStub({ resetError: { message: "rate limit" } });
-  assert.deepEqual(
-    await new SupabaseUserRepository(errored.client).requestPasswordReset("admin"),
-    { ok: false, code: "network" },
-  );
+test("throttling is named, and anything else is a network failure", async () => {
+  // "Try again in a minute" and "we cannot reach the server" are different
+  // instructions, so they are different codes.
+  const throttled = makeStub({ resetError: { message: "For security purposes, you can only request this after 60 seconds." } });
+  assert.deepEqual(await new SupabaseUserRepository(throttled.client).requestPasswordReset("admin"), {
+    ok: false,
+    code: "rate_limited",
+  });
+
+  const errored = makeStub({ resetError: { message: "unexpected failure" } });
+  assert.deepEqual(await new SupabaseUserRepository(errored.client).requestPasswordReset("admin"), {
+    ok: false,
+    code: "network",
+  });
 
   const thrown = makeStub({ throwOn: ["resetPasswordForEmail"] });
+  assert.deepEqual(await new SupabaseUserRepository(thrown.client).requestPasswordReset("admin"), {
+    ok: false,
+    code: "network",
+  });
+});
+
+test("a PKCE recovery link is exchanged for a session", async () => {
+  const stub = makeStub();
+  const repository = new SupabaseUserRepository(stub.client);
+
+  const result = await repository.consumeRecoveryLink({ search: "?code=abc123", hash: "#/reset-password" });
+  assert.deepEqual(result, { ok: true });
+  assert.ok(stub.calls.includes("exchangeCodeForSession:abc123"));
+});
+
+test("an implicit-flow recovery link is turned into a session", async () => {
+  const stub = makeStub();
+  const repository = new SupabaseUserRepository(stub.client);
+
+  const result = await repository.consumeRecoveryLink({
+    search: "",
+    hash: "#/reset-password?access_token=tok&refresh_token=ref&type=recovery",
+  });
+  assert.deepEqual(result, { ok: true });
+  assert.ok(stub.calls.includes("setSession:tok"));
+});
+
+test("a link the provider rejects is reported as expired, whatever the reason", async () => {
+  const rejected = makeStub({ exchangeError: { message: "Invalid code" } });
   assert.deepEqual(
-    await new SupabaseUserRepository(thrown.client).requestPasswordReset("admin"),
+    await new SupabaseUserRepository(rejected.client).consumeRecoveryLink({ search: "?code=old", hash: "" }),
+    { ok: false, code: "expired" },
+  );
+
+  const thrown = makeStub({ throwOn: ["exchangeCodeForSession"] });
+  assert.deepEqual(
+    await new SupabaseUserRepository(thrown.client).consumeRecoveryLink({ search: "?code=x", hash: "" }),
     { ok: false, code: "network" },
+  );
+});
+
+test("a reset page with no recovery material is unauthenticated, not expired", async () => {
+  const stub = makeStub({ session: null });
+  assert.deepEqual(
+    await new SupabaseUserRepository(stub.client).consumeRecoveryLink({ search: "", hash: "#/reset-password" }),
+    { ok: false, code: "not_authenticated" },
+  );
+});
+
+test("a recovery token does not resurrect a deactivated account", async () => {
+  const stub = makeStub({ profiles: [] });
+  // A valid-looking implicit link, but no profile behind it: the token is not an
+  // identity, and an account an admin switched off must not reset its way back in.
+  assert.deepEqual(
+    await new SupabaseUserRepository(stub.client).consumeRecoveryLink({
+      search: "",
+      hash: "#access_token=tok&refresh_token=ref&type=recovery",
+    }),
+    { ok: false, code: "expired" },
   );
 });
 

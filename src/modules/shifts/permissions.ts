@@ -1,5 +1,5 @@
 import { getCurrentUser, type InventoryUser } from "@/modules/inventory/permissions";
-import { hasCapability } from "@/lib/permissions/roles";
+import { canActAs } from "@/lib/permissions/enforce";
 
 /**
  * Cashier-shift, expense and audit permission checks (Phase 8).
@@ -18,39 +18,39 @@ import { hasCapability } from "@/lib/permissions/roles";
 
 /** Cashiers, clerks, managers and admins work a till. */
 export function canOpenShift(user: InventoryUser = getCurrentUser()): boolean {
-  return hasCapability(user?.role, "open_shift");
+  return canActAs(user, "open_shift");
 }
 
 /** Whoever opened the shift (or a manager/admin) may close it. */
 export function canCloseShift(user: InventoryUser = getCurrentUser()): boolean {
-  return hasCapability(user?.role, "close_shift");
+  return canActAs(user, "close_shift");
 }
 
 /** Recording a shift expense — same staff tier that runs the till. */
 export function canAddExpense(user: InventoryUser = getCurrentUser()): boolean {
-  return hasCapability(user?.role, "add_expense");
+  return canActAs(user, "add_expense");
 }
 
 /** Editing an existing expense is manager-level; deleting is admin-level. */
 export function canEditExpense(user: InventoryUser = getCurrentUser()): boolean {
-  return hasCapability(user?.role, "edit_expense");
+  return canActAs(user, "edit_expense");
 }
 
 export function canDeleteExpense(user: InventoryUser = getCurrentUser()): boolean {
-  return hasCapability(user?.role, "delete_expense");
+  return canActAs(user, "delete_expense");
 }
 
 /** Reading shift history is allowed for every internal role. */
 export function canViewAllShifts(user: InventoryUser = getCurrentUser()): boolean {
-  return hasCapability(user?.role, "view_shifts");
+  return canActAs(user, "view_shifts");
 }
 
 /** Signing off a cash difference / adjustment — managers and admins only. */
 export function canApproveAdjustment(user: InventoryUser = getCurrentUser()): boolean {
-  return hasCapability(user?.role, "approve_shift_adjustment");
+  return canActAs(user, "approve_shift_adjustment");
 }
 
 /** Reading the audit log is an oversight action — managers and admins. */
 export function canViewAuditLog(user: InventoryUser = getCurrentUser()): boolean {
-  return hasCapability(user?.role, "view_audit_log");
+  return canActAs(user, "view_audit_log");
 }

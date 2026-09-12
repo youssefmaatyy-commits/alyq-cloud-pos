@@ -4,7 +4,8 @@ import { useI18n } from "@/lib/i18n/I18nProvider";
 import { useCatalog } from "@/modules/products/hooks/CatalogProvider";
 import { useInventory } from "@/modules/inventory/hooks/InventoryProvider";
 import { useAuth } from "@/lib/auth";
-import { ROLE_LABELS, hasCapability } from "@/lib/permissions/roles";
+import { ROLE_LABELS } from "@/lib/permissions/roles";
+import { canAct } from "@/lib/permissions/enforce";
 import { capabilityForPath } from "@/lib/permissions/routes";
 import { useOnlineNotificationState } from "@/modules/online/hooks/OnlineNotificationsProvider";
 import { RouteGuard } from "./RouteGuard";
@@ -101,17 +102,24 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // Sidebar visibility follows the signed-in role: an entry is shown only when
   // the same capability table the route guard reads allows the screen.
   const { user } = useInventory();
-  const { signOut, endReason } = useAuth();
+  const { signOut, signOutEverywhere, endReason, user: sessionUser } = useAuth();
   const canOpen = (path: string) => {
     const required = capabilityForPath(path);
-    return !required || hasCapability(user.role, required);
+    // Resolved capabilities (custom roles included), so the sidebar and the
+    // route guard cannot disagree about what this person may open.
+    return !required || canAct(required);
   };
-  const roleLabel = ROLE_LABELS[user.role as keyof typeof ROLE_LABELS] ?? user.role;
+  const canManageOnline = canAct("manage_online_orders");
+  const canManageWebsite = canAct("manage_website");
+  const canManageUsers = canAct("manage_users");
+  const canManageRoles = canAct("manage_roles");
+  // A custom role's name is what the person is called; the system label is the
+  // fallback (and what the matrix calls the base role underneath).
+  const roleLabel =
+    sessionUser?.custom_role_name || ROLE_LABELS[user.role as keyof typeof ROLE_LABELS] || user.role;
   // One poller for the whole shell (see `OnlineNotificationsProvider`): the badge
   // below and the banner on the Online Orders screen read the same counts.
   const online = useOnlineNotificationState();
-  const canManageOnline = hasCapability(user.role, "manage_online_orders");
-  const canManageWebsite = hasCapability(user.role, "manage_website");
   const location = useLocation();
   const [open, setOpen] = useState(false);
 
@@ -226,6 +234,29 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </a>
           </>
         ) : null}
+
+        {/* Settings (Phase 10). Two entries, each behind its own capability:
+            managing accounts and managing the permission model are different
+            authorities, and a role may hold one without the other. */}
+        {canManageUsers || canManageRoles ? (
+          <>
+            <p className="px-3 pb-1 pt-4 text-[10px] font-bold uppercase tracking-widest text-slate-500">
+              {t("nav.settings")}
+            </p>
+            <NavItem
+              to="/settings/users"
+              icon={<UsersIcon />}
+              label={t("nav.settingsUsers")}
+              visible={canOpen("/settings/users")}
+            />
+            <NavItem
+              to="/settings/roles"
+              icon={<ClipboardIcon />}
+              label={t("nav.settingsRoles")}
+              visible={canOpen("/settings/roles")}
+            />
+          </>
+        ) : null}
       </nav>
 
       {/* Signed-in user — the acting role comes from the auth session. */}
@@ -249,6 +280,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         >
           {t("auth.signOut")}
         </button>
+        {mode === "supabase" ? (
+          <button
+            type="button"
+            onClick={() => void signOutEverywhere()}
+            title={t("auth.signOutEverywhereHint")}
+            className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-rose-50 hover:text-rose-700"
+          >
+            {t("auth.signOutEverywhere")}
+          </button>
+        ) : null}
       </div>
 
       <div className="shrink-0 rounded-2xl border border-slate-200 bg-slate-50 p-3">

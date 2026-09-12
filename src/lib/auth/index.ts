@@ -4,6 +4,9 @@ export { AuthProvider, useAuth } from "./hooks/AuthProvider";
 export type { AuthContextValue } from "./hooks/AuthProvider";
 export { LoginRoute, RequireAuth, resolveNextTarget } from "./components/RequireAuth";
 export { LoginPage } from "./components/LoginPage";
+export { ForgotPasswordPage } from "./components/ForgotPasswordPage";
+export { ResetPasswordPage } from "./components/ResetPasswordPage";
+export { PasswordField } from "./components/PasswordField";
 
 export {
   LIVE_REFRESH_AHEAD_MS,
@@ -11,6 +14,7 @@ export {
   SESSION_IDLE_MS,
   SESSION_REMEMBER_IDLE_MS,
   adoptProviderSession,
+  consumePasswordRecoveryLink,
   createSession,
   forgetSession,
   hasActiveSession,
@@ -20,6 +24,7 @@ export {
   passwordResetRedirectUrl,
   revalidateSession,
   requestPasswordReset,
+  resyncCurrentIdentity,
   restoreSession,
   sessionFromProvider,
   signIn,
@@ -49,6 +54,21 @@ export {
   writeStoredSession,
 } from "./services/sessionStore";
 export {
+  MIN_PASSWORD_LENGTH,
+  PASSWORD_RULES,
+  evaluatePassword,
+  passwordRuleLabelKey,
+  passwordVerdictKey,
+} from "./services/passwordPolicy";
+export {
+  isRecoveryRedirect,
+  normalizeRecoveryUrl,
+  readRecoveryParts,
+  recoveryParams,
+  resetPageUrl,
+} from "./services/recoveryUrl";
+export type { LocationLike } from "./services/recoveryUrl";
+export {
   createVerifier,
   fallbackDigest,
   hashStrategy,
@@ -67,6 +87,8 @@ export type {
   AuthChangeEvent,
   LiveSessionInfo,
   PasswordUpdateResult,
+  RecoveryLinkParts,
+  RecoveryLinkResult,
 } from "./data";
 export {
   STAFF_STORAGE_KEY,
@@ -91,6 +113,9 @@ export type {
   Credentials,
   PasswordResetErrorCode,
   PasswordResetOutcome,
+  PasswordRuleKey,
+  PasswordRuleResult,
+  PasswordVerdict,
   SessionEndReason,
   SessionPersistence,
   SignInResult,

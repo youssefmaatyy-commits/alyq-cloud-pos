@@ -1,6 +1,13 @@
 import { HashRouter, Navigate, Route, Routes } from "react-router-dom";
 import { I18nProvider } from "@/lib/i18n/I18nProvider";
-import { AuthProvider, LoginRoute, RequireAuth } from "@/lib/auth";
+import {
+  AuthProvider,
+  ForgotPasswordPage,
+  LoginRoute,
+  RequireAuth,
+  ResetPasswordPage,
+  normalizeRecoveryUrl,
+} from "@/lib/auth";
 import { ToastProvider } from "@/components/ui";
 import { AppShell } from "@/components/layout/AppShell";
 import { CatalogProvider } from "@/modules/products";
@@ -37,6 +44,7 @@ import {
 } from "@/modules/shifts";
 import { AuditLogPage, RequireAuditAccess } from "@/modules/audit";
 import { ReportsPage } from "@/modules/reports";
+import { RolesPage, SettingsProvider, UsersPage } from "@/modules/settings";
 
 import {
   MarketingPage,
@@ -73,6 +81,16 @@ import {
  *              and the shell. The shell's `RouteGuard` then applies the
  *              role → screen capability table, and `/audit` adds its own copy.
  */
+/**
+ * A password-reset link arrives with the provider's tokens in the URL fragment,
+ * which is also where this app's routes live. Rewriting that fragment into
+ * `#/reset-password?…` has to happen before `HashRouter` reads the location, or
+ * the person who followed the link lands on the dashboard with a token nobody
+ * consumed. Once, at module load, and only when the URL really is a provider
+ * redirect.
+ */
+normalizeRecoveryUrl();
+
 export default function App() {
   return (
     <I18nProvider>
@@ -81,6 +99,11 @@ export default function App() {
           <HashRouter>
             <Routes>
               <Route path="/login" element={<LoginRoute />} />
+              {/* Password recovery is public by definition: the person using it
+                  has no session. Like /login, it renders outside the shell so no
+                  module provider loads business data. */}
+              <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+              <Route path="/reset-password" element={<ResetPasswordPage />} />
               <Route path="/store" element={<StorefrontApp />}>
                 <Route index element={<StoreHomePage />} />
                 <Route path="products" element={<StoreProductsPage />} />
@@ -153,6 +176,12 @@ function AuthenticatedApp() {
                                 </RequireAuditAccess>
                               }
                             />
+                            {/* Settings is mounted only here, not app-wide: the
+                                provider reads the account directory, which a
+                                cashier has no business asking for. The route
+                                guard has already refused the path by the time
+                                this renders. */}
+                            <Route path="/settings" element={<SettingsArea />} />
                             <Route path="*" element={<Navigate to="/" replace />} />
                           </Routes>
                         </OnlineOrdersProvider>
@@ -166,5 +195,27 @@ function AuthenticatedApp() {
         </InventoryProvider>
       </CatalogProvider>
     </RequireAuth>
+  );
+}
+
+/**
+ * Settings → Users and Settings → Roles.
+ *
+ * `/settings` itself holds no screen: it forwards to the directory, which is what
+ * an administrator means by "settings" in an installation where the only two
+ * settings screens are people and permissions. Each child carries its own
+ * capability (`manage_users`, `manage_roles`) in `ROUTE_CAPABILITIES`, so a role
+ * can be given one without the other.
+ */
+function SettingsArea() {
+  return (
+    <SettingsProvider>
+      <Routes>
+        <Route index element={<Navigate to="/settings/users" replace />} />
+        <Route path="users" element={<UsersPage />} />
+        <Route path="roles" element={<RolesPage />} />
+        <Route path="*" element={<Navigate to="/settings/users" replace />} />
+      </Routes>
+    </SettingsProvider>
   );
 }

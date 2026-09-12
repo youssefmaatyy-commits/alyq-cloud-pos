@@ -13,8 +13,8 @@
  * with errors nobody can act on.
  */
 import { createContext, useContext, type ReactNode } from "react";
+import { canActAs } from "@/lib/permissions/enforce";
 import { useAuth } from "@/lib/auth";
-import { hasCapability } from "@/lib/permissions/roles";
 import {
   DEFAULT_NOTIFICATION_PREFS,
   EMPTY_NOTIFICATION_STATE,
@@ -37,7 +37,7 @@ export function useOnlineNotificationState(): OnlineNotificationState {
 
 export function OnlineNotificationsProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
-  const enabled = hasCapability(user?.role, "manage_online_orders");
+  const enabled = canActAs(user, "manage_online_orders");
   const state = useOnlineNotifications(enabled);
   return (
     <OnlineNotificationsContext.Provider value={state}>{children}</OnlineNotificationsContext.Provider>

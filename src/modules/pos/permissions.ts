@@ -1,5 +1,5 @@
 import { getCurrentUser, type InventoryUser } from "@/modules/inventory/permissions";
-import { hasCapability } from "@/lib/permissions/roles";
+import { canActAs } from "@/lib/permissions/enforce";
 
 /**
  * POS permission checks.
@@ -17,22 +17,22 @@ import { hasCapability } from "@/lib/permissions/roles";
 
 /** Cashiers, clerks, managers and admins may run sales. Viewers cannot. */
 export function canCompleteSale(user: InventoryUser = getCurrentUser()): boolean {
-  return hasCapability(user?.role, "sell");
+  return canActAs(user, "sell");
 }
 
 /** Discounts are a manager-level action — cashiers sell at full price only. */
 export function canApplyDiscount(user: InventoryUser = getCurrentUser()): boolean {
-  return hasCapability(user?.role, "apply_discount");
+  return canActAs(user, "apply_discount");
 }
 
 /** Voiding a completed sale is restricted to managers / admins. */
 export function canVoidSale(user: InventoryUser = getCurrentUser()): boolean {
-  return hasCapability(user?.role, "void_sale");
+  return canActAs(user, "void_sale");
 }
 
 /** Confirming a pending InstaPay payment uses the same staff tier as selling. */
 export function canConfirmPayment(user: InventoryUser = getCurrentUser()): boolean {
-  return hasCapability(user?.role, "confirm_payment");
+  return canActAs(user, "confirm_payment");
 }
 
 /** Roles the POS role switcher offered (kept for compatibility). */
