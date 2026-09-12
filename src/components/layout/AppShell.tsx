@@ -12,6 +12,7 @@ import { useOptionalApprovals } from "@/modules/approvals";
 import { RouteGuard } from "./RouteGuard";
 import { cn } from "@/utils/cn";
 import {
+  ArchiveIcon,
   BoxIcon,
   ChevronIcon,
   CloseIcon,
@@ -271,7 +272,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {/* Settings (Phase 10). Two entries, each behind its own capability:
             managing accounts and managing the permission model are different
             authorities, and a role may hold one without the other. */}
-        {canManageUsers || canManageRoles || canManageSettings ? (
+        {canManageUsers || canManageRoles || canManageSettings || canOpen("/settings/backup") ? (
           <>
             <p className="px-3 pb-1 pt-4 text-[10px] font-bold uppercase tracking-widest text-slate-500">
               {t("nav.settings")}
@@ -287,6 +288,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               icon={<ClipboardIcon />}
               label={t("nav.settingsRoles")}
               visible={canOpen("/settings/roles")}
+            />
+            <NavItem
+              to="/settings/backup"
+              icon={<ArchiveIcon />}
+              label={t("nav.settingsBackup")}
+              visible={canOpen("/settings/backup")}
             />
             <NavItem
               to="/settings/approvals"

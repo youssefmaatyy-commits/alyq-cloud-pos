@@ -27,6 +27,7 @@ const SUITES = [
   { id: "smoke", file: "scripts/smoke.dom.mjs", title: "DOM smoke (products, inventory, POS, returns, shifts)" },
   { id: "auth", file: "scripts/auth.flow.mjs", title: "Authentication acceptance flow" },
   { id: "store", file: "scripts/store.flow.mjs", title: "Storefront → POS flow (browse, checkout, approve, verify, cancel)" },
+  { id: "backup", file: "scripts/backup.flow.mjs", title: "Backup & recovery flow (snapshot, download, health, schedule, restore, permissions)" },
 ];
 
 const c = {
@@ -45,7 +46,7 @@ try {
 
 const selected = SUITES.filter((s) => FILTERS.length === 0 || FILTERS.includes(s.id));
 if (selected.length === 0) {
-  console.error(c.red(`✗ no suite matched ${FILTERS.join(", ")} (try: smoke, auth, store)`));
+  console.error(c.red(`✗ no suite matched ${FILTERS.join(", ")} (try: smoke, auth, store, backup)`));
   process.exit(1);
 }
 

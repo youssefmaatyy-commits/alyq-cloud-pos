@@ -305,6 +305,245 @@ end
 $$;
 
 -- ═══════════════════════════════════════════════════════════════════════════
+-- Phase 18 — backup & recovery, as the owner: the restore itself.
+--
+-- Before the role switch, because a restore has to be observed doing the only
+-- thing that matters — putting back a row that is gone — and deleting a row
+-- directly needs a privilege `authenticated` does not hold on `customers`. The
+-- capability checks here are still real: `public.can()` reads the identity claim,
+-- not the role, and every function below re-checks it before it acts. What the
+-- authenticated phase after the switch adds is the grant layer — that the
+-- document column cannot be read by naming its table, and that the scheduler's
+-- entry point cannot be reached by a session at all.
+--
+-- This is the only block in the file that deletes data. It puts the row back by
+-- restoring a snapshot taken three statements earlier, which is the assertion:
+-- not "the data survived" but "the restore brought it back".
+-- ═══════════════════════════════════════════════════════════════════════════
+do $$
+declare
+  v_admin     uuid := '00000000-0000-4000-8000-0000000000a1';
+  v_cashier   uuid := '00000000-0000-4000-8000-0000000000c1';
+  v_marker    uuid := '00000000-0000-4000-8000-000000000b18';
+  v_manifest  jsonb;
+  v_backup_id uuid;
+  v_outcome   jsonb;
+  v_doc       jsonb;
+  v_settings  jsonb;
+  v_count     integer;
+begin
+  perform pg_temp.become(v_cashier);
+  if public.can('view_backups') or public.can('create_backup') or public.can('restore_backup')
+     or public.can('export_backup') or public.can('run_health_check') then
+    raise exception 'a cashier holds a data-safety capability';
+  end if;
+
+  begin
+    perform public.create_backup('manual', 'should not work');
+    raise exception 'a cashier created a backup';
+  exception when others then
+    if sqlerrm not like '%backup.error.forbidden%' then
+      raise exception 'create_backup refused for the wrong reason: %', sqlerrm;
+    end if;
+  end;
+
+  perform pg_temp.become(v_admin);
+  if not (public.can('view_backups') and public.can('create_backup')
+          and public.can('restore_backup') and public.can('export_backup')
+          and public.can('run_health_check')) then
+    raise exception 'an admin is missing a data-safety capability';
+  end if;
+
+  -- 1. something to lose, and a snapshot that carries it
+  insert into public.customers (id, name, phone)
+  values (v_marker, 'Scenario Marker', '01000000018')
+  on conflict (id) do update set name = excluded.name;
+
+  v_manifest := public.create_backup('manual', 'scenario snapshot');
+  v_backup_id := (v_manifest->>'id')::uuid;
+
+  if v_manifest->>'kind' <> 'manual' then
+    raise exception 'the manifest reports kind %', v_manifest->>'kind';
+  end if;
+  if (v_manifest->>'table_count')::integer <> array_length(public.backup_table_order(), 1) then
+    raise exception 'the snapshot carries % tables; the order lists %',
+      v_manifest->>'table_count', array_length(public.backup_table_order(), 1);
+  end if;
+  if coalesce((v_manifest->>'row_count')::bigint, 0) < 1 then
+    raise exception 'the snapshot holds no rows';
+  end if;
+  if coalesce(v_manifest->>'checksum', '') = '' then
+    raise exception 'the snapshot has no checksum';
+  end if;
+  if v_manifest->>'document' is not null then
+    raise exception 'the manifest carries the document';
+  end if;
+
+  select count(*) into v_count from public.backup_manifests where id = v_backup_id;
+  if v_count <> 1 then
+    raise exception 'the new snapshot is not listed in backup_manifests';
+  end if;
+
+  -- 2. lose it, then get it back
+  delete from public.customers where id = v_marker;
+  select count(*) into v_count from public.customers where id = v_marker;
+  if v_count <> 0 then
+    raise exception 'the marker customer was not deleted';
+  end if;
+
+  v_outcome := public.admin_restore_backup(v_backup_id);
+  if not coalesce((v_outcome->>'ok')::boolean, false) then
+    raise exception 'the restore reported failure';
+  end if;
+  select count(*) into v_count from public.customers where id = v_marker;
+  if v_count <> 1 then
+    raise exception 'the restore did not bring the customer back';
+  end if;
+  if coalesce((v_outcome->>'row_count')::bigint, 0) < 1 then
+    raise exception 'the restore counted no rows';
+  end if;
+
+  -- the way back: a pre_restore snapshot exists and is listed as what it is —
+  -- restoring it is how this restore would be undone
+  if v_outcome->>'pre_restore_backup_id' is null then
+    raise exception 'the restore kept no way back';
+  end if;
+  select count(*) into v_count from public.backup_manifests
+   where kind = 'pre_restore' and id = (v_outcome->>'pre_restore_backup_id')::uuid;
+  if v_count <> 1 then
+    raise exception 'the pre-restore snapshot is not listed';
+  end if;
+
+  -- the trail outlives the restore: audit_log is append-only, so a snapshot may
+  -- carry it but a restore may not replace it
+  select count(*) into v_count from public.audit_log;
+  if v_count < 1 then
+    raise exception 'the restore erased the audit log';
+  end if;
+  if not public.can('restore_backup') then
+    raise exception 'the restore replaced the permission vocabulary';
+  end if;
+
+  -- 3. a document that does not add up is refused, and the installation is
+  --    untouched by the refusal — this is the "no partial restore" claim
+  v_doc := jsonb_set(public.get_backup_document(v_backup_id), '{checksum}', '"deadbeef"');
+  begin
+    perform public.admin_restore_document(v_doc);
+    raise exception 'a tampered document was restored';
+  exception when others then
+    if sqlerrm not like '%backup.error.checksum_mismatch%' then
+      raise exception 'a tampered document was refused for the wrong reason: %', sqlerrm;
+    end if;
+  end;
+
+  v_doc := public.get_backup_document(v_backup_id);
+  -- Take the tables object out with `#>` and an explicit text[] path. The `->`
+  -- and `->>` forms resolve a bare '{a,b}' literal as a *key*, not a path, and
+  -- return null — which jsonb_set then turns into a null document, testing the
+  -- wrong refusal (unparseable) instead of the intended one (incomplete).
+  v_doc := jsonb_set(
+    v_doc,
+    array['payload', 'tables'],
+    (v_doc #> array['payload', 'tables']) - 'products'
+  );
+  begin
+    perform public.admin_restore_document(v_doc);
+    raise exception 'a document missing a table was restored';
+  exception when others then
+    if sqlerrm not like '%backup.error.incomplete%' then
+      raise exception 'an incomplete document was refused for the wrong reason: %', sqlerrm;
+    end if;
+  end;
+
+  v_doc := jsonb_set(public.get_backup_document(v_backup_id), '{mode}', '"demo"');
+  begin
+    perform public.admin_restore_document(v_doc);
+    raise exception 'an offline document was restored into a live database';
+  exception when others then
+    if sqlerrm not like '%backup.error.mode_mismatch%' then
+      raise exception 'a demo document was refused for the wrong reason: %', sqlerrm;
+    end if;
+  end;
+
+  select count(*) into v_count from public.customers where id = v_marker;
+  if v_count <> 1 then
+    raise exception 'three refused restores changed the data anyway';
+  end if;
+
+  -- a snapshot kind a seat may not manufacture: a pre_restore row is evidence
+  -- that a restore happened, so only a restore may write one
+  begin
+    perform public.create_backup('pre_restore', 'pretending');
+    raise exception 'a seat wrote a pre_restore snapshot by hand';
+  exception when others then
+    if sqlerrm not like '%backup.error.forbidden_kind%' then
+      raise exception 'create_backup refused the kind for the wrong reason: %', sqlerrm;
+    end if;
+  end;
+
+  -- 4. the schedule: an admin writes it, a cashier may not
+  v_settings := public.save_backup_settings('weekly', 7, 3);
+  if v_settings->>'frequency' <> 'weekly'
+     or (v_settings->>'retention_days')::integer <> 7
+     or (v_settings->>'retention_count')::integer <> 3 then
+    raise exception 'the schedule was not saved as asked';
+  end if;
+
+  perform pg_temp.become(v_cashier);
+  begin
+    perform public.save_backup_settings('daily', 30, 14);
+    raise exception 'a cashier changed the backup schedule';
+  exception when others then
+    if sqlerrm not like '%backup.error.forbidden%' then
+      raise exception 'save_backup_settings refused for the wrong reason: %', sqlerrm;
+    end if;
+  end;
+
+  -- reading the document is a separate authority from seeing the list: this seat
+  -- may not download a snapshot, may not read the database, may not restore, and
+  -- may not read the schedule's own row through the manifest view
+  begin
+    perform public.get_backup_document(v_backup_id);
+    raise exception 'a cashier downloaded a backup';
+  exception when others then
+    if sqlerrm not like '%backup.error.forbidden%' then
+      raise exception 'get_backup_document refused for the wrong reason: %', sqlerrm;
+    end if;
+  end;
+
+  begin
+    perform public.snapshot_document();
+    raise exception 'a cashier read the whole database';
+  exception when others then
+    if sqlerrm not like '%backup.error.forbidden%' then
+      raise exception 'snapshot_document refused for the wrong reason: %', sqlerrm;
+    end if;
+  end;
+
+  begin
+    perform public.admin_restore_backup(v_backup_id);
+    raise exception 'a cashier restored a backup';
+  exception when others then
+    if sqlerrm not like '%backup.error.forbidden%' then
+      raise exception 'admin_restore_backup refused for the wrong reason: %', sqlerrm;
+    end if;
+  end;
+
+  select count(*) into v_count from public.backup_manifests;
+  if v_count <> 0 then
+    raise exception 'backup_manifests listed % snapshot(s) for a cashier', v_count;
+  end if;
+
+  -- leave the policy as the shipped default, and the marker where the next run
+  -- expects to find it
+  perform pg_temp.become(v_admin);
+  perform public.save_backup_settings('daily', 30, 14);
+
+  raise notice 'backup & recovery — snapshot, restore, rollback point, and six refusals that changed nothing';
+end
+$$;
+
+-- ═══════════════════════════════════════════════════════════════════════════
 -- Phase C onwards — as `authenticated`, the role the browser gets.
 -- The role is switched once here and never switched back.
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -1094,6 +1333,61 @@ begin
   end if;
 
   raise notice 'refunds — owed, settled once, rejected without moving money';
+end
+$$;
+
+-- ── Phase 18: the grant layer, as the role the browser actually gets ──────
+-- Two things only a session can prove: that the document column is unreachable
+-- by naming its table (no policy to argue with — no grant), and that the
+-- scheduler's entry point is unreachable, which is the entire authority it has,
+-- since it checks no capability of its own.
+do $$
+declare
+  v_cashier uuid := '00000000-0000-4000-8000-0000000000c1';
+  v_admin   uuid := '00000000-0000-4000-8000-0000000000a1';
+  v_count   integer;
+begin
+  perform pg_temp.become(v_cashier);
+
+  begin
+    perform count(*) from public.backups;
+    raise exception 'authenticated read public.backups directly';
+  exception when insufficient_privilege then
+    null;
+  end;
+
+  begin
+    perform public.automatic_backup_if_due();
+    raise exception 'a session reached the scheduler entry point';
+  exception when insufficient_privilege then
+    null;
+  end;
+
+  begin
+    perform public.prune_backups();
+    raise exception 'a session pruned the snapshots itself';
+  exception when insufficient_privilege then
+    null;
+  end;
+
+  -- the schedule is readable by a seat that may see the panel, and this one may
+  -- not: an empty result, not an error
+  select count(*) into v_count from public.backup_settings;
+  if v_count <> 0 then
+    raise exception 'backup_settings was readable by a cashier';
+  end if;
+
+  perform pg_temp.become(v_admin);
+  select count(*) into v_count from public.backup_settings;
+  if v_count <> 1 then
+    raise exception 'an admin could not read the backup schedule (% rows)', v_count;
+  end if;
+  select count(*) into v_count from public.backup_manifests;
+  if v_count < 1 then
+    raise exception 'an admin sees no snapshots after the restore scenario';
+  end if;
+
+  raise notice 'backup & recovery — the document column has no grant, and the clock has no caller but the clock';
 end
 $$;
 

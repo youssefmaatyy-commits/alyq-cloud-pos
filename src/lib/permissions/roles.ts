@@ -243,6 +243,50 @@ export const CAPABILITIES = [
    * price list and not this.
    */
   "change_cost",
+  /**
+   * Open Backup & recovery: the snapshot list, its metadata, the schedule and the
+   * monitoring panel.
+   *
+   * Seeing that a backup exists is not holding one. This capability answers "are
+   * we protected?" without handing over a copy of the database, which is what
+   * `export_backup` is for.
+   */
+  "view_backups",
+  /**
+   * Take a snapshot — by hand, or by the schedule while an admin session is open.
+   *
+   * Writing a backup changes nothing except adding a way back, so it is the one
+   * recovery act a manager holds: the person who runs the shop should be able to
+   * protect it without being able to replace it.
+   */
+  "create_backup",
+  /**
+   * Replace the installation's data with a snapshot.
+   *
+   * The most destructive act in the system: every row is deleted and rewritten,
+   * including sales that happened after the snapshot was taken. Held by the
+   * shipped admin role only, and deliberately a capability rather than a role
+   * check — an installation that wants a second person able to do it grants this,
+   * instead of making them an admin.
+   */
+  "restore_backup",
+  /**
+   * Download a snapshot file.
+   *
+   * Separate from `view_backups` because the file *is* the database: customers,
+   * sales, the staff directory and (offline) the credential digests that let those
+   * accounts sign in. Separate from `export_data` for the same reason — no report
+   * contains the whole installation.
+   */
+  "export_backup",
+  /**
+   * Run the data health check and read its report.
+   *
+   * It examines relationships across every table, so it is a read of the whole
+   * installation, but it writes nothing and repairs nothing: a finding names a
+   * problem and points at the tool that already fixes it.
+   */
+  "run_health_check",
 ] as const;
 export type Capability = (typeof CAPABILITIES)[number];
 
@@ -304,6 +348,13 @@ export const ROLE_CAPABILITIES: Record<AppRole, readonly Capability[]> = {
     "delete_customer",
     "view_cost",
     "change_cost",
+    // Phase 18: a manager may protect the installation and look at its health,
+    // but not replace it and not walk out with it. Restoring deletes every row
+    // written since the snapshot, and a backup file is the whole database — both
+    // stay with the role that owns the installation.
+    "view_backups",
+    "create_backup",
+    "run_health_check",
   ],
   cashier: [
     "view_inventory",

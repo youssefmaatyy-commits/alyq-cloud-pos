@@ -113,6 +113,17 @@ export const AUDIT_ACTIONS = [
   "reservation.converted",
   "reservation.reconciled",
   "reservation.held",
+  // Backup & recovery (Phase 18). Seven verbs, and the split matters: a snapshot
+  // being taken and a snapshot being *downloaded* are different exposures, and a
+  // restore is recorded twice — once before anything is deleted, because an entry
+  // written afterwards does not exist if the restore ends the session writing it.
+  "backup.created",
+  "backup.downloaded",
+  "backup.settings_changed",
+  "restore.started",
+  "restore.completed",
+  "restore.failed",
+  "health.check_run",
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -144,6 +155,12 @@ export const AUDIT_ENTITIES = [
   "custom_role",
   /** A website order's hold on stock (`stock_reservations`). */
   "reservation",
+  /**
+   * A snapshot of the installation (`backups` in live mode, the offline backup
+   * store otherwise) — and the restore, schedule change or health check performed
+   * against it.
+   */
+  "backup",
 ] as const;
 export type AuditEntity = (typeof AUDIT_ENTITIES)[number];
 

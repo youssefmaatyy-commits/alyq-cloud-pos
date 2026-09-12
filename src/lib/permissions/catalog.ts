@@ -25,7 +25,9 @@ export interface CapabilityGroup {
     | "shifts"
     | "online"
     | "approvals"
-    | "settings";
+    | "settings"
+    /** Backup, restore and data health (Phase 18). */
+    | "data_safety";
   capabilities: Capability[];
 }
 
@@ -91,6 +93,22 @@ export const CAPABILITY_GROUPS: readonly CapabilityGroup[] = [
   {
     key: "settings",
     capabilities: ["manage_users", "manage_roles", "manage_settings", "view_audit_log"],
+  },
+  {
+    // Backup & recovery (Phase 18). Its own group rather than a corner of
+    // "settings", because the acts are not administration of the app's
+    // configuration — they are custody of its data. Four of the five are held by
+    // the shipped admin role alone, and the grouping is what makes that visible
+    // in the picker: an admin building a role sees one area called Data safety
+    // and has to decide, deliberately, whether to tick any of it.
+    key: "data_safety",
+    capabilities: [
+      "view_backups",
+      "create_backup",
+      "restore_backup",
+      "export_backup",
+      "run_health_check",
+    ],
   },
 ] as const;
 
@@ -243,6 +261,14 @@ export const CAPABILITY_ACTIONS: Record<Capability, PermissionAction> = {
   manage_roles: "manage",
   manage_settings: "manage",
   view_audit_log: "view",
+  // Data safety (Phase 18). Restore is `manage` rather than `delete` because it
+  // does both: every table is emptied and filled again from a snapshot. The verb
+  // means "full authority over this area", which is precisely what it is.
+  view_backups: "view",
+  create_backup: "create",
+  restore_backup: "manage",
+  export_backup: "export",
+  run_health_check: "view",
 };
 
 /** `permissions.action.approve` — the verb's own label, EN and AR. */

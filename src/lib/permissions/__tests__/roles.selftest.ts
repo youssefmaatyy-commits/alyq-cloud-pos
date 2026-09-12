@@ -346,14 +346,38 @@ test("no role lost a capability when Phase 10 extended the matrix", () => {
   assert.deepEqual(lost, [], `capabilities removed from a shipped role: ${lost.join(", ")}`);
 });
 
-test("manager differs from admin only by the three identity capabilities", () => {
+test("manager differs from admin only by what admin keeps to itself", () => {
   // Phase 10 is the first time the two oversight roles are not identical: who
   // manages users, roles and system settings is admin's alone.
+  //
+  // Phase 18 adds two more, and they are a different kind of thing. A manager may
+  // protect the installation — see the snapshots, take one, run the health check —
+  // but not replace it and not carry it out:
+  //
+  //   restore_backup  deletes every row written since the snapshot, including
+  //                   sales already taken at the till. That is a decision about
+  //                   the business, not about the shift.
+  //   export_backup   the file *is* the database: every customer's phone number,
+  //                   every sale, and the staff directory. Seeing that a backup
+  //                   exists (`view_backups`, which a manager holds) and holding a
+  //                   copy are deliberately two permissions.
+  //
+  // Both stay capabilities rather than role checks, so an installation that wants
+  // a second person able to restore grants it in the Permission Builder instead of
+  // making them an admin. This list is pinned because it is the whole answer to
+  // "what can the owner do that the manager cannot?" — a change here should be a
+  // decision somebody made, not something that happened.
   const admin = capabilitiesOf("admin");
   const manager = capabilitiesOf("manager");
   const onlyAdmin = admin.filter((c) => !manager.includes(c)).sort();
   const onlyManager = manager.filter((c) => !admin.includes(c));
-  assert.deepEqual(onlyAdmin, ["manage_roles", "manage_settings", "manage_users"]);
+  assert.deepEqual(onlyAdmin, [
+    "export_backup",
+    "manage_roles",
+    "manage_settings",
+    "manage_users",
+    "restore_backup",
+  ]);
   assert.deepEqual(onlyManager, [], "manager holds nothing admin lacks");
 });
 

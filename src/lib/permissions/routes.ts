@@ -72,6 +72,12 @@ export const ROUTE_CAPABILITIES: ReadonlyArray<readonly [string, Capability]> = 
   // model itself. Longest prefix wins, so an admin (who holds all three) reaches
   // every screen and a hypothetical "HR only" role could be given users but not
   // roles. Each is also asserted again in `modules/settings/services`.
+  // Backup & recovery (Phase 18). Opening the panel is `view_backups`; the acts
+  // on it — snapshot, download, restore, health check — are asserted again in
+  // `modules/backup/services` and, in live mode, inside the SQL functions that do
+  // the work. The route says who may look at the recovery story, not who may
+  // change it.
+  ["/settings/backup", "view_backups"],
   ["/settings/users", "manage_users"],
   ["/settings/roles", "manage_roles"],
   ["/settings", "manage_settings"],

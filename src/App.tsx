@@ -50,6 +50,7 @@ import {
 } from "@/modules/approvals";
 import { AdvancedReportsPage, ReportsPage } from "@/modules/reports";
 import { RolesPage, SettingsProvider, UsersPage } from "@/modules/settings";
+import { BackupPage } from "@/modules/backup";
 
 import {
   MarketingPage,
@@ -201,7 +202,13 @@ function AuthenticatedApp() {
                                 cashier has no business asking for. The route
                                 guard has already refused the path by the time
                                 this renders. */}
-                            <Route path="/settings" element={<SettingsArea />} />
+                            {/* The splat is what makes the area work: `SettingsArea`
+                                renders its own descendant <Routes>, and React Router
+                                only hands a deeper path (`/settings/users`) to a
+                                parent that declares it may have children. Without
+                                `/*` every settings URL fell through to the
+                                catch-all below and landed on the dashboard. */}
+                            <Route path="/settings/*" element={<SettingsArea />} />
                             <Route path="*" element={<Navigate to="/" replace />} />
                           </Routes>
                         </OnlineOrdersProvider>
@@ -239,6 +246,11 @@ function SettingsArea() {
             `manage_settings` work — the same capability that owns the rest of
             the system-wide configuration. */}
         <Route path="approvals" element={<ApprovalRulesPage />} />
+        {/* Backup & recovery (Phase 18). Under Settings for the same reason the
+            approval thresholds are: it is custody of the installation rather than
+            a floor task, and the route guard reads `view_backups` from
+            ROUTE_CAPABILITIES like every other path. */}
+        <Route path="backup" element={<BackupPage />} />
         <Route path="*" element={<Navigate to="/settings/users" replace />} />
       </Routes>
     </SettingsProvider>

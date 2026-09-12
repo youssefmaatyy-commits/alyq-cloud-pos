@@ -510,7 +510,14 @@ test("preview: screens follow the route table, and the partition is total", () =
 
 test("preview: every previewed screen is a real route", () => {
   const app = fs.readFileSync(path.join(repoRoot(), "src/App.tsx"), "utf8");
-  const declared = new Set([...app.matchAll(/<Route\s+[^>]*path="([^"]+)"/g)].map((match) => match[1]));
+  const declared = new Set<string>();
+  for (const match of app.matchAll(/<Route\s+[^>]*path="([^"]+)"/g)) {
+    declared.add(match[1]);
+    // A parent that hosts its own descendant <Routes> has to declare a splat
+    // (`path="/settings/*"`), or React Router never hands it the deeper path. The
+    // screens under it are still reached through the parent, so record both.
+    if (match[1].endsWith("/*")) declared.add(match[1].slice(0, -2));
+  }
   for (const screen of PREVIEW_SCREENS) {
     // Nested routes are declared relative to their parent (`/settings` + `users`),
     // so accept either the full path or the parent/leaf pair.

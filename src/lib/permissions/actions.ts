@@ -338,6 +338,61 @@ export const SENSITIVE_ACTIONS: readonly SensitiveAction[] = [
     file: "src/modules/approvals/services/approvalService.ts",
     db: "public.set_approval_rules — requires manage_settings, audits the before and after",
   },
+  // ── backup & recovery (Phase 18) ────────────────────────────────────────
+  // The `db` column matters more here than anywhere else in the register: a
+  // restore deletes the installation's data, so the browser cannot be the only
+  // gate on it. Every function in migration 0029 re-checks `public.can()` before
+  // it acts, and the document column has no grant at all — the refusals below are
+  // the first of two, not the only one.
+  {
+    key: "backup.view",
+    capability: "view_backups",
+    guard: "assertCanViewBackups",
+    file: "src/modules/backup/services/backupService.ts",
+    db: "the backup_manifests view filters on public.can('view_backups'); public.backups has no select grant",
+  },
+  {
+    key: "backup.create",
+    capability: "create_backup",
+    guard: "assertCanCreateBackup",
+    file: "src/modules/backup/services/backupService.ts",
+    db: "public.create_backup — requires create_backup, refuses kind 'pre_restore'",
+  },
+  {
+    key: "backup.restore",
+    capability: "restore_backup",
+    guard: "assertCanRestoreBackup",
+    file: "src/modules/backup/services/backupService.ts",
+    db: "public.admin_restore_backup / admin_restore_document — requires restore_backup, one transaction, snapshots the current state first",
+  },
+  {
+    key: "backup.export",
+    capability: "export_backup",
+    guard: "assertCanExportBackup",
+    file: "src/modules/backup/services/backupService.ts",
+    db: "public.get_backup_document / snapshot_document — requires export_backup",
+  },
+  {
+    key: "backup.health_check",
+    capability: "run_health_check",
+    guard: "assertCanRunHealthCheck",
+    file: "src/modules/backup/services/backupService.ts",
+    db: "offline only — in live mode the check reads through snapshot_document(), so it also requires export_backup",
+  },
+  {
+    key: "backup.emergency_export",
+    capability: "export_data",
+    guard: "assertCanRunEmergencyExport",
+    file: "src/modules/backup/services/emergencyExport.ts",
+    db: "as data.export — the workbook is built from rows the caller could already select",
+  },
+  {
+    key: "backup.schedule",
+    capability: "manage_settings",
+    guard: "assertCanChangeBackupSchedule",
+    file: "src/modules/backup/services/backupService.ts",
+    db: "public.save_backup_settings — requires manage_settings, stamps who changed it",
+  },
   {
     key: "audit.view",
     capability: "view_audit_log",

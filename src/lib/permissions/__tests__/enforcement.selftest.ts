@@ -52,6 +52,7 @@ import {
 import { AppError } from "@/modules/products/data/repository";
 
 import * as auditService from "@/modules/audit/services/auditService";
+import * as backupService from "@/modules/backup/services/backupService";
 import * as expenseService from "@/modules/expenses/services/expenseService";
 import * as inventoryService from "@/modules/inventory/services/inventoryService";
 import * as catalogService from "@/modules/products/services/catalogService";
@@ -201,9 +202,18 @@ test("each role is refused exactly the sensitive actions it lacks", () => {
   // keeps to itself — the ones that decide who holds capabilities and what the
   // system-wide rules are. Asserting the *kind* of refusal, rather than a count,
   // keeps this true as the register grows.
+  //
+  // Phase 18 adds two that are not `manage_` and belong here all the same, both
+  // about custody of the data rather than administration of the app:
+  //   restore_backup — deletes every row written since the snapshot, sales
+  //                    included: a decision about the business, not the shift.
+  //   export_backup  — the file is the whole database, customer book and staff
+  //                    directory with it. A manager may see that a snapshot
+  //                    exists and take one; carrying a copy out is the owner's.
+  const ADMIN_ONLY = /^(manage_|restore_backup$|export_backup$)/;
   for (const capability of refusedCapabilities.get("manager") ?? []) {
     assert.ok(
-      /^manage_/.test(capability),
+      ADMIN_ONLY.test(capability),
       `manager is refused '${capability}', which is an admin-only authority`,
     );
   }
@@ -340,6 +350,20 @@ const FUNNELS: { name: string; call: () => unknown | Promise<unknown> }[] = [
   { name: "reservationRepair.restoreHold", call: () => reservationRepair.restoreHold({} as never, "Left behind by an interrupted deployment") },
   { name: "reservationRepair.repairAllFindings", call: () => reservationRepair.repairAllFindings({} as never, "Left behind by an interrupted deployment") },
   { name: "reportAccess.assertCanExport(data)", call: () => reportAccess.assertCanExport("data") },
+  // Backup & recovery (Phase 18). Each of these is refused before it reads a row,
+  // which is the whole point of the ordering: a restore that checked its payload
+  // before its permission would tell an unauthorised caller what the database
+  // looks like on the way to refusing them.
+  { name: "backupService.loadBackups", call: () => backupService.loadBackups() },
+  { name: "backupService.loadStatus", call: () => backupService.loadStatus() },
+  { name: "backupService.createBackup", call: () => backupService.createBackup("manual", "should not run") },
+  { name: "backupService.saveBackupSettings", call: () => backupService.saveBackupSettings({ frequency: "daily" }) },
+  { name: "backupService.downloadBackup", call: () => backupService.downloadBackup("bk-does-not-exist") },
+  { name: "backupService.runHealthCheck", call: () => backupService.runHealthCheck() },
+  { name: "backupService.restoreBackup", call: () => backupService.restoreBackup({
+      id: "bk-does-not-exist",
+      confirmation: "RESTORE",
+    }) },
 ];
 
 test("every write funnel refuses a caller with no capabilities", async () => {
