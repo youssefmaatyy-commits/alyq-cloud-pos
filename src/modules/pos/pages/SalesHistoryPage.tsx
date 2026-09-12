@@ -8,6 +8,7 @@ import {
   Card,
   EmptyState,
   ErrorState,
+  ExportButton,
   LoadingBlock,
   SelectInput,
   TextInput,
@@ -15,6 +16,7 @@ import {
   useToast,
 } from "@/components/ui";
 import { usePos } from "../hooks/PosProvider";
+import { buildSalesSheets } from "../services/salesExport";
 import { normalizeText } from "@/modules/products/services/productQuery";
 import { canConfirmPayment } from "../permissions";
 import { getSalesRepository } from "../data";
@@ -25,7 +27,7 @@ import { getCurrentUser } from "@/modules/inventory/permissions";
  * Read-only; voiding happens from the sale detail screen.
  */
 export function SalesHistoryPage() {
-  const { t, date, num } = useI18n();
+  const { t, pick, date, num } = useI18n();
   const toast = useToast();
   const { sales, salesLoading, error, refreshSales } = usePos();
   const allowConfirm = canConfirmPayment();
@@ -119,12 +121,20 @@ export function SalesHistoryPage() {
         title={t("pos.salesTitle")}
         subtitle={t("pos.salesSubtitle")}
         actions={
-          <Link
-            to="/pos"
-            className="alyq-btn-primary alyq-cta h-10 gap-2 rounded-xl px-4 text-sm"
-          >
-            {t("nav.register")}
-          </Link>
+          <>
+            {/* Exports `filtered` — search + status + method all applied. */}
+            <ExportButton
+              name="sales"
+              count={filtered.length}
+              build={() => buildSalesSheets({ sales: filtered, t, pick })}
+            />
+            <Link
+              to="/pos"
+              className="alyq-btn-primary alyq-cta h-10 gap-2 rounded-xl px-4 text-sm"
+            >
+              {t("nav.register")}
+            </Link>
+          </>
         }
       />
 

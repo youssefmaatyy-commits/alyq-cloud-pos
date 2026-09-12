@@ -7,6 +7,7 @@ import {
   ConfirmDialog,
   EmptyState,
   ErrorState,
+  ExportButton,
   LoadingBlock,
   BoxIcon,
   PlusIcon,
@@ -14,6 +15,7 @@ import {
   StatTile,
   useToast,
 } from "@/components/ui";
+import { buildProductsSheets } from "../services/productsExport";
 import { ProductFilters, EMPTY_FILTERS, type ProductFiltersValue } from "../components/ProductFilters";
 import { ProductTable } from "../components/ProductTable";
 import { useCatalog } from "../hooks/CatalogProvider";
@@ -100,6 +102,12 @@ export function ProductsPage() {
             <Button variant="secondary" onClick={() => setImportOpen(true)}>
               📥 {t("import.button")}
             </Button>
+            {/* Exports `results` — the filtered set on screen, not the raw list. */}
+            <ExportButton
+              name="products"
+              count={results.length}
+              build={() => buildProductsSheets({ products: results, categories, t, pick })}
+            />
             <Link
               to="/products/new"
               className="alyq-btn-primary alyq-cta h-10 gap-2 rounded-xl px-4 text-sm"

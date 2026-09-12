@@ -18,6 +18,8 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
+import { testBuildOptions } from "./lib/app-bundle.mjs";
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SRC = path.join(ROOT, "src");
 const FILTERS = process.argv.slice(2).filter((a) => !a.startsWith("-"));
@@ -58,24 +60,13 @@ if (suites.length === 0) {
 }
 
 // ── shared bundle settings ────────────────────────────────────────────────
-const DEFINE = {
-  // The app reads `import.meta.env` at module scope (currency formatting, the
-  // Supabase client). Node ESM has no such property, so it is inlined the same
-  // way the documented `npx esbuild --define:import.meta.env=…` recipe does.
-  "import.meta.env": JSON.stringify({
-    VITE_CURRENCY: process.env.VITE_CURRENCY ?? "EGP",
-      // Passed through when present, so the same suites can run against a real
-    // project (the CI `live` job). Absent → the app takes its demo path.
-    ...(process.env.VITE_SUPABASE_URL ? { VITE_SUPABASE_URL: process.env.VITE_SUPABASE_URL } : {}),
-    ...(process.env.VITE_SUPABASE_ANON_KEY
-      ? { VITE_SUPABASE_ANON_KEY: process.env.VITE_SUPABASE_ANON_KEY }
-      : {}),
-    MODE: "test",
-    DEV: false,
-    PROD: true,
-    SSR: false,
-  }),
-};
+// `import.meta.env` (read at module scope by the app), the `.css` loader and the
+// asset mock all come from `scripts/lib/app-bundle.mjs`, the same module the E2E
+// runner builds with. `src/modules/pos/__tests__/logic.selftest.ts` imports
+// `receipt.ts`, which imports `@/assets/alyq-logo.png` — without the mock this
+// bundle fails with "No loader is configured for .png files", and with a
+// `dataurl` loader `RECEIPT_LOGO_SRC` would stop being the public URL the
+// receipts document (`/alyq-logo.png`).
 
 const OUT_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "alyq-logic-"));
 
@@ -90,17 +81,9 @@ for (const suite of suites) {
   process.stdout.write(`  ${c.dim("bundling")} ${rel}\n`);
 
   try {
-    await esbuild.build({
-      entryPoints: [suite],
-      outfile,
-      bundle: true,
-      format: "esm",
-      platform: "node",
-      target: "node20",
-      define: DEFINE,
-      loader: { ".css": "empty", ".png": "dataurl", ".jpg": "dataurl", ".jpeg": "dataurl", ".svg": "dataurl" },
-      logLevel: "silent",
-    });
+    // Every setting comes from `scripts/lib/app-bundle.mjs` — this runner used
+    // to repeat them inline, which is how it drifted from the shared recipe.
+    await esbuild.build(testBuildOptions({ entryPoints: [suite], outfile }));
   } catch (error) {
     console.log(`  ${c.red("✗")} ${rel} ${c.dim("failed to bundle")}`);
     results.push({ rel, ok: false, detail: (error.errors ?? []).map((e) => e.text).join("; ") || String(error) });

@@ -8,6 +8,7 @@ import {
   Card,
   EmptyState,
   ErrorState,
+  ExportButton,
   EyeIcon,
   LoadingBlock,
   PlusIcon,
@@ -19,9 +20,10 @@ import {
 import { useReturns } from "../hooks/ReturnProvider";
 import { queryRefunds, queryReturns } from "../services/returnService";
 import { ReturnFormModal } from "../components/ReturnFormModal";
+import { buildReturnsSheets } from "../services/returnsExport";
 
 export function ReturnsPage({ initialTab = "returns" }: { initialTab?: "returns" | "refunds" }) {
-  const { t, date, num } = useI18n();
+  const { t, date, num, pick } = useI18n();
   const navigate = useNavigate();
   const { returnsList, refundsList, loading, error, refresh } = useReturns();
 
@@ -64,6 +66,19 @@ export function ReturnsPage({ initialTab = "returns" }: { initialTab?: "returns"
         subtitle={t("returns.subtitle")}
         actions={
           <>
+            {/* Exports what the search box currently narrows both tabs down to. */}
+            <ExportButton
+              name="returns"
+              count={filteredReturns.length + filteredRefunds.length}
+              build={() =>
+                buildReturnsSheets({
+                  returnsList: filteredReturns,
+                  refundsList: filteredRefunds,
+                  t,
+                  pick,
+                })
+              }
+            />
             <Button variant="secondary" onClick={() => void refresh()} title={t("common.retry")}>
               ⟳
             </Button>

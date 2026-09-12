@@ -18,6 +18,8 @@ export {
 } from "./Feedback";
 export { Modal, ConfirmDialog } from "./Modal";
 export { ToastProvider, useToast } from "./Toast";
+export { ExportButton } from "./ExportButton";
+export type { ExportButtonProps } from "./ExportButton";
 export {
   ArchiveIcon,
   AlertIcon,
@@ -45,4 +47,6 @@ export {
   WalletIcon,
   ClipboardIcon,
   ClockIcon,
+  DownloadIcon,
+  ReportIcon,
 } from "./icons";

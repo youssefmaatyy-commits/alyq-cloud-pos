@@ -3,10 +3,12 @@
  * credential/session cases the phase must also cover (wrong password, expiry).
  *
  * Build the bundle first, then run it:
- *   npx esbuild src/main.tsx --bundle --format=esm --platform=node \
- *     --outfile=/tmp/alyq-app.mjs --loader:.css=empty \
- *     --define:import.meta.env='{"VITE_CURRENCY":"EGP"}'
+ *   npm run test:bundle                 # → /tmp/alyq-app.mjs
  *   node scripts/auth.flow.mjs
+ * or let the runner do both: `npm run test:e2e auth`.
+ *
+ * The bundle step is `scripts/lib/app-bundle.mjs`; a bare `npx esbuild` fails on
+ * `@/assets/alyq-logo.png` because esbuild ships no `.png` loader.
  *
  * Steps
  *   1 open application            6 unauthorized action blocked

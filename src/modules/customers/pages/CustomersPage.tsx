@@ -9,6 +9,7 @@ import {
   EditIcon,
   EmptyState,
   ErrorState,
+  ExportButton,
   EyeIcon,
   LoadingBlock,
   PlusIcon,
@@ -19,6 +20,7 @@ import {
   UsersIcon,
   useToast,
 } from "@/components/ui";
+import { buildCustomersSheets } from "../services/customersExport";
 import { useCustomers } from "../hooks/CustomerProvider";
 import { queryCustomers } from "../services/customerService";
 import { CustomerFormModal } from "../components/CustomerFormModal";
@@ -93,6 +95,13 @@ export function CustomersPage() {
             <Button variant="secondary" onClick={() => void refresh()} title={t("common.retry")}>
               ⟳
             </Button>
+            {/* Exports `filtered` (search applied). Purchase history is always
+                computed over every sale, since it belongs to the customer. */}
+            <ExportButton
+              name="customers"
+              count={filtered.length}
+              build={() => buildCustomersSheets({ customers: filtered, sales, t })}
+            />
             <Button
               onClick={() => {
                 setEditingCustomer(null);

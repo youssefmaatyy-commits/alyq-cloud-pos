@@ -36,6 +36,7 @@ import {
   ShiftProvider,
 } from "@/modules/shifts";
 import { AuditLogPage, RequireAuditAccess } from "@/modules/audit";
+import { ReportsPage } from "@/modules/reports";
 
 import { StorefrontHomePage } from "@/modules/storefront/pages/StorefrontHomePage";
 import { StorefrontProductsPage } from "@/modules/storefront/pages/StorefrontProductsPage";
@@ -61,7 +62,6 @@ export default function App() {
         <ToastProvider>
           <HashRouter>
             <Routes>
-              <Route path="/" element={<Navigate to="/login" replace />} />
               <Route path="/login" element={<LoginRoute />} />
               <Route path="/store" element={<StorefrontHomePage />} />
               <Route path="/store/products" element={<StorefrontProductsPage />} />
@@ -108,6 +108,7 @@ function AuthenticatedApp() {
                         <Route path="/shifts" element={<ShiftDashboardPage />} />
                         <Route path="/shifts/history" element={<ShiftHistoryPage />} />
                         <Route path="/expenses" element={<ExpensesPage />} />
+                        <Route path="/reports" element={<ReportsPage />} />
                         <Route
                           path="/audit"
                           element={

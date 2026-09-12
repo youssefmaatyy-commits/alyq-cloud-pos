@@ -28,15 +28,32 @@ function test(name: string, fn: () => void | Promise<void>) {
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
 
+/**
+ * A timestamp that is inside today at *any* hour the suite happens to run.
+ *
+ * Anchored to noon rather than to `now` on purpose. Subtracting hours from the
+ * current time rolled fixtures into yesterday between 00:00 and 03:00, which
+ * made "expenses: today vs total" fail depending on the clock instead of the
+ * code — and clamping only the rolled values broke the ordering the
+ * `recentSales` tests rely on, because a clamped 00:57 is *newer* than a real
+ * 01:00. A fixed anchor keeps every fixture on the same day and monotonic:
+ * a larger `hoursAgo` is always older.
+ *
+ * `isToday()` in the code under test is `>= startOfToday()`, so a timestamp
+ * later today still counts as today.
+ */
 function todayISO(hoursAgo = 0): string {
   const d = new Date();
+  d.setHours(12, 0, 0, 0);
   d.setHours(d.getHours() - hoursAgo);
   return d.toISOString();
 }
 
+/** Yesterday at noon, for the same reason — never a rolling 24 hours ago. */
 function yesterdayISO(): string {
   const d = new Date();
   d.setDate(d.getDate() - 1);
+  d.setHours(12, 0, 0, 0);
   return d.toISOString();
 }
 

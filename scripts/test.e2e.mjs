@@ -12,13 +12,14 @@
  * suite fails. Exits 2 without a bundle when esbuild is unavailable.
  */
 import { spawnSync } from "node:child_process";
-import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
+import { DEFAULT_BUNDLE, buildAppBundle } from "./lib/app-bundle.mjs";
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const BUNDLE = "/tmp/alyq-app.mjs";
+const BUNDLE = DEFAULT_BUNDLE;
 const FILTERS = process.argv.slice(2).filter((a) => !a.startsWith("-"));
 
 const SUITES = [
@@ -33,9 +34,8 @@ const c = {
   red: (s) => `\x1b[31m${s}\x1b[0m`,
 };
 
-let esbuild;
 try {
-  esbuild = await import("esbuild");
+  await import("esbuild");
 } catch {
   console.error(c.red("✗ esbuild is not installed. Run `npm install` first."));
   process.exit(2);
@@ -48,51 +48,26 @@ if (selected.length === 0) {
 }
 
 // ── build ─────────────────────────────────────────────────────────────────
-// `--loader:.css=empty` because Tailwind's entry is not needed to exercise
-// behaviour, and `import.meta.env` because the app reads it at module scope.
+// `scripts/lib/app-bundle.mjs` owns the esbuild options so this runner and the
+// logic runner cannot drift apart again:
+//   - `import.meta.env` is inlined — the app reads it at module scope.
+//   - `.css` is empty — Tailwind's entry is not needed to exercise behaviour.
+//   - image imports (`@/assets/alyq-logo.png`) are mocked to the public URL the
+//     receipts document and assert. Plain esbuild has no `.png` loader, so
+//     without the plugin the build dies before any suite runs; `dataurl` builds
+//     but replaces `/alyq-logo.png` with base64, which the receipt assertions
+//     in `scripts/smoke.dom.mjs` can never match.
 // The bundle is rebuilt every run so the suites can never test stale code.
 console.log(c.bold("\nBuilding application bundle…"));
+let bytes;
 try {
-  await esbuild.build({
-    entryPoints: [path.join(ROOT, "src", "main.tsx")],
-    outfile: BUNDLE,
-    bundle: true,
-    format: "esm",
-    platform: "node",
-    target: "node20",
-    define: {
-      "import.meta.env": JSON.stringify({
-        VITE_CURRENCY: process.env.VITE_CURRENCY ?? "EGP",
-      // Passed through when present, so the same suites can run against a real
-        // project (the CI `live` job). Absent → the app takes its demo path.
-        ...(process.env.VITE_SUPABASE_URL ? { VITE_SUPABASE_URL: process.env.VITE_SUPABASE_URL } : {}),
-        ...(process.env.VITE_SUPABASE_ANON_KEY
-          ? { VITE_SUPABASE_ANON_KEY: process.env.VITE_SUPABASE_ANON_KEY }
-          : {}),
-        MODE: "test",
-        DEV: false,
-        PROD: true,
-        SSR: false,
-      }),
-    },
-    loader: {
-      ".css": "empty",
-      ".png": "dataurl",
-      ".jpg": "dataurl",
-      ".jpeg": "dataurl",
-      ".gif": "dataurl",
-      ".svg": "dataurl",
-      ".webp": "dataurl",
-    },
-    logLevel: "silent",
-  });
+  ({ bytes } = await buildAppBundle({ outfile: BUNDLE }));
 } catch (error) {
   console.error(c.red("✗ bundling failed"));
-  for (const e of error.errors ?? []) console.error(c.dim(`  ${e.text}`));
+  for (const e of error?.errors ?? []) console.error(c.dim(`  ${e.text}`));
+  if (!error?.errors) console.error(c.dim(`  ${String(error)}`));
   process.exit(1);
 }
-
-const bytes = fs.statSync(BUNDLE).size;
 console.log(c.dim(`  ${BUNDLE} (${(bytes / 1024).toFixed(0)} kB)\n`));
 
 // ── run ───────────────────────────────────────────────────────────────────

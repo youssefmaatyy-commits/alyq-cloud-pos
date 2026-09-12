@@ -7,6 +7,7 @@ import {
   Card,
   EmptyState,
   ErrorState,
+  ExportButton,
   LoadingBlock,
   SelectInput,
   StatTile,
@@ -17,6 +18,7 @@ import {
   WarehouseIcon,
   AlertIcon,
 } from "@/components/ui";
+import { buildInventorySheets } from "../services/inventoryExport";
 import { useInventory } from "../hooks/InventoryProvider";
 import {
   paginate,
@@ -87,6 +89,16 @@ export function InventoryPage() {
             <Button variant="secondary" onClick={() => void refresh()} title={t("common.retry")}>
               ⟳
             </Button>
+            {/* Exports `results` — the filtered rows on screen. Category names
+                come from this page's own resolver, which deliberately does not
+                import the catalog tree. */}
+            <ExportButton
+              name="inventory"
+              count={results.length}
+              build={() =>
+                buildInventorySheets({ products: results, categoryName: nameOf, t, pick })
+              }
+            />
             <Link
               to="/inventory/movements"
               className="inline-flex h-10 items-center gap-2 rounded-xl bg-white px-4 text-sm font-semibold text-slate-800 ring-1 ring-slate-300 transition-colors hover:bg-slate-50"

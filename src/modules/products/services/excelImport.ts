@@ -1,12 +1,20 @@
 /**
- * Product import from CSV (Excel/Google Sheets export).
+ * Product import from Excel (.xlsx/.xls) or CSV (Excel/Google Sheets export).
  *
- * Foundation layer: parses a CSV file, maps columns to product fields, and
+ * Foundation layer: reads the file, maps columns to product fields, and
  * validates each row. The caller (UI) handles the actual creation via the
- * catalog repository. No external dependencies — the CSV parser handles
- * quoted fields, embedded commas, newlines and escaped quotes per RFC 4180.
+ * catalog repository.
  *
- * Pure functions, fully unit-testable without React or Supabase.
+ * Two layers, deliberately separate:
+ *   - format handling (`importProductsFromFile`, `readWorkbookRows`, `parseCsv`)
+ *     turns any accepted file into `string[][]`;
+ *   - the pipeline (`importProductsFromRows`) applies one set of validation
+ *     rules and messages, so a workbook and a CSV behave identically.
+ *
+ * The CSV parser has no dependencies and handles quoted fields, embedded
+ * commas, newlines and escaped quotes per RFC 4180. `xlsx` is imported lazily,
+ * only when a workbook is actually opened. Everything except the file reading is
+ * pure and unit-testable without React or Supabase.
  */
 
 import {
@@ -117,6 +125,7 @@ export type ImportableField =
   | "tax_rate"
   | "stock_quantity"
   | "low_stock_level"
+  | "stock_tracking_enabled"
   | "product_type"
   | "category_name";
 
@@ -125,10 +134,13 @@ export type ColumnMap = Record<string, ImportableField>;
 
 /** Default header aliases — covers English, Arabic and common variants. */
 const HEADER_ALIASES: Record<ImportableField, string[]> = {
-  sku: ["sku", "code", "كود", "رمز", "رمز المنتج / sku"],
+  sku: ["sku", "code", "product sku", "كود", "رمز", "رمز المنتج", "رمز المنتج / sku"],
   barcode: ["barcode", "باركود", "الباركود", "الباركود / barcode"],
-  name_ar: ["name_ar", "name ar", "namear", "الاسم", "اسم عربي", "الاسم (عربي)", "name arabic", "name (arabic)", "اسم المنتج (عربي) / product name (arabic)"],
-  name_en: ["name_en", "name en", "nameen", "name", "اسم انجليزي", "name english", "name (english)", "product", "اسم المنتج (إنجليزي) / product name (english)"],
+  // The template writes plain "Product Name (Arabic)"; shops that translate the
+  // header row write the Arabic forms. Both have to map, or every row fails with
+  // "at least one name is required" no matter how good the data is.
+  name_ar: ["name_ar", "name ar", "namear", "الاسم", "اسم عربي", "الاسم (عربي)", "الاسم العربي", "name arabic", "name (arabic)", "product name arabic", "product name (arabic)", "اسم المنتج (عربي)", "اسم المنتج عربي", "اسم المنتج (عربي) / product name (arabic)"],
+  name_en: ["name_en", "name en", "nameen", "name", "اسم انجليزي", "name english", "name (english)", "product", "product name english", "product name (english)", "الاسم الإنجليزي", "الاسم (إنجليزي)", "اسم المنتج (إنجليزي)", "اسم المنتج انجليزي", "اسم المنتج (إنجليزي) / product name (english)"],
   description_ar: ["description_ar", "description ar", "الوصف", "وصف عربي"],
   description_en: ["description_en", "description en", "description", "وصف انجليزي"],
   selling_price: ["selling_price", "price", "السعر", "سعر البيع", "selling price", "سعر البيع / selling price"],
@@ -136,23 +148,65 @@ const HEADER_ALIASES: Record<ImportableField, string[]> = {
   tax_rate: ["tax_rate", "tax", "الضريبة", "نسبة الضريبة", "tax rate", "vat"],
   stock_quantity: ["stock_quantity", "stock", "qty", "quantity", "الكمية", "المخزون", "stock quantity", "الكمية بالمخزون / stock quantity"],
   low_stock_level: ["low_stock_level", "low stock", "low_stock", "الحد الأدنى", "حد المخزون"],
+  // The shipped template advertises this column, so the importer has to read it
+  // — otherwise "false" in the file was silently ignored and tracking stayed on.
+  stock_tracking_enabled: [
+    "stock_tracking_enabled",
+    "stock tracking enabled",
+    "stock tracking",
+    "track stock",
+    "tracking",
+    "تتبع المخزون",
+    "تتبع المخزون / stock tracking enabled",
+  ],
   product_type: ["product_type", "type", "النوع", "نوع المنتج"],
   category_name: ["category", "category_name", "التصنيف", "الفئة", "الفئة / category"],
 };
 
-/** Build a column map from a header row by matching against known aliases. */
+/**
+ * Header text reduced to letters and digits, so spacing and punctuation cannot
+ * break a match: "Product Name (Arabic)", "product name  arabic" and
+ * "Product-Name-Arabic" all collapse to the same key.
+ */
+function normalizeHeader(header: string): string {
+  return header.trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+}
+
+/** Alias → field, keyed on the normalised form (built once). */
+const NORMALIZED_ALIASES: Map<string, ImportableField> = new Map(
+  (Object.entries(HEADER_ALIASES) as [ImportableField, string[]][]).flatMap(([field, aliases]) =>
+    aliases.map((alias) => [normalizeHeader(alias), field] as [string, ImportableField]),
+  ),
+);
+
+/**
+ * Build a column map from a header row by matching against known aliases.
+ *
+ * Exact matches win first (so "Name" keeps mapping to `name_en` exactly as
+ * before); anything left over gets a second chance with punctuation and spacing
+ * ignored. A field is only ever bound to one column — the first that claims it.
+ */
 export function buildColumnMap(headers: string[]): ColumnMap {
   const map: ColumnMap = {};
+  const taken = () => Object.values(map);
+
   for (let i = 0; i < headers.length; i++) {
     const header = headers[i].trim().toLowerCase();
     if (!header) continue;
     for (const [field, aliases] of Object.entries(HEADER_ALIASES) as [ImportableField, string[]][]) {
-      if (aliases.includes(header) && !Object.values(map).includes(field)) {
+      if (aliases.includes(header) && !taken().includes(field)) {
         map[String(i)] = field;
         break;
       }
     }
   }
+
+  for (let i = 0; i < headers.length; i++) {
+    if (map[String(i)]) continue;
+    const field = NORMALIZED_ALIASES.get(normalizeHeader(headers[i]));
+    if (field && !taken().includes(field)) map[String(i)] = field;
+  }
+
   return map;
 }
 
@@ -168,6 +222,8 @@ export interface ImportRowError {
     | "nonnegative"
     | "taxRange"
     | "invalidType"
+    | "invalidFlag"
+    | "templateExample"
     | "duplicateSku"
     | "duplicateBarcode";
   message: string;
@@ -180,9 +236,24 @@ export interface ImportRowResult {
   valid: boolean;
 }
 
+/**
+ * Eastern Arabic numerals and separators, normalised to ASCII — an Arabic Excel
+ * sheet may well contain ٦٨٫٥ instead of 68.5.
+ */
+function normalizeDigits(raw: string): string {
+  return raw
+    .replace(/[\u0660-\u0669]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+    .replace(/[\u06f0-\u06f9]/g, (d) => String(d.charCodeAt(0) - 0x06f0))
+    .replace(/\u066b/g, ".") // Arabic decimal separator
+    .replace(/\u066c/g, ","); // Arabic thousands separator
+}
+
 function parseNumber(raw: string): number {
   if (!raw.trim()) return NaN;
-  const cleaned = raw.replace(/[^\d.,-]/g, "");
+  const cleaned = normalizeDigits(raw).replace(/[^\d.,-]/g, "");
+  // No digits at all means the cell holds text ("twelve", "free"). Reporting
+  // that as 0 would quietly import a free product instead of flagging the row.
+  if (!/\d/.test(cleaned)) return NaN;
   
   // Detect European format: 1.234,56 (dots as thousands, comma as decimal)
   // Check if there's a comma followed by exactly 2 digits at the end
@@ -216,6 +287,36 @@ function normalizeType(raw: string): ProductType | null {
   return null;
 }
 
+/** Yes/no in the spellings Excel users actually type; `null` = blank/unknown. */
+function parseFlag(raw: string): boolean | null {
+  const value = raw.trim().toLowerCase();
+  if (!value) return null;
+  if (["true", "yes", "y", "1", "نعم", "صحيح", "مفعل", "متاح"].includes(value)) return true;
+  if (["false", "no", "n", "0", "لا", "غير صحيح", "معطل", "غير مفعل"].includes(value)) return false;
+  return null;
+}
+
+/**
+ * The example row the downloaded template ships with.
+ *
+ * It is a convenience in the file and a hazard on import: a shop that fills in
+ * its own rows but leaves the example behind would silently create a product
+ * called "Example Product". Such a row is rejected with an explanation instead.
+ */
+export const TEMPLATE_EXAMPLE = {
+  sku: "SKU-001",
+  name_en: "Example Product",
+  name_ar: "منتج مثال",
+} as const;
+
+function isTemplateExample(sku: string, nameAr: string, nameEn: string): boolean {
+  if (sku.trim().toUpperCase() !== TEMPLATE_EXAMPLE.sku) return false;
+  return (
+    nameEn.trim().toLowerCase() === TEMPLATE_EXAMPLE.name_en.toLowerCase() ||
+    nameAr.trim() === TEMPLATE_EXAMPLE.name_ar
+  );
+}
+
 /**
  * Parse a single CSV data row into a partial product.
  * `rowIndex` is 1-based (row 1 = first data row after the header).
@@ -243,8 +344,26 @@ function parseRow(
   const taxRateRaw = getField("tax_rate");
   const stockRaw = getField("stock_quantity");
   const lowStockRaw = getField("low_stock_level");
+  const trackingRaw = getField("stock_tracking_enabled");
   const typeRaw = getField("product_type");
   const categoryName = getField("category_name") || undefined;
+
+  // The template's example row is rejected rather than imported as a product.
+  if (isTemplateExample(sku, nameAr, nameEn)) {
+    return {
+      row: rowIndex,
+      data: { _sku: sku, _barcode: barcode, _categoryName: categoryName, sku, barcode },
+      errors: [
+        {
+          row: rowIndex,
+          field: "_row",
+          code: "templateExample",
+          message: `This is the template's example row (${TEMPLATE_EXAMPLE.sku} — ${TEMPLATE_EXAMPLE.name_en}). Replace it with your own product or delete the row.`,
+        },
+      ],
+      valid: false,
+    };
+  }
 
   // Validate SKU
   if (!sku) {
@@ -309,6 +428,17 @@ function parseRow(
     errors.push({ row: rowIndex, field: "low_stock_level", code: "nonnegative", message: "Low stock level cannot be negative" });
   }
 
+  // Validate the stock-tracking flag
+  const stockTracking = parseFlag(trackingRaw);
+  if (trackingRaw && stockTracking === null) {
+    errors.push({
+      row: rowIndex,
+      field: "stock_tracking_enabled",
+      code: "invalidFlag",
+      message: `Unknown stock-tracking value: "${trackingRaw}" (use true or false)`,
+    });
+  }
+
   // Validate type
   const productType = typeRaw ? normalizeType(typeRaw) : "physical";
   if (typeRaw && productType === null) {
@@ -330,7 +460,7 @@ function parseRow(
       selling_price: Number.isNaN(sellingPrice) ? 0 : round2(sellingPrice),
       cost_price: Number.isNaN(costPrice) ? 0 : round2(costPrice),
       tax_rate: Number.isNaN(taxRate) ? 0 : round2(taxRate),
-      stock_tracking_enabled: stockQuantity > 0 || !!stockRaw,
+      stock_tracking_enabled: stockTracking ?? (stockQuantity > 0 || !!stockRaw),
       stock_quantity: Math.max(0, stockQuantity),
       low_stock_level: Math.max(0, lowStockLevel),
       product_type: productType ?? "physical",
@@ -363,17 +493,26 @@ export interface ImportResult {
 }
 
 /**
- * Parse a CSV file into validated product rows.
+ * Parse CSV text into validated product rows.
  *
  * Usage:
- *   const text = await file.text();
- *   const result = importProductsFromCsv(text);
+ *   const result = importProductsFromCsv(await file.text());
  *   // result.validRows → ready for createProduct()
  *   // result.invalidRows → show to user for correction
  */
 export function importProductsFromCsv(csvText: string): ImportResult {
+  return importProductsFromRows(parseCsv(csvText));
+}
+
+/**
+ * Validate rows that are already split into cells.
+ *
+ * This is the whole import pipeline minus the file-format handling, so a CSV
+ * export and a real Excel workbook are validated identically — one set of rules,
+ * one set of messages, whichever way the file arrived.
+ */
+export function importProductsFromRows(rows: string[][]): ImportResult {
   const globalErrors: string[] = [];
-  const rows = parseCsv(csvText);
 
   if (rows.length === 0) {
     return {
@@ -505,11 +644,80 @@ export const TEMPLATE_COLUMNS = [
 ] as const;
 
 /**
- * Import products from a File object (Excel or CSV).
+ * Import products from a File object — a real Excel workbook (.xlsx/.xls) or a
+ * CSV/TSV text export.
+ *
+ * The format is decided by the file's *bytes*, not its name: `.xlsx` is a ZIP
+ * container and `.xls` an OLE2 stream, and both were previously read with
+ * `file.text()` and fed to the CSV parser, which turned the binary into garbage
+ * and reported "could not detect SKU or product name columns". That made the
+ * shipped `.xlsx` template impossible to upload — the one flow the button
+ * advertises. A CSV that happens to be named `.xlsx` still imports, because it
+ * has neither magic number.
  */
 export async function importProductsFromFile(file: File): Promise<ImportResult> {
-  const text = await file.text();
-  return importProductsFromCsv(text);
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  if (looksLikeWorkbook(bytes)) {
+    return importProductsFromRows(await readWorkbookRows(bytes));
+  }
+  // Plain text: `parseCsv` strips the BOM Excel writes on UTF-8 exports.
+  return importProductsFromCsv(new TextDecoder("utf-8").decode(bytes));
+}
+
+/** ZIP (`PK\x03\x04`) → .xlsx, OLE2 (`\xD0\xCF\x11\xE0…`) → .xls. */
+const ZIP_MAGIC: readonly number[] = [0x50, 0x4b, 0x03, 0x04];
+const OLE2_MAGIC: readonly number[] = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
+
+export function looksLikeWorkbook(bytes: Uint8Array): boolean {
+  const startsWith = (magic: readonly number[]) =>
+    bytes.length >= magic.length && magic.every((byte, index) => bytes[index] === byte);
+  return startsWith(ZIP_MAGIC) || startsWith(OLE2_MAGIC);
+}
+
+/**
+ * One Excel cell as the text the validation pipeline expects.
+ *
+ * Numbers are stringified without float artefacts (`0.1 + 0.2` → `"0.3"`) and
+ * without scientific notation, so a 13-digit barcode stays a 13-digit barcode.
+ */
+function cellToText(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? "" : value.toISOString();
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return "";
+    return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(6)));
+  }
+  if (typeof value === "boolean") return value ? "true" : "false";
+  return String(value).trim();
+}
+
+/**
+ * Read a workbook into rows of text, choosing the sheet that actually holds
+ * products — a shop's file may open with a cover or instructions tab.
+ */
+export async function readWorkbookRows(data: Uint8Array): Promise<string[][]> {
+  // Same dynamic import the template generator uses: `xlsx` is ~900 kB and must
+  // not land in the startup bundle.
+  const XLSX = await import("xlsx");
+  const workbook = XLSX.read(data, { type: "array", cellDates: true });
+
+  const sheets = workbook.SheetNames.map((name) => ({
+    name,
+    rows: XLSX.utils
+      .sheet_to_json<unknown[]>(workbook.Sheets[name], {
+        header: 1,
+        raw: true,
+        defval: "",
+        blankrows: false,
+      })
+      .map((row) => row.map(cellToText)),
+  })).filter((sheet) => sheet.rows.length > 0);
+
+  if (sheets.length === 0) return [];
+  const products = sheets.find((sheet) => Object.keys(buildColumnMap(sheet.rows[0])).length > 0);
+  return (products ?? sheets[0]).rows;
 }
 
 /**

@@ -9,11 +9,16 @@
  *
  * Any console.error / window.onerror fails the run.
  *
- * Build the bundle first:
- *   npx esbuild src/main.tsx --bundle --format=esm --platform=node \
- *     --outfile=/tmp/alyq-app.mjs --loader:.css=empty \
- *     --define:import.meta.env='{"VITE_CURRENCY":"EGP"}'
+ * Build the bundle first, then run this file:
+ *   npm run test:bundle                 # → /tmp/alyq-app.mjs
  *   node scripts/smoke.dom.mjs
+ * or let the runner do both: `npm run test:e2e smoke`.
+ *
+ * A bare `npx esbuild src/main.tsx --bundle …` will NOT build it: `main.tsx`
+ * pulls in `@/assets/alyq-logo.png` and esbuild has no loader for `.png`
+ * ("No loader is configured for \".png\" files"). The bundle step lives in
+ * `scripts/lib/app-bundle.mjs`, which mocks image imports to the public URL the
+ * receipts assert (`/alyq-logo.png`) and inlines `import.meta.env`.
  */
 import { JSDOM } from "jsdom";
 import assert from "node:assert/strict";
@@ -55,8 +60,27 @@ globalThis.Blob = dom.window.Blob;
 globalThis.FileReader = dom.window.FileReader;
 // Node's own URL.createObjectURL expects a Node Blob; the app passes a jsdom
 // File, so always replace it with a mock that just returns a blob:-style string.
-URL.createObjectURL = () => `blob:mock-${Math.random().toString(36).slice(2)}`;
+// The Blob is kept so a test can read back what the app handed the browser —
+// that is how the Excel export/import round trip is verified below.
+const downloads = [];
+let pendingDownloadBlob = null;
+URL.createObjectURL = (blob) => {
+  pendingDownloadBlob = blob ?? null;
+  return `blob:mock-${Math.random().toString(36).slice(2)}`;
+};
 URL.revokeObjectURL = () => {};
+
+// An <a download> click would make jsdom attempt a navigation it cannot do.
+// Record it instead; anything without a `download` attribute behaves as before.
+const realAnchorClick = dom.window.HTMLAnchorElement.prototype.click;
+dom.window.HTMLAnchorElement.prototype.click = function () {
+  if (this.download) {
+    downloads.push({ filename: this.download, blob: pendingDownloadBlob });
+    pendingDownloadBlob = null;
+    return;
+  }
+  return realAnchorClick.call(this);
+};
 
 dom.window.console.error = (...args) => {
   errors.push(args.map((a) => (a?.stack ?? String(a))).join(" "));
@@ -508,6 +532,157 @@ async function main() {
   assert.ok(bodyText().includes("Manual override"), "existing manufacturer barcode loads as manual");
   assert.equal(previewValue(), "6281000000013", "edit form previews the stored barcode");
   console.log("  ✓ edit product: manufacturer barcode preserved as manual override");
+
+  // ── Excel import: the round trip through a real .xlsx workbook ────────────
+  // The importer used to read every file with `file.text()` and hand the bytes to
+  // the CSV parser, so the .xlsx template the app itself offers for download came
+  // back as ZIP garbage ("could not detect SKU or product name columns") and no
+  // spreadsheet could ever be uploaded. This walks the whole loop: template →
+  // upload → validation → create → re-upload → duplicate detection → update,
+  // checking the catalogue after each step.
+  const XLSX = await import("xlsx");
+  const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  const buildWorkbook = (sheetRows) => {
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheetRows), "Products");
+    return XLSX.write(wb, { type: "array", bookType: "xlsx" });
+  };
+  const previewNumber = (label) =>
+    Number((dialog()?.textContent ?? "").match(new RegExp(`${label}:\\s*(\\d+)`))?.[1] ?? NaN);
+  const uploadToImport = async (bytes, filename) => {
+    const input = dialog().querySelector('input[type="file"]');
+    assert.ok(input, "the import modal has a file input");
+    setInputFiles(input, [new dom.window.File([bytes], filename, { type: XLSX_MIME })]);
+    input.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    for (let i = 0; i < 40 && !bodyText().includes("File Summary"); i += 1) await sleep(150);
+    assert.ok(bodyText().includes("File Summary"), `${filename}: the import preview appears`);
+  };
+  const openImportModal = async () => {
+    click("Import from Excel");
+    // the modal is lazy-loaded (xlsx is heavy), so wait for it to mount
+    for (let i = 0; i < 30 && !dialog(); i += 1) await sleep(200);
+    assert.ok(dialog(), "the import modal opens");
+    await sleep(200);
+  };
+  const closeImportModal = async () => {
+    dialog().querySelector('button[aria-label="close"]').click();
+    for (let i = 0; i < 20 && dialog(); i += 1) await sleep(150);
+    assert.ok(!dialog(), "the import modal closes again");
+  };
+
+  // a) the template really is a workbook, and importing it untouched is refused
+  await navigate("#/products");
+  await openImportModal();
+  const downloadsBefore = downloads.length;
+  click("Download Excel Template", dialog());
+  await sleep(800);
+  assert.equal(downloads.length, downloadsBefore + 1, "the template was downloaded");
+  const template = downloads[downloads.length - 1];
+  assert.equal(template.filename, "products-template.xlsx");
+  const templateBytes = Buffer.from(await template.blob.arrayBuffer());
+  assert.deepEqual(
+    [...templateBytes.subarray(0, 4)],
+    [0x50, 0x4b, 0x03, 0x04],
+    "the template is a real .xlsx (ZIP) file",
+  );
+  await closeImportModal();
+
+  await openImportModal();
+  await uploadToImport(templateBytes, "products-template.xlsx");
+  assert.equal(previewNumber("Valid rows"), 0, "the template's example row is not importable");
+  assert.ok(/example row/i.test(dialog().textContent), "and the preview says why");
+  await closeImportModal();
+  console.log("  ✓ excel import: template is a real .xlsx and its example row is refused");
+
+  // b) two good rows and one bad one, in a genuine workbook
+  const IMPORT_HEADERS = [
+    "SKU", "Product Name (Arabic)", "Product Name (English)",
+    "Selling Price", "Cost Price", "Stock Quantity", "Category",
+  ];
+  const importedRows = [
+    ["SMOKE-IMP-1", "منتج استيراد", "Smoke Import One", 42.5, 20, 8, "Coffee"],
+    ["SMOKE-IMP-2", "منتج استيراد ٢", "Smoke Import Two", 15, 7.25, 3, "Tea"],
+  ];
+  await openImportModal();
+  await uploadToImport(
+    buildWorkbook([
+      IMPORT_HEADERS,
+      ...importedRows,
+      ["SMOKE-IMP-3", "سعر سالب", "Negative Price", -5, 1, 1, "Coffee"],
+    ]),
+    "smoke-products.xlsx",
+  );
+  assert.equal(previewNumber("Total rows"), 3, "three data rows came out of the workbook");
+  assert.equal(previewNumber("Valid rows"), 2, "two of them are valid");
+  assert.equal(previewNumber("Invalid rows"), 1, "the negative price is held back");
+  assert.equal(previewNumber("New products"), 2, "both valid rows are new");
+  assert.ok(
+    dialog().textContent.includes("Selling price cannot be negative"),
+    "with a reason the user can act on",
+  );
+  click("Import (2)", dialog());
+  for (let i = 0; i < 40 && !bodyText().includes("Import Complete"); i += 1) await sleep(200);
+  assert.ok(
+    /2 product\(s\) imported successfully/.test(dialog().textContent),
+    "the success message counts what was written",
+  );
+  await closeImportModal();
+
+  setField('input[type="search"]', "SMOKE-IMP");
+  await sleep(400);
+  assert.equal(rows(), 2, "both imported products are in the catalogue");
+  assert.ok(/42[.,]5/.test(bodyText()), "with the price from the spreadsheet");
+  console.log("  ✓ excel import: a real .xlsx creates products, bad rows are rejected with reasons");
+
+  // c) the same file again — duplicates are detected before anything is written
+  await openImportModal();
+  await uploadToImport(buildWorkbook([IMPORT_HEADERS, ...importedRows]), "smoke-products.xlsx");
+  assert.equal(previewNumber("Already in catalogue"), 2, "both rows match products that exist");
+  assert.equal(previewNumber("New products"), 0, "nothing new would be created");
+  assert.ok(dialog().textContent.includes("will be skipped"), "and the default is stated plainly");
+  const importButton = [...dialog().querySelectorAll("button")].find((b) =>
+    (b.textContent ?? "").trim().startsWith("Import ("),
+  );
+  assert.ok(importButton.disabled, "an import that would write nothing cannot be started");
+
+  const updateToggle = dialog().querySelector('input[type="checkbox"]');
+  assert.ok(updateToggle, "updating existing products is offered as an option");
+  updateToggle.click();
+  await sleep(350);
+  assert.ok(dialog().textContent.includes("will be updated"), "toggling says what happens instead");
+  assert.ok(!importButton.disabled, "and the same rows become actionable");
+  await closeImportModal();
+  console.log("  ✓ excel import: duplicates are visible before confirming, and cannot write silently");
+
+  // d) opt in to updating: same SKUs, new prices, no duplicates created
+  await openImportModal();
+  await uploadToImport(
+    buildWorkbook([
+      IMPORT_HEADERS,
+      ["SMOKE-IMP-1", "منتج استيراد", "Smoke Import One", 55, 20, 8, "Coffee"],
+      ["SMOKE-IMP-2", "منتج استيراد ٢", "Smoke Import Two", 18, 7.25, 3, "Tea"],
+    ]),
+    "smoke-update.xlsx",
+  );
+  dialog().querySelector('input[type="checkbox"]').click();
+  await sleep(350);
+  click("Import (2)", dialog());
+  for (let i = 0; i < 40 && !bodyText().includes("Import Complete"); i += 1) await sleep(200);
+  assert.ok(/2 existing product\(s\) updated/.test(dialog().textContent), "reported as an update");
+  assert.ok(
+    /0 product\(s\) imported successfully/.test(dialog().textContent),
+    "and not as newly created products",
+  );
+  assert.ok(!/could not be saved/.test(dialog().textContent), "a duplicate is never reported as a failure");
+  await closeImportModal();
+
+  setField('input[type="search"]', "SMOKE-IMP");
+  await sleep(400);
+  assert.equal(rows(), 2, "still two products — updating created no duplicates");
+  assert.ok(/55[.,]0/.test(bodyText()), "and the updated price is in the catalogue");
+  setField('input[type="search"]', "");
+  await sleep(300);
+  console.log("  ✓ excel import: update mode rewrites existing products instead of duplicating them");
 
   // ── Phase 3 · Inventory module ──
   await navigate("#/inventory");

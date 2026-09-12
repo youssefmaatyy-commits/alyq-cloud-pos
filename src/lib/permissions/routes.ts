@@ -24,6 +24,12 @@ export const ROUTE_CAPABILITIES: ReadonlyArray<readonly [string, Capability]> = 
   ["/shifts/history", "view_shifts"],
   ["/shifts", "view_shifts"],
   ["/expenses", "view_shifts"],
+  // Reports is read-only: it re-reads data the other screens already expose and
+  // never writes, so it reuses the existing `view_shifts` read capability that
+  // gates `/expenses` and `/shifts/history`. Adding a dedicated capability here
+  // would desynchronise `roles.ts` from `public.role_capabilities`, which
+  // `npm run db:check` asserts row-for-row.
+  ["/reports", "view_shifts"],
   ["/audit", "view_audit_log"],
 ];
 

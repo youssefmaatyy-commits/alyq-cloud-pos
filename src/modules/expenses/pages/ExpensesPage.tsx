@@ -8,6 +8,7 @@ import {
   ConfirmDialog,
   EmptyState,
   ErrorState,
+  ExportButton,
   LoadingBlock,
   PlusIcon,
   SearchIcon,
@@ -19,6 +20,7 @@ import {
 import { useExpenses } from "../hooks/ExpenseProvider";
 import { queryExpenses, summarizeExpenses } from "../services/expenseService";
 import { ExpenseFormModal } from "../components/ExpenseFormModal";
+import { buildExpensesSheets } from "../services/expensesExport";
 import { useShifts } from "@/modules/shifts/hooks/ShiftProvider";
 import { canAddExpense, canDeleteExpense, canEditExpense } from "@/modules/shifts/permissions";
 import {
@@ -75,6 +77,12 @@ export function ExpensesPage() {
         subtitle={t("expenses.subtitle")}
         actions={
           <>
+            {/* Exports `filtered` — search, category and method filters applied. */}
+            <ExportButton
+              name="expenses"
+              count={filtered.length}
+              build={() => buildExpensesSheets({ expenses: filtered, t })}
+            />
             <Button variant="secondary" onClick={() => void refresh()} title={t("common.retry")}>
               ⟳
             </Button>

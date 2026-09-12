@@ -6,6 +6,7 @@ import {
   useToast,
 } from "@/components/ui";
 import type { ImportResult } from "../services/excelImport";
+import type { ProductPatch } from "../types";
 import {
   generateExcelTemplate,
   importProductsFromFile,
@@ -40,10 +41,46 @@ export function ExcelImportModal({
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const [importing, setImporting] = useState(false);
   const [importedCount, setImportedCount] = useState(0);
+  const [updatedCount, setUpdatedCount] = useState(0);
+  const [skippedCount, setSkippedCount] = useState(0);
   const [failedCount, setFailedCount] = useState(0);
+  /** Opt-in: a colliding row replaces the existing product instead of being skipped. */
+  const [updateExisting, setUpdateExisting] = useState(false);
 
   const validRows = useMemo(() => importResult?.validRows ?? [], [importResult]);
   const invalidRows = useMemo(() => importResult?.invalidRows ?? [], [importResult]);
+
+  /**
+   * The existing product each valid row collides with, by SKU (case-insensitive)
+   * or barcode.
+   *
+   * Worked out for the preview on purpose: collisions used to surface only as a
+   * "failed" count *after* the import ran, so a shop re-uploading a corrected
+   * price list saw "0 imported, 12 failed" with no explanation and no way to
+   * update anything.
+   */
+  const duplicateOf = useMemo(() => {
+    const matches = new Map<number, Product>();
+    if (validRows.length === 0) return matches;
+
+    const bySku = new Map<string, Product>();
+    const byBarcode = new Map<string, Product>();
+    for (const product of products) {
+      bySku.set(product.sku.trim().toLowerCase(), product);
+      if (product.barcode) byBarcode.set(product.barcode.trim(), product);
+    }
+
+    for (const row of validRows) {
+      const match =
+        bySku.get(row.data._sku.trim().toLowerCase()) ??
+        (row.data._barcode ? byBarcode.get(row.data._barcode.trim()) : undefined);
+      if (match) matches.set(row.row, match);
+    }
+    return matches;
+  }, [products, validRows]);
+
+  const duplicateCount = duplicateOf.size;
+  const newCount = validRows.length - duplicateCount;
 
   const handleFileSelect = useCallback(
     async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -87,61 +124,84 @@ export function ExcelImportModal({
     setStep("importing");
     setImporting(true);
     setImportedCount(0);
+    setUpdatedCount(0);
+    setSkippedCount(0);
     setFailedCount(0);
 
     const repository = getCatalogRepository();
     const resolved = resolveCategoryIds(validRows, categories, null);
 
     let success = 0;
+    let updated = 0;
+    let skipped = 0;
     let failed = 0;
 
     for (const row of resolved) {
+      const existing = duplicateOf.get(row.row);
+
+      // A collision is a decision, not an error: the row is either updated or
+      // skipped, and the summary reports which — it is never counted as failed.
+      if (existing && !updateExisting) {
+        skipped++;
+        setSkippedCount(skipped);
+        continue;
+      }
+
+      const newProduct: NewProduct = {
+        sku: row.data.sku!,
+        barcode: row.data._barcode,
+        name_ar: row.data.name_ar!,
+        name_en: row.data.name_en!,
+        description_ar: row.data.description_ar ?? null,
+        description_en: row.data.description_en ?? null,
+        category_id: row.data.category_id ?? null,
+        product_type: row.data.product_type ?? "physical",
+        selling_price: row.data.selling_price ?? 0,
+        cost_price: row.data.cost_price ?? 0,
+        tax_rate: row.data.tax_rate ?? 0,
+        stock_tracking_enabled: row.data.stock_tracking_enabled ?? false,
+        stock_quantity: row.data.stock_quantity ?? 0,
+        low_stock_level: row.data.low_stock_level ?? 5,
+        show_on_website: row.data.show_on_website ?? true,
+        is_featured: row.data.is_featured ?? false,
+        active: row.data.active ?? true,
+        image_url: null,
+        images: [],
+      };
+
+      /**
+       * An update carries only the columns a spreadsheet can hold. Images and
+       * the published / featured / archived flags are deliberately absent, so
+       * re-uploading a price list cannot wipe a product's photos or resurrect
+       * one that was archived on purpose.
+       */
+      const patch: ProductPatch = {
+        sku: newProduct.sku,
+        barcode: newProduct.barcode,
+        name_ar: newProduct.name_ar,
+        name_en: newProduct.name_en,
+        description_ar: newProduct.description_ar,
+        description_en: newProduct.description_en,
+        category_id: newProduct.category_id,
+        product_type: newProduct.product_type,
+        selling_price: newProduct.selling_price,
+        cost_price: newProduct.cost_price,
+        tax_rate: newProduct.tax_rate,
+        stock_tracking_enabled: newProduct.stock_tracking_enabled,
+        stock_quantity: newProduct.stock_quantity,
+        low_stock_level: newProduct.low_stock_level,
+      };
+
       try {
-        // Check for duplicate SKU in existing products
-        const existingSku = products.find(
-          (p) => p.sku.toLowerCase() === row.data._sku.toLowerCase(),
-        );
-        if (existingSku) {
-          failed++;
-          continue;
+        if (existing) {
+          await repository.updateProduct(existing.id, patch);
+          updated++;
+          setUpdatedCount(updated);
+        } else {
+          await repository.createProduct(newProduct);
+          success++;
+          setImportedCount(success);
         }
-
-        // Check for duplicate barcode in existing products
-        if (row.data._barcode) {
-          const existingBarcode = products.find(
-            (p) => p.barcode === row.data._barcode,
-          );
-          if (existingBarcode) {
-            failed++;
-            continue;
-          }
-        }
-
-        const newProduct: NewProduct = {
-          sku: row.data.sku!,
-          barcode: row.data._barcode,
-          name_ar: row.data.name_ar!,
-          name_en: row.data.name_en!,
-          description_ar: row.data.description_ar ?? null,
-          description_en: row.data.description_en ?? null,
-          category_id: row.data.category_id ?? null,
-          product_type: row.data.product_type ?? "physical",
-          selling_price: row.data.selling_price ?? 0,
-          cost_price: row.data.cost_price ?? 0,
-          tax_rate: row.data.tax_rate ?? 0,
-          stock_tracking_enabled: row.data.stock_tracking_enabled ?? false,
-          stock_quantity: row.data.stock_quantity ?? 0,
-          low_stock_level: row.data.low_stock_level ?? 5,
-          show_on_website: row.data.show_on_website ?? true,
-          is_featured: row.data.is_featured ?? false,
-          active: row.data.active ?? true,
-          image_url: null,
-          images: [],
-        };
-
-        await repository.createProduct(newProduct);
-        success++;
-        setImportedCount(success);
       } catch (err) {
         console.error(`Failed to import row ${row.row}:`, err);
         failed++;
@@ -152,7 +212,7 @@ export function ExcelImportModal({
     setImporting(false);
     setStep("complete");
     onImportComplete();
-  }, [importResult, validRows, categories, products, onImportComplete]);
+  }, [importResult, validRows, categories, duplicateOf, updateExisting, onImportComplete]);
 
   const handleClose = useCallback(() => {
     setStep("upload");
@@ -160,7 +220,10 @@ export function ExcelImportModal({
     setImportResult(null);
     setImporting(false);
     setImportedCount(0);
+    setUpdatedCount(0);
+    setSkippedCount(0);
     setFailedCount(0);
+    setUpdateExisting(false);
     onClose();
   }, [onClose]);
 
@@ -228,6 +291,16 @@ export function ExcelImportModal({
                   <span className="text-slate-600">{t("import.invalidRows")}:</span>{" "}
                   <span className="font-medium text-red-600">{invalidRows.length}</span>
                 </div>
+                <div>
+                  <span className="text-slate-600">{t("import.newRows")}:</span>{" "}
+                  <span className="font-medium text-emerald-600">{newCount}</span>
+                </div>
+                {duplicateCount > 0 && (
+                  <div>
+                    <span className="text-slate-600">{t("import.duplicateRows")}:</span>{" "}
+                    <span className="font-medium text-amber-600">{duplicateCount}</span>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -302,6 +375,33 @@ export function ExcelImportModal({
               </div>
             )}
 
+            {duplicateCount > 0 && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+                <label className="flex cursor-pointer items-start gap-3">
+                  <input
+                    type="checkbox"
+                    checked={updateExisting}
+                    onChange={(event) => setUpdateExisting(event.target.checked)}
+                    className="mt-0.5 h-4 w-4 rounded border-amber-400 text-amber-600"
+                  />
+                  <span>
+                    <span className="block text-sm font-semibold text-amber-900">
+                      {t("import.updateExisting")}
+                    </span>
+                    <span className="block text-xs text-amber-800">
+                      {t("import.updateExistingHint")}
+                    </span>
+                  </span>
+                </label>
+                <p className="mt-3 text-xs font-medium text-amber-800">
+                  {t(
+                    updateExisting ? "import.duplicatesUpdateHint" : "import.duplicatesSkipHint",
+                    { count: duplicateCount },
+                  )}
+                </p>
+              </div>
+            )}
+
             <div className="flex justify-end gap-2">
               <Button variant="secondary" onClick={handleClose}>
                 {t("common.cancel")}
@@ -309,9 +409,12 @@ export function ExcelImportModal({
               <Button
                 variant="primary"
                 onClick={() => void handleConfirmImport()}
-                disabled={validRows.length === 0}
+                disabled={updateExisting ? validRows.length === 0 : newCount === 0}
               >
-                {t("import.confirmImport")} ({validRows.length})
+                {/* The count is what will actually be written, not every valid row —
+                    and with nothing to write the button is off, so an import can
+                    never run just to report "0 imported". */}
+                {t("import.confirmImport")} ({updateExisting ? validRows.length : newCount})
               </Button>
             </div>
           </div>
@@ -324,7 +427,10 @@ export function ExcelImportModal({
               {t("import.importing")}
             </p>
             <p className="mt-2 text-xs text-slate-500">
-              {t("import.importedCount", { imported: importedCount, total: validRows.length })}
+              {t("import.importedCount", {
+                imported: importedCount + updatedCount,
+                total: validRows.length,
+              })}
             </p>
           </div>
         )}
@@ -338,6 +444,16 @@ export function ExcelImportModal({
             <p className="text-sm text-slate-600">
               {t("import.importedSuccess", { count: importedCount })}
             </p>
+            {updatedCount > 0 && (
+              <p className="mt-2 text-sm text-emerald-600">
+                {t("import.updatedSuccess", { count: updatedCount })}
+              </p>
+            )}
+            {skippedCount > 0 && (
+              <p className="mt-2 text-sm text-amber-600">
+                {t("import.skippedCount", { count: skippedCount })}
+              </p>
+            )}
             {failedCount > 0 && (
               <p className="mt-2 text-sm text-red-600">
                 {t("import.failedCount", { count: failedCount })}

@@ -199,3 +199,22 @@ export const ClockIcon = (props: IconProps) => (
     <path d="M12 7v5l3 2" />
   </svg>
 );
+
+/** Bar chart — the Reports screen. */
+export const ReportIcon = (props: IconProps) => (
+  <svg {...base} width="18" height="18" {...props}>
+    <path d="M4 20V10" />
+    <path d="M10 20V4" />
+    <path d="M16 20v-7" />
+    <path d="M3 20h18" />
+  </svg>
+);
+
+/** Tray with a down arrow — Excel export. */
+export const DownloadIcon = (props: IconProps) => (
+  <svg {...base} width="16" height="16" {...props}>
+    <path d="M12 3v10" />
+    <path d="m8 9 4 4 4-4" />
+    <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+  </svg>
+);
