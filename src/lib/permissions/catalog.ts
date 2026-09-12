@@ -1,5 +1,5 @@
 /**
- * Capability catalog — the same 33 capabilities `roles.ts` defines, grouped the
+ * Capability catalog — the same capabilities `roles.ts` defines, grouped the
  * way a shop thinks about them, for the permission picker on the Roles screen.
  *
  * This file adds no authority of its own: it is a *presentation* of
@@ -23,6 +23,7 @@ export interface CapabilityGroup {
     | "expenses"
     | "shifts"
     | "online"
+    | "approvals"
     | "settings";
   capabilities: Capability[];
 }
@@ -67,6 +68,12 @@ export const CAPABILITY_GROUPS: readonly CapabilityGroup[] = [
   {
     key: "online",
     capabilities: ["manage_online_orders", "manage_website"],
+  },
+  {
+    // Cross-cutting on purpose: one capability decides every over-limit request,
+    // whichever module raised it (Phase 12).
+    key: "approvals",
+    capabilities: ["approve_limit_request"],
   },
   {
     key: "settings",

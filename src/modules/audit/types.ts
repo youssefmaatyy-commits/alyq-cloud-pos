@@ -27,6 +27,16 @@ export const AUDIT_ACTIONS = [
   // (no database function writes it), while the settlement rows above are
   // written by `pos_settle_refund` live and by the service in demo mode.
   "return.created",
+  // Approval limits (Phase 12, requirement 2). Live mode writes these from
+  // `submit_approval_request` / `decide_approval_request` / `mark_approval_applied`
+  // / `set_approval_rules` (migration 0023); demo mode writes the same five from
+  // the approvals service, so the trail reads identically in both.
+  "approval.requested",
+  "approval.approved",
+  "approval.rejected",
+  "approval.cancelled",
+  "approval.applied",
+  "approval_rules.updated",
   // Online storefront (Phase 9). Approving a website order creates a POS sale
   // and converts its stock reservation; cancelling releases the reservation and
   // keeps the record with a reason. The two payment actions are the human half
@@ -68,6 +78,10 @@ export const AUDIT_ENTITIES = [
   "refund",
   /** A sales return (`sales_returns`) — the goods side of a refund. */
   "return",
+  /** An over-limit act waiting for a decision (`approval_requests`). */
+  "approval_request",
+  /** The threshold document itself (`approval_rules`, one row). */
+  "approval_rules",
   "online_order",
   "website_settings",
   /** A sign-in, a sign-out or a refresh: an event with no table behind it. */

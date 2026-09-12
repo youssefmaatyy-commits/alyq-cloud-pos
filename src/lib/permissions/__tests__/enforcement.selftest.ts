@@ -169,10 +169,12 @@ test("every register entry names a real capability, file and exported guard", ()
 // ── 2. refusal matrix, derived not listed ─────────────────────────────────
 test("each role is refused exactly the sensitive actions it lacks", () => {
   const refusals = new Map<AppRole, number>();
+  const refusedCapabilities = new Map<AppRole, string[]>();
   for (const role of APP_ROLES) {
     installStorageStub();
     signInAs(role);
     let refused = 0;
+    const lacking: string[] = [];
     for (const action of SENSITIVE_ACTIONS) {
       const allowed = hasCapability(role, action.capability);
       const code = refusalCodeSync(() => assertSensitiveAction(action.key));
@@ -183,16 +185,27 @@ test("each role is refused exactly the sensitive actions it lacks", () => {
         assert.equal(code, "FORBIDDEN", `${role} is refused '${action.key}' (${action.capability})`);
         assert.equal(mayPerform(action.key), false, `${role}: mayPerform agrees on refusing '${action.key}'`);
         refused += 1;
+        lacking.push(action.capability);
       }
     }
     refusals.set(role, refused);
+    refusedCapabilities.set(role, lacking);
   }
 
-  // The two oversight seats are refused nothing: an action an admin or a
-  // manager could not perform would be a hole in the matrix rather than a
-  // control, and the shop's owner must always be able to run the shop.
+  // The owner can always run the shop: an action an admin is refused would be a
+  // hole in the matrix rather than a control.
   assert.equal(refusals.get("admin"), 0, "admin is refused nothing");
-  assert.equal(refusals.get("manager"), 0, "manager is refused nothing");
+
+  // A manager runs the shop too, and is refused only the capabilities admin
+  // keeps to itself — the ones that decide who holds capabilities and what the
+  // system-wide rules are. Asserting the *kind* of refusal, rather than a count,
+  // keeps this true as the register grows.
+  for (const capability of refusedCapabilities.get("manager") ?? []) {
+    assert.ok(
+      /^manage_/.test(capability),
+      `manager is refused '${capability}', which is an admin-only authority`,
+    );
+  }
 
   // Every seat below them is gated, and the read-only seat is gated hardest.
   for (const role of ["cashier", "inventory_clerk", "viewer"] as const) {

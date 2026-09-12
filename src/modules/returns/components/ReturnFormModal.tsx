@@ -191,12 +191,21 @@ export function ReturnFormModal({
         user_name: user.name,
       });
 
-      toast.success(t("returns.createdToast"));
+      // Phase 12: a refund above the cap is still recorded — the goods are back
+      // and the stock is right — but it opens `pending` and the request goes to
+      // an approver, who releases the money from the inbox.
+      if (res.approvalRequest) {
+        toast.success(
+          t("returns.createdPendingApprovalToast", { number: res.approvalRequest.request_number }),
+        );
+      } else {
+        toast.success(t("returns.createdToast"));
+      }
       await refreshCatalog();
       onClose();
       if (onSuccess) onSuccess(res.returnRecord.id);
-    } catch {
-      toast.error(t("common.error"));
+    } catch (err) {
+      toast.error(err instanceof Error && err.message ? err.message : t("common.error"));
     } finally {
       setSubmitting(false);
     }

@@ -21,6 +21,7 @@ import {
   type FieldErrors,
   type ProductFormValues,
 } from "../validation";
+import { ApprovalRequestDialog, isApprovalRequired, type ApprovalRequirement } from "@/modules/approvals";
 import { useCatalog } from "../hooks/CatalogProvider";
 import { toCategoryOptions } from "../services/categoryTree";
 import { describeError } from "../services/catalogService";
@@ -194,6 +195,13 @@ export function ProductForm({ productId }: { productId?: string }) {
       toast.success(t(isNew ? "products.createdToast" : "products.updatedToast"));
       navigate(isNew ? "/products" : `/products/${productId}`);
     } catch (error) {
+      // Phase 12: the shop requires a second signature on price moves. Nothing
+      // was written — offer to file the change, carrying the draft verbatim so
+      // an approval applies exactly what was asked for.
+      if (isApprovalRequired(error)) {
+        setApprovalAsk(error.approvalRequired);
+        return;
+      }
       const described = describeError(error);
       toast.error(t(described.key as never));
       if (described.field) {
@@ -205,6 +213,9 @@ export function ProductForm({ productId }: { productId?: string }) {
   };
 
   const skuAvailable = !errors.sku && values.sku.trim().length > 0;
+
+  // The over-limit price move the service refused, waiting for a reason.
+  const [approvalAsk, setApprovalAsk] = useState<ApprovalRequirement | null>(null);
 
   if (productId && loading && !existing) {
     return <Card className="text-sm font-medium text-slate-600">{t("common.loading")}</Card>;
@@ -224,6 +235,7 @@ export function ProductForm({ productId }: { productId?: string }) {
   }
 
   return (
+    <>
     <form onSubmit={handleSubmit} className="space-y-4" noValidate>
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="space-y-4 lg:col-span-2">
@@ -677,5 +689,30 @@ export function ProductForm({ productId }: { productId?: string }) {
         </div>
       </div>
     </form>
+
+    {approvalAsk && existing ? (
+      <ApprovalRequestDialog
+        open
+        requirement={approvalAsk}
+        entityType="product"
+        entityId={existing.id}
+        entityLabel={`${existing.name_en || existing.name_ar} · ${existing.sku}`}
+        previousValue={{
+          selling_price: Number(existing.selling_price),
+          cost_price: Number(existing.cost_price ?? 0),
+        }}
+        newValue={{
+          selling_price: Number(values.selling_price),
+          cost_price: Number(values.cost_price),
+        }}
+        payload={{ product_id: existing.id, values } as unknown as Record<string, unknown>}
+        summary={`${t("products.sellingPrice")}: ${money(Number(existing.selling_price))} → ${money(
+          Number(values.selling_price),
+        )}`}
+        onFiled={() => goBack()}
+        onClose={() => setApprovalAsk(null)}
+      />
+    ) : null}
+    </>
   );
 }

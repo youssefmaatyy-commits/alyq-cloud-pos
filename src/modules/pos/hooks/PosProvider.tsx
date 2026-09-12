@@ -21,6 +21,7 @@ import { getSalesRepository, type SalesRepository } from "../data";
 // written, which the provider's own `canSell` flag cannot do for a caller that
 // never looked at it.
 import { completeSale as completeSaleGuarded } from "../services/saleService";
+import { isApprovalRequired, type ApprovalRequirement } from "@/modules/approvals";
 import { cartTotals, validateDiscount, type CartTotals as Totals } from "../services/posMath";
 import type {
   CartDiscount,
@@ -56,8 +57,16 @@ export interface PosContextValue {
   // completion
   completing: boolean;
   completedSale: SaleModel | null;
-  completeSale: (payments: SalePaymentInput[]) => Promise<SaleModel>;
+  /**
+   * Completes the sale, or returns `null` when the discount crossed an approval
+   * limit and the draft was offered to the register as a request instead
+   * (Phase 12). `approvalAsk` then carries the rule that fired and the exact
+   * draft an approver will replay.
+   */
+  completeSale: (payments: SalePaymentInput[]) => Promise<SaleModel | null>;
   dismissCompleted: () => void;
+  approvalAsk: { requirement: ApprovalRequirement; input: CompleteSaleInput } | null;
+  dismissApprovalAsk: () => void;
   // history
   sales: SaleModel[];
   salesLoading: boolean;
@@ -81,6 +90,12 @@ export function PosProvider({ children }: { children: ReactNode }) {
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [completing, setCompleting] = useState(false);
   const [completedSale, setCompletedSale] = useState<SaleModel | null>(null);
+  // Set when the discount cap refused a sale (Phase 12): the rule that fired and
+  // the draft the register may send for approval.
+  const [approvalAsk, setApprovalAsk] = useState<{
+    requirement: ApprovalRequirement;
+    input: CompleteSaleInput;
+  } | null>(null);
   const [sales, setSales] = useState<SaleModel[]>([]);
   const [salesLoading, setSalesLoading] = useState(true);
   const repositoryRef = useRef<SalesRepository | null>(null);
@@ -230,8 +245,10 @@ export function PosProvider({ children }: { children: ReactNode }) {
       if (lines.length === 0) throw new AppError("VALIDATION", "Cart is empty");
 
       setCompleting(true);
-      try {
-        const input: CompleteSaleInput = {
+      // Built outside the try so the catch can offer the very draft that was
+      // refused: an approval replays it byte for byte, `client_ref` included,
+      // which is what stops an approved sale from being written twice.
+      const input: CompleteSaleInput = {
           client_ref: newClientRef(),
           lines: lines.map((l) => ({ product_id: l.product_id, qty: l.qty })),
           discount_type: discount.type,
@@ -242,7 +259,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
           customer_phone: selectedCustomer?.phone ?? null,
           user_id: user.id,
           user_name: user.name,
-        };
+      };
+      try {
         const sale = await completeSaleGuarded(input);
         await loadCatalog();
         setCompletedSale(sale);
@@ -251,6 +269,16 @@ export function PosProvider({ children }: { children: ReactNode }) {
         setSelectedCustomer(null);
         void refreshSales();
         return sale;
+      } catch (err) {
+        // Over the discount cap: nothing was written, and the cart stays exactly
+        // as it is so the cashier can either send it for approval or lower the
+        // discount and sell now. The draft carried here is what an approval
+        // replays, `client_ref` included — so approving cannot double-sell.
+        if (isApprovalRequired(err)) {
+          setApprovalAsk({ requirement: err.approvalRequired, input });
+          return null;
+        }
+        throw err;
       } finally {
         setCompleting(false);
       }
@@ -259,6 +287,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
   );
 
   const dismissCompleted = useCallback(() => setCompletedSale(null), []);
+
+  const dismissApprovalAsk = useCallback(() => setApprovalAsk(null), []);
 
   const value = useMemo<PosContextValue>(
     () => ({
@@ -284,6 +314,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
       completedSale,
       completeSale,
       dismissCompleted,
+      approvalAsk,
+      dismissApprovalAsk,
       sales,
       salesLoading,
       refreshSales,
@@ -313,6 +345,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
       completedSale,
       completeSale,
       dismissCompleted,
+      approvalAsk,
+      dismissApprovalAsk,
       sales,
       salesLoading,
       refreshSales,

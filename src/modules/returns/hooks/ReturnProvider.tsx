@@ -21,6 +21,7 @@ import {
   loadReturns,
   processReturn,
   settleRefund as settleRefundRequest,
+  type ProcessReturnResult,
 } from "../services/returnService";
 import { AppError } from "@/modules/products/data/repository";
 
@@ -32,9 +33,12 @@ export interface ReturnContextValue {
   loading: boolean;
   error: AppError | null;
   refresh: () => Promise<void>;
-  createReturn: (
-    input: CreateReturnInput,
-  ) => Promise<{ returnRecord: SalesReturn; refundRecord: RefundRecord }>;
+  /**
+   * Record a return. `approvalRequest` is set when the refund crossed an
+   * approval limit (Phase 12): the return still exists and the stock is still
+   * right, but the refund opened `pending` and the money waits on a decision.
+   */
+  createReturn: (input: CreateReturnInput) => Promise<ProcessReturnResult>;
   /**
    * Complete or reject a pending refund. Throws FORBIDDEN when the acting user
    * lacks `approve_refund`, so callers show the message rather than guessing.

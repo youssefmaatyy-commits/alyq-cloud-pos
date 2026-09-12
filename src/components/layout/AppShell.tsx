@@ -8,6 +8,7 @@ import { ROLE_LABELS } from "@/lib/permissions/roles";
 import { canAct } from "@/lib/permissions/enforce";
 import { capabilityForPath } from "@/lib/permissions/routes";
 import { useOnlineNotificationState } from "@/modules/online/hooks/OnlineNotificationsProvider";
+import { useOptionalApprovals } from "@/modules/approvals";
 import { RouteGuard } from "./RouteGuard";
 import { cn } from "@/utils/cn";
 import {
@@ -113,6 +114,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const canManageWebsite = canAct("manage_website");
   const canManageUsers = canAct("manage_users");
   const canManageRoles = canAct("manage_roles");
+  const canManageSettings = canAct("manage_settings");
+  // Approval limits (Phase 12): the badge is the inbox's pending count, read
+  // from the provider the shell is mounted inside. `useOptional` because the
+  // storefront and the login screen render without it.
+  const approvals = useOptionalApprovals();
+  const pendingApprovals = approvals?.summary.pending ?? 0;
   // A custom role's name is what the person is called; the system label is the
   // fallback (and what the matrix calls the base role underneath).
   const roleLabel =
@@ -174,6 +181,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <NavItem to="/expenses" icon={<ReceiptIcon />} label={t("nav.expenses")} visible={canOpen("/expenses")} />
         <NavItem to="/reports" icon={<ReportIcon />} label={t("nav.reports")} visible={canOpen("/reports")} />
         <NavItem to="/audit" icon={<ClipboardIcon />} label={t("nav.audit")} visible={canOpen("/audit")} />
+        {/* Every signed-in role may open the inbox: an approver decides from it,
+            a requester watches their own ask. Deciding is asserted in the
+            service, not by hiding the screen. */}
+        <NavItem
+          to="/approvals"
+          icon={<ClipboardIcon />}
+          label={t("nav.approvals")}
+          badge={pendingApprovals}
+          badgeLabel={t("approvals.pendingHint")}
+        />
 
         {canManageOnline || canManageWebsite ? (
           <>
@@ -238,7 +255,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {/* Settings (Phase 10). Two entries, each behind its own capability:
             managing accounts and managing the permission model are different
             authorities, and a role may hold one without the other. */}
-        {canManageUsers || canManageRoles ? (
+        {canManageUsers || canManageRoles || canManageSettings ? (
           <>
             <p className="px-3 pb-1 pt-4 text-[10px] font-bold uppercase tracking-widest text-slate-500">
               {t("nav.settings")}
@@ -254,6 +271,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               icon={<ClipboardIcon />}
               label={t("nav.settingsRoles")}
               visible={canOpen("/settings/roles")}
+            />
+            <NavItem
+              to="/settings/approvals"
+              icon={<ReportIcon />}
+              label={t("approvals.rules")}
+              visible={canOpen("/settings/approvals") && canManageSettings}
             />
           </>
         ) : null}

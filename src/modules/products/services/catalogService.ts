@@ -1,4 +1,10 @@
 import { assertSensitiveAction } from "@/lib/permissions/actions";
+import {
+  assertRequestApplicable,
+  assertWithinApprovalLimit,
+  markRequestApplied,
+  requirementForPriceChange,
+} from "@/modules/approvals/services/approvalService";
 import { getCatalogRepository } from "../data";
 import { AppError } from "../data/repository";
 import type { Category, NewCategory, Product } from "../types";
@@ -116,6 +122,8 @@ export interface SaveProductArgs {
   products: Product[];
   categories: Category[];
   currentId?: string;
+  /** An approved price-change request being executed. See `ExpenseApproval`. */
+  approval?: { requestId: string };
 }
 
 /**
@@ -128,6 +136,7 @@ export async function saveProduct({
   products,
   categories,
   currentId,
+  approval,
 }: SaveProductArgs): Promise<{ product: Product; isNew: boolean }> {
   // Permission first, payload second: an unauthorised caller is told they may
   // not do this, not that they filled the form in wrong. (The price/cost gates
@@ -161,7 +170,34 @@ export async function saveProduct({
     const changed = priceChanges(existing, data);
     if (changed.selling) assertCanChangePrice();
     if (changed.cost) assertCanChangeCost();
+
+    // Phase 12, requirement 2: a shop may require a second signature on any
+    // price or cost move. Asked only when a value really moves, so renaming a
+    // product is never paperwork, and skipped for whoever holds the approval
+    // authority — the limit binds the seats below it.
+    if (changed.selling || changed.cost) {
+      if (approval) {
+        await assertRequestApplicable(approval.requestId, "price_change");
+      } else {
+        assertWithinApprovalLimit(
+          await requirementForPriceChange(
+            {
+              selling_price: Number(existing.selling_price),
+              cost_price: Number(existing.cost_price ?? 0),
+            },
+            {
+              selling_price: Number(data.selling_price),
+              cost_price: Number(data.cost_price ?? 0),
+            },
+          ),
+        );
+      }
+    }
+
     const product = await repository.updateProduct(currentId, data);
+    if ((changed.selling || changed.cost) && approval) {
+      await markRequestApplied(approval.requestId, product.id);
+    }
     return { product, isNew: false };
   }
   assertCanCreateProduct();

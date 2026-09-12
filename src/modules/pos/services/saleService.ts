@@ -38,6 +38,12 @@
  * enforcement there is, which is exactly why it is not optional.
  */
 import { assertSensitiveAction } from "@/lib/permissions/actions";
+import {
+  assertRequestApplicable,
+  assertWithinApprovalLimit,
+  markRequestApplied,
+  requirementForDiscount,
+} from "@/modules/approvals/services/approvalService";
 import { AppError } from "@/modules/products/data/repository";
 import { getSalesRepository } from "../data";
 import type { CompleteSaleInput, ConfirmPaymentInput, Sale, VoidSaleInput } from "../types";
@@ -45,6 +51,31 @@ import type { CompleteSaleInput, ConfirmPaymentInput, Sale, VoidSaleInput } from
 /** True when the input carries a discount that actually reduces the total. */
 function hasDiscount(input: Pick<CompleteSaleInput, "discount_type" | "discount_value">): boolean {
   return input.discount_type !== "none" && Number(input.discount_value) > 0;
+}
+
+/**
+ * The discount as a percentage of the pre-discount subtotal — the unit the
+ * approval rule is written in.
+ *
+ * A percentage discount already is one. A fixed discount is converted using the
+ * payments, which sum to the post-discount total, so subtotal = paid + discount.
+ * Both are estimates of what the authoritative side will compute; the rule is a
+ * gate on the *intent*, and the sale total itself is still calculated server-side.
+ */
+export function discountPercentOf(
+  input: Pick<CompleteSaleInput, "discount_type" | "discount_value" | "payments">,
+): number {
+  if (!hasDiscount(input)) return 0;
+  const value = Number(input.discount_value) || 0;
+  if (input.discount_type === "percent") return value;
+  const paid = (input.payments ?? []).reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+  const subtotal = paid + value;
+  return subtotal > 0 ? (value / subtotal) * 100 : 0;
+}
+
+/** An approved over-limit discount being completed. See `ExpenseApproval`. */
+export interface SaleApproval {
+  requestId: string;
 }
 
 // ── guards ──────────────────────────────────────────────────────────────────
@@ -91,10 +122,33 @@ export function assertCanDeleteSale(): void {
 
 // ── mutations ───────────────────────────────────────────────────────────────
 
-/** Complete a sale. Asserts `sell`, plus `apply_discount` when discounted. */
-export async function completeSale(input: CompleteSaleInput): Promise<Sale> {
+/**
+ * Complete a sale. Asserts `sell`, plus `apply_discount` when discounted, plus
+ * the discount cap when the shop sets one (Phase 12, requirement 2).
+ *
+ * Over the cap, a till operator is refused with `approvalRequiredError` carrying
+ * the whole draft, so the register can offer "send for approval" and an approver
+ * can complete the exact same sale from the inbox. Passing `approval` is the only
+ * way through: the request is re-read and must be approved, be a discount
+ * request, and not have produced a sale already.
+ */
+export async function completeSale(
+  input: CompleteSaleInput,
+  approval?: SaleApproval,
+): Promise<Sale> {
   assertCanCompleteSale(input);
-  return getSalesRepository().completeSale(input);
+  const discounted = hasDiscount(input);
+  if (discounted) {
+    if (approval) {
+      await assertRequestApplicable(approval.requestId, "discount");
+    } else {
+      assertWithinApprovalLimit(await requirementForDiscount(discountPercentOf(input)));
+    }
+  }
+
+  const sale = await getSalesRepository().completeSale(input);
+  if (discounted && approval) await markRequestApplied(approval.requestId, sale.id);
+  return sale;
 }
 
 /** Void a completed sale, restocking once and keeping the record. */

@@ -1,4 +1,10 @@
 import { assertSensitiveAction } from "@/lib/permissions/actions";
+import {
+  assertRequestApplicable,
+  markRequestApplied,
+  requirementForExpense,
+  assertWithinApprovalLimit,
+} from "@/modules/approvals/services/approvalService";
 import { getExpenseRepository } from "../data";
 import type { Expense, ExpenseFiltersValue, NewExpense } from "../types";
 import { normalizeText } from "@/modules/products/services/productQuery";
@@ -29,17 +35,61 @@ export function assertCanApproveExpense(): void {
   assertSensitiveAction("expense.approve");
 }
 
-export async function createExpense(input: NewExpense): Promise<Expense> {
+/**
+ * An approved over-limit request being executed. Supplying it is the only way
+ * past the expense cap: the request is re-read and re-checked here, so a flag in
+ * a request body cannot invent authority.
+ */
+export interface ExpenseApproval {
+  requestId: string;
+}
+
+/**
+ * Record an expense.
+ *
+ * Two gates, in order: `add_expense` (may this person file spending at all?) and
+ * the approval limit (is this amount theirs to file without a second signature?).
+ * An expense above the cap is refused with `approvalRequiredError`, which the
+ * form turns into "send for approval" — the expense is then created by whoever
+ * the request is approved for, through this same function.
+ */
+export async function createExpense(
+  input: NewExpense,
+  approval?: ExpenseApproval,
+): Promise<Expense> {
   assertCanCreateExpense();
-  return getExpenseRepository().createExpense(input);
+  if (approval) {
+    await assertRequestApplicable(approval.requestId, "expense");
+  } else {
+    assertWithinApprovalLimit(await requirementForExpense(input.amount));
+  }
+
+  const expense = await getExpenseRepository().createExpense(input);
+  if (approval) await markRequestApplied(approval.requestId, expense.id);
+  return expense;
 }
 
 export async function updateExpense(
   id: string,
   patch: Parameters<ReturnType<typeof getExpenseRepository>["updateExpense"]>[1],
+  approval?: ExpenseApproval,
 ): Promise<Expense> {
   assertCanEditExpense();
-  return getExpenseRepository().updateExpense(id, patch);
+  // Raising an expense over the cap is the same act as filing it over the cap:
+  // editing the amount cannot be the way around the rule.
+  if (typeof patch.amount === "number") {
+    if (approval) {
+      await assertRequestApplicable(approval.requestId, "expense");
+    } else {
+      assertWithinApprovalLimit(await requirementForExpense(patch.amount));
+    }
+  }
+
+  const expense = await getExpenseRepository().updateExpense(id, patch);
+  if (approval && typeof patch.amount === "number") {
+    await markRequestApplied(approval.requestId, expense.id);
+  }
+  return expense;
 }
 
 export async function deleteExpense(id: string): Promise<void> {

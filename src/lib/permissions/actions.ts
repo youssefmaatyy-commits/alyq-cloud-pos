@@ -306,6 +306,21 @@ export const SENSITIVE_ACTIONS: readonly SensitiveAction[] = [
     file: "src/modules/reports/services/reportAccess.ts",
     db: "as report.export — a bulk extract of the same RLS-filtered rows",
   },
+  // ── approval limits (Phase 12, requirement 2) ────────────────────────────
+  {
+    key: "approval.decide",
+    capability: "approve_limit_request",
+    guard: "assertCanDecideApproval",
+    file: "src/modules/approvals/services/approvalService.ts",
+    db: "public.decide_approval_request — requires approve_limit_request, decides once, a rejection needs a note",
+  },
+  {
+    key: "approval.rules",
+    capability: "manage_settings",
+    guard: "assertCanEditApprovalRules",
+    file: "src/modules/approvals/services/approvalService.ts",
+    db: "public.set_approval_rules — requires manage_settings, audits the before and after",
+  },
   {
     key: "audit.view",
     capability: "view_audit_log",

@@ -2,12 +2,15 @@ import { useEffect, useState } from "react";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { Button, Field, Modal, SelectInput, TextArea, TextInput, useToast } from "@/components/ui";
 import { useShifts } from "@/modules/shifts/hooks/ShiftProvider";
+import { ApprovalRequestDialog, isApprovalRequired, type ApprovalRequirement } from "@/modules/approvals";
+import { getCurrentUser } from "@/modules/inventory/permissions";
 import {
   EMPTY_EXPENSE_FORM,
   EXPENSE_CATEGORIES,
   EXPENSE_PAYMENT_METHODS,
   type Expense,
   type ExpenseFormValues,
+  type NewExpense,
 } from "../types";
 import { MAX_EXPENSE_NAME, MAX_EXPENSE_NOTES, toDateTimeLocal, toSpentAtIso, validateExpense } from "../validation";
 import { useExpenses } from "../hooks/ExpenseProvider";
@@ -29,6 +32,11 @@ export function ExpenseFormModal({ open, onClose, expense }: ExpenseFormModalPro
   const [submitting, setSubmitting] = useState(false);
   const [attempted, setAttempted] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  // Phase 12: when the service refuses an expense for exceeding the limit, the
+  // form offers to file it instead. The draft that was refused is kept verbatim —
+  // it is what an approval replays, so it must be the whole `NewExpense`.
+  const [approvalAsk, setApprovalAsk] = useState<ApprovalRequirement | null>(null);
+  const [approvalDraft, setApprovalDraft] = useState<NewExpense | null>(null);
 
   const isEdit = Boolean(expense);
 
@@ -69,8 +77,10 @@ export function ExpenseFormModal({ open, onClose, expense }: ExpenseFormModalPro
     if (!check.valid) return;
     setSubmitting(true);
     setFormError(null);
-    try {
-      const payload = {
+    // Built outside the try so the catch can file the very draft that was
+    // refused: an approval replays these exact values, so nothing may be
+    // recomputed later from a form the user has since edited.
+    const payload = {
         name: values.name.trim(),
         category: values.category,
         amount: check.amount,
@@ -81,7 +91,8 @@ export function ExpenseFormModal({ open, onClose, expense }: ExpenseFormModalPro
         notes: values.notes.trim() || null,
         attachment_url: values.attachment_url.trim() || null,
         attachment_name: values.attachment_name.trim() || null,
-      };
+    };
+    try {
       if (expense) {
         const updated = await editExpense(expense.id, payload);
         toast.success(`${t("expenses.updatedToast")} · ${updated.expense_number}`);
@@ -91,6 +102,12 @@ export function ExpenseFormModal({ open, onClose, expense }: ExpenseFormModalPro
       }
       onClose();
     } catch (err) {
+      if (isApprovalRequired(err)) {
+        const user = getCurrentUser();
+        setApprovalDraft({ ...payload, user_id: user.id, user_name: user.name });
+        setApprovalAsk(err.approvalRequired);
+        return;
+      }
       setFormError(err instanceof Error ? err.message : String(err));
     } finally {
       setSubmitting(false);
@@ -98,6 +115,7 @@ export function ExpenseFormModal({ open, onClose, expense }: ExpenseFormModalPro
   }
 
   return (
+    <>
     <Modal
       open={open}
       onClose={onClose}
@@ -237,5 +255,31 @@ export function ExpenseFormModal({ open, onClose, expense }: ExpenseFormModalPro
         ) : null}
       </div>
     </Modal>
+
+    {/* Over the expense limit: the act was refused, so offer to file it. The
+        draft carried here is exactly what an approval will replay. */}
+    {approvalAsk && approvalDraft ? (
+      <ApprovalRequestDialog
+        open
+        requirement={approvalAsk}
+        entityType="expense"
+        entityLabel={approvalDraft.name}
+        branch={approvalDraft.branch}
+        newValue={{
+          amount: approvalDraft.amount,
+          category: approvalDraft.category,
+          method: approvalDraft.payment_method,
+          spent_at: approvalDraft.spent_at,
+        }}
+        payload={approvalDraft as unknown as Record<string, unknown>}
+        summary={`${approvalDraft.name} · ${t(`expenses.category.${approvalDraft.category}` as never)}`}
+        onFiled={() => onClose()}
+        onClose={() => {
+          setApprovalAsk(null);
+          setApprovalDraft(null);
+        }}
+      />
+    ) : null}
+    </>
   );
 }

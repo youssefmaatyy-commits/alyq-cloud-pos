@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useI18n } from "@/lib/i18n/I18nProvider";
-import { Button, TextInput, ToggleSwitch } from "@/components/ui";
+import { Button, TextInput, ToggleSwitch, useToast } from "@/components/ui";
+import { ApprovalRequestDialog } from "@/modules/approvals";
 import { usePos } from "../hooks/PosProvider";
 import { autoBalanceOther, round2, smartPaymentCalc } from "../services/posMath";
 import type { SalePaymentInput } from "../types";
@@ -20,7 +21,18 @@ import type { SalePaymentInput } from "../types";
  */
 export function PaymentPanel() {
   const { t, num } = useI18n();
-  const { totals, completeSale, completing, isEmpty, canSell } = usePos();
+  const toast = useToast();
+  const {
+    totals,
+    completeSale,
+    completing,
+    isEmpty,
+    canSell,
+    discount,
+    approvalAsk,
+    dismissApprovalAsk,
+    clearCart,
+  } = usePos();
 
   const [split, setSplit] = useState(false);
   const [cash, setCash] = useState("");
@@ -104,9 +116,21 @@ export function PaymentPanel() {
     [total],
   );
 
+  const [failure, setFailure] = useState<string | null>(null);
+
   const onComplete = async () => {
     if (!canComplete) return;
-    await completeSale(payments);
+    setFailure(null);
+    try {
+      // `null` means the discount crossed an approval limit: nothing was
+      // written, and `approvalAsk` now carries the draft the register can send
+      // for approval instead.
+      await completeSale(payments);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setFailure(message);
+      toast.error(message);
+    }
   };
 
   return (
@@ -275,10 +299,41 @@ export function PaymentPanel() {
       >
         {completing ? t("pos.completing") : `✓ ${t("pos.complete")}`}
       </Button>
+      {failure ? (
+        <p className="mt-1.5 rounded-lg bg-rose-50 px-2.5 py-1.5 text-[11px] font-semibold text-rose-700">
+          {failure}
+        </p>
+      ) : null}
       {!canSell ? (
         <p className="mt-1 text-center text-[11px] font-semibold text-rose-600">
           {t("pos.discountLocked")}
         </p>
+      ) : null}
+
+      {/* Phase 12: the discount is above the cap this seat may apply alone. The
+          sale was not written — send it for approval, or lower the discount and
+          ring it up now. */}
+      {approvalAsk ? (
+        <ApprovalRequestDialog
+          open
+          requirement={approvalAsk.requirement}
+          entityType="sale"
+          entityLabel={t("pos.discountApprovalLabel")}
+          previousValue={{ discount_percent: 0 }}
+          newValue={{
+            discount_percent: approvalAsk.requirement.amount,
+            total: round2(totals.total),
+          }}
+          payload={approvalAsk.input as unknown as Record<string, unknown>}
+          summary={`${t("pos.discount")}: ${
+            discount.type === "percent" ? `${num(discount.value, 2)}%` : num(discount.value, 2)
+          } · ${t("pos.total")}: ${num(totals.total, 2)}`}
+          onFiled={() => {
+            clearCart();
+            dismissApprovalAsk();
+          }}
+          onClose={dismissApprovalAsk}
+        />
       ) : null}
     </div>
   );

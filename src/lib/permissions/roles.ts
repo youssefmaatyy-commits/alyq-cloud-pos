@@ -175,6 +175,21 @@ export const CAPABILITIES = [
   "manage_roles",
   /** Change system-wide settings. Admin only. */
   "manage_settings",
+
+  // ── Phase 12: approval limits ──────────────────────────────────────────
+  /**
+   * Decide an approval request raised by a limit rule (Phase 12, requirement 2):
+   * a discount above the cap, a refund above the cap, an expense above the cap,
+   * or a price change when the rule says price changes need sign-off.
+   *
+   * This is deliberately *not* the same capability as the act being approved.
+   * `approve_expense` answers "is this expense legitimate?", `change_price`
+   * answers "may this person set prices?" — and a cashier holds `change_price`,
+   * so reusing it would let the person who wants the price rise also sign it
+   * off. One capability, held by the oversight seats and assignable to a custom
+   * role (an accountant, a branch owner), decides every over-limit request.
+   */
+  "approve_limit_request",
 ] as const;
 export type Capability = (typeof CAPABILITIES)[number];
 
@@ -227,6 +242,7 @@ export const ROLE_CAPABILITIES: Record<AppRole, readonly Capability[]> = {
     "view_reports",
     "export_reports",
     "approve_expense",
+    "approve_limit_request",
   ],
   cashier: [
     "view_inventory",

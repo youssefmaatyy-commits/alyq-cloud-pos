@@ -43,6 +43,11 @@ import {
   ShiftProvider,
 } from "@/modules/shifts";
 import { AuditLogPage, RequireAuditAccess } from "@/modules/audit";
+import {
+  ApprovalProvider,
+  ApprovalRulesPage,
+  ApprovalsPage,
+} from "@/modules/approvals";
 import { ReportsPage } from "@/modules/reports";
 import { RolesPage, SettingsProvider, UsersPage } from "@/modules/settings";
 
@@ -132,6 +137,7 @@ function AuthenticatedApp() {
   return (
     <RequireAuth>
       <CatalogProvider>
+        <ApprovalProvider>
         <InventoryProvider>
           <PosProvider>
             <CustomerProvider>
@@ -162,6 +168,12 @@ function AuthenticatedApp() {
                             <Route path="/shifts" element={<ShiftDashboardPage />} />
                             <Route path="/shifts/history" element={<ShiftHistoryPage />} />
                             <Route path="/expenses" element={<ExpensesPage />} />
+                            {/* Approval limits (Phase 12). The inbox is readable by
+                                every signed-in role — an approver sees every
+                                request, a requester sees their own — so the path
+                                carries no capability in `routes.ts`; deciding a
+                                request is asserted in the service. */}
+                            <Route path="/approvals" element={<ApprovalsPage />} />
                             <Route path="/reports" element={<ReportsPage />} />
                             <Route path="/online/orders" element={<OnlineOrdersPage />} />
                             <Route path="/online/website" element={<WebsiteSettingsPage />} />
@@ -193,6 +205,7 @@ function AuthenticatedApp() {
             </CustomerProvider>
           </PosProvider>
         </InventoryProvider>
+        </ApprovalProvider>
       </CatalogProvider>
     </RequireAuth>
   );
@@ -214,6 +227,10 @@ function SettingsArea() {
         <Route index element={<Navigate to="/settings/users" replace />} />
         <Route path="users" element={<UsersPage />} />
         <Route path="roles" element={<RolesPage />} />
+        {/* Approval thresholds live under Settings because changing them is
+            `manage_settings` work — the same capability that owns the rest of
+            the system-wide configuration. */}
+        <Route path="approvals" element={<ApprovalRulesPage />} />
         <Route path="*" element={<Navigate to="/settings/users" replace />} />
       </Routes>
     </SettingsProvider>
