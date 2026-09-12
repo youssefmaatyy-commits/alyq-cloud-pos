@@ -18,6 +18,7 @@ import {
 } from "../services/inventoryService";
 import { getCurrentUser, canAdjustStock, type InventoryUser } from "../permissions";
 import { useAuth } from "@/lib/auth";
+import { useRealtimeWatch } from "@/lib/supabase/useRealtimeWatch";
 import type { StockMovement, StockMovementType, StockReason } from "../types";
 
 export interface InventoryContextValue {
@@ -27,7 +28,7 @@ export interface InventoryContextValue {
   movements: StockMovement[];
   loading: boolean;
   error: AppError | null;
-  refresh: () => Promise<void>;
+  refresh: (options?: { silent?: boolean }) => Promise<void>;
   adjustStock: (args: {
     productId: string;
     type: StockMovementType;
@@ -62,8 +63,15 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
   const repository = useMemo(() => getInventoryRepository(), []);
   const mode = useMemo(() => getInventoryMode(), []);
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
+  /**
+   * Re-read.
+   *
+   * `silent` is what a realtime event asks for: the data is replaced without the
+   * spinner, so a change made in another tab updates the numbers instead of
+   * flashing a loading screen over somebody who is reading it.
+   */
+  const refresh = useCallback(async (options?: { silent?: boolean }) => {
+    if (options?.silent !== true) setLoading(true);
     setError(null);
     try {
       const snapshot = await loadInventory();
@@ -79,6 +87,12 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // Phase 16: stock is the one number two tills disagree about fastest. A sale,
+  // an adjustment or a repaired website hold (Phase 15) re-reads this provider,
+  // so availability and the low-stock list follow the shelf rather than the last
+  // time somebody opened the page.
+  useRealtimeWatch(["products", "stock_movements"], () => refresh({ silent: true }));
 
   const adjustStock = useCallback(
     async (args: {

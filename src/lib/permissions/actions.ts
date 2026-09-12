@@ -182,6 +182,18 @@ export const SENSITIVE_ACTIONS: readonly SensitiveAction[] = [
     db: "each imported row is an inventory_adjust_stock call, so the RLS check applies per row",
   },
 
+  // A website order's hold on stock (Phase 15). Settling a hold changes what the
+  // shop can promise to sell, which is the same consequence as writing the stock
+  // ledger, so it asks for the same capability — and the till seat, which works
+  // the online queue with `manage_online_orders`, does not hold it.
+  {
+    key: "reservation.repair",
+    capability: "adjust_stock",
+    guard: "assertCanRepairReservations",
+    file: "src/modules/online/services/reservationRepair.ts",
+    db: "public.repair_stock_reservation — requires adjust_stock, repeats a resolution as a no-op, refuses to reverse one, and never writes products.stock_quantity",
+  },
+
   // ── products & catalog ───────────────────────────────────────────────────
   {
     key: "product.create",

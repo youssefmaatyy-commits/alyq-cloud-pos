@@ -216,6 +216,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               }
             />
             <NavItem
+              to="/online/reservations"
+              icon={<LayersIcon />}
+              label={t("nav.stockHolds")}
+              visible={canOpen("/online/reservations")}
+            />
+            <NavItem
               to="/online/reports"
               icon={<ReportIcon />}
               label={t("nav.onlineReports")}

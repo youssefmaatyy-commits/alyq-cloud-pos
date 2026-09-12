@@ -11,8 +11,23 @@
  * there is no asset to ship, nothing to fail to load on a slow connection, and
  * browsers only allow it after the user has interacted with the page, which is
  * already true of anybody working the till.
+ *
+ * Phase 16 put a realtime channel underneath this. In live mode an insert on
+ * `online_orders` arrives over the shared socket and re-runs *this* refresh, so a
+ * new order is on the badge in well under a second instead of up to twenty. The
+ * interval does not go away — it becomes the safety net, stretched to two minutes
+ * while the channel is up and back to the shop's chosen rate the moment it is
+ * not. That ordering matters: realtime is an optimisation, and the poll is what
+ * makes a dropped socket cost freshness rather than a missed order.
+ *
+ * Nothing about the announcement changes, which is what keeps it from double-
+ * chiming. "Only a rise is news" is measured against the last count this hook
+ * saw, and every path — event, interval, manual refresh — goes through the same
+ * `refresh`, so whichever arrives first sets the baseline and the other sees no
+ * rise to announce.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRealtimeWatch } from "@/lib/supabase/useRealtimeWatch";
 import { getOnlineOrdersRepository } from "../data";
 import { EMPTY_ORDER_COUNTS, toOnlineError, type OrderCounts } from "../data/repository";
 
@@ -21,6 +36,53 @@ const PREFS_KEY = "alyq.online.notify.v1";
 /** How often to ask. 20s is quick enough to feel live, quiet enough to be free. */
 export const DEFAULT_POLL_MS = 20_000;
 export const POLL_CHOICES = [10_000, 20_000, 60_000] as const;
+
+/**
+ * How often to re-check while a realtime channel is up.
+ *
+ * Two minutes is long enough that the socket does the work and short enough that
+ * a channel which silently stopped delivering — a laptop waking from sleep, a
+ * proxy that dropped the upgrade — is contradicted by a real read soon after.
+ */
+export const SAFETY_NET_POLL_MS = 120_000;
+
+/**
+ * How many orders just arrived, or `null` when there is nothing to announce.
+ *
+ * Only a rise is news. A fall means somebody worked the queue, and a first
+ * reading is a baseline — announcing eleven orders that were already waiting
+ * would train staff to ignore the chime. This is also what keeps a realtime event
+ * and the safety-net poll from announcing the same order twice: whichever runs
+ * first moves the baseline, and the other then sees no rise. Extracted from the
+ * refresh so the rule is tested rather than trusted.
+ */
+export function arrivalsOf(previous: number | null, pending: number): number | null {
+  if (previous === null) return null;
+  if (pending <= previous) return null;
+  return pending - previous;
+}
+
+/**
+ * How fresh this screen is, in one word the UI can render.
+ *
+ * `realtime` means a channel is subscribed and events are arriving; `polling`
+ * means the interval is the only thing working (demo mode, still connecting);
+ * `error` means the channel was refused or dropped and the poll has taken over.
+ */
+export type NotificationTransport = "realtime" | "polling" | "error";
+
+/**
+ * The interval to run at, given the shop's preference and whether the channel is
+ * up. Exported because it is the one number that decides how the app behaves when
+ * realtime fails, and a rule like that belongs in a test rather than in prose.
+ */
+export function pollIntervalFor(prefs: NotificationPrefs, live: boolean): number {
+  if (!live) return prefs.pollMs;
+  // The preference is a floor, never a ceiling: a shop that asked to be checked
+  // every 60s is not silently checked every 20s because a socket came up, and one
+  // that asked for 10s is not hammered while the socket is doing the work.
+  return Math.max(prefs.pollMs, SAFETY_NET_POLL_MS);
+}
 
 export interface NotificationPrefs {
   sound: boolean;
@@ -99,6 +161,10 @@ export interface OnlineNotificationState {
   newOrderNumbers: string[];
   /** True once at least one poll has completed since the hook mounted. */
   ready: boolean;
+  /** How the counts are arriving — for a label that must not overclaim. */
+  transport: NotificationTransport;
+  /** True while a realtime channel is subscribed to `online_orders`. */
+  live: boolean;
   prefs: NotificationPrefs;
   setPrefs: (prefs: Partial<NotificationPrefs>) => void;
   refresh: () => Promise<void>;
@@ -119,6 +185,8 @@ export const EMPTY_NOTIFICATION_STATE: OnlineNotificationState = {
   error: null,
   newOrderNumbers: [],
   ready: false,
+  transport: "polling",
+  live: false,
   prefs: DEFAULT_NOTIFICATION_PREFS,
   setPrefs: () => {},
   refresh: async () => {},
@@ -164,11 +232,8 @@ export function useOnlineNotifications(enabled: boolean): OnlineNotificationStat
       const before = previousPending.current;
       previousPending.current = next.pending;
 
-      // Only a rise is news. A fall means somebody worked the queue, and a first
-      // reading is a baseline — announcing eleven orders that were already
-      // waiting would train staff to ignore the chime.
-      if (before !== null && next.pending > before) {
-        const arrived = next.pending - before;
+      const arrived = arrivalsOf(before, next.pending);
+      if (arrived !== null) {
         if (prefs.sound) playOrderChime();
         try {
           const recent = await repository.listOrders({ status: "pending", limit: arrived });
@@ -197,6 +262,14 @@ export function useOnlineNotifications(enabled: boolean): OnlineNotificationStat
     }
   }, [enabled, prefs.sound]);
 
+  // The same refresh the interval uses, triggered by an insert or update on the
+  // orders table. `enabled` is the capability check: a user who may not read
+  // these rows must not subscribe to them, because in live mode the channel would
+  // connect and then hear nothing at all.
+  const status = useRealtimeWatch(["online_orders"], refresh, { enabled });
+  const live = status === "live";
+  const transport: NotificationTransport = status === "error" ? "error" : live ? "realtime" : "polling";
+
   useEffect(() => {
     if (!enabled) {
       setLoading(false);
@@ -204,9 +277,9 @@ export function useOnlineNotifications(enabled: boolean): OnlineNotificationStat
       return;
     }
     void refresh();
-    const timer = window.setInterval(() => void refresh(), prefs.pollMs);
+    const timer = window.setInterval(() => void refresh(), pollIntervalFor(prefs, live));
     return () => window.clearInterval(timer);
-  }, [enabled, prefs.pollMs, refresh]);
+  }, [enabled, prefs, live, refresh]);
 
   const setPrefs = useCallback((patch: Partial<NotificationPrefs>) => {
     setPrefsState((current) => {
@@ -224,6 +297,8 @@ export function useOnlineNotifications(enabled: boolean): OnlineNotificationStat
     error,
     newOrderNumbers,
     ready,
+    transport,
+    live,
     prefs,
     setPrefs,
     refresh,

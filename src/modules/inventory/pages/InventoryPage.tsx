@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { PageHeader } from "@/components/layout/AppShell";
+import { canAct } from "@/lib/permissions/enforce";
 import {
   Button,
   Card,
@@ -89,6 +90,13 @@ export function InventoryPage() {
             <Button variant="secondary" onClick={() => void refresh()} title={t("common.retry")}>
               ⟳
             </Button>
+            {/* Held units are the website's reservations — the place they get
+                read and, when they disagree with their order, settled. */}
+            {canAct("manage_online_orders") ? (
+              <Link to="/online/reservations">
+                <Button variant="secondary">{t("nav.stockHolds")}</Button>
+              </Link>
+            ) : null}
             {/* Exports `results` — the filtered rows on screen. Category names
                 come from this page's own resolver, which deliberately does not
                 import the catalog tree. */}

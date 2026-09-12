@@ -207,6 +207,63 @@ export interface StockReservation {
   resolved_at: string | null;
 }
 
+/* ── reservation repair (Phase 15) ──────────────────────────────────────────
+ * A hold is written by checkout and resolved by the order workflow: approving
+ * converts it (the sale takes the units), cancelling releases it. Nothing else
+ * may touch one — which is exactly why a hold that misses its transition sticks:
+ * the units stay out of the pool forever and the website understates what it can
+ * sell. These types are the vocabulary of the repair pass, and they are the only
+ * write path to `stock_reservations` besides the workflow itself.
+ *
+ * The rule the whole design hangs on: **a repair never writes
+ * `products.stock_quantity`.** By the time a hold is wrong, the stock effect of
+ * the order's transition has already happened (the sale deducted, or the cancel
+ * restored). Moving stock again would be the double-count the reservation model
+ * exists to prevent, so a repair only settles the hold's own bookkeeping — and
+ * says so in the audit trail and on the order's timeline.
+ */
+
+/** What a repair pass may do to a hold. */
+export const RESERVATION_REPAIR_ACTIONS = ["release", "convert", "reconcile", "hold"] as const;
+export type ReservationRepairAction = (typeof RESERVATION_REPAIR_ACTIONS)[number];
+
+export interface ReservationRepairInput {
+  /** `hold` creates a row, so it has its own input below. */
+  action: Exclude<ReservationRepairAction, "hold">;
+  /**
+   * Corrected quantity, for `reconcile` only — and only when it equals what the
+   * order line actually asks for. Both repositories check that rather than
+   * trusting the caller, so a repair cannot invent a hold of its own size.
+   */
+  quantity?: number | null;
+  /** Why this needed repairing. Lands on the order timeline and in the audit trail. */
+  reason: string;
+  user_id: string;
+  user_name: string;
+}
+
+export interface ReservationHoldInput {
+  online_order_id: string;
+  product_id: string;
+  /** Ignored unless it matches the order line — see `ReservationRepairInput.quantity`. */
+  quantity?: number | null;
+  reason: string;
+  user_id: string;
+  user_name: string;
+}
+
+export interface ReservationRepairResult {
+  reservation: StockReservation;
+  /**
+   * True when the row was already in the requested state, so nothing was
+   * written. The same idempotence `pos_settle_refund` offers: repeating a repair
+   * is safe, and reversing one is refused rather than silently applied.
+   */
+  alreadyResolved: boolean;
+  /** What the repair changed, for the audit row and the toast. */
+  before: { status: ReservationStatus; quantity: number; resolved_at: string | null };
+}
+
 /** What checkout sends. Prices are never taken from it. */
 export interface PlaceOrderInput {
   client_ref: string;

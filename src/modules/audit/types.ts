@@ -89,6 +89,28 @@ export const AUDIT_ACTIONS = [
   "role.updated",
   "role.activated",
   "role.deactivated",
+  // Stock-hold reconciliation (Phase 15). A website order holds stock while it is
+  // pending; the workflow releases or converts that hold when the order moves on.
+  // When a transition misses its resolution the units stay out of the pool, and
+  // somebody has to settle the row by hand — which is an act worth recording,
+  // because it changes what the shop can promise to sell.
+  //
+  //   `reservation.released`    the hold was given back (order cancelled, or the
+  //                             order behind it no longer exists).
+  //   `reservation.converted`   the hold was marked as the deduction the order's
+  //                             sale already made.
+  //   `reservation.reconciled`  the held quantity (or the row's own resolved
+  //                             timestamp) was corrected to match the order line.
+  //   `reservation.held`        a hold a pending order had lost was restored.
+  //
+  // Written by `reservationRepair` in demo and live mode alike — no database
+  // function writes them, exactly like `return.created`. Migration 0025 adds the
+  // vocabulary rows and the repair function; the parity check fails if either
+  // side moves alone.
+  "reservation.released",
+  "reservation.converted",
+  "reservation.reconciled",
+  "reservation.held",
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -118,6 +140,8 @@ export const AUDIT_ENTITIES = [
   "user",
   /** An admin-defined role and its permission set. */
   "custom_role",
+  /** A website order's hold on stock (`stock_reservations`). */
+  "reservation",
 ] as const;
 export type AuditEntity = (typeof AUDIT_ENTITIES)[number];
 

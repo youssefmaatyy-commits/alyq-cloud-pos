@@ -32,6 +32,9 @@ import type {
   StoreFaq,
   StoreReview,
   StockReservation,
+  ReservationHoldInput,
+  ReservationRepairInput,
+  ReservationRepairResult,
   WebsiteSettings,
   WebsiteSettingsMeta,
 } from "../types";
@@ -145,6 +148,12 @@ export function toOnlineError(error: unknown): OnlineError {
   if (/order not found/i.test(message)) {
     return new OnlineError("order_not_found", message, { field: "order_number" });
   }
+  // Live mode: `repair_stock_reservation` (migration 0025) raises with this
+  // wording when a repair is asked to reverse a resolution — releasing a hold
+  // the sale already converted, which would put taken units back on the shelf.
+  if (/cannot be (released|converted)/i.test(message)) {
+    return new OnlineError("workflow_refused", message);
+  }
   return new OnlineError("db", message);
 }
 
@@ -213,6 +222,19 @@ export interface OnlineOrdersRepository {
   resolveOrder(id: string, input: ResolveOrderInput): Promise<OnlineOrder>;
   /** Stock currently held by pending orders — the POS shows it per product. */
   listReservations(): Promise<StockReservation[]>;
+
+  /**
+   * Settle a hold that missed its transition (Phase 15).
+   *
+   * The only write path to `stock_reservations` outside the order workflow. It
+   * refuses to reverse a resolution — releasing a converted hold would hand back
+   * units the sale already took — repeats a resolution as a no-op, and never
+   * writes `products.stock_quantity`.
+   */
+  repairReservation(id: string, input: ReservationRepairInput): Promise<ReservationRepairResult>;
+
+  /** Create the hold a pending order should already have (Phase 15). */
+  reserveStockForOrder(input: ReservationHoldInput): Promise<StockReservation>;
   counts(filter?: Partial<OnlineOrderFilter>): Promise<OrderCounts>;
 
   // Customer side

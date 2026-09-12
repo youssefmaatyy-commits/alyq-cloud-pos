@@ -24,6 +24,7 @@ import {
   type ProcessReturnResult,
 } from "../services/returnService";
 import { AppError } from "@/modules/products/data/repository";
+import { useRealtimeWatch } from "@/lib/supabase/useRealtimeWatch";
 
 export interface ReturnContextValue {
   mode: "supabase" | "demo";
@@ -32,7 +33,7 @@ export interface ReturnContextValue {
   refundsList: RefundRecord[];
   loading: boolean;
   error: AppError | null;
-  refresh: () => Promise<void>;
+  refresh: (options?: { silent?: boolean }) => Promise<void>;
   /**
    * Record a return. `approvalRequest` is set when the refund crossed an
    * approval limit (Phase 12): the return still exists and the stock is still
@@ -67,8 +68,15 @@ export function ReturnProvider({ children }: { children: ReactNode }) {
   const repository = useMemo(() => getReturnRepository(), []);
   const mode = useMemo(() => getReturnMode(), []);
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
+  /**
+   * Re-read.
+   *
+   * `silent` is what a realtime event asks for: the data is replaced without the
+   * spinner, so a change made in another tab updates the numbers instead of
+   * flashing a loading screen over somebody who is reading it.
+   */
+  const refresh = useCallback(async (options?: { silent?: boolean }) => {
+    if (options?.silent !== true) setLoading(true);
     setError(null);
     try {
       const [rets, refs] = await Promise.all([loadReturns(), loadRefunds()]);
@@ -84,6 +92,11 @@ export function ReturnProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // Phase 16: the refund lifecycle — recorded at one till, settled or rejected by
+  // a manager somewhere else — arrives over the shared channel instead of waiting
+  // for somebody to reopen the page.
+  useRealtimeWatch(["sales_returns", "refund_records"], () => refresh({ silent: true }));
 
   const createReturn = useCallback(
     async (input: CreateReturnInput) => {

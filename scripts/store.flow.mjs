@@ -716,6 +716,67 @@ async function main() {
   assert.ok(bodyText().includes("EGP") || bodyText().includes("Total"), "the reports screen totals online sales");
   console.log("  ✓ online reports, marketing, content and the website builder all render");
 
+  // ── 9b · the stock-holds screen reads the same reservations (Phase 15) ────
+  // Every order this flow placed went through the app's own workflow — approved,
+  // verified, cancelled — so every hold it wrote is settled and the review has
+  // nothing to report. That is the point of the assertion: a shop whose orders
+  // were worked correctly is told so in words, instead of being shown a table of
+  // green rows nobody needs to act on.
+  await navigate("#/online/reservations", 900);
+  await waitFor(() => bodyText().includes("Stock holds & reconciliation"), {
+    label: "the stock-holds screen",
+  });
+  assert.ok(
+    document.querySelector('a[href="#/online/reservations"]'),
+    "the sidebar links to it — a reconciliation tool nobody can find is a tool nobody uses",
+  );
+  assert.ok(
+    bodyText().includes("A pending website order holds its stock"),
+    "the screen says what a hold is: whoever reads it may never have seen one",
+  );
+  assert.ok(
+    bodyText().includes("Every hold agrees with its order"),
+    "the flow's own orders and reservations reconcile — nothing to repair",
+  );
+  // A missing translation renders as its key, which is how a screen ships saying
+  // "holds.verdict.stale" to somebody standing at a till.
+  for (const prefix of ["holds.verdict", "holds.explain", "holds.action", "holds.status", "holds.col"]) {
+    assert.ok(!bodyText().includes(prefix), `no untranslated ${prefix}.* key reaches the screen`);
+  }
+
+  // Settling a hold changes what the whole shop can promise, so the bulk repair is
+  // offered to an admin and disabled while there is nothing to settle — visible,
+  // not hidden, so the tool is discoverable on the day it is needed.
+  const repairAll = [...document.querySelectorAll("button")].find((n) =>
+    (n.textContent ?? "").trim().startsWith("Repair all"),
+  );
+  assert.ok(repairAll, "an admin is offered the bulk repair");
+  assert.equal(repairAll.disabled, true, "…and it is disabled with nothing to repair");
+
+  // Problems only, by default; every hold is one select away.
+  const scopeSelect = selectWithOption("Every hold");
+  assert.ok(scopeSelect, "the screen can list every hold, not only the problems");
+  Object.getOwnPropertyDescriptor(dom.window.HTMLSelectElement.prototype, "value").set.call(
+    scopeSelect,
+    "all",
+  );
+  scopeSelect.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+  await sleep(400);
+
+  const openHolds = reservations().filter((r) => r.status === "reserved");
+  for (const hold of openHolds) {
+    const order = onlineOrders().find((o) => o.id === hold.online_order_id);
+    assert.ok(order, `the hold belongs to an order that exists (${hold.online_order_id})`);
+    assert.ok(
+      bodyText().includes(order.order_number),
+      `${order.order_number} is listed with the hold it owns`,
+    );
+    assert.ok(bodyText().includes("Held correctly"), "and the review calls a correct hold correct");
+  }
+  console.log(
+    `  ✓ the stock-holds screen reconciles the flow's ${openHolds.length} open hold(s) and offers no repair it does not need`,
+  );
+
   // ── 10 · the builder goes live on the storefront ──────────────────────────
   await navigate("#/online/website", 900);
   await waitFor(() => bodyText().includes("Website"), { label: "the website builder" });
@@ -820,6 +881,68 @@ async function main() {
   await navigate("#/", 700);
   assert.ok(isSignedIn(), "the session survived the trip to the storefront");
   console.log("  ✓ a shopper's visit leaves the till's session exactly as it was");
+
+  // ── 13 · a live hold appears on the reconciliation screen (Phase 15) ──────
+  // The screen in step 9b was clean because every order had been worked. This one
+  // is not: a shopper places an order and leaves it pending, which is the exact
+  // state a hold exists for — and the table has to render it, in the language the
+  // till is using, with the verdict that says nothing needs doing.
+  await navigate("#/store/products", 900);
+  await waitFor(() => productCards().length > 0, { label: "the product list" });
+  const holdCard = firstInStockCard();
+  assert.ok(holdCard, "an in-stock product to order");
+  const holdName = cardName(holdCard);
+  const holdLink = holdCard.querySelector("h3 a");
+  assert.ok(holdLink, "the card links to its product page");
+  holdLink.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  await waitFor(() => bodyText().includes("Add to cart"), { label: "the product page" });
+  click("Add to cart");
+  await sleep(400);
+
+  const { number: pendingNumber, order: pendingOrder } = await placeOrderThroughTheStore({
+    payment: "cod",
+  });
+  assert.ok(pendingOrder, "the order was written");
+  assert.equal(pendingOrder.status, "pending", "and nobody has worked it yet");
+  assert.equal(openReservationsFor(pendingOrder.id).length, 1, "so its stock is held");
+  const heldUnits = openReservationsFor(pendingOrder.id)[0].quantity;
+
+  await navigate("#/online/reservations", 900);
+  await waitFor(() => bodyText().includes("Stock holds & reconciliation"), {
+    label: "the stock-holds screen",
+  });
+  await waitFor(() => bodyText().includes("Every hold agrees with its order"), {
+    label: "the review to finish",
+  });
+  assert.ok(
+    bodyText().includes("Every hold agrees with its order"),
+    "a correct hold is not a finding — the default view lists problems, and there are none",
+  );
+
+  const everyHold = selectWithOption("Every hold");
+  assert.ok(everyHold, "every hold is one select away");
+  Object.getOwnPropertyDescriptor(dom.window.HTMLSelectElement.prototype, "value").set.call(
+    everyHold,
+    "all",
+  );
+  everyHold.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+  await waitFor(() => bodyText().includes(pendingNumber), {
+    label: `${pendingNumber} on the holds table`,
+  });
+  assert.ok(bodyText().includes(holdName), "the row names the product being held");
+  assert.ok(bodyText().includes(String(heldUnits)), "and how many units");
+  assert.ok(bodyText().includes("Holding"), "with the hold's own status");
+  assert.ok(bodyText().includes("Held correctly"), "and a verdict that says nothing needs doing");
+  assert.equal(
+    [...document.querySelectorAll("button")].some((n) =>
+      (n.textContent ?? "").trim().startsWith("Repair all") && !n.disabled,
+    ),
+    false,
+    "a healthy hold still offers no repair",
+  );
+  console.log(
+    `  ✓ ${pendingNumber} shows on the stock-holds screen as ${heldUnits} unit(s) held correctly, with nothing to repair`,
+  );
 
   if (errors.length > 0) {
     console.error(`\n✗ ${errors.length} console error(s):`);

@@ -29,6 +29,31 @@ export { OnlineReportsPage } from "./pages/OnlineReportsPage";
 
 // Providers
 export { OnlineOrdersProvider, useOnlineOrders } from "./hooks/OnlineOrdersProvider";
+export { StockHoldsPage } from "./pages/StockHoldsPage";
+
+// Stock-hold reconciliation (Phase 15). Exported so the inventory screen can show
+// how many units the website is holding, and so the tests drive the same review
+// the repair screen renders.
+export {
+  AGING_HOLD_DAYS,
+  RESERVATION_VERDICTS,
+  assertCanRepairReservations,
+  heldByProduct,
+  mayRepairReservations,
+  repairAllFindings,
+  repairFinding,
+  repairHold,
+  restoreHold,
+  reviewReservations,
+} from "./services/reservationRepair";
+export type {
+  RepairBatchOutcome,
+  RepairOutcome,
+  ReservationReview,
+  ReservationReviewRow,
+  ReservationSeverity,
+  ReservationVerdict,
+} from "./services/reservationRepair";
 export {
   OnlineNotificationsProvider,
   useOnlineNotificationState,

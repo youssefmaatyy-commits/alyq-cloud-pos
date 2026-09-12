@@ -12,6 +12,7 @@
  * number on the badge and the number of rows here cannot disagree.
  */
 import { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { PageHeader } from "@/components/layout/AppShell";
 import {
@@ -30,7 +31,7 @@ import {
   ToggleSwitch,
 } from "@/components/ui";
 import { useOnlineOrders } from "../hooks/OnlineOrdersProvider";
-import { POLL_CHOICES } from "../hooks/useOnlineNotifications";
+import { POLL_CHOICES, SAFETY_NET_POLL_MS } from "../hooks/useOnlineNotifications";
 import { useOnlineNotificationState } from "../hooks/OnlineNotificationsProvider";
 import { OrderDetailModal } from "../components/OrderDetailModal";
 import { buildOnlineOrderSheets } from "../services/onlineOrdersExport";
@@ -117,6 +118,9 @@ export function OnlineOrdersPage() {
             <Button variant="secondary" onClick={() => void refresh()} title={t("common.retry")}>
               ⟳
             </Button>
+            <Link to="/online/reservations">
+              <Button variant="secondary">{t("nav.stockHolds")}</Button>
+            </Link>
           </>
         }
       />
@@ -243,6 +247,27 @@ export function OnlineOrdersPage() {
             {mode === "demo" ? ` · ${t("online.orders.demoMode")}` : ""}
           </p>
           <div className="flex flex-wrap items-center gap-3">
+            {/* How fresh this screen is. A badge that claims "live" over a dead
+                socket is worse than no badge, so it reports the channel's own
+                state: subscribed, still polling, or polling because the channel
+                was refused. */}
+            <Badge
+              tone={
+                notifications.transport === "realtime"
+                  ? "success"
+                  : notifications.transport === "error"
+                    ? "warning"
+                    : "neutral"
+              }
+            >
+              {notifications.transport === "realtime"
+                ? t("online.notifications.transport.realtime", {
+                    count: Math.round(SAFETY_NET_POLL_MS / 60_000),
+                  })
+                : t(`online.notifications.transport.${notifications.transport}` as Parameters<typeof t>[0], {
+                    count: Math.round(notifications.prefs.pollMs / 1000),
+                  })}
+            </Badge>
             {activeFilters > 0 ? (
               <Button
                 size="sm"

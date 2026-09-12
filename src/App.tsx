@@ -57,6 +57,7 @@ import {
   OnlineOrdersPage,
   OnlineOrdersProvider,
   OnlineReportsPage,
+  StockHoldsPage,
   StoreAccountPage,
   StoreCartPage,
   StoreCheckoutPage,
@@ -182,6 +183,7 @@ function AuthenticatedApp() {
                                 instead of the raw extracts. */}
                             <Route path="/reports/advanced" element={<AdvancedReportsPage />} />
                             <Route path="/online/orders" element={<OnlineOrdersPage />} />
+                            <Route path="/online/reservations" element={<StockHoldsPage />} />
                             <Route path="/online/website" element={<WebsiteSettingsPage />} />
                             <Route path="/online/marketing" element={<MarketingPage />} />
                             <Route path="/online/content" element={<StoreContentPage />} />

@@ -30,6 +30,9 @@ import type {
   ResolveOrderInput,
   SettingsSaveInput,
   StockReservation,
+  ReservationHoldInput,
+  ReservationRepairInput,
+  ReservationRepairResult,
   StoreCustomer,
   StoreFaq,
   StoreReview,
@@ -338,6 +341,35 @@ function mapOrder(
   };
 }
 
+/**
+ * The repair RPC's jsonb → the app's result shape.
+ *
+ * The function returns the row it settled plus what it looked like before, so the
+ * caller can write one audit entry that says "12 → 8 units" without a second
+ * round trip — and so an already-resolved row is visibly a no-op rather than a
+ * change nobody made.
+ */
+function repairResultOf(payload: unknown): ReservationRepairResult {
+  const body = (payload ?? {}) as {
+    reservation?: StockReservationRow | null;
+    before?: { status?: StockReservation["status"]; quantity?: number; resolved_at?: string | null } | null;
+    already_resolved?: boolean;
+  };
+  if (!body.reservation) {
+    throw new OnlineError("db", "The repair returned no reservation");
+  }
+  const reservation = mapReservation(body.reservation);
+  return {
+    reservation,
+    alreadyResolved: body.already_resolved === true,
+    before: {
+      status: body.before?.status ?? reservation.status,
+      quantity: body.before?.quantity ?? reservation.quantity,
+      resolved_at: body.before?.resolved_at ?? null,
+    },
+  };
+}
+
 function mapReservation(row: StockReservationRow): StockReservation {
   return {
     id: row.id,
@@ -541,6 +573,59 @@ export class SupabaseOnlineRepository
       const { data, error } = await client.from("stock_reservations").select("*");
       if (error) throw toOnlineError(error);
       return ((data as StockReservationRow[] | null) ?? []).map(mapReservation);
+    } catch (error) {
+      throw toOnlineError(error);
+    }
+  }
+
+  /**
+   * Settle a hold that missed its transition (Phase 15).
+   *
+   * Live mode does this in `public.repair_stock_reservation` (migration 0025)
+   * rather than with an `update`: `stock_reservations` has no write policy for
+   * authenticated callers, so the only way in is a definer function that can
+   * check `public.can('adjust_stock')` itself, lock the row, refuse to reverse a
+   * resolution, and leave `products.stock_quantity` alone.
+   */
+  async repairReservation(
+    id: string,
+    input: ReservationRepairInput,
+  ): Promise<ReservationRepairResult> {
+    try {
+      const client = this.require();
+      const { data, error } = await client.rpc("repair_stock_reservation", {
+        p_action: input.action,
+        p_reservation_id: id,
+        p_order_id: null,
+        p_product_id: null,
+        p_quantity: input.quantity == null ? null : Math.trunc(input.quantity),
+        p_reason: input.reason,
+        p_user_id: input.user_id,
+        p_user_name: input.user_name,
+      });
+      if (error) throw toOnlineError(error);
+      return repairResultOf(data);
+    } catch (error) {
+      throw toOnlineError(error);
+    }
+  }
+
+  /** Create the hold a pending order should already have (Phase 15). */
+  async reserveStockForOrder(input: ReservationHoldInput): Promise<StockReservation> {
+    try {
+      const client = this.require();
+      const { data, error } = await client.rpc("repair_stock_reservation", {
+        p_action: "hold",
+        p_reservation_id: null,
+        p_order_id: input.online_order_id,
+        p_product_id: input.product_id,
+        p_quantity: input.quantity == null ? null : Math.trunc(input.quantity),
+        p_reason: input.reason,
+        p_user_id: input.user_id,
+        p_user_name: input.user_name,
+      });
+      if (error) throw toOnlineError(error);
+      return repairResultOf(data).reservation;
     } catch (error) {
       throw toOnlineError(error);
     }

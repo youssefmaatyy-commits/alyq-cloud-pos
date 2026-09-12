@@ -29,6 +29,7 @@ import type { Product } from "@/modules/products/types";
 import { getDemoRepository } from "@/modules/products/data/demoRepository";
 import { getSupabaseRepository } from "@/modules/products/data/supabaseRepository";
 import { getSupabaseClient, isSupabaseConfigured } from "@/lib/supabase/client";
+import { useRealtimeWatch } from "@/lib/supabase/useRealtimeWatch";
 import { getSalesRepository } from "@/modules/pos/data";
 import type { Sale } from "@/modules/pos/types";
 import { getOnlineMode, getOnlineOrdersRepository } from "../data";
@@ -51,7 +52,7 @@ export interface OnlineOrdersContextValue {
   reservations: StockReservation[];
   /** Product id → units currently held by pending orders. */
   reservedByProduct: Map<string, number>;
-  refresh: () => Promise<void>;
+  refresh: (options?: { silent?: boolean }) => Promise<void>;
 
   /** The order open in the detail drawer, with its items and timeline. */
   selected: OnlineOrder | null;
@@ -121,14 +122,16 @@ export function OnlineOrdersProvider({ children }: { children: ReactNode }) {
   const actor = useMemo(() => getCurrentUser(), [user]);
 
   const load = useCallback(
-    async (currentFilter: OnlineOrderFilter) => {
+    async (currentFilter: OnlineOrderFilter, options?: { silent?: boolean }) => {
       if (!canManage) {
         setOrders([]);
         setCounts(EMPTY_ORDER_COUNTS);
         setLoading(false);
         return;
       }
-      setLoading(true);
+      // A realtime event asks for a silent read: replace the data, keep the
+      // screen readable instead of flashing a spinner over it.
+      if (options?.silent !== true) setLoading(true);
       try {
         const [list, totals, holds, saleList, catalog] = await Promise.all([
           repository.listOrders(currentFilter),
@@ -164,14 +167,26 @@ export function OnlineOrdersProvider({ children }: { children: ReactNode }) {
     void load(filter);
   }, [filter, load]);
 
+  // Phase 16: the queue, its timeline and its holds arrive over the shared
+  // channel, so two staff working the same order see each other's decisions
+  // without reloading — and a hold settled on the stock-holds screen (Phase 15)
+  // changes the availability this provider hands out. Gated on the same
+  // capability as the read: subscribing to rows RLS will hide is noise, not
+  // security, and in demo mode the bus does nothing at all.
+  useRealtimeWatch(
+    ["online_orders", "order_events", "stock_reservations"],
+    () => refresh({ silent: true }),
+    { enabled: canManage },
+  );
+
   const setFilter = useCallback((patch: Partial<OnlineOrderFilter>) => {
     setFilterState((current) => ({ ...current, ...patch }));
   }, []);
 
   const resetFilter = useCallback(() => setFilterState(EMPTY_ORDER_FILTER), []);
 
-  const refresh = useCallback(async () => {
-    await load(filter);
+  const refresh = useCallback(async (options?: { silent?: boolean }) => {
+    await load(filter, options);
   }, [filter, load]);
 
   const select = useCallback(

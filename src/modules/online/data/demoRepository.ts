@@ -44,6 +44,9 @@ import type {
   ResolveOrderInput,
   SettingsSaveInput,
   StockReservation,
+  ReservationHoldInput,
+  ReservationRepairInput,
+  ReservationRepairResult,
   StoreCustomer,
   StoreFaq,
   StoreReview,
@@ -63,7 +66,7 @@ import {
   priceCart,
   round2,
 } from "../services/pricing";
-import { availableToPromise, reservedByProduct } from "../services/availability";
+import { availableToPromise, holdsReservation, reservedByProduct } from "../services/availability";
 import { unitsSold } from "../services/badges";
 import { checkAction, initialPaymentStatus, requiresReason } from "../services/orderWorkflow";
 import { slugifyAscii } from "../services/seo";
@@ -121,6 +124,18 @@ function resolveValue<T>(value: T): T {
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+/** Units an order's lines ask for of one product, or `null` when it is not in the order. */
+function orderedQuantity(order: OnlineOrder, productId: string): number | null {
+  let total = 0;
+  let found = false;
+  for (const item of order.items) {
+    if (item.product_id !== productId) continue;
+    found = true;
+    total += Math.max(0, Math.trunc(item.quantity));
+  }
+  return found ? total : null;
 }
 
 function newId(prefix: string): string {
@@ -455,6 +470,223 @@ export class DemoOnlineRepository
   async listReservations(): Promise<StockReservation[]> {
     await this.ensureSeeded();
     return delay(this.reservations);
+  }
+
+  /**
+   * Settle a hold that missed its transition (Phase 15).
+   *
+   * Three rules, in the order they are checked:
+   *
+   *   1. **A reason is required.** This is a hand repairing the book, and the
+   *      trail has to say why — the same insistence the refund settlement and the
+   *      order cancellation both make.
+   *   2. **Never reverse a resolution.** Releasing a hold that was already
+   *      converted would put units back into the pool that the sale has already
+   *      taken off the shelf — an oversell created by the repair tool itself.
+   *      Repeating the same direction is a no-op that reports
+   *      `alreadyResolved`, so a double-click or a retried request cannot
+   *      double-release either.
+   *   3. **Never write `stock_quantity`.** The order's transition already had its
+   *      stock effect; a repair only settles the hold's own row.
+   */
+  async repairReservation(
+    id: string,
+    input: ReservationRepairInput,
+  ): Promise<ReservationRepairResult> {
+    await this.ensureSeeded();
+    const reason = input.reason?.trim() ?? "";
+    if (!reason) {
+      throw new OnlineError("workflow_refused", "A reason is required", {
+        field: "reason",
+        detail: { reason: "missing_reason", action: input.action },
+      });
+    }
+
+    const index = this.reservations.findIndex((reservation) => reservation.id === id);
+    if (index < 0) {
+      throw new OnlineError("db", "Reservation not found", { detail: { id } });
+    }
+    const current = this.reservations[index];
+    const before = {
+      status: current.status,
+      quantity: current.quantity,
+      resolved_at: current.resolved_at,
+    };
+    const at = nowIso();
+    const actor = { user_id: input.user_id, user_name: input.user_name };
+    const order = this.orders.find((candidate) => candidate.id === current.online_order_id) ?? null;
+
+    // ── rule 2: a resolved hold is only ever re-settled in the same direction ──
+    if (current.status !== "reserved") {
+      const wanted = input.action === "release" ? "released" : "converted";
+      if (input.action === "reconcile") {
+        // The one thing a resolved row can still be wrong about is its own
+        // timestamp: the schema requires one, and a hand-edited store may not
+        // have it. Stamping it changes no quantity and no stock.
+        if (current.resolved_at) {
+          return { reservation: current, alreadyResolved: true, before };
+        }
+        const stamped: StockReservation = { ...current, resolved_at: at };
+        this.reservations[index] = stamped;
+        this.persistOrders();
+        this.noteRepair(order, actor, `Hold reconciled · resolved timestamp recorded · ${reason}`);
+        return { reservation: stamped, alreadyResolved: false, before };
+      }
+      if (current.status === wanted) {
+        return { reservation: current, alreadyResolved: true, before };
+      }
+      throw new OnlineError(
+        "workflow_refused",
+        `This hold was already ${current.status}; it cannot be ${wanted}`,
+        { detail: { id, status: current.status, action: input.action } },
+      );
+    }
+
+    // ── reconcile an open hold: the quantity must be the order's own ─────────
+    if (input.action === "reconcile") {
+      if (!order) {
+        throw new OnlineError("order_not_found", "The order behind this hold no longer exists", {
+          detail: { id, action: "reconcile" },
+        });
+      }
+      if (!holdsReservation(order.status)) {
+        throw new OnlineError(
+          "workflow_refused",
+          `A ${order.status} order does not hold stock — release or convert the hold instead`,
+          { detail: { id, order_status: order.status },
+        });
+      }
+      const expected = orderedQuantity(order, current.product_id);
+      if (expected === null) {
+        throw new OnlineError(
+          "workflow_refused",
+          "The order has no line for this product — release the hold instead",
+          { detail: { id, product_id: current.product_id } },
+        );
+      }
+      if (input.quantity != null && Math.trunc(input.quantity) !== expected) {
+        throw new OnlineError(
+          "workflow_refused",
+          `The order asks for ${expected}; a repair cannot hold a different number`,
+          { field: "quantity", detail: { id, expected, requested: Math.trunc(input.quantity) } },
+        );
+      }
+      if (expected === current.quantity) {
+        return { reservation: current, alreadyResolved: true, before };
+      }
+      const corrected: StockReservation = { ...current, quantity: expected };
+      this.reservations[index] = corrected;
+      this.persistOrders();
+      this.noteRepair(
+        order,
+        actor,
+        `Hold reconciled · ${current.quantity} → ${expected} units · ${reason}`,
+      );
+      return { reservation: corrected, alreadyResolved: false, before };
+    }
+
+    // ── release / convert ────────────────────────────────────────────────────
+    const status = input.action === "release" ? "released" : "converted";
+    const repaired: StockReservation = { ...current, status, resolved_at: at };
+    this.reservations[index] = repaired;
+    this.persistOrders();
+    this.noteRepair(
+      order,
+      actor,
+      `Hold ${status} during reconciliation · ${current.quantity} unit(s) · ${reason}`,
+    );
+    return { reservation: repaired, alreadyResolved: false, before };
+  }
+
+  /**
+   * Create the hold a pending order should already have (Phase 15).
+   *
+   * The mirror image of a stuck hold: an order that is holding nothing, so the
+   * website is promising units it cannot deliver. The quantity is the order
+   * line's own — a caller cannot invent one — and an existing open hold for the
+   * same order and product is returned unchanged rather than duplicated, because
+   * two holds on one line would hide stock twice.
+   */
+  async reserveStockForOrder(input: ReservationHoldInput): Promise<StockReservation> {
+    await this.ensureSeeded();
+    const reason = input.reason?.trim() ?? "";
+    if (!reason) {
+      throw new OnlineError("workflow_refused", "A reason is required", {
+        field: "reason",
+        detail: { reason: "missing_reason", action: "hold" },
+      });
+    }
+    const order = this.orders.find((candidate) => candidate.id === input.online_order_id) ?? null;
+    if (!order) {
+      throw new OnlineError("order_not_found", "Order not found", {
+        detail: { id: input.online_order_id },
+      });
+    }
+    if (!holdsReservation(order.status)) {
+      throw new OnlineError(
+        "workflow_refused",
+        `A ${order.status} order does not hold stock, so there is nothing to repair`,
+        { detail: { order_status: order.status } },
+      );
+    }
+    const expected = orderedQuantity(order, input.product_id);
+    if (expected === null || expected <= 0) {
+      throw new OnlineError("workflow_refused", "The order has no line for this product", {
+        detail: { product_id: input.product_id },
+      });
+    }
+    if (input.quantity != null && Math.trunc(input.quantity) !== expected) {
+      throw new OnlineError(
+        "workflow_refused",
+        `The order asks for ${expected}; a repair cannot hold a different number`,
+        { field: "quantity", detail: { expected, requested: Math.trunc(input.quantity) } },
+      );
+    }
+    const existing = this.reservations.find(
+      (reservation) =>
+        reservation.online_order_id === order.id &&
+        reservation.product_id === input.product_id &&
+        reservation.status === "reserved",
+    );
+    if (existing) return delay(existing);
+
+    const created: StockReservation = {
+      id: newId("rsv"),
+      online_order_id: order.id,
+      product_id: input.product_id,
+      quantity: expected,
+      status: "reserved",
+      created_at: nowIso(),
+      resolved_at: null,
+    };
+    this.reservations.push(created);
+    this.persistOrders();
+    this.noteRepair(
+      order,
+      { user_id: input.user_id, user_name: input.user_name },
+      `Hold restored · ${expected} unit(s) · ${reason}`,
+    );
+    return delay(created);
+  }
+
+  /** A repair leaves a line on the order's own timeline, not only in the audit log. */
+  private noteRepair(
+    order: OnlineOrder | null,
+    actor: { user_id: string; user_name: string },
+    note: string,
+  ): void {
+    if (!order) return;
+    const index = this.orders.findIndex((candidate) => candidate.id === order.id);
+    if (index < 0) return;
+    this.orders[index] = {
+      ...this.orders[index],
+      updated_at: nowIso(),
+      events: [
+        ...this.orders[index].events,
+        { ...this.event("note", note, actor), order_id: order.id },
+      ],
+    };
+    this.persistOrders();
   }
 
   async counts(filter: Partial<OnlineOrderFilter> = {}): Promise<OrderCounts> {

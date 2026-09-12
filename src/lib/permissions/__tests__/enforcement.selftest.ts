@@ -57,6 +57,7 @@ import * as inventoryService from "@/modules/inventory/services/inventoryService
 import * as catalogService from "@/modules/products/services/catalogService";
 import * as saleService from "@/modules/pos/services/saleService";
 import * as reportAccess from "@/modules/reports/services/reportAccess";
+import * as reservationRepair from "@/modules/online/services/reservationRepair";
 import * as returnService from "@/modules/returns/services/returnService";
 import * as shiftService from "@/modules/shifts/services/shiftService";
 
@@ -332,6 +333,12 @@ const FUNNELS: { name: string; call: () => unknown | Promise<unknown> }[] = [
   { name: "returnService.processReturn", call: () => returnService.processReturn({} as never) },
   { name: "returnService.settleRefund", call: () => returnService.settleRefund("ref-x", "completed", null) },
   { name: "reportAccess.assertCanExport(report)", call: () => reportAccess.assertCanExport("report") },
+  // Settling a website hold asks for the stock ledger's own capability, so the
+  // till seat that works the online queue is refused here exactly as it is on
+  // the screen — and the refusal happens before any row is read.
+  { name: "reservationRepair.repairHold", call: () => reservationRepair.repairHold({} as never, "Left behind by an interrupted deployment") },
+  { name: "reservationRepair.restoreHold", call: () => reservationRepair.restoreHold({} as never, "Left behind by an interrupted deployment") },
+  { name: "reservationRepair.repairAllFindings", call: () => reservationRepair.repairAllFindings({} as never, "Left behind by an interrupted deployment") },
   { name: "reportAccess.assertCanExport(data)", call: () => reportAccess.assertCanExport("data") },
 ];
 

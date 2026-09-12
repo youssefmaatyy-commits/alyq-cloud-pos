@@ -42,6 +42,13 @@ export const ROUTE_CAPABILITIES: ReadonlyArray<readonly [string, Capability]> = 
   // storefront for every customer and change what they pay, so it uses
   // `manage_website`, which only managers and admins hold.
   ["/online/orders", "manage_online_orders"],
+  // Stock holds (Phase 15). Reading what the website has reserved is part of
+  // working the queue, so it opens with the same capability. *Settling* a hold
+  // changes what the whole shop can promise, so the screen's repair buttons are
+  // gated separately on `adjust_stock` — in the UI, in the service funnel and in
+  // `public.repair_stock_reservation` for live mode. One path, two capabilities,
+  // deliberately: the route table says who may look, not who may act.
+  ["/online/reservations", "manage_online_orders"],
   ["/online/reports", "manage_online_orders"],
   ["/online/website", "manage_website"],
   ["/online/marketing", "manage_website"],

@@ -9,6 +9,7 @@ import {
 } from "react";
 import { AppError } from "@/modules/products/data/repository";
 import { canAct } from "@/lib/permissions/enforce";
+import { useRealtimeWatch } from "@/lib/supabase/useRealtimeWatch";
 import { getApprovalMode, getApprovalRepository } from "../data";
 import type { ApprovalRepository } from "../data/repository";
 import type {
@@ -42,7 +43,7 @@ export interface ApprovalContextValue {
   summary: ApprovalSummary;
   loading: boolean;
   error: AppError | null;
-  refresh: () => Promise<void>;
+  refresh: (options?: { silent?: boolean }) => Promise<void>;
   /** May the signed-in user decide requests (and therefore skip the limits)? */
   mayDecide: boolean;
 
@@ -93,8 +94,15 @@ export function ApprovalProvider({ children }: { children: ReactNode }) {
   const repository = useMemo(() => getApprovalRepository(), []);
   const mode = useMemo(() => getApprovalMode(), []);
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
+  /**
+   * Re-read.
+   *
+   * `silent` is what a realtime event asks for: the data is replaced without the
+   * spinner, so a change made in another tab updates the numbers instead of
+   * flashing a loading screen over somebody who is reading it.
+   */
+  const refresh = useCallback(async (options?: { silent?: boolean }) => {
+    if (options?.silent !== true) setLoading(true);
     setError(null);
     try {
       // The rules are read first and cached, because the domain funnels consult
@@ -113,6 +121,11 @@ export function ApprovalProvider({ children }: { children: ReactNode }) {
     void refresh();
     return () => clearApprovalRulesCache();
   }, [refresh]);
+
+  // Phase 16: a request filed or decided anywhere — another tab, another till,
+  // the admin edge function — re-reads this queue. The sidebar badge and the
+  // screen are the same state, so they cannot disagree about what is pending.
+  useRealtimeWatch(["approval_requests"], () => refresh({ silent: true }));
 
   const request = useCallback<ApprovalContextValue["request"]>(
     async (requirement, context) => {

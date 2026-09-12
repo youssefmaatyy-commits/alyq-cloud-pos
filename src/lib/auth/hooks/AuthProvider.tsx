@@ -17,6 +17,7 @@ import type {
   SessionEndReason,
 } from "../types";
 import type { PasswordUpdateResult } from "../data/repository";
+import { stopRealtime } from "@/lib/supabase/realtime";
 import {
   adoptProviderSession,
   forgetSession,
@@ -321,6 +322,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signOut = useCallback(async () => {
     const actor = session?.user ?? null;
     await signOutRequest();
+    // Providers unmounting drops their own subscriptions; this makes sure no
+    // socket outlives the session it was opened for.
+    stopRealtime();
     setSession(null);
     setError(null);
     setEndReason("signed_out");
@@ -331,6 +335,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signOutEverywhere = useCallback(async () => {
     const actor = session?.user ?? null;
     await signOutRequest({ everywhere: true });
+    stopRealtime();
     setSession(null);
     setError(null);
     setEndReason("signed_out");
