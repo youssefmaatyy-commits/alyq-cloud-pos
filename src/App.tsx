@@ -38,9 +38,25 @@ import {
 import { AuditLogPage, RequireAuditAccess } from "@/modules/audit";
 import { ReportsPage } from "@/modules/reports";
 
-import { StorefrontHomePage } from "@/modules/storefront/pages/StorefrontHomePage";
-import { StorefrontProductsPage } from "@/modules/storefront/pages/StorefrontProductsPage";
-import { StorefrontProductPage } from "@/modules/storefront/pages/StorefrontProductPage";
+import {
+  MarketingPage,
+  OnlineNotificationsProvider,
+  OnlineOrdersPage,
+  OnlineOrdersProvider,
+  OnlineReportsPage,
+  StoreAccountPage,
+  StoreCartPage,
+  StoreCheckoutPage,
+  StoreConfirmationPage,
+  StoreContactPage,
+  StoreContentPage,
+  StoreHomePage,
+  StoreProductPage,
+  StoreProductsPage,
+  StoreTrackPage,
+  StorefrontApp,
+  WebsiteSettingsPage,
+} from "@/modules/online";
 
 /**
  * ALYQ Cloud POS — application root.
@@ -50,7 +66,9 @@ import { StorefrontProductPage } from "@/modules/storefront/pages/StorefrontProd
  * Routing (Authentication phase) has three branches:
  *   /login     public — rendered outside the shell, with no module providers
  *              mounted, so nothing loads business data before a session exists;
- *   /store/*   public — customer-facing storefront, no auth required;
+ *   /store/*   public — the customer-facing website, no auth required, and no
+ *              POS provider mounted: a shopper browsing the catalogue must not
+ *              cause the app to load stock, sales or staff data;
  *   *          everything else — `RequireAuth` first, then the module providers
  *              and the shell. The shell's `RouteGuard` then applies the
  *              role → screen capability table, and `/audit` adds its own copy.
@@ -63,9 +81,20 @@ export default function App() {
           <HashRouter>
             <Routes>
               <Route path="/login" element={<LoginRoute />} />
-              <Route path="/store" element={<StorefrontHomePage />} />
-              <Route path="/store/products" element={<StorefrontProductsPage />} />
-              <Route path="/store/products/:id" element={<StorefrontProductPage />} />
+              <Route path="/store" element={<StorefrontApp />}>
+                <Route index element={<StoreHomePage />} />
+                <Route path="products" element={<StoreProductsPage />} />
+                {/* `:key` is the slug when a product has one and the id when it
+                    does not — both resolve, so a shared link never dies. */}
+                <Route path="products/:key" element={<StoreProductPage />} />
+                <Route path="cart" element={<StoreCartPage />} />
+                <Route path="checkout" element={<StoreCheckoutPage />} />
+                <Route path="confirmation" element={<StoreConfirmationPage />} />
+                <Route path="track" element={<StoreTrackPage />} />
+                <Route path="account" element={<StoreAccountPage />} />
+                <Route path="contact" element={<StoreContactPage />} />
+                <Route path="*" element={<Navigate to="/store" replace />} />
+              </Route>
               <Route path="*" element={<AuthenticatedApp />} />
             </Routes>
           </HashRouter>
@@ -86,40 +115,49 @@ function AuthenticatedApp() {
               <ReturnProvider>
                 <ExpenseProvider>
                   <ShiftProvider>
-                    <AppShell>
-                      <Routes>
-                        <Route path="/" element={<DashboardPage />} />
-                        <Route path="/products" element={<ProductsPage />} />
-                        <Route path="/products/new" element={<ProductFormPage mode="create" />} />
-                        <Route path="/products/:id" element={<ProductDetailPage />} />
-                        <Route path="/products/:id/edit" element={<ProductFormPage mode="edit" />} />
-                        <Route path="/categories" element={<CategoriesPage />} />
-                        <Route path="/inventory" element={<InventoryPage />} />
-                        <Route path="/inventory/movements" element={<MovementsPage />} />
-                        <Route path="/pos" element={<PosPage />} />
-                        <Route path="/pos/sales" element={<SalesHistoryPage />} />
-                        <Route path="/pos/sales/:id" element={<SaleDetailPage />} />
-                        <Route path="/customers" element={<CustomersPage />} />
-                        <Route path="/customers/:id" element={<CustomerDetailPage />} />
-                        <Route path="/returns" element={<ReturnsPage />} />
-                        <Route path="/returns/:id" element={<ReturnDetailPage />} />
-                        <Route path="/refunds" element={<RefundsPage />} />
-                        <Route path="/refunds/:id" element={<RefundDetailPage />} />
-                        <Route path="/shifts" element={<ShiftDashboardPage />} />
-                        <Route path="/shifts/history" element={<ShiftHistoryPage />} />
-                        <Route path="/expenses" element={<ExpensesPage />} />
-                        <Route path="/reports" element={<ReportsPage />} />
-                        <Route
-                          path="/audit"
-                          element={
-                            <RequireAuditAccess>
-                              <AuditLogPage />
-                            </RequireAuditAccess>
-                          }
-                        />
-                        <Route path="*" element={<Navigate to="/" replace />} />
-                      </Routes>
-                    </AppShell>
+                    <OnlineNotificationsProvider>
+                      <AppShell>
+                        <OnlineOrdersProvider>
+                          <Routes>
+                            <Route path="/" element={<DashboardPage />} />
+                            <Route path="/products" element={<ProductsPage />} />
+                            <Route path="/products/new" element={<ProductFormPage mode="create" />} />
+                            <Route path="/products/:id" element={<ProductDetailPage />} />
+                            <Route path="/products/:id/edit" element={<ProductFormPage mode="edit" />} />
+                            <Route path="/categories" element={<CategoriesPage />} />
+                            <Route path="/inventory" element={<InventoryPage />} />
+                            <Route path="/inventory/movements" element={<MovementsPage />} />
+                            <Route path="/pos" element={<PosPage />} />
+                            <Route path="/pos/sales" element={<SalesHistoryPage />} />
+                            <Route path="/pos/sales/:id" element={<SaleDetailPage />} />
+                            <Route path="/customers" element={<CustomersPage />} />
+                            <Route path="/customers/:id" element={<CustomerDetailPage />} />
+                            <Route path="/returns" element={<ReturnsPage />} />
+                            <Route path="/returns/:id" element={<ReturnDetailPage />} />
+                            <Route path="/refunds" element={<RefundsPage />} />
+                            <Route path="/refunds/:id" element={<RefundDetailPage />} />
+                            <Route path="/shifts" element={<ShiftDashboardPage />} />
+                            <Route path="/shifts/history" element={<ShiftHistoryPage />} />
+                            <Route path="/expenses" element={<ExpensesPage />} />
+                            <Route path="/reports" element={<ReportsPage />} />
+                            <Route path="/online/orders" element={<OnlineOrdersPage />} />
+                            <Route path="/online/website" element={<WebsiteSettingsPage />} />
+                            <Route path="/online/marketing" element={<MarketingPage />} />
+                            <Route path="/online/content" element={<StoreContentPage />} />
+                            <Route path="/online/reports" element={<OnlineReportsPage />} />
+                            <Route
+                              path="/audit"
+                              element={
+                                <RequireAuditAccess>
+                                  <AuditLogPage />
+                                </RequireAuditAccess>
+                              }
+                            />
+                            <Route path="*" element={<Navigate to="/" replace />} />
+                          </Routes>
+                        </OnlineOrdersProvider>
+                      </AppShell>
+                    </OnlineNotificationsProvider>
                   </ShiftProvider>
                 </ExpenseProvider>
               </ReturnProvider>

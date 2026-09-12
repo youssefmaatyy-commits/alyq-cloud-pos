@@ -112,6 +112,26 @@ export const CAPABILITIES = [
   "approve_shift_adjustment",
   /** Read the audit trail. */
   "view_audit_log",
+  /**
+   * Work the online queue (Phase 9): read website orders, approve them (which
+   * creates the POS sale and converts the stock reservation), move them through
+   * processing/ready/completed, and cancel a pending one with a reason.
+   * Granted to every role that may already `sell`, because approving an order is
+   * a sale. Cancelling an *approved* order additionally needs `void_sale`, since
+   * it unwinds one.
+   */
+  "manage_online_orders",
+  /**
+   * Edit the customer-facing website (Phase 9): appearance and theme, homepage
+   * sections, social and contact links, SEO defaults, InstaPay details, coupons,
+   * campaigns, FAQs and reviews. Admin and manager only — this is the shop's
+   * public face, not a till operation.
+   *
+   * Verifying an InstaPay payment proof deliberately reuses `confirm_payment`:
+   * it is the same judgement as confirming a transfer at the till, and a second
+   * capability would let the two drift apart.
+   */
+  "manage_website",
 ] as const;
 export type Capability = (typeof CAPABILITIES)[number];
 
@@ -141,6 +161,8 @@ export const ROLE_CAPABILITIES: Record<AppRole, readonly Capability[]> = {
     "close_shift",
     "add_expense",
     "view_shifts",
+    // Works the online queue like the till; may not restyle the website.
+    "manage_online_orders",
   ],
   inventory_clerk: [
     "view_inventory",
@@ -153,6 +175,7 @@ export const ROLE_CAPABILITIES: Record<AppRole, readonly Capability[]> = {
     "close_shift",
     "add_expense",
     "view_shifts",
+    "manage_online_orders",
   ],
   viewer: ["view_inventory", "view_shifts"],
 };

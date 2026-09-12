@@ -30,6 +30,17 @@ export const ROUTE_CAPABILITIES: ReadonlyArray<readonly [string, Capability]> = 
   // would desynchronise `roles.ts` from `public.role_capabilities`, which
   // `npm run db:check` asserts row-for-row.
   ["/reports", "view_shifts"],
+  // The website is two screens' worth of authority. Working an order —
+  // approving, cancelling, verifying an InstaPay proof — is a till-side job, so
+  // it uses `manage_online_orders`, which cashiers hold. Editing the shop itself
+  // (appearance, sections, campaigns, coupons, product content) can repaint the
+  // storefront for every customer and change what they pay, so it uses
+  // `manage_website`, which only managers and admins hold.
+  ["/online/orders", "manage_online_orders"],
+  ["/online/reports", "manage_online_orders"],
+  ["/online/website", "manage_website"],
+  ["/online/marketing", "manage_website"],
+  ["/online/content", "manage_website"],
   ["/audit", "view_audit_log"],
 ];
 

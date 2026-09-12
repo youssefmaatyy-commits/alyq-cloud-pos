@@ -1,0 +1,569 @@
+/**
+ * Checkout.
+ *
+ * The last screen before an order exists, so it is the one place where being
+ * vague costs a sale. It asks only for what the order needs — who, where, how it
+ * travels, how it is paid — and it hides the options the shop switched off, so a
+ * customer is never offered pickup that cannot be collected or InstaPay that
+ * cannot be verified.
+ *
+ * Nothing here decides a price. The cart's totals are shown, and
+ * `place_online_order` recomputes them from the catalogue; if the two disagree
+ * (a campaign ended mid-checkout) the server's number is the one that is written,
+ * and the confirmation screen shows it.
+ */
+import { useEffect, useMemo, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { useI18n } from "@/lib/i18n/I18nProvider";
+import { cn } from "@/utils/cn";
+import { useStoreCart, type CheckoutInput } from "../hooks/StoreCartProvider";
+import { useStoreAccount } from "../hooks/StoreAccountProvider";
+import { useStorefront } from "../hooks/StorefrontProvider";
+import type { CustomerAddress, DeliveryType, OnlinePaymentMethod } from "../types";
+import { whatsappHref } from "../components/storefront/StoreLayout";
+import { FieldNote, Money } from "../components/storefront/StorePrimitives";
+import { applyDocumentMeta, clearDocumentMeta } from "../services/seo";
+
+/** Egyptian mobile numbers: 11 digits, starting 01. */
+const EGYPT_PHONE = /^01[0-25]\d{8}$/;
+
+/** A blank address to type into. */
+const blankAddress = (): CustomerAddress => ({
+  id: "",
+  label: "",
+  full_name: "",
+  phone: "",
+  city: "",
+  area: "",
+  street: "",
+  building: "",
+  floor: "",
+  apartment: "",
+  notes: "",
+  is_default: false,
+});
+
+export function StoreCheckoutPage() {
+  const { t, pick, money } = useI18n();
+
+  // Checkout holds personal details and is never a landing page.
+  useEffect(() => {
+    applyDocumentMeta({ title: t("store.checkout.title"), description: "", noIndex: true });
+    return () => clearDocumentMeta();
+  }, [t]);
+  const navigate = useNavigate();
+  const { settings } = useStorefront();
+  const { customer, addresses } = useStoreAccount();
+  const {
+    entries,
+    isEmpty,
+    totals,
+    problems,
+    deliveryType,
+    setDeliveryType,
+    paymentMethod,
+    setPaymentMethod,
+    placing,
+    checkout,
+    checkoutError,
+    clearCheckoutError,
+  } = useStoreCart();
+
+  const [name, setName] = useState(customer?.name ?? "");
+  const [phone, setPhone] = useState(customer?.phone ?? "");
+  const [email, setEmail] = useState(customer?.email ?? "");
+  const [notes, setNotes] = useState("");
+  const [address, setAddress] = useState<CustomerAddress>(blankAddress);
+  const [savedAddressId, setSavedAddressId] = useState<string | null>(null);
+  const [touched, setTouched] = useState(false);
+
+  const defaultAddress = addresses.find((entry) => entry.is_default) ?? addresses[0] ?? null;
+
+  // A signed-in shopper starts from their saved address; they can still type a
+  // different one for this order without editing the saved copy.
+  useEffect(() => {
+    if (!customer) return;
+    setName((current) => current || customer.name);
+    setPhone((current) => current || customer.phone);
+    setEmail((current) => current || customer.email || "");
+    if (defaultAddress && !savedAddressId) {
+      setSavedAddressId(defaultAddress.id);
+      setAddress(defaultAddress);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customer?.id]);
+
+  // The shop can switch a channel off while a cart is open; do not let the
+  // customer submit a choice that no longer exists.
+  useEffect(() => {
+    if (deliveryType === "delivery" && !settings.delivery.enabled && settings.delivery.pickup_enabled) {
+      setDeliveryType("pickup");
+    }
+    if (deliveryType === "pickup" && !settings.delivery.pickup_enabled && settings.delivery.enabled) {
+      setDeliveryType("delivery");
+    }
+    if (paymentMethod === "cod" && !settings.delivery.cod_enabled && settings.delivery.instapay_enabled) {
+      setPaymentMethod("instapay");
+    }
+    if (paymentMethod === "instapay" && !settings.delivery.instapay_enabled && settings.delivery.cod_enabled) {
+      setPaymentMethod("cod");
+    }
+  }, [deliveryType, paymentMethod, setDeliveryType, setPaymentMethod, settings.delivery]);
+
+  const problemsByProduct = useMemo(
+    () => new Map(problems.map((problem) => [problem.product_id, problem])),
+    [problems],
+  );
+
+  const nameError = touched && !name.trim() ? t("store.checkout.nameRequired") : null;
+  const phoneError =
+    touched && !phone.trim()
+      ? t("store.checkout.phoneRequired")
+      : touched && !EGYPT_PHONE.test(phone.replace(/\s+/g, ""))
+        ? t("store.checkout.phoneInvalid")
+        : null;
+  const addressError =
+    touched && deliveryType === "delivery" && !address.city.trim() && !address.street.trim()
+      ? t("store.checkout.addressRequired")
+      : null;
+  const blocked = problems.length > 0;
+  const invalid = Boolean(nameError || phoneError || addressError) || blocked;
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setTouched(true);
+    clearCheckoutError();
+    if (invalid) return;
+
+    const payload: CheckoutInput = {
+      customer_name: name.trim(),
+      customer_phone: phone.trim(),
+      customer_email: email.trim() || null,
+      address: deliveryType === "delivery" ? address : null,
+      notes: notes.trim() || null,
+    };
+    const order = await checkout(payload);
+    if (order) navigate("/store/confirmation");
+  };
+
+  if (isEmpty) {
+    return (
+      <div className="mx-auto w-full max-w-2xl px-4 py-20 text-center">
+        <p className="text-lg font-black text-[var(--store-text)]">{t("store.cart.empty")}</p>
+        <Link
+          to="/store/products"
+          className="mt-6 inline-block bg-[var(--store-primary)] px-6 py-3 text-sm font-black text-[var(--store-on-primary)]"
+          style={{ borderRadius: "var(--store-radius-button)" }}
+        >
+          {t("store.cart.startShopping")}
+        </Link>
+      </div>
+    );
+  }
+
+  const inputClass =
+    "w-full rounded-lg border border-[var(--store-border)] bg-[var(--store-surface)] px-3 py-2 text-sm text-[var(--store-text)] outline-none transition focus:border-[var(--store-primary)]";
+
+  return (
+    <form onSubmit={submit} className="mx-auto w-full max-w-[var(--store-max-width,72rem)] px-4 py-6 sm:px-6">
+      <h1 className="text-2xl font-black tracking-tight text-[var(--store-text)]">{t("store.checkout.title")}</h1>
+
+      {!customer ? (
+        <p className="mt-2 text-xs font-semibold text-[var(--store-muted)]">
+          {t("store.checkout.guestNote")}{" "}
+          <Link to="/store/account" className="font-bold text-[var(--store-primary)] hover:underline">
+            {t("store.account.signIn")}
+          </Link>
+        </p>
+      ) : null}
+
+      {checkoutError ? (
+        <div className="mt-4 border border-rose-300 bg-rose-50 p-3 text-sm font-bold text-rose-800" style={{ borderRadius: "var(--store-radius)" }}>
+          {t(`store.error.${checkoutError.code}` as never)}
+          {checkoutError.code === "insufficient_stock" && checkoutError.detail.sku
+            ? ` · ${String(checkoutError.detail.sku)}`
+            : ""}
+          <button type="button" onClick={clearCheckoutError} className="ms-2 underline">
+            {t("common.dismiss")}
+          </button>
+        </div>
+      ) : null}
+
+      <div className="mt-5 grid gap-6 lg:grid-cols-[1fr_20rem]">
+        <div className="flex flex-col gap-5">
+          {/* contact */}
+          <section className="border border-[var(--store-border)] bg-[var(--store-surface)] p-4" style={{ borderRadius: "var(--store-radius)" }}>
+            <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-muted)]">
+              {t("store.checkout.contactSection")}
+            </h2>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <label className="block">
+                <span className="mb-1 block text-xs font-bold text-[var(--store-text)]">{t("store.checkout.fullName")}</span>
+                <input value={name} onChange={(event) => setName(event.target.value)} className={inputClass} autoComplete="name" />
+                {nameError ? <FieldNote tone="error">{nameError}</FieldNote> : null}
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-xs font-bold text-[var(--store-text)]">{t("store.checkout.phone")}</span>
+                <input
+                  value={phone}
+                  onChange={(event) => setPhone(event.target.value)}
+                  className={inputClass}
+                  inputMode="tel"
+                  autoComplete="tel"
+                  placeholder="01xxxxxxxxx"
+                />
+                {phoneError ? (
+                  <FieldNote tone="error">{phoneError}</FieldNote>
+                ) : (
+                  <FieldNote>{t("store.checkout.phoneHint")}</FieldNote>
+                )}
+              </label>
+              <label className="block sm:col-span-2">
+                <span className="mb-1 block text-xs font-bold text-[var(--store-text)]">
+                  {t("store.checkout.email")} <span className="font-medium text-[var(--store-muted)]">({t("common.optional")})</span>
+                </span>
+                <input value={email} onChange={(event) => setEmail(event.target.value)} className={inputClass} type="email" autoComplete="email" />
+              </label>
+            </div>
+          </section>
+
+          {/* fulfilment */}
+          <section className="border border-[var(--store-border)] bg-[var(--store-surface)] p-4" style={{ borderRadius: "var(--store-radius)" }}>
+            <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-muted)]">
+              {t("store.checkout.fulfilment")}
+            </h2>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              {settings.delivery.enabled ? (
+                <button
+                  type="button"
+                  onClick={() => setDeliveryType("delivery" as DeliveryType)}
+                  className={cn(
+                    "rounded-xl border-2 p-3 text-start transition",
+                    deliveryType === "delivery"
+                      ? "border-[var(--store-primary)] bg-[var(--store-primary-soft)]"
+                      : "border-[var(--store-border)]",
+                  )}
+                >
+                  <p className="text-sm font-black text-[var(--store-text)]">{t("store.checkout.delivery")}</p>
+                  <p className="mt-0.5 text-xs text-[var(--store-muted)]">
+                    {totals.delivery_fee > 0
+                      ? t("store.checkout.deliveryFeeAmount", { amount: money(settings.delivery.fee) })
+                      : t("store.cart.freeDeliveryReached")}
+                  </p>
+                </button>
+              ) : null}
+              {settings.delivery.pickup_enabled ? (
+                <button
+                  type="button"
+                  onClick={() => setDeliveryType("pickup" as DeliveryType)}
+                  className={cn(
+                    "rounded-xl border-2 p-3 text-start transition",
+                    deliveryType === "pickup"
+                      ? "border-[var(--store-primary)] bg-[var(--store-primary-soft)]"
+                      : "border-[var(--store-border)]",
+                  )}
+                >
+                  <p className="text-sm font-black text-[var(--store-text)]">{t("store.checkout.pickup")}</p>
+                  <p className="mt-0.5 text-xs text-[var(--store-muted)]">
+                    {pick(settings.delivery.pickup_address_ar, settings.delivery.pickup_address_en) ||
+                      t("store.checkout.pickupFree")}
+                  </p>
+                </button>
+              ) : null}
+            </div>
+
+            {deliveryType === "delivery" ? (
+              <div className="mt-4">
+                {addresses.length > 0 ? (
+                  <div className="mb-3 flex flex-col gap-2">
+                    {addresses.map((entry) => (
+                      <label
+                        key={entry.id}
+                        className={cn(
+                          "flex cursor-pointer items-start gap-2 rounded-xl border-2 p-3 transition",
+                          savedAddressId === entry.id
+                            ? "border-[var(--store-primary)] bg-[var(--store-primary-soft)]"
+                            : "border-[var(--store-border)]",
+                        )}
+                      >
+                        <input
+                          type="radio"
+                          name="saved-address"
+                          checked={savedAddressId === entry.id}
+                          onChange={() => {
+                            setSavedAddressId(entry.id);
+                            setAddress(entry);
+                            if (entry.full_name) setName(entry.full_name);
+                            if (entry.phone) setPhone(entry.phone);
+                          }}
+                          className="mt-0.5 accent-[var(--store-primary)]"
+                        />
+                        <span className="text-xs">
+                          <span className="block font-black text-[var(--store-text)]">
+                            {entry.label || entry.full_name}
+                            {entry.is_default ? ` · ${t("store.account.defaultAddress")}` : ""}
+                          </span>
+                          <span className="block text-[var(--store-muted)]">
+                            {[entry.street, entry.area, entry.city].filter(Boolean).join("، ")}
+                          </span>
+                        </span>
+                      </label>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSavedAddressId(null);
+                        setAddress({ ...blankAddress(), full_name: name, phone });
+                      }}
+                      className="self-start text-xs font-bold text-[var(--store-primary)] hover:underline"
+                    >
+                      {t("store.account.useNewAddress")}
+                    </button>
+                  </div>
+                ) : null}
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {(
+                    [
+                      ["city", t("store.checkout.city")],
+                      ["area", t("store.checkout.area")],
+                      ["street", t("store.checkout.street")],
+                      ["building", t("store.checkout.building")],
+                      ["floor", t("store.checkout.floor")],
+                      ["apartment", t("store.checkout.apartment")],
+                    ] as [keyof CustomerAddress, string][]
+                  ).map(([field, label]) => (
+                    <label key={field} className="block">
+                      <span className="mb-1 block text-xs font-bold text-[var(--store-text)]">{label}</span>
+                      <input
+                        value={String(address[field] ?? "")}
+                        onChange={(event) =>
+                          setAddress((current) => ({ ...current, [field]: event.target.value }))
+                        }
+                        className={inputClass}
+                      />
+                    </label>
+                  ))}
+                  <label className="block sm:col-span-2">
+                    <span className="mb-1 block text-xs font-bold text-[var(--store-text)]">
+                      {t("store.checkout.addressNotes")}
+                    </span>
+                    <input
+                      value={address.notes ?? ""}
+                      onChange={(event) =>
+                        setAddress((current) => ({ ...current, notes: event.target.value }))
+                      }
+                      className={inputClass}
+                    />
+                  </label>
+                </div>
+                {addressError ? <FieldNote tone="error">{addressError}</FieldNote> : null}
+              </div>
+            ) : (
+              <p className="mt-3 text-xs leading-relaxed text-[var(--store-muted)]">
+                {t("store.checkout.pickupNote", {
+                  address:
+                    pick(settings.delivery.pickup_address_ar, settings.delivery.pickup_address_en) ||
+                    pick(settings.contact.address_ar, settings.contact.address_en),
+                })}
+              </p>
+            )}
+          </section>
+
+          {/* payment */}
+          <section className="border border-[var(--store-border)] bg-[var(--store-surface)] p-4" style={{ borderRadius: "var(--store-radius)" }}>
+            <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-muted)]">
+              {t("store.checkout.payment")}
+            </h2>
+            <div className="mt-3 flex flex-col gap-2">
+              {settings.delivery.cod_enabled ? (
+                <label
+                  className={cn(
+                    "flex cursor-pointer items-start gap-3 rounded-xl border-2 p-3 transition",
+                    paymentMethod === "cod"
+                      ? "border-[var(--store-primary)] bg-[var(--store-primary-soft)]"
+                      : "border-[var(--store-border)]",
+                  )}
+                >
+                  <input
+                    type="radio"
+                    name="payment"
+                    value="cod"
+                    checked={paymentMethod === "cod"}
+                    onChange={() => setPaymentMethod("cod" as OnlinePaymentMethod)}
+                    className="mt-0.5 accent-[var(--store-primary)]"
+                  />
+                  <span>
+                    <span className="block text-sm font-black text-[var(--store-text)]">{t("store.checkout.cod")}</span>
+                    <span className="block text-xs text-[var(--store-muted)]">{t("store.checkout.codHint")}</span>
+                  </span>
+                </label>
+              ) : null}
+
+              {settings.delivery.instapay_enabled ? (
+                <label
+                  className={cn(
+                    "flex cursor-pointer items-start gap-3 rounded-xl border-2 p-3 transition",
+                    paymentMethod === "instapay"
+                      ? "border-[var(--store-primary)] bg-[var(--store-primary-soft)]"
+                      : "border-[var(--store-border)]",
+                  )}
+                >
+                  <input
+                    type="radio"
+                    name="payment"
+                    value="instapay"
+                    checked={paymentMethod === "instapay"}
+                    onChange={() => setPaymentMethod("instapay" as OnlinePaymentMethod)}
+                    className="mt-0.5 accent-[var(--store-primary)]"
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-black text-[var(--store-text)]">{t("store.checkout.instapay")}</span>
+                    <span className="block text-xs text-[var(--store-muted)]">{t("store.checkout.instapayHint")}</span>
+
+                    {paymentMethod === "instapay" ? (
+                      <span className="mt-3 block rounded-lg border border-[var(--store-border)] bg-[var(--store-surface-alt)] p-3">
+                        <span className="block text-xs font-bold text-[var(--store-text)]">
+                          {t("store.checkout.instapaySteps")}
+                        </span>
+                        <ol className="mt-2 list-decimal space-y-1 ps-4 text-xs text-[var(--store-muted)]">
+                          <li>{t("store.checkout.instapayStep1", { amount: money(totals.total) })}</li>
+                          <li>{t("store.checkout.instapayStep2")}</li>
+                          <li>{t("store.checkout.instapayStep3")}</li>
+                        </ol>
+                        {settings.social.instapay_account ? (
+                          <span className="mt-2 block text-xs font-black text-[var(--store-primary)]">
+                            {settings.social.instapay_account}
+                          </span>
+                        ) : null}
+                        {settings.social.instapay_link ? (
+                          <a
+                            href={settings.social.instapay_link}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="mt-2 inline-block rounded-lg bg-[var(--store-primary)] px-3 py-1.5 text-xs font-black text-[var(--store-on-primary)]"
+                          >
+                            {t("store.checkout.openInstapay")}
+                          </a>
+                        ) : null}
+                        {settings.social.instapay_qr_url ? (
+                          <img
+                            src={settings.social.instapay_qr_url}
+                            alt={t("store.checkout.instapayQr")}
+                            loading="lazy"
+                            decoding="async"
+                            className="mt-3 h-32 w-32 rounded-lg border border-[var(--store-border)] bg-white object-contain p-1"
+                          />
+                        ) : null}
+                        <span className="mt-2 block text-[11px] font-semibold text-amber-700">
+                          {t("store.checkout.instapayNeverAutomatic")}
+                        </span>
+                      </span>
+                    ) : null}
+                  </span>
+                </label>
+              ) : null}
+            </div>
+          </section>
+
+          {/* notes */}
+          <section className="border border-[var(--store-border)] bg-[var(--store-surface)] p-4" style={{ borderRadius: "var(--store-radius)" }}>
+            <label className="block">
+              <span className="mb-1 block text-xs font-bold text-[var(--store-text)]">
+                {t("store.checkout.orderNotes")} <span className="font-medium text-[var(--store-muted)]">({t("common.optional")})</span>
+              </span>
+              <textarea
+                value={notes}
+                onChange={(event) => setNotes(event.target.value)}
+                rows={3}
+                className={inputClass}
+                placeholder={t("store.checkout.orderNotesPlaceholder")}
+              />
+            </label>
+          </section>
+        </div>
+
+        {/* summary */}
+        <aside className="flex flex-col gap-4 lg:sticky lg:top-24 lg:self-start">
+          <div className="border border-[var(--store-border)] bg-[var(--store-surface)] p-4" style={{ borderRadius: "var(--store-radius)" }}>
+            <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-muted)]">
+              {t("store.cart.summary")}
+            </h2>
+
+            <ul className="mt-3 flex flex-col gap-2">
+              {entries.map((entry) => {
+                const problem = problemsByProduct.get(entry.product.id);
+                return (
+                  <li key={entry.product.id} className="flex items-start justify-between gap-2 text-xs">
+                    <span className="min-w-0">
+                      <span className="block truncate font-bold text-[var(--store-text)]">
+                        {pick(entry.product.name_ar, entry.product.name_en)}
+                      </span>
+                      <span className="text-[var(--store-muted)]">
+                        {t("store.checkout.quantityTimes", { count: entry.quantity })}
+                      </span>
+                      {problem ? (
+                        <span className="block font-bold text-rose-600">
+                          {t("store.cart.onlyAvailable", { count: problem.available })}
+                        </span>
+                      ) : null}
+                    </span>
+                    <Money value={entry.lineTotal} className="shrink-0 font-black text-[var(--store-text)]" />
+                  </li>
+                );
+              })}
+            </ul>
+
+            <dl className="mt-3 space-y-2 border-t border-[var(--store-border)] pt-3 text-sm">
+              <div className="flex justify-between gap-2">
+                <dt className="text-[var(--store-muted)]">{t("store.cart.subtotal")}</dt>
+                <dd className="font-bold text-[var(--store-text)]"><Money value={totals.subtotal} /></dd>
+              </div>
+              {totals.discount_amount > 0 ? (
+                <div className="flex justify-between gap-2 text-emerald-700">
+                  <dt>{t("store.cart.discount")}</dt>
+                  <dd className="font-bold">−{money(totals.discount_amount)}</dd>
+                </div>
+              ) : null}
+              <div className="flex justify-between gap-2">
+                <dt className="text-[var(--store-muted)]">
+                  {deliveryType === "pickup" ? t("store.checkout.pickup") : t("store.cart.deliveryFee")}
+                </dt>
+                <dd className="font-bold text-[var(--store-text)]">
+                  {totals.delivery_fee > 0 ? <Money value={totals.delivery_fee} /> : t("store.checkout.free")}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-2 border-t border-[var(--store-border)] pt-2 text-base">
+                <dt className="font-black text-[var(--store-text)]">{t("store.cart.total")}</dt>
+                <dd className="font-black text-[var(--store-text)]"><Money value={totals.total} /></dd>
+              </div>
+            </dl>
+
+            <button
+              type="submit"
+              disabled={placing || invalid}
+              className="mt-4 w-full bg-[var(--store-primary)] px-4 py-3 text-sm font-black text-[var(--store-on-primary)] transition hover:bg-[var(--store-primary-hover)] disabled:cursor-not-allowed disabled:bg-[var(--store-border)] disabled:text-[var(--store-muted)]"
+              style={{ borderRadius: "var(--store-radius-button)" }}
+            >
+              {placing ? t("store.checkout.placing") : t("store.checkout.placeOrder")}
+            </button>
+            <p className="mt-2 text-[11px] leading-relaxed text-[var(--store-muted)]">
+              {t("store.checkout.placementNote")}
+            </p>
+          </div>
+
+          {whatsappHref(settings.social.whatsapp) ? (
+            <a
+              href={whatsappHref(settings.social.whatsapp, t("store.contact.whatsappMessage")) ?? "#"}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="rounded-xl border border-[var(--store-border)] bg-[var(--store-surface)] p-3 text-center text-xs font-bold text-[var(--store-primary)]"
+            >
+              {t("store.checkout.needHelp")}
+            </a>
+          ) : null}
+        </aside>
+      </div>
+    </form>
+  );
+}

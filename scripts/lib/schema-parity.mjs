@@ -32,6 +32,19 @@ const TABLE_ALIASES = {
   category: "categories",
   movement: "stock_movements",
   return: "sales_returns",
+  // Online storefront (Phase 9): every table name is multi-word, so the
+  // pluralised interface name never lands on one. Listing them here is what puts
+  // the new repositories under the same column-parity guard as the old ones —
+  // an interface that reads a column the migrations never created must fail.
+  onlineorder: "online_orders",
+  onlineorderitem: "online_order_items",
+  orderevent: "order_events",
+  stockreservation: "stock_reservations",
+  productcontent: "product_content",
+  websitesettings: "website_settings",
+  storefaq: "store_faqs",
+  storereview: "store_reviews",
+  storecustomer: "store_customers",
 };
 
 /** `interface ExpenseRow { … }` → `{ name, columns }`, parsed from the source. */

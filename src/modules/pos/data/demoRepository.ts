@@ -155,15 +155,23 @@ export class DemoSalesRepository implements SalesRepository {
       // cash-change summary; it is not persisted on the payment record.
       const cashTendered: number[] = [];
       const payments: Sale["payments"] = input.payments.map((p, i) => {
-        if (p.method !== "cash" && p.method !== "instapay") {
+        // The till takes cash and InstaPay. Cash on delivery is only ever
+        // attached to a sale an approved website order created, and only this
+        // flow sets `source`, so the till's behaviour is unchanged.
+        if (p.method === "cod" && input.source !== "online") {
+          throw new AppError("VALIDATION", `Invalid payment method: ${p.method}`, "payment");
+        }
+        if (p.method !== "cash" && p.method !== "instapay" && p.method !== "cod") {
           throw new AppError("VALIDATION", `Invalid payment method: ${p.method}`, "payment");
         }
         const amount = round2(p.amount);
         if (!Number.isFinite(amount) || amount <= 0) {
           throw new AppError("VALIDATION", "Payment amount must be greater than zero", "payment");
         }
-        // Cash is always paid; InstaPay may be pending or paid.
-        const status = p.method === "cash" ? "paid" : p.status === "paid" ? "paid" : "pending";
+        // Cash is always paid; cash on delivery never is (the money has not been
+        // collected — it arrives with the courier); InstaPay may be either.
+        const status =
+          p.method === "cash" ? "paid" : p.method === "cod" ? "pending" : p.status === "paid" ? "paid" : "pending";
         if (p.method === "cash") {
           const t = round2(p.tendered ?? amount);
           if (!Number.isFinite(t) || t < amount) {
@@ -228,6 +236,7 @@ export class DemoSalesRepository implements SalesRepository {
         paid_at: allPaid ? now : lastInstaPay?.paid_at ?? null,
         paid_by: allPaid ? input.user_id : lastInstaPay?.paid_by ?? null,
         paid_by_name: allPaid ? input.user_name : lastInstaPay?.paid_by_name ?? null,
+        source: input.source ?? "pos",
       };
 
       // ── deduct stock + record a movement per line (re-read each time

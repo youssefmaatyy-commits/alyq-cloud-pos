@@ -11,8 +11,29 @@
  * reversing stock movement).
  */
 
-export const PAYMENT_METHODS = ["cash", "instapay", "visa"] as const;
+/**
+ * How a sale is paid.
+ *
+ * `cod` (cash on delivery) exists only for sales an approved website order
+ * created — the till has no button for it, because a cashier standing in front
+ * of a customer is not delivering anything. It is in this list because it is in
+ * the database enum (migration 0017) and because a sale paid that way has to be
+ * readable everywhere sales are listed and exported.
+ */
+export const PAYMENT_METHODS = ["cash", "instapay", "visa", "cod"] as const;
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
+
+/**
+ * Where a sale came from.
+ *
+ * `pos` is the till; `online` is an approved website order. The column exists so
+ * the register can answer "how much of today's takings was the website?" without
+ * a second system of record, and so an online sale is recognisable in the sales
+ * list rather than looking like a mystery transaction. Optional and defaulting to
+ * `pos`, so every existing call site keeps working unchanged.
+ */
+export const SALE_SOURCES = ["pos", "online"] as const;
+export type SaleSource = (typeof SALE_SOURCES)[number];
 
 /** `completed` = paid & stock deducted · `pending` = InstaPay awaiting confirmation · `voided` = reversed. */
 export type SaleStatus = "completed" | "pending" | "voided";
@@ -97,6 +118,8 @@ export interface Sale {
   paid_at: string | null;
   paid_by: string | null;
   paid_by_name: string | null;
+  /** `pos` unless an approved online order created it. */
+  source?: SaleSource;
 }
 
 /** Payload the cart sends to complete a sale. */
@@ -116,6 +139,8 @@ export interface CompleteSaleInput {
   customer_phone?: string | null;
   user_id: string;
   user_name: string;
+  /** Omitted by the till; set to `online` when an order approval creates it. */
+  source?: SaleSource;
 }
 
 export interface VoidSaleInput {

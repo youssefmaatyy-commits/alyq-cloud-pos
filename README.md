@@ -1,8 +1,9 @@
 # ALYQ Cloud POS
 
 Bilingual (Arabic / English) retail operations suite: catalog, inventory, point
-of sale, customers, returns and refunds, cashier shifts and expenses, with
-role-based access control throughout.
+of sale, customers, returns and refunds, cashier shifts and expenses, an online
+storefront that feeds the same register, and Excel exports throughout — all
+under role-based access control.
 
 React 19 · TypeScript · Vite · Tailwind 4 · Supabase (Postgres + Auth + Storage).
 
@@ -21,8 +22,8 @@ password `alyq1234`.
 | --- | --- | --- |
 | `admin` | Admin | everything, including the audit log |
 | `manager` | Manager | everything except user management |
-| `cashier` | Cashier | sell, returns, refunds, open/close shifts, record expenses |
-| `inventory_clerk` | Inventory clerk | catalog and stock only |
+| `cashier` | Cashier | sell, returns, refunds, open/close shifts, record expenses, work the online-order queue |
+| `inventory_clerk` | Inventory clerk | catalog and stock, plus the online-order queue |
 | `viewer` | Viewer | read-only: dashboard, catalog, customers, sales history |
 
 Demo mode is for development and evaluation. It is per-browser, has no
@@ -52,7 +53,7 @@ npm run typecheck    # tsc; also guarantees the EN/AR dictionary is complete
 npm run build        # production bundle
 npm test             # logic suites: money math, validation, permissions, repos
 npm run db:check     # migrations apply, are idempotent, and satisfy the code
-npm run test:e2e     # the real bundle driven in jsdom (smoke + auth flows)
+npm run test:e2e     # the real bundle driven in jsdom (smoke + auth + store flows)
 npm run test:all     # typecheck + logic + e2e
 ```
 
@@ -64,14 +65,56 @@ interface, RLS enabled everywhere, and the capability matrix, audit vocabulary
 and role aliases identical on both sides. Point it at a real project with
 `--driver=psql --url=postgres://… --verify-only` to check what is deployed.
 
+## Online store
+
+The storefront lives at `#/store` and is **public** — no account, no session, no
+role. It reads the same catalog the POS does, so a price or a stock level is
+never entered twice.
+
+| Screen | What it does |
+| --- | --- |
+| `#/store` | Homepage: hero, featured, best sellers, new arrivals, categories, promos, brands, reviews, FAQ — each section shown, hidden and ordered from the admin |
+| `#/store/products` | Search (name, barcode, SKU), category / brand / price / availability filters, sorting |
+| `#/store/products/:slug` | Gallery with zoom, description, specs, related products, New / Sale / Best-seller badges |
+| `#/store/cart` · `#/store/checkout` | Cart editing, coupon codes, delivery or pickup, COD or InstaPay |
+| `#/store/track` | Order status and payment status, looked up by order number + phone |
+| `#/store/account` | Optional customer account: profile, addresses, order history, reorder, wishlist |
+| `#/online/orders` | The POS queue for those orders |
+| `#/online/website` · `/online/content` · `/online/marketing` | The website builder, homepage sections, campaigns / coupons |
+| `#/online/reports` | Online sales, pending and cancelled orders, best sellers online, payment status |
+
+Three invariants the store does not break:
+
+1. **Stock is reserved, never double-sold.** A pending order holds its units;
+   approving it converts the hold into a sale, cancelling releases it. Only
+   stock-tracked products can be ordered.
+2. **An online order is not a sale until a person says so.** Approving creates
+   the sale with `source: "online"`, which the till's history and the reports
+   show as its own origin.
+3. **InstaPay is verified by a human.** The customer sends a reference and a
+   proof image; the order waits in *payment verification pending*; an employee
+   approves or rejects it. Nothing auto-completes on upload.
+
+Admins and managers get everything; cashiers and inventory clerks work the order
+queue but cannot restyle the website; viewers see neither.
+
+## Exports
+
+Every list screen — products, inventory, sales, customers, returns, expenses,
+reports — exports to Excel (`.xlsx`) in the language and currency currently on
+screen, with an Arabic sheet for the same rows. Payments and cash movements have
+their own exports. The Excel **import** for products is unchanged and round-trips
+against the export format (`npm test` proves it).
+
 ## Layout
 
 ```
 src/
   app/            shell, navigation, routing
-  lib/            auth, permissions, i18n, storage, supabase client
+  lib/            auth, permissions, i18n, export, storage, supabase client
   modules/        one folder per domain: dashboard, products, inventory, pos,
-                  customers, returns, shifts, expenses, audit, settings
+                  customers, returns, shifts, expenses, audit, reports,
+                  settings, online
 scripts/          test runners, migration check, E2E suites
 supabase/
   migrations/     numbered, idempotent schema migrations (+ README)
@@ -98,12 +141,14 @@ components. Two rules keep it maintainable: UI never talks to Supabase directly
 
 ## Status
 
-Feature phases 1–8 are implemented and covered by the suites above. The current
-focus is **production readiness**: the live schema now covers identity, roles,
-shifts, expenses, the audit trail, card payment at the register and the refund
-lifecycle, and the database enforces the permission matrix itself. Still to
-come: the application slices for card payments and refund settlement, wider
-audit coverage and a dashboard upgrade. The plan, acceptance criteria and
-testing strategy live in
+Feature phases 1–9 are implemented and covered by the suites above: phases 1–8
+for the back office, phase 9 for the online store and its queue in the POS. The
+live schema covers identity, roles, shifts, expenses, the audit trail, card
+payment at the register, the refund lifecycle and — from migrations 0017–0020 —
+the storefront's catalog reads, order placement, payment proofs and resolution,
+with the database enforcing the permission matrix itself. Still to come: the
+application slices for card payments and refund settlement, wider audit coverage
+and a dashboard upgrade. The plan, acceptance criteria and testing strategy live
+in
 [`docs/PRODUCTION_READINESS_PLAN.md`](docs/PRODUCTION_READINESS_PLAN.md).
 

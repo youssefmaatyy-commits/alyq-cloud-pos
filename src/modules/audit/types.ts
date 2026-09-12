@@ -23,12 +23,27 @@ export const AUDIT_ACTIONS = [
   "refund.created",
   "refund.settled",
   "refund.rejected",
+  // Online storefront (Phase 9). Approving a website order creates a POS sale
+  // and converts its stock reservation; cancelling releases the reservation and
+  // keeps the record with a reason. The two payment actions are the human half
+  // of InstaPay verification — money is never marked paid automatically.
+  "online_order.approved",
+  "online_order.cancelled",
+  "online_order.payment_approved",
+  "online_order.payment_rejected",
+  "website_settings.updated",
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
 /** What kind of record the action happened to. */
-export const AUDIT_ENTITIES = ["shift", "expense", "refund"] as const;
+export const AUDIT_ENTITIES = [
+  "shift",
+  "expense",
+  "refund",
+  "online_order",
+  "website_settings",
+] as const;
 export type AuditEntity = (typeof AUDIT_ENTITIES)[number];
 
 export interface AuditLogEntry {

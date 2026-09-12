@@ -3,11 +3,12 @@
  * End-to-end runner — builds the real application bundle once and drives it in
  * jsdom through both DOM suites.
  *
- *   node scripts/test.e2e.mjs               # both suites
+ *   node scripts/test.e2e.mjs               # every suite
  *   node scripts/test.e2e.mjs smoke         # only scripts/smoke.dom.mjs
  *   node scripts/test.e2e.mjs auth          # only scripts/auth.flow.mjs
+ *   node scripts/test.e2e.mjs store         # only scripts/store.flow.mjs
  *
- * Both suites import the bundle from `/tmp/alyq-app.mjs`, so the build step here
+ * Each suite imports the bundle from `/tmp/alyq-app.mjs`, so the build step here
  * is what the header comments of those files describe by hand. Exit code 1 if a
  * suite fails. Exits 2 without a bundle when esbuild is unavailable.
  */
@@ -25,6 +26,7 @@ const FILTERS = process.argv.slice(2).filter((a) => !a.startsWith("-"));
 const SUITES = [
   { id: "smoke", file: "scripts/smoke.dom.mjs", title: "DOM smoke (products, inventory, POS, returns, shifts)" },
   { id: "auth", file: "scripts/auth.flow.mjs", title: "Authentication acceptance flow" },
+  { id: "store", file: "scripts/store.flow.mjs", title: "Storefront → POS flow (browse, checkout, approve, verify, cancel)" },
 ];
 
 const c = {
@@ -43,7 +45,7 @@ try {
 
 const selected = SUITES.filter((s) => FILTERS.length === 0 || FILTERS.includes(s.id));
 if (selected.length === 0) {
-  console.error(c.red(`✗ no suite matched ${FILTERS.join(", ")} (try: smoke, auth)`));
+  console.error(c.red(`✗ no suite matched ${FILTERS.join(", ")} (try: smoke, auth, store)`));
   process.exit(1);
 }
 

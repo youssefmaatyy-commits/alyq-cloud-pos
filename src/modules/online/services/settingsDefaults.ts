@@ -1,0 +1,274 @@
+/**
+ * Website settings — the defaults and the merge rule.
+ *
+ * The stored document may be `{}` (a fresh install), may predate a knob that was
+ * added later, or may have been edited by hand. `resolveSettings` therefore
+ * deep-merges whatever is stored over the defaults below, so:
+ *
+ *   - a missing field renders the shop's default rather than `undefined`,
+ *   - adding a setting never needs a data migration,
+ *   - the storefront can always trust the shape it receives.
+ *
+ * The defaults are the design the storefront shipped with: the same indigo the
+ * POS uses, EGP, and every homepage section visible in a sensible order.
+ */
+import type {
+  HeroSlide,
+  HomepageSectionConfig,
+  HomepageSectionKey,
+  WebsiteSettings,
+} from "../types";
+import { HOMEPAGE_SECTIONS } from "../types";
+
+/** The shop's name before the admin sets one. Both languages, like everything. */
+const DEFAULT_STORE_NAME_AR = "متجر عليق";
+const DEFAULT_STORE_NAME_EN = "ALYQ Store";
+
+export const DEFAULT_HERO_SLIDES: HeroSlide[] = [
+  {
+    id: "hero-1",
+    image_url: null,
+    title_ar: "قهوة طازجة كل يوم",
+    title_en: "Fresh coffee, every day",
+    subtitle_ar: "اطلب أونلاين واستلم من الفرع أو نوصلك لحد الباب",
+    subtitle_en: "Order online and collect in store, or we deliver to your door",
+    cta_label_ar: "تسوق الآن",
+    cta_label_en: "Shop now",
+    cta_href: "#/store/products",
+    align: "start",
+  },
+  {
+    id: "hero-2",
+    image_url: null,
+    title_ar: "عروض الأسبوع",
+    title_en: "This week's offers",
+    subtitle_ar: "خصومات على المنتجات المميزة لفترة محدودة",
+    subtitle_en: "Limited-time discounts on featured products",
+    cta_label_ar: "شاهد العروض",
+    cta_label_en: "See the offers",
+    cta_href: "#/store/products?sort=newest",
+    align: "center",
+  },
+];
+
+/** Every section, visible, in the order the homepage renders them. */
+export function defaultSections(): HomepageSectionConfig[] {
+  return HOMEPAGE_SECTIONS.map((key: HomepageSectionKey, index) => ({
+    key,
+    visible: true,
+    order: index,
+    title_ar: DEFAULT_SECTION_TITLES[key].ar,
+    title_en: DEFAULT_SECTION_TITLES[key].en,
+    limit: 8,
+  }));
+}
+
+const DEFAULT_SECTION_TITLES: Record<HomepageSectionKey, { ar: string; en: string }> = {
+  hero: { ar: "", en: "" },
+  categories: { ar: "تسوق حسب الفئة", en: "Shop by category" },
+  featured: { ar: "منتجات مميزة", en: "Featured products" },
+  bestSellers: { ar: "الأكثر مبيعًا", en: "Best sellers" },
+  newArrivals: { ar: "وصل حديثًا", en: "New arrivals" },
+  promoBanners: { ar: "عروض حالية", en: "Current offers" },
+  brands: { ar: "العلامات التجارية", en: "Brands" },
+  reviews: { ar: "آراء عملائنا", en: "What our customers say" },
+  faq: { ar: "أسئلة شائعة", en: "Frequently asked questions" },
+  contact: { ar: "تواصل معنا", en: "Get in touch" },
+};
+
+/** The settings a brand-new shop gets. */
+export const DEFAULT_WEBSITE_SETTINGS: WebsiteSettings = {
+  version: 1,
+  currency: "EGP",
+  contact: {
+    store_name_ar: DEFAULT_STORE_NAME_AR,
+    store_name_en: DEFAULT_STORE_NAME_EN,
+    tagline_ar: "قهوة ومشروبات طازجة",
+    tagline_en: "Speciality coffee & fresh drinks",
+    phone: "01000000000",
+    email: "hello@alyq.example",
+    address_ar: "شارع السلطان حسين، الإسماعيلية، مصر",
+    address_en: "Sultan Hussein St, Ismailia, Egypt",
+    hours_ar: "يوميًا من ٨ صباحًا حتى ١٢ منتصف الليل",
+    hours_en: "Daily, 8:00 – 24:00",
+    map_url: "",
+  },
+  theme: {
+    // The same indigo/violet the POS brand uses, so the shop and the back office
+    // look like one business until the owner picks their own colours.
+    primary_color: "#4f46e5",
+    secondary_color: "#7c3aed",
+    accent_color: "#f59e0b",
+    background_color: "#f8fafc",
+    surface_color: "#ffffff",
+    text_color: "#0f172a",
+    muted_text_color: "#64748b",
+    font_stack: "system",
+    button_style: "rounded",
+    header_style: "solid",
+    corner_radius: 16,
+    dark_mode: false,
+  },
+  images: {
+    logo_url: null,
+    favicon_url: null,
+    hero_slides: DEFAULT_HERO_SLIDES,
+    background_url: null,
+    section_images: {},
+    promo_banners: [
+      {
+        id: "promo-1",
+        image_url: null,
+        title_ar: "اشترِ ٢ واحصل على خصم",
+        title_en: "Buy two, save more",
+        caption_ar: "على كل المشروبات الباردة",
+        caption_en: "On every cold drink",
+        href: "#/store/products",
+        badge_ar: "عرض",
+        badge_en: "Offer",
+      },
+    ],
+    about_image_url: null,
+  },
+  sections: defaultSections(),
+  social: {
+    facebook: "",
+    instagram: "",
+    tiktok: "",
+    whatsapp: "",
+    instapay_link: "",
+    instapay_account: "",
+    instapay_qr_url: null,
+  },
+  delivery: {
+    enabled: true,
+    fee: 30,
+    free_delivery_threshold: 500,
+    note_ar: "التوصيل خلال ٢٤ ساعة داخل الإسماعيلية",
+    note_en: "Delivery within 24 hours inside Ismailia",
+    pickup_enabled: true,
+    pickup_address_ar: "فرع الإسماعيلية — شارع السلطان حسين",
+    pickup_address_en: "Ismailia branch — Sultan Hussein St",
+    cod_enabled: true,
+    instapay_enabled: true,
+  },
+  seo: {
+    meta_title: "ALYQ Store — Speciality coffee & fresh drinks",
+    meta_description:
+      "Order ALYQ coffee and drinks online. Delivery across Ismailia or collect from the branch. Pay with InstaPay or cash on delivery.",
+    keywords: "coffee, ismailia, online order, instapay, delivery",
+    og_image_url: null,
+  },
+  announcement: {
+    enabled: false,
+    text_ar: "",
+    text_en: "",
+    href: "",
+  },
+};
+
+type Json = Record<string, unknown>;
+
+const isPlainObject = (value: unknown): value is Json =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/**
+ * Deep-merge `stored` over `defaults`.
+ *
+ * Arrays are replaced, never merged: a section list or a hero carousel the admin
+ * edited is theirs, and interleaving it with the defaults would resurrect slides
+ * they deleted. Objects merge key by key so a partially stored group (say a
+ * theme saved before `corner_radius` existed) still gets the new default.
+ */
+export function mergeSettings<T>(defaults: T, stored: unknown): T {
+  if (!isPlainObject(stored)) return defaults;
+  if (!isPlainObject(defaults)) return (stored as unknown as T);
+
+  const out: Json = { ...stored };
+  for (const [key, defaultValue] of Object.entries(defaults as unknown as Json)) {
+    const storedValue = (stored as Json)[key];
+    if (storedValue === undefined || storedValue === null) {
+      out[key] = defaultValue;
+    } else if (isPlainObject(defaultValue) && isPlainObject(storedValue)) {
+      out[key] = mergeSettings(defaultValue, storedValue);
+    } else {
+      out[key] = storedValue;
+    }
+  }
+  return out as unknown as T;
+}
+
+/**
+ * The settings the storefront and the admin panel both work from: whatever is
+ * stored, filled in with defaults, with the section list repaired.
+ *
+ * Section repair matters because it is the one list an admin reorders: a key
+ * added in a later release must appear (visible, at the end) rather than be
+ * silently missing, and a stored key that no longer exists must be dropped.
+ */
+export function resolveSettings(stored: unknown): WebsiteSettings {
+  const merged = mergeSettings(DEFAULT_WEBSITE_SETTINGS, stored);
+  return { ...merged, sections: repairSections(merged.sections) };
+}
+
+/** Fill in missing sections, drop unknown ones, and make the order total. */
+export function repairSections(
+  sections: HomepageSectionConfig[] | undefined,
+): HomepageSectionConfig[] {
+  const known = new Set<string>(HOMEPAGE_SECTIONS);
+  const byKey = new Map<HomepageSectionKey, HomepageSectionConfig>();
+
+  for (const section of Array.isArray(sections) ? sections : []) {
+    if (!section || !known.has(section.key)) continue;
+    const fallback = DEFAULT_WEBSITE_SETTINGS.sections.find((s) => s.key === section.key);
+    byKey.set(section.key, {
+      key: section.key,
+      visible: typeof section.visible === "boolean" ? section.visible : true,
+      order: Number.isFinite(section.order) ? section.order : (fallback?.order ?? 0),
+      title_ar: typeof section.title_ar === "string" ? section.title_ar : (fallback?.title_ar ?? ""),
+      title_en: typeof section.title_en === "string" ? section.title_en : (fallback?.title_en ?? ""),
+      limit: Number.isFinite(section.limit) && section.limit > 0 ? section.limit : 8,
+    });
+  }
+
+  // Anything the admin has never seen gets appended, visible, after what they
+  // arranged — a new section should show up, not hide.
+  return HOMEPAGE_SECTIONS.map((key, index) => {
+    const existing = byKey.get(key);
+    if (existing) return existing;
+    const fallback = DEFAULT_WEBSITE_SETTINGS.sections.find((s) => s.key === key);
+    return {
+      key,
+      visible: true,
+      order: 100 + index,
+      title_ar: fallback?.title_ar ?? "",
+      title_en: fallback?.title_en ?? "",
+      limit: fallback?.limit ?? 8,
+    };
+  }).sort((a, b) => a.order - b.order || HOMEPAGE_SECTIONS.indexOf(a.key) - HOMEPAGE_SECTIONS.indexOf(b.key));
+}
+
+/** A hex colour the browser can use, or the fallback when it cannot. */
+export function safeColor(value: unknown, fallback: string): string {
+  if (typeof value !== "string") return fallback;
+  const trimmed = value.trim();
+  return /^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(trimmed) ? trimmed : fallback;
+}
+
+/**
+ * Readable text on a colour, by relative luminance. Used for button labels so an
+ * admin who picks a pale primary colour does not end up with white-on-white.
+ */
+export function readableOn(hex: string): "#ffffff" | "#0f172a" {
+  const value = hex.replace("#", "");
+  const full =
+    value.length === 3
+      ? value
+          .split("")
+          .map((c) => c + c)
+          .join("")
+      : value.slice(0, 6);
+  const [r, g, b] = [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16) || 0);
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return luminance > 0.6 ? "#0f172a" : "#ffffff";
+}

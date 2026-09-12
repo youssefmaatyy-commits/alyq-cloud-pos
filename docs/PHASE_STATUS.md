@@ -44,6 +44,8 @@ Two caveats, stated up front:
 | 8 | Cashier shifts + Expenses + Audit log | **Completed** (code) / **Partial** (live schema) |
 | — | Authorization phase *(named, not numbered)* | **Completed** |
 | — | Authentication phase *(named, not numbered)* | **Completed** (demo) / **Partial** (live schema) |
+| — | Excel exports & report outputs *(post-phase workstream)* | **Completed** |
+| 9 | Online store — public storefront + POS order queue | **Completed** |
 
 "Completed" means the phase's features are implemented, wired into the app, and covered by at least
 one automated suite. Gaps listed per phase are things that are absent or only partly present — not
@@ -347,6 +349,78 @@ matrix was carried over unchanged.
 
 ---
 
+## Phase 9 — Online store — Completed
+
+Declared by `src/modules/online/index.ts`, migrations 0017–0020, the `app.phase9` i18n banner and
+the Phase 9 section of `scripts/store.flow.mjs`. One module, two audiences: a public shop at
+`#/store` and five screens inside the app shell for the people who run it.
+
+### Features implemented
+- **Public storefront**, mounted outside `RequireAuth` at `/store/*` (nine routes: home, products,
+  product, cart, checkout, confirmation, track, account, contact). No session, no role, no
+  business data loaded before a shopper asks for it. Bilingual and RTL-safe, prices in EGP.
+- **One catalog, two front doors.** The shop reads the same products, categories, brands, stock and
+  prices as the POS through `catalogQuery`; nothing is entered twice, and `show_on_website` decides
+  what a shopper may see.
+- **Website builder** (`#/online/website`, capability `manage_website`): logo, favicon, hero and
+  section imagery, primary/secondary/accent colours, dark mode, corner radius, button style and font
+  stack. Saving writes CSS custom properties into a `:root` style block, so a new colour is live on
+  the next render — no rebuild, no deploy. Tabs: appearance, homepage, contact & social, delivery &
+  payment, search (SEO).
+- **Homepage sections** (`#/online/content`): hero, featured, best sellers, new arrivals, categories,
+  promo banners, brands, reviews, FAQ and contact — each shown/hidden and reordered by the admin,
+  rendered from `sections.ts`.
+- **Search, filters and sorting**: name, barcode and SKU; category, brand, price range and
+  availability; newest, price ascending/descending, best selling and name.
+- **Product pages**: multi-image gallery with zoom, description, specifications, brand, stock,
+  related products and New / Sale / Best-seller badges (`badges.ts`).
+- **Cart and checkout**: add/update/remove, coupon codes, delivery or pickup, COD or InstaPay,
+  guest or signed-in. Customer accounts (`localAccounts` in demo, Supabase Auth live) add profile,
+  saved addresses, order history, reorder and wishlist.
+- **The POS queue** (`#/online/orders`, capability `manage_online_orders`): statuses Pending,
+  Approved, Processing, Ready, Completed, Cancelled. Approving creates the sale through the existing
+  `pos_complete_sale` path with `source: "online"` and deducts stock once; cancelling keeps the
+  record, demands a written reason and deducts nothing. Every transition records who, when and from
+  where, and each action is offered only if `checkAction` would allow it.
+- **Inventory protection**: a pending order reserves its units (availability subtracts open
+  reservations), approval converts the reservation into a sale, cancellation releases it. Only
+  stock-tracked products can be ordered at all.
+- **InstaPay verification**: the customer sends a reference plus a proof image (uploaded to the
+  `product-images` bucket under `proofs/`); the order sits in *payment verification pending*; an
+  employee approves or rejects it. Nothing completes on upload, ever.
+- **Notifications**: `useOnlineNotifications` polls the queue, badges the sidebar with the pending
+  count and says how many need payment verification; sound is an admin setting, off by default.
+- **Order tracking** for customers at `#/store/track`: order number plus phone, with order status and
+  payment status shown as the two separate things they are.
+- **Marketing** (`#/online/marketing`): campaigns, coupons and flash sales feeding the same pricing
+  the checkout uses.
+- **SEO and performance**: per-page meta title/description/canonical, JSON-LD for the store and for
+  each product, `noindex` on cart/checkout/account, a `sitemap.xml` route, system font stacks (no
+  webfont to block rendering) and lazy image decoding.
+- **Online reports** (`#/online/reports`): online revenue and order counts, pending and cancelled
+  totals, best-selling online products and payment-status breakdown, exportable like every other list.
+- **Social and contact links**: Facebook, Instagram, TikTok, WhatsApp and InstaPay configured in the
+  builder, rendered in the storefront header and footer plus a floating WhatsApp button.
+- **Live schema**: migrations `0017_online_storefront` (tables), `0018_online_order_functions`
+  (`place_online_order`, `submit_online_payment_proof`, `lookup_online_order`, `list_my_online_orders`,
+  `resolve_online_order`), `0019_storefront_public_reads` and `0020_storefront_grants_and_coupon_check`.
+  The server re-prices every line and validates every coupon — the client's totals are a preview.
+- Tests: 75 logic tests in `src/modules/online/__tests__/logic.selftest.ts`; `scripts/store.flow.mjs`
+  drives the whole acceptance flow in the DOM (14 steps: browse → search → sort → filter → product →
+  cart → guest COD checkout → tracking → approval → sale + stock → InstaPay proof → verification →
+  cancellation with reason → admin screens → live theme → social links → Arabic/RTL).
+
+### Remaining gaps
+- The customer-account path in demo mode is a local directory (`localAccounts`), so passwords are not
+  hashed and accounts are per-browser; live mode delegates to Supabase Auth.
+- Notifications poll rather than subscribe — no Realtime channel yet.
+- No shipping-carrier integration: delivery is a fee and an address, not a tracked parcel.
+- Product reviews are content the admin writes, not submissions from verified buyers.
+- The live order path (migrations 0017–0020) is exercised by `npm run db:check` against in-process
+  Postgres, never against a hosted project.
+
+---
+
 ## Cross-cutting gaps
 
 These are not owned by a single phase:
@@ -371,6 +445,14 @@ These are not owned by a single phase:
 7. **Printing is limited to three artefacts** — sales receipt, return receipt, barcode label. There
    are no reports, exports or analytics outputs anywhere in the app.
 
+*Addendum, written after this snapshot:* items 2, 3, 4 and 7 have since been closed — `.github/`
+now holds `ci.yml` and `deploy-pages.yml`, and the repository has a `.gitignore`, a `.env.example`
+and a root `README.md`. Excel exports exist for products, inventory, sales, payments, cash,
+customers, returns, expenses, reports and online orders, so item 7's "no exports" no longer holds;
+printing is still limited to the three artefacts. Item 1 is partly closed: migrations now run to
+0020 and cover Phase 8 and Phase 9, and `npm run db:check` applies them twice in an in-process
+WebAssembly Postgres — still never against a hosted project.
+
 ---
 
 ## Verification snapshot at HEAD `ec03675`
@@ -392,3 +474,15 @@ E2E coverage by phase: Phase 1 (shell, nav, RTL/LTR), Phase 2, Phase 3, Phase 4,
 POS section), Phase 7, Phase 8, authorization (audit gating per role), authentication
 (`auth.flow.mjs`, 9 steps). Phase 5 has no coverage because its scope is unknown; live/Supabase mode
 has no coverage because no instance exists.
+
+---
+
+## Verification snapshot after Phase 9
+
+| Check | Result |
+| --- | --- |
+| `npm run typecheck` | clean (and the EN/AR dictionary is 1784 keys on both sides) |
+| `npm run build` | green — single self-contained HTML document |
+| `npm test` | 13/13 suites, including 75/75 online-shop logic tests |
+| `npm run db:check` | migrations 0001–0020 apply, are idempotent, and match every `…Row` interface |
+| `npm run test:e2e` | 3/3 suites — smoke, auth (9 steps), store (14 steps), 0 console errors |

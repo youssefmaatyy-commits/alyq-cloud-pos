@@ -40,6 +40,9 @@ const ZERO_TOTALS = (): SalePaymentTotals => ({
   cash: 0,
   visa: 0,
   instapay: 0,
+  // Website orders an employee approved: the money is collected on delivery, so
+  // it belongs in its own column rather than being counted as till cash.
+  cod: 0,
   paid: 0,
   pending: 0,
 });
@@ -138,6 +141,7 @@ export function buildSalesSheets({ sales, t, pick }: SalesExportInput): BuiltShe
       { header: t("export.col.cash"), value: (r) => r.payments.cash, kind: "money" },
       { header: t("export.col.card"), value: (r) => r.payments.visa, kind: "money" },
       { header: t("export.col.instapay"), value: (r) => r.payments.instapay, kind: "money" },
+      { header: t("export.col.cod"), value: (r) => r.payments.cod, kind: "money" },
       { header: t("export.col.paid"), value: (r) => r.payments.paid, kind: "money" },
       { header: t("export.col.remaining"), value: (r) => r.payments.pending, kind: "money" },
       {
@@ -165,6 +169,7 @@ export function buildSalesSheets({ sales, t, pick }: SalesExportInput): BuiltShe
       sum((r) => r.payments.cash),
       sum((r) => r.payments.visa),
       sum((r) => r.payments.instapay),
+      sum((r) => r.payments.cod),
       sum((r) => r.payments.paid),
       sum((r) => r.payments.pending),
       "",

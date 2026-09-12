@@ -6,6 +6,7 @@ import { useInventory } from "@/modules/inventory/hooks/InventoryProvider";
 import { useAuth } from "@/lib/auth";
 import { ROLE_LABELS, hasCapability } from "@/lib/permissions/roles";
 import { capabilityForPath } from "@/lib/permissions/routes";
+import { useOnlineNotificationState } from "@/modules/online/hooks/OnlineNotificationsProvider";
 import { RouteGuard } from "./RouteGuard";
 import { cn } from "@/utils/cn";
 import {
@@ -26,26 +27,41 @@ import {
   ClockIcon,
   ClipboardIcon,
   ReportIcon,
+  EditIcon,
+  PlusCircleIcon,
 } from "@/components/ui";
 
+/**
+ * A sidebar entry.
+ *
+ * `badge` is a count the entry carries — currently only the online-orders queue,
+ * where the number is the reason to look. It renders inside the link so it is
+ * read as part of the destination, and it inverts on the active row rather than
+ * staying amber on indigo.
+ */
 function NavItem({
   to,
   icon,
   label,
   end,
   visible = true,
+  badge = 0,
+  badgeLabel,
 }: {
   to: string;
   icon: React.ReactNode;
   label: string;
   end?: boolean;
   visible?: boolean;
+  badge?: number;
+  badgeLabel?: string;
 }) {
   if (!visible) return null;
   return (
     <NavLink
       to={to}
       end={end}
+      title={badgeLabel}
       className={({ isActive }) =>
         cn(
           "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors",
@@ -55,10 +71,26 @@ function NavItem({
         )
       }
     >
-      <span aria-hidden className="shrink-0">
-        {icon}
-      </span>
-      <span className="truncate">{label}</span>
+      {/* Children as a function: the badge inverts on the active row, and only
+          NavLink knows whether it is active. */}
+      {({ isActive }) => (
+        <>
+          <span aria-hidden className="shrink-0">
+            {icon}
+          </span>
+          <span className="truncate">{label}</span>
+          {badge > 0 ? (
+            <span
+              className={cn(
+                "ms-auto shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-black tabular-nums",
+                isActive ? "bg-white text-indigo-700" : "bg-amber-100 text-amber-800",
+              )}
+            >
+              {badge > 99 ? "99+" : badge}
+            </span>
+          ) : null}
+        </>
+      )}
     </NavLink>
   );
 }
@@ -75,6 +107,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return !required || hasCapability(user.role, required);
   };
   const roleLabel = ROLE_LABELS[user.role as keyof typeof ROLE_LABELS] ?? user.role;
+  // One poller for the whole shell (see `OnlineNotificationsProvider`): the badge
+  // below and the banner on the Online Orders screen read the same counts.
+  const online = useOnlineNotificationState();
+  const canManageOnline = hasCapability(user.role, "manage_online_orders");
+  const canManageWebsite = hasCapability(user.role, "manage_website");
   const location = useLocation();
   const [open, setOpen] = useState(false);
 
@@ -129,6 +166,66 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <NavItem to="/expenses" icon={<ReceiptIcon />} label={t("nav.expenses")} visible={canOpen("/expenses")} />
         <NavItem to="/reports" icon={<ReportIcon />} label={t("nav.reports")} visible={canOpen("/reports")} />
         <NavItem to="/audit" icon={<ClipboardIcon />} label={t("nav.audit")} visible={canOpen("/audit")} />
+
+        {canManageOnline || canManageWebsite ? (
+          <>
+            <p className="px-3 pb-1 pt-4 text-[10px] font-bold uppercase tracking-widest text-slate-500">
+              {t("app.phase9")}
+            </p>
+            <NavItem
+              to="/online/orders"
+              icon={<GlobeIcon />}
+              label={t("nav.onlineOrders")}
+              visible={canOpen("/online/orders")}
+              badge={online.counts.pending}
+              badgeLabel={
+                online.counts.needs_payment > 0
+                  ? t("nav.onlineOrdersBadgePayment", { count: online.counts.needs_payment })
+                  : t("nav.onlineOrdersBadge", { count: online.counts.pending })
+              }
+            />
+            <NavItem
+              to="/online/reports"
+              icon={<ReportIcon />}
+              label={t("nav.onlineReports")}
+              visible={canOpen("/online/reports")}
+            />
+            <NavItem
+              to="/online/website"
+              icon={<EditIcon />}
+              label={t("nav.websiteSettings")}
+              visible={canOpen("/online/website")}
+            />
+            <NavItem
+              to="/online/marketing"
+              icon={<PlusCircleIcon />}
+              label={t("nav.marketing")}
+              visible={canOpen("/online/marketing")}
+            />
+            <NavItem
+              to="/online/content"
+              icon={<ClipboardIcon />}
+              label={t("nav.websiteContent")}
+              visible={canOpen("/online/content")}
+            />
+            {/* Not a screen: the shop itself, in a new tab, so configuring it and
+                looking at it can happen side by side. */}
+            <a
+              href="#/store"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 hover:text-slate-900"
+            >
+              <span aria-hidden className="shrink-0">
+                <ShoppingCartIcon />
+              </span>
+              <span className="truncate">{t("nav.viewStore")}</span>
+              <span aria-hidden className="ms-auto text-[10px] text-slate-400">
+                ↗
+              </span>
+            </a>
+          </>
+        ) : null}
       </nav>
 
       {/* Signed-in user — the acting role comes from the auth session. */}

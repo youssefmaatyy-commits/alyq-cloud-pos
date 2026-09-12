@@ -35,6 +35,8 @@ interface SaleRow {
   paid_at: string | null;
   paid_by: string | null;
   paid_by_name: string | null;
+  /** Present from migration 0017 onward; older rows simply lack it. */
+  source?: Sale["source"] | null;
 }
 
 interface SalePaymentRow {
@@ -119,6 +121,7 @@ function mapSale(row: SaleRow, items: SaleItemRow[] = [], payments: SalePaymentR
     paid_at: row.paid_at ?? null,
     paid_by: row.paid_by ?? null,
     paid_by_name: row.paid_by_name ?? null,
+    source: row.source ?? "pos",
   };
 }
 
@@ -154,6 +157,7 @@ export class SupabaseSalesRepository implements SalesRepository {
           customer_phone: input.customer_phone ?? null,
           user_id: input.user_id,
           user_name: input.user_name,
+          source: input.source ?? "pos",
         },
       });
       if (error) throw toAppError(error);
