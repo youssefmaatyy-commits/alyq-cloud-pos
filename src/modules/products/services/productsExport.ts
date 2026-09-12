@@ -11,10 +11,12 @@ import {
   buildSheets,
   toDate,
   type BuiltSheet,
+  type ExportColumn,
   type ExportSheet,
   type PickBilingual,
   type Translate,
 } from "@/lib/export";
+import { canAct } from "@/lib/permissions/enforce";
 import { categoryNameIndex } from "./categoryTree";
 import { PRODUCT_TYPE_META } from "../constants";
 import { marginPct, stockStatus, type Category, type Product } from "../types";
@@ -25,6 +27,13 @@ export interface ProductsExportInput {
   categories: readonly Category[];
   t: Translate;
   pick: PickBilingual;
+  /**
+   * Phase 17: whether cost price and margin belong in the sheet. Defaults to the
+   * signed-in seat's `view_cost`, and a caller may pass the answer instead — the
+   * export selftest does, because it runs with no session at all. This is the one
+   * thing the builder asks anybody about; everything else arrives as arguments.
+   */
+  maySeeCost?: boolean;
 }
 
 /** Localised Yes/No, so flag columns read naturally in either language. */
@@ -37,7 +46,13 @@ export function buildProductsSheets({
   categories,
   t,
   pick,
+  maySeeCost,
 }: ProductsExportInput): BuiltSheet[] {
+  // Phase 17: an export is a screen with a longer memory. A seat that may not see
+  // cost price gets a products sheet without the cost and margin columns, so what
+  // the UI hid cannot leave through a download — and `export_data`, which opened
+  // the button, is not asked to do the work of `view_cost` as well.
+  const seesCost = maySeeCost ?? canAct("view_cost");
   const names = categoryNameIndex([...categories], pick);
   const categoryOf = (id: string | null) =>
     id ? names.get(id) ?? "—" : t("products.withoutCategory");
@@ -58,13 +73,19 @@ export function buildProductsSheets({
         value: (p) => t(PRODUCT_TYPE_META[p.product_type].labelKey as never),
         width: 16,
       },
-      { header: t("export.col.costPrice"), value: (p) => p.cost_price, kind: "money" },
+      ...(seesCost
+        ? ([{ header: t("export.col.costPrice"), value: (p) => p.cost_price, kind: "money" }] as ExportColumn<Product>[])
+        : []),
       { header: t("export.col.sellingPrice"), value: (p) => p.selling_price, kind: "money" },
-      {
-        header: t("export.col.margin"),
-        value: (p) => marginPct(p.selling_price, p.cost_price),
-        kind: "percent",
-      },
+      ...(seesCost
+        ? ([
+            {
+              header: t("export.col.margin"),
+              value: (p) => marginPct(p.selling_price, p.cost_price),
+              kind: "percent",
+            },
+          ] as ExportColumn<Product>[])
+        : []),
       { header: t("export.col.taxRate"), value: (p) => p.tax_rate, kind: "percent" },
       {
         header: t("export.col.stockTracking"),

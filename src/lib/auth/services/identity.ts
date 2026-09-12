@@ -6,13 +6,19 @@
  * sign-in produce the same shape — including the resolved capability list, which
  * is what makes every permission check in the app synchronous.
  *
- * The rule encoded below: a custom role *replaces* the system matrix when it is
- * assigned and active. That mirrors `public.can()` in migration 0021, so the UI
- * hiding a button and the database refusing the write are the same decision made
- * twice, not two different decisions.
+ * The rules encoded below, in the order they are applied:
+ *
+ *   1. a custom role *replaces* the system matrix when it is assigned and active;
+ *   2. the person's own exceptions then add to and subtract from that result,
+ *      with a denial winning over a grant.
+ *
+ * Both mirror `public.can()` — rule 1 since migration 0021, rule 2 since 0028 —
+ * so the UI hiding a button and the database refusing the write are the same
+ * decision made twice, not two different decisions.
  */
 import { normalizeRole, type AppRole, type Capability } from "@/lib/permissions/roles";
 import { resolveCapabilities } from "@/lib/permissions/customRoles";
+import { parseCapabilityExceptions, type CapabilityExceptions } from "@/lib/permissions/exceptions";
 import type { AuthUser } from "../types";
 
 export interface IdentityInput {
@@ -27,6 +33,13 @@ export interface IdentityInput {
   custom_role_id?: string | null;
   /** The assigned custom role, when it could be read. */
   custom_role?: { name_en: string; name_ar: string; capabilities: readonly string[]; active: boolean } | null;
+  /**
+   * Phase 17: this person's own grants and denials, read from
+   * `profiles.extra_capabilities` / `denied_capabilities` (live) or the demo
+   * directory (offline). Absent, null or corrupt all mean "none", because
+   * `parseCapabilityExceptions` refuses to invent authority out of bad data.
+   */
+  exceptions?: CapabilityExceptions | { extra?: unknown; denied?: unknown } | null;
   last_login_at?: string | null;
   /** Supabase Auth uid; the demo directory stores its own ids. */
   auth_id?: string | null;
@@ -48,7 +61,7 @@ export function capabilitiesForIdentity(input: IdentityInput): Capability[] {
     input.custom_role && input.custom_role.active
       ? { capabilities: input.custom_role.capabilities, active: true }
       : null;
-  return resolveCapabilities(role, custom);
+  return resolveCapabilities(role, custom, parseCapabilityExceptions(input.exceptions));
 }
 
 export function buildAuthUser(input: IdentityInput): AuthUser {

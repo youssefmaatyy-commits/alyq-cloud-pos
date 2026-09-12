@@ -24,6 +24,7 @@
  * button and the database refusing the write agree.
  */
 import { APP_ROLES, CAPABILITIES, capabilitiesOf, normalizeRole, type AppRole, type Capability } from "./roles";
+import { applyExceptions, type CapabilityExceptions } from "./exceptions";
 
 /** A role an admin defined. Mirrors `public.custom_roles`. */
 export interface CustomRole {
@@ -196,14 +197,17 @@ export function validateCustomRoleDraft(
 export function resolveCapabilities(
   role: string | null | undefined,
   custom: { capabilities: readonly string[]; active: boolean } | null | undefined,
+  exceptions?: CapabilityExceptions | null,
 ): Capability[] {
   if (custom && custom.active) {
     const list = sanitizeCapabilities(custom.capabilities);
     // An active custom role with no usable capabilities grants nothing: the
     // overlay decides absolutely, it never silently falls back to the base role.
-    return list;
+    // Phase 17: the person's own exceptions still apply on top of it — they are
+    // not a property of the role, so swapping the role does not discard them.
+    return applyExceptions(list, exceptions);
   }
-  return capabilitiesOf(role);
+  return applyExceptions(capabilitiesOf(role), exceptions);
 }
 
 /** One question, asked the way the database asks it. */
@@ -211,8 +215,9 @@ export function canWithCustomRole(
   role: string | null | undefined,
   custom: { capabilities: readonly string[]; active: boolean } | null | undefined,
   capability: Capability,
+  exceptions?: CapabilityExceptions | null,
 ): boolean {
-  return resolveCapabilities(role, custom).includes(capability);
+  return resolveCapabilities(role, custom, exceptions).includes(capability);
 }
 
 /** A role's name in the language on screen. */

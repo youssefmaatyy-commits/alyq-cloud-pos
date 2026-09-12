@@ -13,12 +13,14 @@ import {
   buildSheets,
   toDate,
   type BuiltSheet,
+  type ExportColumn,
   type ExportSheet,
   type PickBilingual,
   type Translate,
 } from "@/lib/export";
 import { stockStatus, type Product } from "@/modules/products/types";
 import { yesNo } from "@/modules/products/services/productsExport";
+import { canAct } from "@/lib/permissions/enforce";
 
 export interface InventoryExportInput {
   products: readonly Product[];
@@ -26,6 +28,13 @@ export interface InventoryExportInput {
   categoryName(id: string | null): string;
   t: Translate;
   pick: PickBilingual;
+  /**
+   * Phase 17: whether the cost-basis columns belong in the sheet. Defaults to the
+   * signed-in seat's `view_cost`; the export selftest passes the answer because it
+   * runs with no session. Per-product cost is the protected fact — quantity,
+   * retail value and stock status are the stockroom's own, and they always travel.
+   */
+  maySeeCost?: boolean;
 }
 
 /** Cost-basis value of one product's on-hand stock. */
@@ -43,7 +52,9 @@ export function buildInventorySheets({
   categoryName,
   t,
   pick,
+  maySeeCost,
 }: InventoryExportInput): BuiltSheet[] {
+  const seesCost = maySeeCost ?? canAct("view_cost");
   const totalQty = products.reduce((sum, p) => sum + p.stock_quantity, 0);
   const totalCost = products.reduce((sum, p) => sum + stockValueAtCost(p), 0);
   const totalRetail = products.reduce((sum, p) => sum + stockValueAtRetail(p), 0);
@@ -58,10 +69,18 @@ export function buildInventorySheets({
       { header: t("export.col.category"), value: (p) => categoryName(p.category_id), width: 20 },
       // The product schema has no unit field — see the note under the table.
       { header: t("export.col.unit"), value: () => "", width: 10 },
-      { header: t("export.col.costPrice"), value: (p) => p.cost_price, kind: "money" },
+      // Phase 17: the two cost-basis columns travel only for a seat that may see
+      // what the shop pays. Quantity, retail value and status always do.
+      ...(seesCost
+        ? ([{ header: t("export.col.costPrice"), value: (p) => p.cost_price, kind: "money" }] as ExportColumn<Product>[])
+        : []),
       { header: t("export.col.sellingPrice"), value: (p) => p.selling_price, kind: "money" },
       { header: t("export.col.currentQty"), value: (p) => p.stock_quantity, kind: "number" },
-      { header: t("export.col.stockValue"), value: (p) => stockValueAtCost(p), kind: "money", width: 18 },
+      ...(seesCost
+        ? ([
+            { header: t("export.col.stockValue"), value: (p) => stockValueAtCost(p), kind: "money", width: 18 },
+          ] as ExportColumn<Product>[])
+        : []),
       { header: t("export.col.retailValue"), value: (p) => stockValueAtRetail(p), kind: "money", width: 18 },
       { header: t("export.col.lowStockLevel"), value: (p) => p.low_stock_level, kind: "number" },
       {
@@ -79,10 +98,10 @@ export function buildInventorySheets({
       "",
       "",
       "",
-      null,
+      ...(seesCost ? [null] : []),
       null,
       totalQty,
-      Math.round(totalCost * 100) / 100,
+      ...(seesCost ? [Math.round(totalCost * 100) / 100] : []),
       Math.round(totalRetail * 100) / 100,
       null,
       "",
@@ -91,7 +110,9 @@ export function buildInventorySheets({
     ],
     notes: [
       t("export.note.unit"),
-      t("export.note.stockValue"),
+      // The note explains the cost basis; without the column it would explain
+      // something the sheet does not contain.
+      ...(seesCost ? [t("export.note.stockValue")] : []),
       `${t("export.col.currentQty")}: ${products.length}`,
     ],
   };

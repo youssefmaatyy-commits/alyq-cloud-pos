@@ -16,7 +16,7 @@ import type { Category, NewProduct, Product } from "../types";
 import { getCatalogRepository } from "../data";
 import { assertCanImportProducts } from "../services/catalogService";
 import { AppError } from "../data/repository";
-import { deniedMessageKey } from "@/lib/permissions/enforce";
+import { canAct, deniedMessageKey } from "@/lib/permissions/enforce";
 import type { TranslationKey } from "@/lib/i18n/I18nProvider";
 
 /** The copy shown when the acting user may not apply an import. */
@@ -125,6 +125,16 @@ export function ExcelImportModal({
     toast.success(t("import.templateDownloaded"));
   }, [t, toast]);
 
+  // Phase 17: an import writes cost price, so a seat without `change_cost`
+  // imports every column except that one. Dropping the column rather than
+  // refusing the file is the honest reading of the permission — the rest of the
+  // sheet is theirs to load — provided the screen says so before they press the
+  // button, which the note below does.
+  const mayChangeCost = canAct("change_cost");
+  const fileCarriesCost = validRows.some(
+    (row) => row.data.cost_price !== undefined && row.data.cost_price !== null,
+  );
+
   const handleConfirmImport = useCallback(async () => {
     if (!importResult || validRows.length === 0) return;
 
@@ -174,7 +184,9 @@ export function ExcelImportModal({
         category_id: row.data.category_id ?? null,
         product_type: row.data.product_type ?? "physical",
         selling_price: row.data.selling_price ?? 0,
-        cost_price: row.data.cost_price ?? 0,
+        // A new product's cost is zero for a seat that may not write cost: the
+        // column is theirs to upload and not theirs to store.
+        cost_price: mayChangeCost ? (row.data.cost_price ?? 0) : 0,
         tax_rate: row.data.tax_rate ?? 0,
         stock_tracking_enabled: row.data.stock_tracking_enabled ?? false,
         stock_quantity: row.data.stock_quantity ?? 0,
@@ -202,7 +214,9 @@ export function ExcelImportModal({
         category_id: newProduct.category_id,
         product_type: newProduct.product_type,
         selling_price: newProduct.selling_price,
-        cost_price: newProduct.cost_price,
+        // Omitted entirely when the seat may not write cost, so an update leaves
+        // the stored value alone instead of overwriting it with the sheet's.
+        ...(mayChangeCost ? { cost_price: newProduct.cost_price } : {}),
         tax_rate: newProduct.tax_rate,
         stock_tracking_enabled: newProduct.stock_tracking_enabled,
         stock_quantity: newProduct.stock_quantity,
@@ -362,6 +376,11 @@ export function ExcelImportModal({
                 <h3 className="mb-2 text-sm font-semibold text-emerald-900">
                   {t("import.preview")} ({validRows.length})
                 </h3>
+                {!mayChangeCost && fileCarriesCost ? (
+                  <p className="mb-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900">
+                    {t("import.costSkipped")}
+                  </p>
+                ) : null}
                 <div className="max-h-64 overflow-auto">
                   <table className="w-full text-xs">
                     <thead className="sticky top-0 bg-emerald-100">

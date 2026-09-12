@@ -21,8 +21,13 @@
  *     question the whole phase exists to answer.
  */
 import assert from "node:assert/strict";
-import { CAPABILITIES, capabilitiesOf, type AppRole } from "@/lib/permissions/roles";
-import { CAPABILITY_GROUPS, catalogProblems, groupOfCapability } from "@/lib/permissions/catalog";
+import { CAPABILITIES, capabilitiesOf, type AppRole, type Capability } from "@/lib/permissions/roles";
+import {
+  CAPABILITY_GROUPS,
+  capabilityLabelKey,
+  catalogProblems,
+  groupOfCapability,
+} from "@/lib/permissions/catalog";
 import {
   CUSTOM_ROLE_PRESETS,
   resolveCapabilities,
@@ -30,6 +35,8 @@ import {
   validateCustomRoleDraft,
 } from "@/lib/permissions/customRoles";
 import { resetCustomRoles, readCustomRoles } from "@/lib/permissions/customRoleStore";
+import { ar, en } from "@/lib/i18n/dictionary";
+import { NO_EXCEPTIONS } from "@/lib/permissions/exceptions";
 import { createVerifier, verifyPassword } from "@/lib/auth/services/password";
 import { evaluatePassword } from "@/lib/auth/services/passwordPolicy";
 import { createSession, signOut } from "@/lib/auth/services/authService";
@@ -51,10 +58,11 @@ import {
   resetUserPassword,
   setRoleActive,
   setUserActive,
+  setUserExceptions,
   updateRole,
   updateUser,
 } from "../services/settingsService";
-import { queryUsers, sortUsers, summarizeUsers } from "../services/userQuery";
+import { queryRoles, queryUsers, sortUsers, summarizeUsers } from "../services/userQuery";
 import { roleFormToDraft, validateRoleForm, validateUserForm } from "../validation";
 import {
   DEFAULT_USER_SORT,
@@ -297,7 +305,7 @@ test("the user form refuses what the database would refuse", () => {
     userForm({ name: "Sara Nour", username: "admin", role: "cashier", password: "Till@2026x", confirmPassword: "Till@2026x" }),
     {
       ...context,
-      existing: [{ id: "user-admin", username: "admin", name: "A", email: null, phone: null, role: "admin", active: true, custom_role_id: null, custom_role_name: null, created_at: null, last_login_at: null }],
+      existing: [{ id: "user-admin", username: "admin", name: "A", email: null, phone: null, role: "admin", active: true, custom_role_id: null, custom_role_name: null, extra_capabilities: [], denied_capabilities: [], created_at: null, last_login_at: null }],
     },
   );
   assert.equal(taken.ok, false);
@@ -755,6 +763,158 @@ test("a verifier built offline verifies in either digest mode", async () => {
   assert.equal(await verifyPassword("Till@2026x", verifier), true);
   assert.equal(await verifyPassword("till@2026x", verifier), false, "case-sensitive");
   assert.notEqual(verifier.salt, (await createVerifier("Till@2026x")).salt, "each password gets its own salt");
+});
+
+// ── Phase 17: per-user exceptions and role search ────────────────────────────
+
+test("per-user exceptions change exactly what the wearer may do", async () => {
+  resetAll();
+  const viewer = await createUser(
+    userForm({ name: "Sara Nour", username: "sara.nour", role: "viewer", password: "Till@2026x", confirmPassword: "Till@2026x" }),
+    { existing: [], roles: [] },
+  );
+  const cashier = await createUser(
+    userForm({ name: "Tamer Aziz", username: "tamer.aziz", role: "cashier", password: "Till@2026x", confirmPassword: "Till@2026x" }),
+    { existing: [], roles: [] },
+  );
+
+  // A grant: a viewer who may also work the till — and nothing else comes with it.
+  await setUserExceptions(viewer.id, { extra: ["sell"], denied: [] }, {
+    existing: await loadManagedUsers(),
+    roles: await loadManagedRoles(),
+  });
+  const granted = await getDemoUserRepository().authenticate("sara.nour", "Till@2026x");
+  assert.equal(granted.ok, true);
+  if (granted.ok) {
+    assert.deepEqual(
+      granted.user.capabilities,
+      resolveCapabilities("viewer", null, { extra: ["sell"], denied: [] }),
+      "the sign-in resolves the role plus the grant",
+    );
+    assert.ok(granted.user.capabilities.includes("sell"), "a viewer may now sell");
+    assert.ok(!granted.user.capabilities.includes("manage_users"), "and still cannot manage users");
+    assert.ok(!granted.user.capabilities.includes("approve_expense"), "a grant brings nothing with it");
+  }
+
+  // A denial: the role's own permission is taken away from this one person.
+  await setUserExceptions(cashier.id, { extra: [], denied: ["sell", "apply_discount"] }, {
+    existing: await loadManagedUsers(),
+    roles: await loadManagedRoles(),
+  });
+  const denied = await getDemoUserRepository().authenticate("tamer.aziz", "Till@2026x");
+  assert.equal(denied.ok, true);
+  if (denied.ok) {
+    assert.ok(!denied.user.capabilities.includes("sell"), "the denial overrides the cashier role");
+    assert.ok(!denied.user.capabilities.includes("apply_discount"));
+    assert.ok(denied.user.capabilities.includes("process_return"), "the rest of the role survives");
+  }
+
+  // Deny wins over a grant of the same act, even when both are written at once.
+  const both = await setUserExceptions(cashier.id, { extra: ["sell"], denied: ["sell"] }, {
+    existing: await loadManagedUsers(),
+    roles: await loadManagedRoles(),
+  });
+  assert.deepEqual([...both.extra_capabilities], [], "the contradictory grant is dropped");
+  assert.deepEqual([...both.denied_capabilities], ["sell"], "the denial stands");
+  const stillDenied = await getDemoUserRepository().authenticate("tamer.aziz", "Till@2026x");
+  if (stillDenied.ok) assert.ok(!stillDenied.user.capabilities.includes("sell"));
+
+  // Clearing the exceptions gives the role back, exactly as it was.
+  await setUserExceptions(cashier.id, NO_EXCEPTIONS, {
+    existing: await loadManagedUsers(),
+    roles: await loadManagedRoles(),
+  });
+  const restored = await getDemoUserRepository().authenticate("tamer.aziz", "Till@2026x");
+  assert.equal(restored.ok, true);
+  if (restored.ok) assert.deepEqual(restored.user.capabilities, capabilitiesOf("cashier"), "back to the role");
+});
+
+test("an exception travels with the person across roles, and the session re-resolves it", async () => {
+  resetAll();
+  const created = await createUser(
+    userForm({ name: "Sara Nour", username: "sara.nour", role: "viewer", password: "Till@2026x", confirmPassword: "Till@2026x" }),
+    { existing: [], roles: [] },
+  );
+  await setUserExceptions(created.id, { extra: ["adjust_stock"], denied: [] }, {
+    existing: await loadManagedUsers(),
+    roles: await loadManagedRoles(),
+  });
+  // The same person, promoted: the exception is theirs, not the role's, so it
+  // survives the change of role instead of being silently discarded.
+  await updateUser(
+    userForm({ id: created.id, name: "Sara Nour", username: "sara.nour", role: "cashier" }),
+    { existing: await loadManagedUsers(), roles: await loadManagedRoles() },
+  );
+  const after = await getDemoUserRepository().authenticate("sara.nour", "Till@2026x");
+  assert.equal(after.ok, true);
+  if (after.ok) {
+    assert.ok(after.user.capabilities.includes("process_return"), "the new role applies");
+    assert.deepEqual(
+      after.user.capabilities,
+      resolveCapabilities("cashier", null, { extra: ["adjust_stock"], denied: [] }),
+      "and the grant travelled with the person",
+    );
+    assert.ok(after.user.capabilities.includes("adjust_stock"), "a cashier who may also adjust stock");
+  }
+});
+
+test("role search finds a role by name, key, description, base role, or permission", async () => {
+  resetAll();
+  const accountant = await createRole(ACCOUNTANT_FORM, { existing: [] });
+  const floor = await createRole(
+    roleForm({
+      key: "floor_lead",
+      name_en: "Floor Lead",
+      name_ar: "مسؤول الصالة",
+      description_en: "Approves discounts at the till",
+      description_ar: "يعتمد الخصومات عند الصندوق",
+      base_role: "cashier",
+      capabilities: ["sell", "apply_discount", "approve_limit_request", "process_return"],
+    }),
+    { existing: [accountant] },
+  );
+  const roles = await loadManagedRoles();
+  assert.equal(roles.length, 2, "both roles are listed");
+
+  // The screen hands `queryRoles` the dictionary's own label, so searching in
+  // either language finds the role that holds the permission.
+  const labelEn = (capability: Capability): string => (en as Record<string, string>)[capabilityLabelKey(capability)] ?? capability;
+  const labelAr = (capability: Capability): string => (ar as Record<string, string>)[capabilityLabelKey(capability)] ?? capability;
+  const keys = (found: typeof roles): string[] => found.map((role) => role.key);
+
+  assert.deepEqual(keys(queryRoles(roles, "accountant", labelEn)), [accountant.key], "by English name");
+  assert.deepEqual(keys(queryRoles(roles, "محاسب", labelAr)), [accountant.key], "by Arabic name");
+  assert.deepEqual(keys(queryRoles(roles, "floor_lead", labelEn)), [floor.key], "by key");
+  assert.deepEqual(keys(queryRoles(roles, "Floor", labelEn)), [floor.key], "case-insensitively");
+  assert.deepEqual(keys(queryRoles(roles, "  FLOOR  ", labelEn)), [floor.key], "surrounding whitespace is ignored");
+  assert.deepEqual(keys(queryRoles(roles, "discounts at the till", labelEn)), [floor.key], "by description");
+  assert.deepEqual(keys(queryRoles(roles, "الخصومات", labelAr)), [floor.key], "by Arabic description");
+  assert.deepEqual(keys(queryRoles(roles, "cashier", labelEn)), [floor.key], "by base role");
+
+  // The question an admin actually asks: which role may do this?
+  assert.deepEqual(keys(queryRoles(roles, "apply_discount", labelEn)), [floor.key], "by permission id");
+  assert.deepEqual(keys(queryRoles(roles, labelEn("apply_discount"), labelEn)), [floor.key], "by English permission label");
+  assert.deepEqual(keys(queryRoles(roles, labelAr("apply_discount"), labelAr)), [floor.key], "by Arabic permission label");
+  assert.deepEqual(keys(queryRoles(roles, labelEn("approve_expense"), labelEn)), [accountant.key], "and the other role answers for its own");
+
+  // Every term has to match — search narrows, it does not union.
+  assert.equal(queryRoles(roles, "floor discount", labelEn).length, 1);
+  assert.equal(queryRoles(roles, "floor accountant", labelEn).length, 0, "two terms from different roles match neither");
+
+  // Empty and whitespace-only queries are not a filter.
+  assert.deepEqual(keys(queryRoles(roles, "", labelEn)), keys(roles), "an empty query lists everything");
+  assert.deepEqual(keys(queryRoles(roles, "   ", labelEn)), keys(roles), "so does a blank one");
+
+  // Filtering never reorders the list: the page shows roles in one stable order,
+  // so a search result reads the same way the full list does.
+  const filtered = queryRoles(roles, "role", labelEn);
+  assert.deepEqual(keys(filtered), keys(roles).filter((key) => filtered.some((role) => role.key === key)));
+  const single = queryRoles(roles, "accountant", labelEn);
+  assert.deepEqual(keys(roles).indexOf(single[0].key), 0, "a match keeps its place in the list");
+
+  // No match is an empty list, not an error and not the full list.
+  assert.deepEqual(queryRoles(roles, "zzz-nothing-matches", labelEn), [], "empty results");
+  assert.deepEqual(queryRoles([], "accountant", labelEn), [], "an empty catalogue stays empty");
 });
 
 // ── runner ───────────────────────────────────────────────────────────────────

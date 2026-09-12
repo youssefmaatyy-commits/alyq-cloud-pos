@@ -68,6 +68,15 @@ role switcher are untouched.
 
 ## 2. Current permission model
 
+> **This section is a snapshot of the model as it stood when it was written — sixteen
+> capabilities, four shipped roles.** It is kept because the reasoning in it still holds, not
+> because the table is current. The model now has **five roles and 40 capabilities**, plus
+> per-user exceptions and an access preview; the live sources of truth are
+> `src/lib/permissions/roles.ts` (the matrix), `src/lib/permissions/catalog.ts` (groups, verbs
+> and the integrity check), `src/lib/permissions/exceptions.ts` and `src/lib/permissions/preview.ts`,
+> with the database side in `supabase/migrations/0028_dynamic_access_control.sql`. See §2.6 below
+> and the Phase 17 snapshot in `docs/PHASE_STATUS.md`.
+
 ### 2.1 Single source of truth
 
 `src/lib/permissions/roles.ts` owns *what a role may do*:
@@ -149,6 +158,24 @@ a shipped role's behaviour shifts, and `scripts/auth.flow.mjs` step 6 re-verifie
 user-visible consequences.
 
 ---
+
+### 2.6 Phase 17 — what the model grew into
+
+The sixteen capabilities above became forty, in the same single source of truth and with the same
+fail-closed resolution. What changed structurally:
+
+| Addition | Where it lives | What it means |
+| --- | --- | --- |
+| `view_customers`, `add_customer`, `edit_customer`, `delete_customer` | `roles.ts`, `catalog.ts` (group `customers`), `customerService.ts`, `0028` | The customer book is now describable, so a custom role can be built without it. Every role may read it; only manager and admin may delete. Four RLS policies ask `public.can()` for the matching act. |
+| `view_cost`, `change_cost` | `roles.ts`, `catalog.ts` (group `products`), `actions.ts`, products/inventory export + import, `0028` | Cost stopped being a side effect of `change_price`. Seeing what the shop paid and changing it are separate acts, and profit/margin follow `view_cost` because they are derived from it. |
+| Per-user exceptions | `exceptions.ts`, `profiles.extra_capabilities` / `denied_capabilities`, `current_user_capabilities()`, `admin_set_user_exceptions()` | One person may hold more or less than their role. Deny wins — in resolution and in storage. They belong to the person, so a role change keeps them. |
+| Access preview | `preview.ts`, `AccessPreviewModal.tsx` | "What would this role see?" answered from the same inputs the gates use. Read-only by construction: it never writes to the session and no guard reads it. |
+| Verbs and groups | `catalog.ts` (`CAPABILITY_ACTIONS`, `CAPABILITY_GROUPS`, `capabilityMatrix()`) | Every capability is exactly one of seven verbs in exactly one area, exhaustively by type. A new capability cannot be added without saying what kind of act it is, and appears in the picker, summary and preview with no UI change. |
+
+Enforcement is unchanged in shape and wider in coverage: the screens hide, the services assert
+(`assertCapability` before touching a repository), and the database refuses — now including the
+customer table. `npm run db:check` probes the SQL half of the exception model against a real
+database rather than reviewing it.
 
 ## 3. Remaining authentication requirements (next phase)
 

@@ -207,11 +207,15 @@ test("read-only role can read but never mutate", () => {
   // Phase 10 added three capabilities here — `view_reports`, `export_reports`
   // and `export_data` — and every one is a read (or an export) of data the
   // viewer could already open: `/reports` was reachable through `view_shifts`
-  // and the export buttons were not gated at all. The write list below is the
-  // real assertion: the viewer holds none of it.
+  // and the export buttons were not gated at all. Phase 17 added two more reads,
+  // `view_customers` and `view_cost`, both of which any signed-in seat could
+  // already do because nothing gated the customer book or the cost column. The
+  // write list below is the real assertion: the viewer holds none of it.
   assert.deepEqual(viewer, [
     "export_data",
     "export_reports",
+    "view_cost",
+    "view_customers",
     "view_inventory",
     "view_reports",
     "view_shifts",
@@ -238,8 +242,12 @@ test("read-only role can read but never mutate", () => {
     "add_product",
     "edit_product",
     "change_price",
+    "change_cost",
     "delete_product",
     "import_data",
+    "add_customer",
+    "edit_customer",
+    "delete_customer",
     "manage_online_orders",
     "manage_website",
     "manage_users",
@@ -249,6 +257,48 @@ test("read-only role can read but never mutate", () => {
   for (const capability of writes) {
     assert.equal(hasCapability("viewer", capability), false, `viewer may not ${capability}`);
   }
+});
+
+test("Phase 17 named the customer book and cost price, and tightened one thing", () => {
+  // Before Phase 17 nothing gated the customer book at all: any signed-in seat
+  // could add, edit or delete a customer, and cost price was written from the
+  // product form by anybody who could edit a product. Naming those acts is what
+  // makes them assignable — and the grants below keep every working seat exactly
+  // as capable as it was.
+  const named: Capability[] = [
+    "view_customers",
+    "add_customer",
+    "edit_customer",
+    "delete_customer",
+    "view_cost",
+    "change_cost",
+  ];
+  for (const capability of named) {
+    assert.ok(CAPABILITIES.includes(capability), `${capability} is a capability`);
+  }
+
+  // The till keeps its customers and its cost price: a sale needs a customer, and
+  // the product form the cashier could already edit is where cost is written.
+  for (const role of ["cashier", "inventory_clerk", "manager", "admin"] as const) {
+    const keeps: Capability[] = ["view_customers", "add_customer", "edit_customer", "view_cost", "change_cost"];
+    for (const capability of keeps) {
+      assert.equal(hasCapability(role, capability), true, `${role} keeps ${capability}`);
+    }
+  }
+
+  // Deleting a customer erases a purchase history, so it is an oversight act.
+  assert.equal(hasCapability("manager", "delete_customer"), true);
+  assert.equal(hasCapability("admin", "delete_customer"), true);
+  assert.equal(hasCapability("cashier", "delete_customer"), false, "the till may not erase a customer");
+  assert.equal(hasCapability("inventory_clerk", "delete_customer"), false);
+
+  // The one deliberate tightening: a viewer could previously write the customer
+  // book because nothing checked. Every other change in Phase 17 is a naming.
+  assert.equal(hasCapability("viewer", "add_customer"), false);
+  assert.equal(hasCapability("viewer", "edit_customer"), false);
+  assert.equal(hasCapability("viewer", "delete_customer"), false);
+  assert.equal(hasCapability("viewer", "change_cost"), false);
+  assert.equal(hasCapability("viewer", "view_customers"), true, "…but may still read it");
 });
 
 test("no role lost a capability when Phase 10 extended the matrix", () => {

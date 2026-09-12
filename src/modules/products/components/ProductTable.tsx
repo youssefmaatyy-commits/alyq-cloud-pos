@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui";
 import { ArchiveIcon, EditIcon, EyeIcon, RestoreIcon } from "@/components/ui";
 import { cn } from "@/utils/cn";
 import { marginPct, stockStatus, type Product, type StockStatus } from "../types";
+import { canAct } from "@/lib/permissions/enforce";
 import { ActiveBadge, ProductTypeBadge } from "./ProductTypeBadge";
 
 export interface ProductTableProps {
@@ -88,7 +89,9 @@ export function ProductTable({
           </thead>
           <tbody>
             {products.map((product) => {
-              const margin = marginPct(product.selling_price, product.cost_price);
+              // Phase 17: margin is cost in disguise, so it follows `view_cost`.
+              const maySeeCost = canAct("view_cost");
+              const margin = maySeeCost ? marginPct(product.selling_price, product.cost_price) : null;
               const status = stockStatus(product);
               return (
                 <tr key={product.id} className="border-b border-slate-50 last:border-0 hover:bg-slate-50/60">

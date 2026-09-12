@@ -48,6 +48,8 @@ interface ProfileRow {
   email: string | null;
   phone: string | null;
   custom_role_id: string | null;
+  extra_capabilities: string[] | null;
+  denied_capabilities: string[] | null;
   last_login_at: string | null;
   created_at: string | null;
 }
@@ -63,7 +65,7 @@ interface CustomRoleRow {
 }
 
 const PROFILE_COLUMNS =
-  "id, username, name, role, active, email, phone, custom_role_id, last_login_at, created_at";
+  "id, username, name, role, active, email, phone, custom_role_id, extra_capabilities, denied_capabilities, last_login_at, created_at";
 
 export class SupabaseUserRepository implements UserRepository {
   readonly kind = "supabase" as const;
@@ -122,6 +124,10 @@ export class SupabaseUserRepository implements UserRepository {
             active: custom.active !== false,
           }
         : null,
+      exceptions: {
+        extra: profile.extra_capabilities,
+        denied: profile.denied_capabilities,
+      },
       last_login_at: profile.last_login_at,
       auth_id: authId,
     });

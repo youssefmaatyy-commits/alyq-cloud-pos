@@ -8,13 +8,25 @@ import type { Capability } from "./roles";
  * guard can never be bypassed by typing a URL.
  *
  * Screens that are absent from this table need a session but no particular
- * capability: every signed-in role may read the dashboard, the catalogue, the
- * customer book and sales history. Capabilities are only listed where the
- * matrix actually distinguishes roles.
+ * capability: every signed-in role may read the dashboard, the catalogue and
+ * sales history. Capabilities are only listed where the matrix actually
+ * distinguishes roles.
+ *
+ * Phase 17 moved the customer book out of that "anybody signed in" group and
+ * onto `view_customers`. It was the one screen holding records about named
+ * people — phone numbers, addresses, what they bought — that no capability
+ * described, so no role could be built without it. Every shipped role holds it,
+ * including the viewer; a custom role may now decline it, and the till's customer
+ * picker declines with it.
  *
  * Longest prefix wins, so `/pos/sales` is matched before `/pos`.
  */
 export const ROUTE_CAPABILITIES: ReadonlyArray<readonly [string, Capability]> = [
+  // The customer book (Phase 17). Reading it is `view_customers`; adding,
+  // editing and deleting are gated per action in the customers service and the
+  // screens, because the till adds a customer mid-sale and that act belongs to
+  // the sale, not to the book.
+  ["/customers", "view_customers"],
   ["/inventory/movements", "view_inventory"],
   ["/inventory", "view_inventory"],
   ["/pos/sales", "sell"],

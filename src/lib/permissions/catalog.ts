@@ -17,6 +17,7 @@ export interface CapabilityGroup {
   key:
     | "sales"
     | "products"
+    | "customers"
     | "inventory"
     | "returns"
     | "reports"
@@ -42,8 +43,20 @@ export const CAPABILITY_GROUPS: readonly CapabilityGroup[] = [
     capabilities: ["sell", "edit_sale", "apply_discount", "void_sale", "confirm_payment"],
   },
   {
+    // Cost sits with the catalogue rather than with reports: it is a field on a
+    // product, written from the product form and read on the product page. The
+    // two capabilities are separate because they are separate acts — seeing what
+    // the shop paid and changing it (Phase 17).
     key: "products",
-    capabilities: ["add_product", "edit_product", "change_price", "delete_product"],
+    capabilities: ["add_product", "edit_product", "change_price", "delete_product", "view_cost", "change_cost"],
+  },
+  {
+    // Phase 17. The customer book existed for eight releases with no capability
+    // describing it, which is why no role could be built without it. History is
+    // part of `view_customers`, not a fourth capability: same screen, same
+    // person, same reason for looking.
+    key: "customers",
+    capabilities: ["view_customers", "add_customer", "edit_customer", "delete_customer"],
   },
   {
     key: "inventory",
@@ -129,5 +142,149 @@ export function catalogProblems(): string[] {
     if (!seen.has(capability)) problems.push(`'${capability}' is in no group`);
   }
 
+  // Phase 17: every capability must also declare the verb it is. The map below
+  // is typed `Record<Capability, PermissionAction>`, so a capability added to
+  // `roles.ts` without a verb does not compile — this loop is the belt to that
+  // brace, and it catches a verb that is not one of the seven.
+  for (const capability of CAPABILITIES) {
+    const action = CAPABILITY_ACTIONS[capability];
+    if (!PERMISSION_ACTIONS.includes(action)) {
+      problems.push(`'${capability}' has the action '${String(action)}', which is not a permission action`);
+    }
+  }
+
   return problems;
+}
+
+// ── the action layer (Phase 17) ──────────────────────────────────────────────
+/**
+ * The verbs a permission can be.
+ *
+ * Seven, and deliberately not one per module: a shop does not think "may
+ * `customer_history_view`", it thinks "who may *see* customers". Naming the verb
+ * separately from the area is what lets the picker show a matrix (area × verb)
+ * instead of a flat list of forty identifiers, and what lets a future capability
+ * say what kind of act it is without anybody re-reading this file.
+ *
+ * `manage` is the escape hatch for acts that are genuinely all of the above —
+ * `manage_users`, `manage_online_orders` — and it is used sparingly, because a
+ * verb that means everything tells an admin nothing.
+ */
+export const PERMISSION_ACTIONS = [
+  "view",
+  "create",
+  "edit",
+  "delete",
+  "approve",
+  "export",
+  "manage",
+] as const;
+
+export type PermissionAction = (typeof PERMISSION_ACTIONS)[number];
+
+/**
+ * Which verb each capability is — exhaustive by construction.
+ *
+ * This is a `Record<Capability, PermissionAction>`, not a partial map: add a
+ * capability to `roles.ts` and the compiler refuses to build until somebody says
+ * what kind of act it is. That is the whole mechanism by which the permission
+ * builder "auto-supports future permissions" — the new capability arrives with a
+ * group and a verb, and appears in the picker, the summary and the preview
+ * without a line of UI code changing.
+ */
+export const CAPABILITY_ACTIONS: Record<Capability, PermissionAction> = {
+  // Sales floor
+  sell: "create",
+  edit_sale: "edit",
+  apply_discount: "edit",
+  void_sale: "delete",
+  confirm_payment: "approve",
+  // Catalogue
+  add_product: "create",
+  edit_product: "edit",
+  change_price: "edit",
+  delete_product: "delete",
+  view_cost: "view",
+  change_cost: "edit",
+  // Customers
+  view_customers: "view",
+  add_customer: "create",
+  edit_customer: "edit",
+  delete_customer: "delete",
+  // Stock
+  view_inventory: "view",
+  adjust_stock: "edit",
+  import_data: "create",
+  export_data: "export",
+  // Returns and refunds
+  process_return: "create",
+  approve_return: "approve",
+  process_refund: "create",
+  approve_refund: "approve",
+  // Numbers
+  view_reports: "view",
+  export_reports: "export",
+  view_shifts: "view",
+  // Expenses
+  add_expense: "create",
+  edit_expense: "edit",
+  delete_expense: "delete",
+  approve_expense: "approve",
+  // Shifts
+  open_shift: "create",
+  close_shift: "edit",
+  approve_shift_adjustment: "approve",
+  // Online
+  manage_online_orders: "manage",
+  manage_website: "manage",
+  // Oversight
+  approve_limit_request: "approve",
+  manage_users: "manage",
+  manage_roles: "manage",
+  manage_settings: "manage",
+  view_audit_log: "view",
+};
+
+/** `permissions.action.approve` — the verb's own label, EN and AR. */
+export function actionLabelKey(action: PermissionAction): string {
+  return `permissions.action.${action}`;
+}
+
+/** The verb a capability is. Total: every capability has one. */
+export function actionOfCapability(capability: Capability): PermissionAction {
+  return CAPABILITY_ACTIONS[capability];
+}
+
+/** One cell of the area × verb matrix. */
+export interface MatrixCell {
+  group: CapabilityGroup["key"];
+  action: PermissionAction;
+  capability: Capability;
+}
+
+/**
+ * The permission matrix, as cells: every capability with its area and its verb.
+ *
+ * Empty crossings are simply absent — Customers has no `approve`, Reports has no
+ * `delete` — which is how the builder "only shows the actions that make sense per
+ * module" without anybody maintaining a list of which actions those are. The
+ * matrix is derived from the catalogue, so it cannot disagree with it.
+ */
+export function capabilityMatrix(): MatrixCell[] {
+  const cells: MatrixCell[] = [];
+  for (const group of CAPABILITY_GROUPS) {
+    for (const capability of group.capabilities) {
+      cells.push({ group: group.key, action: CAPABILITY_ACTIONS[capability], capability });
+    }
+  }
+  return cells;
+}
+
+/** The verbs an area actually uses — its columns in the matrix. */
+export function actionsInGroup(group: CapabilityGroup["key"]): PermissionAction[] {
+  const entry = CAPABILITY_GROUPS.find((candidate) => candidate.key === group);
+  if (!entry) return [];
+  return PERMISSION_ACTIONS.filter((action) =>
+    entry.capabilities.some((capability) => CAPABILITY_ACTIONS[capability] === action),
+  );
 }

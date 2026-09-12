@@ -141,14 +141,18 @@ components. Two rules keep it maintainable: UI never talks to Supabase directly
 
 ## Status
 
-Feature phases 1–9 are implemented and covered by the suites above: phases 1–8
-for the back office, phase 9 for the online store and its queue in the POS. The
-live schema covers identity, roles, shifts, expenses, the audit trail, card
-payment at the register, the refund lifecycle and — from migrations 0017–0020 —
-the storefront's catalog reads, order placement, payment proofs and resolution,
-with the database enforcing the permission matrix itself. Still to come: the
-application slices for card payments and refund settlement, wider audit coverage
-and a dashboard upgrade. The plan, acceptance criteria and testing strategy live
-in
-[`docs/PRODUCTION_READINESS_PLAN.md`](docs/PRODUCTION_READINESS_PLAN.md).
+Feature phases 1–17 are implemented and covered by the suites above: phases 1–8
+for the back office, phase 9 for the online store and its queue in the POS,
+phases 10–14 for identity, custom roles, enforcement, advanced reports and the
+dashboard, phases 15–16 for stock-hold reconciliation and realtime, and phase 17
+for dynamic access control — 40 capabilities in five roles, per-user exceptions,
+an access preview, and cost and customer records gated in the screen, the service
+and the database alike. The live schema (migrations 0001–0028) covers identity,
+roles, shifts, expenses, the audit trail, card payment at the register, the
+refund lifecycle, the storefront's catalog reads, order placement, payment proofs
+and resolution, with the database enforcing the permission matrix itself. The
+plan, acceptance criteria and testing strategy live in
+[`docs/PRODUCTION_READINESS_PLAN.md`](docs/PRODUCTION_READINESS_PLAN.md), and the
+latest verification snapshot — including what each phase deliberately left undone
+— in [`docs/PHASE_STATUS.md`](docs/PHASE_STATUS.md).
 

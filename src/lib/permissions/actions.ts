@@ -218,7 +218,12 @@ export const SENSITIVE_ACTIONS: readonly SensitiveAction[] = [
   },
   {
     key: "product.cost_change",
-    capability: "change_price",
+    // Phase 17 gave cost its own capability. It used to ride on `change_price`,
+    // which meant a shop could not hand somebody the retail price without also
+    // handing them what the shop pays — and cost is a supplier fact, not a
+    // pricing decision. The two are now separately assignable, and the approval
+    // rule for a cost move still fires exactly as before.
+    capability: "change_cost",
     guard: "assertCanChangeCost",
     file: "src/modules/products/services/catalogService.ts",
     db: "RLS update on products — a purchase cost is a price, and it drives every profit figure",

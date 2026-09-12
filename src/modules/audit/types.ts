@@ -82,6 +82,8 @@ export const AUDIT_ACTIONS = [
   "user.activated",
   "user.deactivated",
   "user.role_changed",
+  // Phase 17: one person's exceptions replaced — what they gained, what they lost.
+  "user.permissions_changed",
   "user.password_reset_requested",
   "user.password_reset",
   "user.password_changed",

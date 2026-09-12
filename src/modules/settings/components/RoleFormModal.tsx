@@ -4,6 +4,7 @@ import { useI18n } from "@/lib/i18n/I18nProvider";
 import { APP_ROLES, capabilitiesOf, type AppRole, type Capability } from "@/lib/permissions/roles";
 import { CUSTOM_ROLE_PRESETS, normalizeRoleKey, type CustomRole } from "@/lib/permissions/customRoles";
 import { PermissionPicker } from "./PermissionPicker";
+import { PermissionSummary } from "./PermissionSummary";
 import { roleLabel } from "./UserStatusBadge";
 import { validateRoleForm } from "../validation";
 import { EMPTY_ROLE_FORM, type RoleFormState } from "../types";
@@ -14,6 +15,14 @@ export interface RoleFormModalProps {
   existing: CustomRole[];
   onClose: () => void;
   onSubmit: (form: RoleFormState) => Promise<void>;
+  /**
+   * Phase 17: open as a copy of this role instead of as a blank form or an edit.
+   * Duplication is how an admin makes "the accountant, but for the new branch" —
+   * and the alternative is re-ticking thirty boxes and getting twenty-nine right.
+   * The copy gets a fresh key and a name that says it is a copy, so it cannot be
+   * saved over the original by accident and cannot be mistaken for it later.
+   */
+  duplicateOf?: CustomRole | null;
 }
 
 export function formFromRole(role: CustomRole | null): RoleFormState {
@@ -23,6 +32,29 @@ export function formFromRole(role: CustomRole | null): RoleFormState {
     key: role.key,
     name_en: role.name_en,
     name_ar: role.name_ar,
+    description_en: role.description_en ?? "",
+    description_ar: role.description_ar ?? "",
+    base_role: role.base_role,
+    capabilities: [...role.capabilities],
+    active: role.active,
+  };
+}
+
+/**
+ * The same role as a *new* draft: no id (so the service creates rather than
+ * updates), no key (so it is generated from the new name and cannot collide with
+ * the original's), and both names suffixed so the copy announces itself in
+ * whichever language the admin reads. Permissions are copied exactly — that is
+ * the whole point of duplicating — and the admin then changes the two or three
+ * that differ.
+ */
+export function formFromDuplicate(role: CustomRole, suffix: string): RoleFormState {
+  return {
+    ...EMPTY_ROLE_FORM,
+    id: null,
+    key: "",
+    name_en: `${role.name_en} (${suffix})`,
+    name_ar: `${role.name_ar} (${suffix})`,
     description_en: role.description_en ?? "",
     description_ar: role.description_ar ?? "",
     base_role: role.base_role,
@@ -44,7 +76,7 @@ export function formFromRole(role: CustomRole | null): RoleFormState {
  * it is what audit entries and stored assignments refer to, and `custom_roles.key`
  * is unique for that reason.
  */
-export function RoleFormModal({ open, editing, existing, onClose, onSubmit }: RoleFormModalProps) {
+export function RoleFormModal({ open, editing, existing, onClose, onSubmit, duplicateOf }: RoleFormModalProps) {
   const { t, lang } = useI18n();
   const [form, setForm] = useState<RoleFormState>(() => formFromRole(editing));
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -52,10 +84,18 @@ export function RoleFormModal({ open, editing, existing, onClose, onSubmit }: Ro
 
   useEffect(() => {
     if (!open) return;
-    setForm(formFromRole(editing));
+    setForm(
+      editing
+        ? formFromRole(editing)
+        : duplicateOf
+          ? formFromDuplicate(duplicateOf, t("settings.roles.duplicateSuffix"))
+          : formFromRole(null),
+    );
     setErrors({});
     setSaving(false);
-  }, [open, editing]);
+    // `t` is stable for the open lifetime of the modal; re-running on a language
+    // switch would discard what the admin has typed.
+  }, [open, editing, duplicateOf]);
 
   const presets = useMemo(() => CUSTOM_ROLE_PRESETS, []);
   const generatedKey = form.key || normalizeRoleKey(form.name_en);
@@ -103,7 +143,13 @@ export function RoleFormModal({ open, editing, existing, onClose, onSubmit }: Ro
       open={open}
       onClose={onClose}
       size="lg"
-      title={editing ? t("settings.roles.form.titleEdit") : t("settings.roles.form.titleCreate")}
+      title={
+        editing
+          ? t("settings.roles.form.titleEdit")
+          : duplicateOf && !form.id
+            ? `${t("settings.roles.form.titleCreate")} · ${t("settings.roles.duplicate")}`
+            : t("settings.roles.form.titleCreate")
+      }
       footer={
         <>
           <Button variant="secondary" onClick={onClose} disabled={saving}>
@@ -122,7 +168,7 @@ export function RoleFormModal({ open, editing, existing, onClose, onSubmit }: Ro
           void submit();
         }}
       >
-        {!editing ? (
+        {!editing && !duplicateOf ? (
           <div className="rounded-xl border border-indigo-200 bg-indigo-50/60 p-3">
             <div className="mb-2 flex items-center justify-between gap-2">
               <p className="text-xs font-bold text-indigo-900">{t("settings.roles.presets.title")}</p>
@@ -236,6 +282,11 @@ export function RoleFormModal({ open, editing, existing, onClose, onSubmit }: Ro
           error={errorFor("capabilities")}
           onChange={(capabilities) => setForm((f) => ({ ...f, capabilities }))}
         />
+
+        {/* Read before saving, in verbs: what this role will be able to do, and
+            what it will not. It updates as the picker changes, so the sentence an
+            admin is about to make true is the one on screen. */}
+        <PermissionSummary capabilities={form.capabilities} />
 
         <ToggleSwitch
           checked={form.active}

@@ -23,9 +23,11 @@ import {
   resetUserPassword,
   setRoleActive,
   setUserActive,
+  setUserExceptions as setUserExceptionsRequest,
   updateRole,
   updateUser,
 } from "../services/settingsService";
+import type { CapabilityExceptions } from "@/lib/permissions/exceptions";
 import type { ManagedUser, RoleFormState, UserFormState } from "../types";
 
 export interface SettingsContextValue {
@@ -43,6 +45,12 @@ export interface SettingsContextValue {
   saveUser: (form: UserFormState) => Promise<ManagedUser>;
   toggleUserActive: (user: ManagedUser) => Promise<ManagedUser>;
   assignRole: (userId: string, customRoleId: string | null) => Promise<ManagedUser>;
+  /**
+   * Phase 17: replace one person's grants and denials. Goes through the service,
+   * so the capability check, the self-lockout guard and the audit entry happen
+   * here as they do on every other path into the data.
+   */
+  saveUserExceptions: (userId: string, exceptions: CapabilityExceptions) => Promise<ManagedUser>;
   resetPassword: (userId: string, password: string, confirmPassword: string) => Promise<void>;
   /** Create (`form.id === null`) or update. */
   saveRole: (form: RoleFormState) => Promise<CustomRole>;
@@ -140,6 +148,15 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     [context, refresh],
   );
 
+  const saveUserExceptions = useCallback(
+    async (userId: string, exceptions: CapabilityExceptions) => {
+      const saved = await setUserExceptionsRequest(userId, exceptions, context());
+      await refresh();
+      return saved;
+    },
+    [context, refresh],
+  );
+
   const resetPassword = useCallback(
     async (userId: string, password: string, confirmPassword: string) => {
       await resetUserPassword(userId, password, confirmPassword, context());
@@ -192,6 +209,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       saveUser,
       toggleUserActive,
       assignRole,
+      saveUserExceptions,
       resetPassword,
       saveRole,
       toggleRoleActive,
@@ -212,6 +230,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       saveUser,
       toggleUserActive,
       assignRole,
+      saveUserExceptions,
       resetPassword,
       saveRole,
       toggleRoleActive,

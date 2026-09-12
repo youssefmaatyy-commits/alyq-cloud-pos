@@ -26,6 +26,7 @@ import { queryCustomers } from "../services/customerService";
 import { CustomerFormModal } from "../components/CustomerFormModal";
 import type { Customer } from "../types";
 import { usePos } from "@/modules/pos";
+import { canAct } from "@/lib/permissions/enforce";
 
 export function CustomersPage() {
   const { t, date, num } = useI18n();
@@ -38,6 +39,14 @@ export function CustomersPage() {
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Customer | null>(null);
   const [deleting, setDeleting] = useState(false);
+
+  // Phase 17: the three acts on this screen are three capabilities. Hiding the
+  // button is the courtesy; `customerService` asserts the same capability, and in
+  // live mode the row-level policies assert it again — so a hand-built request
+  // meets the same answer the UI gave.
+  const mayAdd = canAct("add_customer");
+  const mayEdit = canAct("edit_customer");
+  const mayDelete = canAct("delete_customer");
 
   const filtered = useMemo(() => {
     return queryCustomers(customers, { search });
@@ -102,15 +111,17 @@ export function CustomersPage() {
               count={filtered.length}
               build={() => buildCustomersSheets({ customers: filtered, sales, t })}
             />
-            <Button
-              onClick={() => {
-                setEditingCustomer(null);
-                setModalOpen(true);
-              }}
-            >
-              <PlusIcon />
-              {t("customers.add")}
-            </Button>
+            {mayAdd ? (
+              <Button
+                onClick={() => {
+                  setEditingCustomer(null);
+                  setModalOpen(true);
+                }}
+              >
+                <PlusIcon />
+                {t("customers.add")}
+              </Button>
+            ) : null}
           </>
         }
       />
@@ -239,25 +250,29 @@ export function CustomersPage() {
                           >
                             <EyeIcon />
                           </Link>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setEditingCustomer(c);
-                              setModalOpen(true);
-                            }}
-                            className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900"
-                            title={t("common.edit")}
-                          >
-                            <EditIcon />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setDeleteTarget(c)}
-                            className="flex h-8 w-8 items-center justify-center rounded-lg text-rose-500 transition-colors hover:bg-rose-50 hover:text-rose-700"
-                            title={t("common.delete")}
-                          >
-                            <TrashIcon />
-                          </button>
+                          {mayEdit ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingCustomer(c);
+                                setModalOpen(true);
+                              }}
+                              className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900"
+                              title={t("common.edit")}
+                            >
+                              <EditIcon />
+                            </button>
+                          ) : null}
+                          {mayDelete ? (
+                            <button
+                              type="button"
+                              onClick={() => setDeleteTarget(c)}
+                              className="flex h-8 w-8 items-center justify-center rounded-lg text-rose-500 transition-colors hover:bg-rose-50 hover:text-rose-700"
+                              title={t("common.delete")}
+                            >
+                              <TrashIcon />
+                            </button>
+                          ) : null}
                         </div>
                       </td>
                     </tr>

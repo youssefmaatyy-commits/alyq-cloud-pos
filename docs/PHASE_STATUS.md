@@ -527,3 +527,110 @@ What Phases 11–14 added on top of the Phase 9 snapshot:
   with it, and the dashboard charts their span with it, so three screens cannot define a month
   differently. It moved out of the component so a headless caller can read a window without pulling
   the UI graph into a logic suite.
+
+---
+
+## Verification snapshot after Phase 17
+
+Phases 15–16 (stock-hold reconciliation, realtime underneath the app, reservation
+monitoring and alerts) landed in commits `1a8bfc0` and `a02bb39` without a snapshot
+of their own; the numbers below are the first taken after them, so they cover all
+three phases.
+
+| Check | Result |
+| --- | --- |
+| `npm run typecheck` | clean — and the EN/AR dictionary is 2563 keys on both sides, with no key on one side only |
+| `npm run build` | green — single self-contained HTML document, 2,344 kB (629 kB gzip) |
+| `npm test` | 22/22 suites, 533 tests — including the new 24/24 Phase 17 access-control suite, 27/27 settings (was 24), 35/35 export, 15/15 role model, 12/12 enforcement |
+| `npm run db:check` | migrations 0001–0028 apply, are idempotent, and match the app's row types, its role model (5 roles, 131 grants), the audit vocabulary (48 actions over 15 entities) and the seed — plus a new behaviour probe that resolves per-user exceptions in SQL |
+| `npm run test:e2e` | 3/3 suites — smoke, auth, store · 0 console errors · 0 network calls |
+
+What Phase 17 added on top of the Phase 15–16 snapshot:
+
+- **Six capabilities, and the two areas they were missing from** — `view_customers`,
+  `add_customer`, `edit_customer`, `delete_customer`, `view_cost`, `change_cost`, taking the
+  model to 40. The customer book had existed for eight releases with no capability describing
+  it, which is why no custom role could be built without it; cost had been gated by
+  `change_price`, which conflated "may reprice" with "may see what the shop paid". History is
+  part of `view_customers` rather than a fourth act: same screen, same person, same reason for
+  looking. Grants: every role may view customers and cost; cashier and inventory clerk may add
+  and edit customers and change cost; only manager and admin may delete a customer; viewer
+  stays read-only (7 capabilities).
+- **Per-user exceptions** — `profiles.extra_capabilities` / `denied_capabilities`, mirrored in
+  the offline staff directory, resolved by `src/lib/permissions/exceptions.ts` and by
+  `public.current_user_capabilities()` in SQL. Deny wins, and it wins in storage too: the
+  write path drops a grant that a denial contradicts, so the disjointness constraint is never
+  reached by a careless caller. Exceptions belong to the *person*, not the role — promoting
+  somebody keeps them — and they sit on top of a custom role overlay exactly as they sit on
+  top of the system matrix. `public.admin_set_user_exceptions()` is the only door to the
+  columns: it requires `manage_users`, validates against `known_capabilities()`, and refuses
+  to let an administrator deny themselves the console.
+- **Access preview** — `src/lib/permissions/preview.ts` answers "what would this role actually
+  see?" from the same three inputs the gates use and the same two tables they read. It is a
+  projection, not a bypass: it never writes to the session, never calls `canAct`, and no guard
+  in the app reads a value it returns. The suite signs a viewer in, previews an administrator,
+  and asserts the viewer is still refused everything they were refused before.
+- **Cost, gated in five places** — the product form hides the field without `view_cost` and
+  makes it read-only without `change_cost`; the product page and table hide cost, profit and
+  margin; the products and inventory exports drop the cost, margin and stock-value columns and
+  keep their totals aligned with the columns they actually wrote; the Excel importer discards a
+  cost column from a seat that may not change one, and says so in the modal. Profit is derived
+  from cost, so it is gated with it rather than separately.
+- **The customer book, gated in three places** — the screens hide what a seat may not do, the
+  service asserts the capability before it touches a repository, and migration 0028 gives
+  `public.customers` four policies that ask `public.can()` for the matching capability. It is
+  the only tenant table tightened here: the rest are written from inside `security definer`
+  RPCs whose checks live in the service layer, and tightening them is a change of its own.
+- **The Roles screen** — search across names in both languages, key, description, base role and
+  the permissions a role holds (so "which role may approve a refund?" is a question the screen
+  answers); duplicate a role into a new one with a unique name; a permission count, an
+  action-verb tally and the assigned-user count on every card; a preview button per role and a
+  global one. `PermissionPicker` now shows the verb of each act, and `PermissionSummary` states
+  what a role may and may not do in words rather than tick boxes.
+- **Users screen** — an exceptions button and badge per seat, opening `UserExceptionsModal`:
+  two lists (grant / withhold), a live preview of the resolved result, and the same
+  self-lockout refusal the service and the database make.
+- **Audit** — one new action, `user.permissions_changed`, written by the service that changes
+  them, recording `granted`, `ungranted`, `withheld`, `restored` and both lists as stored, so a
+  row can be re-read later without guessing what "granted" meant at the time. No second trail.
+- **Migration 0028** — seeds the 24 new `role_capabilities` rows, adds the audit action, the two
+  profile columns and their disjointness constraint, `current_user_capabilities()`, the rewritten
+  `public.can()` (deny → grant → overlay → matrix), `admin_set_user_exceptions()`, the four
+  customer policies, and the grants. `npm run db:check` applies it, re-applies it to prove
+  idempotence, and then *behaves* against it: it derives which capability to take away and which
+  to grant from `role_capabilities` rather than hardcoding either, and asserts the grant reaches
+  `can()`, the denial overrides the role's own matrix, deny wins over a grant of the same act,
+  `current_user_capabilities()` agrees with `can()` capability by capability, a cashier calling
+  the RPC is refused, an administrator denying themselves `manage_users` is refused, clearing the
+  exceptions restores the matrix exactly, and all four customer policies ask for the capability
+  they are named after.
+- **Tests** — `src/lib/permissions/__tests__/accessControl.selftest.ts` (24) covers the exception
+  arithmetic and its enforcement through real service funnels, the preview's agreement with a
+  signed-in session and its inability to change one, and the catalogue's completeness: every
+  capability has exactly one of seven verbs, belongs to exactly one group, is translated in both
+  languages (label, hint and denial copy), is held by at least one role, and is read by a gate
+  somewhere in `src/`. The settings suite gained three: exceptions end to end through
+  `authenticate()`, an exception travelling with a person across a role change, and role search
+  (both languages, key, description, base role, permission id and permission label, multi-term
+  narrowing, stable order, empty results). The export suite gained two negative cost-gating
+  tests, and the auth suite now asserts `/customers` is *not* an open path.
+
+Deliberately not done, and why:
+
+- **No supplier capabilities.** There is no supplier entity in the schema or the app, so a
+  `view_suppliers` group would have been a permission that gates nothing — the exact drift the
+  catalogue tests exist to catch. Adding the entity is its own phase.
+- **Cost is scoped to the catalogue.** `view_cost` / `change_cost` gate products, their exports
+  and their imports. Reports that show margin keep their existing `view_reports` gate: changing
+  what a report reveals is a reporting decision, not a catalogue one.
+- **No role sorting.** The Roles screen lists roles in store order and search preserves it
+  (asserted), because inventing a sort order nobody asked for would change what "first" means on
+  a screen administrators recognise.
+- **`enforcement.selftest.ts` runs signed out.** Its `signInAs` helper writes a session and then
+  calls `resetSessionCache()` + `primeCacheFromStorage()`, and with no `localStorage` in node the
+  prime reads nothing back — so every caller in that suite is anonymous and its refusals pass for
+  the right result and the wrong reason. Phase 17's suite does not repeat the mistake (it relies
+  on the in-memory cache `writeStoredSession` already primes, and stubs storage where persistence
+  is the thing under test), and the settings suite has always stubbed it. Fixing the older suite
+  means giving it the same stub and re-checking 12 assertions that have never actually run
+  authorised, which is a change of its own rather than a rider on this one.

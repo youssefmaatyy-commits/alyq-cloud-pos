@@ -2,7 +2,14 @@ import { useMemo, useState } from "react";
 import { Badge, Card, SearchIcon, TextInput } from "@/components/ui";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { CAPABILITIES, capabilitiesOf, type AppRole, type Capability } from "@/lib/permissions/roles";
-import { CAPABILITY_GROUPS, capabilityHintKey, capabilityLabelKey, capabilityGroupLabelKey } from "@/lib/permissions/catalog";
+import {
+  CAPABILITY_GROUPS,
+  actionOfCapability,
+  actionsInGroup,
+  capabilityHintKey,
+  capabilityLabelKey,
+  capabilityGroupLabelKey,
+} from "@/lib/permissions/catalog";
 
 export interface PermissionPickerProps {
   value: Capability[];
@@ -21,6 +28,15 @@ export interface PermissionPickerProps {
  * `catalogProblems()` in the logic suite fails if it is not grouped at all. The
  * alternative (a list maintained beside the matrix) is how a permission ends up
  * ungrantable.
+ *
+ * Every row also carries its verb — View, Create, Edit, Delete, Approve, Export,
+ * Manage — because "permissions" is not one kind of thing. A group header lists
+ * the verbs that area actually uses, so an admin can see at a glance that
+ * Customers is view/create/edit/delete and Reports is view/export, and never has
+ * to wonder why there is no "Approve customer" to tick. The verbs come from
+ * `CAPABILITY_ACTIONS`, which the compiler checks against the full capability
+ * list: a capability added to `roles.ts` without declaring its verb does not
+ * build, which is how the picker supports permissions nobody has written yet.
  *
  * The "the base role grants this" hint is the part that makes a custom role
  * understandable. A custom role *replaces* the system matrix, so unticking
@@ -132,6 +148,10 @@ export function PermissionPicker({ value, onChange, baseRole, disabled, error }:
               <div className="mb-2 flex items-center justify-between gap-2">
                 <p className="text-xs font-bold uppercase tracking-wide text-slate-700">
                   {translate(capabilityGroupLabelKey(group.key))}
+                  {/* The columns this area has — the actions that make sense here. */}
+                  <span className="ms-2 font-semibold normal-case tracking-normal text-slate-500">
+                    {actionsInGroup(group.key).map((action) => translate(`permissions.action.${action}`)).join(" · ")}
+                  </span>
                 </p>
                 <div className="flex items-center gap-2">
                   <button
@@ -176,7 +196,12 @@ export function PermissionPicker({ value, onChange, baseRole, disabled, error }:
                           onChange={() => toggle(capability)}
                         />
                         <span className="min-w-0">
-                          <span className="block font-bold">{translate(capabilityLabelKey(capability))}</span>
+                          <span className="flex items-center gap-1.5">
+                            <span className="block font-bold">{translate(capabilityLabelKey(capability))}</span>
+                            <span className="shrink-0 rounded-full bg-slate-100 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wide text-slate-500">
+                              {translate(`permissions.action.${actionOfCapability(capability)}`)}
+                            </span>
+                          </span>
                           <span className="block font-medium text-slate-600">
                             {translate(capabilityHintKey(capability))}
                           </span>

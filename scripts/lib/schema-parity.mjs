@@ -645,3 +645,159 @@ export async function checkSeedParity({
     `  ${c.green("✓")} public.can() follows the overlay: assign → accountant's list decides, deactivate → base role, clear → system matrix`,
   );
 }
+
+/**
+ * Phase 17 behaviour: per-user exceptions, resolved by the database.
+ *
+ * The overlay probe above shows `public.can()` following a custom role. This one
+ * shows it following a *person*: a grant adds what the role lacks, a denial
+ * removes what the role holds, and a denial wins over a grant of the same act —
+ * in the SQL, not only in TypeScript. The two implementations are separate code
+ * paths (migration 0028 and `src/lib/permissions/exceptions.ts`), so agreement
+ * is a claim worth checking rather than assuming.
+ *
+ * Everything expected here is derived from `public.role_capabilities`: which
+ * capability to take away is "one the seeded cashier holds", which to grant is
+ * "one the cashier does not hold but another role does". Moving a capability
+ * between roles therefore cannot silently turn this probe into a no-op.
+ *
+ * It also checks the two refusals the RPC exists to make, and that the customer
+ * book is gated in the database as well as in the service — the module's whole
+ * point is that hiding a button is not a security control.
+ */
+export async function checkExceptionParity({ driver, failures, c, log }) {
+  const problems = [];
+  const asUser = async (id) => {
+    await driver.query(`select set_config('request.jwt.claim.sub', '${id}', false)`);
+    await driver.query(
+      `select set_config('request.jwt.claims', '{"sub":"${id}","role":"authenticated"}', false)`,
+    );
+  };
+  const can = async (capability) =>
+    (await driver.query(`select public.can('${capability}')`))[0][0] === "true";
+
+  try {
+    const adminId = (await driver.query(`select id::text from auth.users where email = 'admin@alyq.local'`))[0]?.[0];
+    const cashierId = (await driver.query(`select id::text from public.profiles where username = 'cashier'`))[0]?.[0];
+    if (!adminId || !cashierId) throw new Error("the seed left no admin or cashier to test with");
+
+    const held = new Set(
+      (await driver.query(`select capability from public.role_capabilities where role = 'cashier'`)).map((row) => row[0]),
+    );
+    const elsewhere = (
+      await driver.query(`select capability from public.role_capabilities where role <> 'cashier' order by capability`)
+    ).map((row) => row[0]);
+    const DENY = [...held].sort()[0];
+    const KEEP = [...held].sort().find((capability) => capability !== DENY);
+    const GRANT = elsewhere.find((capability) => !held.has(capability));
+    if (!DENY || !KEEP || !GRANT) {
+      throw new Error("the cashier's matrix does not differ from the other roles in both directions");
+    }
+
+    // Baseline: before any exception, the matrix decides.
+    await asUser(cashierId);
+    if (!(await can(DENY))) problems.push(`a seeded cashier does not hold '${DENY}' before any exception is written`);
+    if (!(await can(KEEP))) problems.push(`a seeded cashier does not hold '${KEEP}' before any exception is written`);
+    if (await can(GRANT)) problems.push(`a seeded cashier already holds '${GRANT}' before any exception is written`);
+
+    // A grant and a denial, written together.
+    await asUser(adminId);
+    await driver.query(
+      `select public.admin_set_user_exceptions('${cashierId}', array['${GRANT}']::text[], array['${DENY}']::text[])`,
+    );
+    await asUser(cashierId);
+    if (!(await can(GRANT))) problems.push(`the grant of '${GRANT}' did not reach public.can()`);
+    if (await can(DENY)) problems.push(`the denial of '${DENY}' did not override the cashier's own matrix`);
+    if (!(await can(KEEP))) problems.push(`writing exceptions disturbed '${KEEP}', which nothing mentioned`);
+
+    // The set-returning resolver must agree with can(), capability by capability.
+    const resolved = new Set(
+      (await driver.query(`select capability from public.current_user_capabilities()`)).map((row) => row[0]),
+    );
+    if (!resolved.has(GRANT)) problems.push("current_user_capabilities() omits a granted capability");
+    if (resolved.has(DENY)) problems.push("current_user_capabilities() still lists a denied capability");
+    for (const capability of resolved) {
+      if (!(await can(capability))) problems.push(`current_user_capabilities() lists '${capability}' but can() refuses it`);
+    }
+
+    // Deny wins over a grant of the same act — and wins in storage too, so the
+    // disjointness constraint is never reached by a careless caller.
+    await asUser(adminId);
+    await driver.query(
+      `select public.admin_set_user_exceptions('${cashierId}', array['${DENY}']::text[], array['${DENY}']::text[])`,
+    );
+    await asUser(cashierId);
+    if (await can(DENY)) problems.push(`deny did not win when '${DENY}' was granted and denied in the same call`);
+    const storedExtra = (
+      await driver.query(
+        `select coalesce(array_to_string(extra_capabilities, ','), '') from public.profiles where id = '${cashierId}'`,
+      )
+    )[0][0];
+    if (storedExtra.split(",").filter(Boolean).includes(DENY)) {
+      problems.push(`the RPC stored a contradictory grant of '${DENY}' instead of dropping it`);
+    }
+
+    // The door is the only door: a seat without manage_users cannot write them.
+    await asUser(cashierId);
+    let refusedCaller = false;
+    try {
+      await driver.query(`select public.admin_set_user_exceptions('${adminId}', '{}', '{}')`);
+    } catch {
+      refusedCaller = true;
+    }
+    if (!refusedCaller) problems.push("a cashier was able to call public.admin_set_user_exceptions()");
+
+    // And an admin cannot lock themselves out of the console.
+    await asUser(adminId);
+    let refusedSelfLockout = false;
+    try {
+      await driver.query(`select public.admin_set_user_exceptions('${adminId}', '{}', array['manage_users']::text[])`);
+    } catch {
+      refusedSelfLockout = true;
+    }
+    if (!refusedSelfLockout) problems.push("an administrator was allowed to deny themselves manage_users");
+
+    // Clearing them gives the matrix back exactly as it was.
+    await asUser(adminId);
+    await driver.query(`select public.admin_set_user_exceptions('${cashierId}', '{}', '{}')`);
+    await asUser(cashierId);
+    if (!(await can(DENY))) problems.push(`clearing the exceptions did not give '${DENY}' back`);
+    if (await can(GRANT)) problems.push(`clearing the exceptions left '${GRANT}' behind`);
+
+    // The customer book is gated where it is stored, not only where it is shown.
+    const policies = await driver.query(
+      `select policyname, cmd, coalesce(qual, '') || ' ' || coalesce(with_check, '') from pg_policies
+        where schemaname = 'public' and tablename = 'customers'`,
+    );
+    const expected = [
+      ["SELECT", "view_customers"],
+      ["INSERT", "add_customer"],
+      ["UPDATE", "edit_customer"],
+      ["DELETE", "delete_customer"],
+    ];
+    for (const [cmd, capability] of expected) {
+      const rows = policies.filter((row) => row[1] === cmd);
+      if (rows.length === 0) {
+        problems.push(`public.customers has no ${cmd} policy`);
+        continue;
+      }
+      if (!rows.some((row) => String(row[2]).includes(`'${capability}'`))) {
+        problems.push(`the ${cmd} policy on public.customers does not ask for '${capability}'`);
+      }
+    }
+
+    await driver.query(`select set_config('request.jwt.claim.sub', '', false)`);
+    await driver.query(`select set_config('request.jwt.claims', '', false)`);
+  } catch (error) {
+    problems.push(`the exception behaviour check could not run: ${String(error.message).split("\n")[0]}`);
+  }
+
+  if (problems.length > 0) {
+    for (const problem of problems) log(`  ${c.red("✗")} ${problem}`);
+    failures.push({ name: "exception parity", phase: "behaviour", error: problems[0] });
+    return;
+  }
+  log(
+    `  ${c.green("✓")} public.can() follows the exceptions: a grant adds, a denial overrides, deny wins, clearing restores — and the customer book is gated in the database`,
+  );
+}

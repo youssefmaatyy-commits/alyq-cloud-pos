@@ -27,6 +27,13 @@ export interface ManagedUser {
   custom_role_id: string | null;
   /** Resolved for display; never authoritative (the store is). */
   custom_role_name: string | null;
+  /**
+   * Phase 17: personal grants and denials on top of the role. Empty for nearly
+   * everybody; when they are not, the Users screen says so, because a permission
+   * nobody can see is a permission nobody will remember to remove.
+   */
+  extra_capabilities: readonly Capability[];
+  denied_capabilities: readonly Capability[];
   created_at: string | null;
   last_login_at: string | null;
 }

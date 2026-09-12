@@ -28,6 +28,7 @@ import {
   upsertStaffEntry,
   type StaffDirectoryEntry,
 } from "@/lib/auth/data/staffDirectory";
+import { sanitizeCapabilityExceptions, type CapabilityExceptions } from "@/lib/permissions/exceptions";
 import type { CustomRoleInput, SettingsRepository } from "./repository";
 import type { ManagedUser, NewUserInput, UserPatch } from "../types";
 
@@ -53,6 +54,8 @@ function toManagedUser(entry: StaffDirectoryEntry): ManagedUser {
     active: entry.active,
     custom_role_id: entry.custom_role_id,
     custom_role_name: roleLabel(entry),
+    extra_capabilities: entry.extra_capabilities ?? [],
+    denied_capabilities: entry.denied_capabilities ?? [],
     created_at: entry.created_at,
     last_login_at: entry.last_login_at,
   };
@@ -104,6 +107,10 @@ export class DemoSettingsRepository implements SettingsRepository {
       // The overlay's base wins, exactly as `admin_set_custom_role` sets it.
       role: overlay ? overlay.base_role : (normalizeRole(input.role) ?? "viewer"),
       custom_role_id: overlay ? overlay.id : null,
+      // A new account starts as its role and nothing personal: an exception is
+      // something an admin adds later, on purpose, for a named reason.
+      extra_capabilities: [],
+      denied_capabilities: [],
       active: input.active !== false,
       created_at: now,
       last_login_at: null,
@@ -160,6 +167,18 @@ export class DemoSettingsRepository implements SettingsRepository {
   async setUserActive(id: string, active: boolean): Promise<ManagedUser> {
     const entry = requireEntry(id);
     entry.active = active;
+    upsertStaffEntry(entry);
+    return toManagedUser(entry);
+  }
+
+  async setUserExceptions(id: string, exceptions: CapabilityExceptions): Promise<ManagedUser> {
+    const entry = requireEntry(id);
+    // Normalise before writing, exactly as the database RPC does: unknown ids
+    // dropped, duplicates folded, deny winning over a grant of the same act. The
+    // two stores then hold the same bytes for the same decision.
+    const next = sanitizeCapabilityExceptions(exceptions);
+    entry.extra_capabilities = [...next.extra];
+    entry.denied_capabilities = [...next.denied];
     upsertStaffEntry(entry);
     return toManagedUser(entry);
   }

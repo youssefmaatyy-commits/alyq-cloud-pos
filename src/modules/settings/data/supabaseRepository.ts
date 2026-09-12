@@ -27,6 +27,11 @@ import { AppError, toAppError } from "@/modules/products/data/repository";
 import { normalizeRole, type AppRole } from "@/lib/permissions/roles";
 import { usernameToEmail } from "@/lib/auth/services/identity";
 import type { CustomRole, CustomRoleDraft } from "@/lib/permissions/customRoles";
+import {
+  parseCapabilityExceptions,
+  sanitizeCapabilityExceptions,
+  type CapabilityExceptions,
+} from "@/lib/permissions/exceptions";
 import type { CustomRoleInput, SettingsRepository } from "./repository";
 import type { ManagedUser, NewUserInput, UserPatch } from "../types";
 
@@ -39,6 +44,8 @@ interface ProfileRow {
   email: string | null;
   phone: string | null;
   custom_role_id: string | null;
+  extra_capabilities: string[] | null;
+  denied_capabilities: string[] | null;
   last_login_at: string | null;
   created_at: string | null;
 }
@@ -61,9 +68,18 @@ interface CustomRoleRow {
 }
 
 const PROFILE_COLUMNS =
-  "id, username, name, role, active, email, phone, custom_role_id, last_login_at, created_at";
+  "id, username, name, role, active, email, phone, custom_role_id, extra_capabilities, denied_capabilities, last_login_at, created_at";
 const ROLE_COLUMNS =
   "id, key, name_en, name_ar, description_en, description_ar, base_role, capabilities, active, is_system, created_by, created_by_name, created_at, updated_at";
+
+/** The two Phase 17 columns, parsed the same way on every read path. */
+function exceptionColumns(row: ProfileRow) {
+  const exceptions = parseCapabilityExceptions(row);
+  return {
+    extra_capabilities: exceptions.extra,
+    denied_capabilities: exceptions.denied,
+  };
+}
 
 /** The edge function that holds the service role. */
 const ADMIN_FUNCTION = "alyq-admin";
@@ -144,6 +160,7 @@ export class SupabaseSettingsRepository implements SettingsRepository {
       active: row.active !== false,
       custom_role_id: row.custom_role_id,
       custom_role_name: row.custom_role_id ? names.get(row.custom_role_id) ?? null : null,
+      ...exceptionColumns(row),
       created_at: row.created_at,
       last_login_at: row.last_login_at,
     }));
@@ -232,6 +249,20 @@ export class SupabaseSettingsRepository implements SettingsRepository {
     return this.updateUser(id, { active });
   }
 
+  async setUserExceptions(id: string, exceptions: CapabilityExceptions): Promise<ManagedUser> {
+    // The RPC re-checks `public.can('manage_users')`, validates both lists
+    // against `known_capabilities()` and refuses to strip the caller's own
+    // oversight, so a forged request meets the same arithmetic the UI showed.
+    const next = sanitizeCapabilityExceptions(exceptions);
+    const { error } = await this.client().rpc("admin_set_user_exceptions", {
+      p_user_id: id,
+      p_extra: [...next.extra],
+      p_denied: [...next.denied],
+    });
+    if (error) translate(error);
+    return this.readUser(id);
+  }
+
   async assignCustomRole(id: string, customRoleId: string | null): Promise<ManagedUser> {
     const { error } = await this.client().rpc("admin_set_custom_role", {
       p_user_id: id,
@@ -280,6 +311,7 @@ export class SupabaseSettingsRepository implements SettingsRepository {
       active: row.active !== false,
       custom_role_id: row.custom_role_id,
       custom_role_name: customRoleName,
+      ...exceptionColumns(row),
       created_at: row.created_at,
       last_login_at: row.last_login_at,
     };

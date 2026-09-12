@@ -49,6 +49,7 @@ import {
   checkAuditVocabularyParity,
   checkCapabilityParity,
   checkColumnParity,
+  checkExceptionParity,
   checkRoleAliasParity,
   checkSeedParity,
 } from "./lib/schema-parity.mjs";
@@ -553,7 +554,7 @@ if (failures.length === 0) {
     checkAuditVocabularyParity,
     checkRoleAliasParity,
   ];
-  if (seedApplied) stages.push(checkSeedParity);
+  if (seedApplied) stages.push(checkSeedParity, checkExceptionParity);
   for (const stage of stages) {
     try {
       await stage(context);

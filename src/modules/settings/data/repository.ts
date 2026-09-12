@@ -17,6 +17,7 @@
  * meets the database.
  */
 import type { CustomRole, CustomRoleDraft } from "@/lib/permissions/customRoles";
+import type { CapabilityExceptions } from "@/lib/permissions/exceptions";
 import type { ManagedUser, NewUserInput, UserPatch } from "../types";
 
 /** A draft plus the on/off switch the role list exposes. */
@@ -33,6 +34,14 @@ export interface SettingsRepository {
   setUserActive(id: string, active: boolean): Promise<ManagedUser>;
   /** Assign or clear the custom-role overlay. */
   assignCustomRole(id: string, customRoleId: string | null): Promise<ManagedUser>;
+  /**
+   * Phase 17: replace one person's permission exceptions. Replaces rather than
+   * patches, so what the admin sees in the picker is exactly what is stored.
+   * Live mode goes through `admin_set_user_exceptions`, which re-checks
+   * `public.can('manage_users')` server-side and refuses to strip the caller's
+   * own oversight; demo mode writes the directory.
+   */
+  setUserExceptions(id: string, exceptions: CapabilityExceptions): Promise<ManagedUser>;
   /**
    * Admin reset: replace the password outright.
    * Live mode goes through the edge function (service role); demo mode writes a

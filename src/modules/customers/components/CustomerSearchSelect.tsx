@@ -4,6 +4,7 @@ import { Button, SelectInput, UsersIcon } from "@/components/ui";
 import type { Customer } from "../types";
 import { useCustomers } from "../hooks/CustomerProvider";
 import { CustomerFormModal } from "./CustomerFormModal";
+import { canAct } from "@/lib/permissions/enforce";
 
 interface Props {
   selectedCustomerId?: string | null;
@@ -19,10 +20,18 @@ export function CustomerSearchSelect({
   allowQuickAdd = true,
 }: Props) {
   const { t } = useI18n();
-  const { customers } = useCustomers();
+  const { customers, canView } = useCustomers();
   const [modalOpen, setModalOpen] = useState(false);
 
   const selected = customers.find((c) => c.id === selectedCustomerId);
+  // Quick-add is its own act: a seat may be allowed to read the book without
+  // being allowed to add to it, and the reverse is possible too.
+  const mayQuickAdd = allowQuickAdd && canAct("add_customer");
+
+  // A role that may not read customers gets no picker at all, and the sale
+  // proceeds without one. Rendering an empty dropdown would read as "there are
+  // no customers" — a claim about the shop this seat is not allowed to make.
+  if (!canView) return null;
 
   return (
     <div className={`space-y-1.5 ${className ?? ""}`}>
@@ -31,7 +40,7 @@ export function CustomerSearchSelect({
           <UsersIcon className="h-3.5 w-3.5 text-slate-500" />
           <span>{t("customers.customerLabel")}</span>
         </label>
-        {allowQuickAdd && (
+        {mayQuickAdd && (
           <button
             type="button"
             onClick={() => setModalOpen(true)}

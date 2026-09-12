@@ -22,6 +22,7 @@ import {
   type ProductFormValues,
 } from "../validation";
 import { ApprovalRequestDialog, isApprovalRequired, type ApprovalRequirement } from "@/modules/approvals";
+import { canAct } from "@/lib/permissions/enforce";
 import { useCatalog } from "../hooks/CatalogProvider";
 import { toCategoryOptions } from "../services/categoryTree";
 import { describeError } from "../services/catalogService";
@@ -42,9 +43,15 @@ export function ProductForm({ productId }: { productId?: string }) {
     [productId, products],
   );
 
-  const [values, setValues] = useState<ProductFormValues>(() =>
-    existing ? productToForm(existing) : EMPTY_PRODUCT_FORM,
-  );
+  const [values, setValues] = useState<ProductFormValues>(() => {
+    const base = existing ? productToForm(existing) : EMPTY_PRODUCT_FORM;
+    // Phase 17: a seat that may not see cost price still submits a value for it,
+    // because the record has one and the form validates it. Hidden means
+    // unchanged, never zeroed — an edit carries the product's own cost through
+    // (so `priceChanges` sees no move and asks for no authority), and a new
+    // product starts at zero rather than failing a field nobody can fill in.
+    return canAct("view_cost") || base.cost_price.trim() ? base : { ...base, cost_price: "0" };
+  });
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [submitAttempted, setSubmitAttempted] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -148,6 +155,12 @@ export function ProductForm({ productId }: { productId?: string }) {
     () => toCategoryOptions(tree, pick, { includeInactive: true }),
     [tree, pick],
   );
+
+  // Cost is two capabilities, not one: seeing the number and writing it. A seat
+  // that may see but not write gets a read-only field that says why; a seat that
+  // may do neither gets no field at all.
+  const maySeeCost = canAct("view_cost");
+  const mayChangeCost = canAct("change_cost");
 
   const selling = Number(values.selling_price.replace(/,/g, ".")) || 0;
   const cost = Number(values.cost_price.replace(/,/g, ".")) || 0;
@@ -490,24 +503,28 @@ export function ProductForm({ productId }: { productId?: string }) {
                   placeholder="0.00"
                 />
               </Field>
-              <Field
-                label={t("products.costPrice")}
-                required
-                error={showError("cost_price") ? t(fieldErrorKey(showError("cost_price")!) as never) : undefined}
-                htmlFor="cost_price"
-              >
-                <TextInput
-                  id="cost_price"
-                  name="cost_price"
-                  dir="ltr"
-                  inputMode="decimal"
-                  value={values.cost_price}
-                  invalid={Boolean(showError("cost_price"))}
-                  onBlur={handleBlur("cost_price")}
-                  onChange={(e) => set("cost_price", e.target.value)}
-                  placeholder="0.00"
-                />
-              </Field>
+              {maySeeCost ? (
+                <Field
+                  label={t("products.costPrice")}
+                  required
+                  hint={mayChangeCost ? undefined : t("permissions.denied.change_cost")}
+                  error={showError("cost_price") ? t(fieldErrorKey(showError("cost_price")!) as never) : undefined}
+                  htmlFor="cost_price"
+                >
+                  <TextInput
+                    id="cost_price"
+                    name="cost_price"
+                    dir="ltr"
+                    inputMode="decimal"
+                    readOnly={!mayChangeCost}
+                    value={values.cost_price}
+                    invalid={Boolean(showError("cost_price"))}
+                    onBlur={handleBlur("cost_price")}
+                    onChange={(e) => set("cost_price", e.target.value)}
+                    placeholder="0.00"
+                  />
+                </Field>
+              ) : null}
               <Field
                 label={t("products.taxRate")}
                 required
@@ -572,8 +589,14 @@ export function ProductForm({ productId }: { productId?: string }) {
             ) : null}
 
             <div className="mt-3 grid gap-3 sm:grid-cols-3">
-              <StatTile label={t("products.profit")} value={money(profit)} tone={profit >= 0 ? "success" : "danger"} />
-              <StatTile label={t("products.margin")} value={margin === null ? "—" : `${num(margin, 1)}%`} />
+              {/* Both figures are cost in disguise: profit is price minus cost,
+                  and margin is the same subtraction as a percentage. */}
+              {maySeeCost ? (
+                <>
+                  <StatTile label={t("products.profit")} value={money(profit)} tone={profit >= 0 ? "success" : "danger"} />
+                  <StatTile label={t("products.margin")} value={margin === null ? "—" : `${num(margin, 1)}%`} />
+                </>
+              ) : null}
               <StatTile
                 label={t("common.stock")}
                 value={values.stock_tracking_enabled ? num(Number(values.stock_quantity.replace(/,/g, ".")) || 0, 0) : "—"}

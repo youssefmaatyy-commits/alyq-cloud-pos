@@ -20,7 +20,8 @@
  * are configured.
  */
 import { safeStorage } from "@/modules/products/data/demoSeed";
-import { normalizeRole, type AppRole } from "@/lib/permissions/roles";
+import { normalizeRole, type AppRole, type Capability } from "@/lib/permissions/roles";
+import { parseCapabilityExceptions } from "@/lib/permissions/exceptions";
 import { DEMO_USERS } from "../demoUsers";
 import type { PasswordVerifier } from "../services/password";
 
@@ -37,6 +38,15 @@ export interface StaffDirectoryEntry {
   role: AppRole;
   /** Admin-defined overlay (Phase 10), or null. */
   custom_role_id: string | null;
+  /**
+   * Phase 17: this person's own grants and denials, on top of whatever role they
+   * wear. Mirrors `profiles.extra_capabilities` / `denied_capabilities` (0028) so
+   * the offline directory and the database hold the same idea, and a demo
+   * installation enforces the same model a live one does. Empty for almost
+   * everybody: an exception is the unusual case, not a per-user permission list.
+   */
+  extra_capabilities: Capability[];
+  denied_capabilities: Capability[];
   active: boolean;
   created_at: string;
   last_login_at: string | null;
@@ -64,6 +74,8 @@ function seedFromDemoUsers(): StaffDirectoryEntry[] {
     phone: null,
     role: user.role,
     custom_role_id: null,
+    extra_capabilities: [],
+    denied_capabilities: [],
     active: true,
     created_at: SYSTEM_CREATED_AT,
     last_login_at: null,
@@ -87,6 +99,7 @@ function isEntry(value: unknown): value is StaffDirectoryEntry {
 /** Normalise one record, dropping anything that cannot be trusted. */
 function normalizeEntry(entry: StaffDirectoryEntry): StaffDirectoryEntry {
   const role = normalizeRole(entry.role) ?? "viewer";
+  const exceptions = parseCapabilityExceptions(entry);
   return {
     id: entry.id,
     username: entry.username.trim().toLowerCase(),
@@ -95,6 +108,9 @@ function normalizeEntry(entry: StaffDirectoryEntry): StaffDirectoryEntry {
     phone: typeof entry.phone === "string" && entry.phone.trim() ? entry.phone.trim() : null,
     role,
     custom_role_id: typeof entry.custom_role_id === "string" && entry.custom_role_id ? entry.custom_role_id : null,
+    // Never trust what was stored: unknown ids dropped, deny wins, sorted.
+    extra_capabilities: [...exceptions.extra],
+    denied_capabilities: [...exceptions.denied],
     active: entry.active !== false,
     created_at: typeof entry.created_at === "string" ? entry.created_at : SYSTEM_CREATED_AT,
     last_login_at: typeof entry.last_login_at === "string" ? entry.last_login_at : null,

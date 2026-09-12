@@ -546,6 +546,9 @@ test("inventory export carries the requested columns and a totals row", () => {
     categoryName: (id) => (id === "cat-1" ? "Drinks" : "—"),
     t,
     pick,
+    // Passed rather than read from a session: this suite runs signed out, and the
+    // builder defaults to `canAct("view_cost")`, which is false for nobody.
+    maySeeCost: true,
   });
 
   for (const key of [
@@ -580,6 +583,7 @@ test("products export covers the whole catalogue record", () => {
     categories: CATEGORIES,
     t,
     pick,
+    maySeeCost: true,
   });
   for (const key of [
     "export.col.sku",
@@ -600,6 +604,56 @@ test("products export covers the whole catalogue record", () => {
   const margin = sheet.rows[0][sheet.header.indexOf("export.col.margin")];
   assert.equal(margin, 60, "(100 − 40) / 100 = 60%");
   assert.equal(sheet.rows[0][sheet.header.indexOf("export.col.category")], "Drinks");
+});
+
+// ── Phase 17: cost price leaves the building only with `view_cost` ─────────
+
+test("a products export without cost authority carries no cost and no margin", () => {
+  const [sheet] = buildProductsSheets({
+    products: PRODUCTS,
+    categories: CATEGORIES,
+    t,
+    pick,
+    maySeeCost: false,
+  });
+
+  // Margin is cost in disguise — (price − cost) / price — so it goes too. What
+  // remains is the whole catalogue record minus the supplier's number: the sheet
+  // is still useful, which is why the column is dropped instead of the export
+  // being refused.
+  assert.equal(sheet.header.includes("export.col.costPrice"), false, "no cost column");
+  assert.equal(sheet.header.includes("export.col.margin"), false, "no margin column");
+  assert.ok(sheet.header.includes("export.col.sellingPrice"), "the till's price stays");
+  assert.ok(sheet.header.includes("export.col.currentQty"), "stock stays");
+  assert.equal(sheet.rows.length, PRODUCTS.length, "same rows, fewer columns");
+});
+
+test("an inventory export without cost authority keeps its totals aligned", () => {
+  const rows = [
+    product({ id: "p1", stock_quantity: 10, cost_price: 40, selling_price: 100 }),
+    product({ id: "p2", stock_quantity: 3, cost_price: 10, selling_price: 25 }),
+  ];
+  const build = (maySeeCost: boolean) =>
+    buildInventorySheets({
+      products: rows,
+      categoryName: () => "Drinks",
+      t,
+      pick,
+      maySeeCost,
+    })[0];
+
+  const withCost = build(true);
+  const without = build(false);
+
+  assert.equal(withCost.header.length - without.header.length, 2, "cost price and stock value");
+  // The totals row is positional, so a dropped column must drop its total too —
+  // otherwise the retail sum lands under the quantity heading and the sheet
+  // quietly lies about a number nobody can check.
+  assert.equal(without.totals?.length, without.header.length, "totals line up with columns");
+  assert.ok(without.totals?.includes(13), `quantity total survives (${JSON.stringify(without.totals)})`);
+  assert.ok(without.totals?.includes(1075), `retail total survives (${JSON.stringify(without.totals)})`);
+  assert.equal(without.totals?.includes(430), false, "the cost-basis total (10×40 + 3×10) is not in the sheet");
+  assert.ok(withCost.totals?.includes(430), "…but it is when the seat may see cost");
 });
 
 // ── customers ───────────────────────────────────────────────────────────────

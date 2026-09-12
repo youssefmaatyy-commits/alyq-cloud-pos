@@ -71,6 +71,7 @@ export function staffEntryToAuthUser(entry: StaffDirectoryEntry): AuthUser {
     active: entry.active,
     custom_role_id: entry.custom_role_id,
     custom_role: customRoleOf(entry),
+    exceptions: { extra: entry.extra_capabilities, denied: entry.denied_capabilities },
     last_login_at: entry.last_login_at,
     auth_id: null,
   });

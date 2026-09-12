@@ -10,15 +10,21 @@ import {
   ErrorState,
   LoadingBlock,
   PlusIcon,
+  SearchIcon,
   StatTile,
+  TextInput,
   useToast,
 } from "@/components/ui";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { canAct } from "@/lib/permissions/enforce";
 import { capabilityLabelKey, capabilityGroupLabelKey, groupOfCapability } from "@/lib/permissions/catalog";
+import { actionTally } from "@/lib/permissions/preview";
+import { CAPABILITIES } from "@/lib/permissions/roles";
 import { customRoleName, type CustomRole } from "@/lib/permissions/customRoles";
 import { useSettings } from "../hooks/SettingsProvider";
 import { RoleFormModal } from "../components/RoleFormModal";
+import { AccessPreviewModal } from "../components/AccessPreviewModal";
+import { queryRoles } from "../services/userQuery";
 import { roleLabel } from "../components/UserStatusBadge";
 import type { RoleFormState } from "../types";
 
@@ -33,11 +39,18 @@ const CHIPS_PER_CARD = 10;
  * touch the register", and the answer to that is not a sixth hard-coded role — it
  * is this screen.
  *
- * What it shows besides the list: how many people wear each role, and what
- * deactivating one would do to them (they fall back to the role's base matrix, so
- * nobody is locked out, but their permissions change immediately). Both numbers
- * are the difference between an admin making an informed change and an admin
- * wondering why the warehouse stopped being able to adjust stock.
+ * What it shows besides the list, per card: how many permissions the role holds
+ * out of the whole catalogue, what kinds of act they are (nine reads and two
+ * approvals reads as a job; forty edits reads as a mistake), how many people wear
+ * it, and what deactivating it would do to them — they fall back to the role's
+ * base matrix, so nobody is locked out, but their permissions change immediately.
+ * Those numbers are the difference between an admin making an informed change and
+ * an admin wondering why the warehouse stopped being able to adjust stock.
+ *
+ * Phase 17 added three ways to work with a role instead of only editing it:
+ * search (by name, key or the permissions it holds), duplicate (the honest way to
+ * make "the accountant, but for the new branch"), and preview (what the role would
+ * see — computed, never applied; see `AccessPreviewModal`).
  */
 export function RolesPage() {
   const { t, lang, num } = useI18n();
@@ -46,10 +59,21 @@ export function RolesPage() {
 
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<CustomRole | null>(null);
+  const [duplicateOf, setDuplicateOf] = useState<CustomRole | null>(null);
   const [pendingToggle, setPendingToggle] = useState<CustomRole | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewRoleId, setPreviewRoleId] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
 
   const canManage = canAct("manage_roles");
+
+  // Search matches the permissions a role holds as well as its names, so "which
+  // role can approve a refund?" is answered from this screen.
+  const visible = useMemo(
+    () => queryRoles(roles, query, (capability) => t(capabilityLabelKey(capability) as Parameters<typeof t>[0])),
+    [roles, query, t],
+  );
 
   const stats = useMemo(() => {
     const active = roles.filter((role) => role.active).length;
@@ -76,16 +100,32 @@ export function RolesPage() {
 
   async function submitForm(form: RoleFormState) {
     try {
+      // A duplicate arrives with no id, so it goes through the create path — and
+      // `createRole` writes its own `role.created` audit entry, listing the
+      // capabilities it was born with. Duplicating is not a privileged shortcut
+      // around the audit log; it is the same act with the boxes pre-ticked.
       const saved = await saveRole(form);
       toast.success(
         `${form.id ? t("settings.roles.updatedToast") : t("settings.roles.createdToast")} · ${saved.name_en}`,
       );
       setFormOpen(false);
       setEditing(null);
+      setDuplicateOf(null);
     } catch (err) {
       toast.error(errorMessage(err));
       throw err;
     }
+  }
+
+  function openDuplicate(role: CustomRole) {
+    setEditing(null);
+    setDuplicateOf(role);
+    setFormOpen(true);
+  }
+
+  function openPreview(roleId: string | null) {
+    setPreviewRoleId(roleId);
+    setPreviewOpen(true);
   }
 
   async function confirmToggle() {
@@ -125,10 +165,15 @@ export function RolesPage() {
             <Button variant="secondary" onClick={() => void refresh()} title={t("common.retry")}>
               ⟳
             </Button>
+            <Button variant="secondary" onClick={() => openPreview(null)}>
+              👁
+              {t("settings.preview.open")}
+            </Button>
             <Button
               disabled={!canManage}
               onClick={() => {
                 setEditing(null);
+                setDuplicateOf(null);
                 setFormOpen(true);
               }}
             >
@@ -146,8 +191,24 @@ export function RolesPage() {
         <StatTile label={t("settings.roles.stat.assigned")} value={num(stats.assigned)} tone="info" />
       </div>
 
-      <Card className="mb-4">
+      <Card className="mb-4 space-y-2">
         <p className="text-xs font-medium text-slate-700">{t("settings.roles.replacesHint")}</p>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <TextInput
+            type="search"
+            value={query}
+            leading={<SearchIcon />}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder={t("settings.roles.search")}
+            aria-label={t("settings.roles.search")}
+            className="sm:max-w-sm"
+          />
+          {query.trim() ? (
+            <span className="text-[11px] font-semibold text-slate-500">
+              {t("settings.roles.showing", { count: num(visible.length), total: num(roles.length) })}
+            </span>
+          ) : null}
+        </div>
       </Card>
 
       {error ? (
@@ -172,6 +233,7 @@ export function RolesPage() {
                 <Button
                   onClick={() => {
                     setEditing(null);
+                    setDuplicateOf(null);
                     setFormOpen(true);
                   }}
                 >
@@ -182,12 +244,17 @@ export function RolesPage() {
             }
           />
         </Card>
+      ) : visible.length === 0 ? (
+        <Card>
+          <EmptyState icon="🔍" title={t("settings.roles.noResults")} description={t("settings.roles.search")} />
+        </Card>
       ) : (
         <div className="grid gap-3 lg:grid-cols-2">
-          {roles.map((role) => {
+          {visible.map((role) => {
             const assigned = assignments.get(role.id) ?? 0;
             const chips = role.capabilities.slice(0, CHIPS_PER_CARD);
             const rest = role.capabilities.length - chips.length;
+            const tally = actionTally(role.capabilities);
             return (
               <Card key={role.id} className={role.active ? "" : "opacity-80"}>
                 <div className="flex flex-wrap items-start justify-between gap-2">
@@ -209,6 +276,13 @@ export function RolesPage() {
                       </span>
                       <span aria-hidden>·</span>
                       <span>{t("settings.roles.assignedHint", { count: num(assigned) })}</span>
+                      <span aria-hidden>·</span>
+                      <span>
+                        {t("settings.preview.held", {
+                          count: num(role.capabilities.length),
+                          total: num(CAPABILITIES.length),
+                        })}
+                      </span>
                     </p>
                     {role.description_en || role.description_ar ? (
                       <p className="mt-1.5 text-xs font-medium text-slate-600">
@@ -217,6 +291,26 @@ export function RolesPage() {
                     ) : null}
                   </div>
                   <div className="flex items-center gap-1.5">
+                    {/* Preview is offered for system roles too, and to everybody
+                        who can open this screen: it discloses nothing the picker
+                        does not, and it never changes any authority. */}
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      title={t("settings.preview.open")}
+                      onClick={() => openPreview(role.id)}
+                    >
+                      👁
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={!canManage}
+                      title={t("settings.roles.duplicate")}
+                      onClick={() => openDuplicate(role)}
+                    >
+                      ⧉
+                    </Button>
                     <Button
                       size="sm"
                       variant="ghost"
@@ -224,6 +318,7 @@ export function RolesPage() {
                       title={t("settings.roles.edit")}
                       onClick={() => {
                         setEditing(role);
+                        setDuplicateOf(null);
                         setFormOpen(true);
                       }}
                     >
@@ -240,7 +335,21 @@ export function RolesPage() {
                   </div>
                 </div>
 
+                {/* The shape of the job: how many reads, writes, approvals and
+                    exports this role is. Two roles with the same count can be
+                    very different jobs, and this is what tells them apart. */}
                 <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                  {tally.map((entry) => (
+                    <span
+                      key={entry.action}
+                      className="rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-indigo-700 ring-1 ring-indigo-100"
+                    >
+                      {t(`permissions.action.${entry.action}` as Parameters<typeof t>[0])} · {num(entry.count)}
+                    </span>
+                  ))}
+                </div>
+
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
                   {groupCounts(role).map((group) => (
                     <span
                       key={group.key}
@@ -272,12 +381,25 @@ export function RolesPage() {
       <RoleFormModal
         open={formOpen}
         editing={editing}
+        duplicateOf={duplicateOf}
         existing={roles}
         onClose={() => {
           setFormOpen(false);
           setEditing(null);
+          setDuplicateOf(null);
         }}
         onSubmit={submitForm}
+      />
+
+      <AccessPreviewModal
+        open={previewOpen}
+        roles={roles}
+        users={users}
+        initialRoleId={previewRoleId}
+        onClose={() => {
+          setPreviewOpen(false);
+          setPreviewRoleId(null);
+        }}
       />
 
       <ConfirmDialog

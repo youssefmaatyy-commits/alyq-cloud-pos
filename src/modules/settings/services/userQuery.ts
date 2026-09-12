@@ -8,6 +8,8 @@
  * decides *what is on screen*.
  */
 import { normalizeText } from "@/modules/products/services/productQuery";
+import type { Capability } from "@/lib/permissions/roles";
+import type { CustomRole } from "@/lib/permissions/customRoles";
 import type { ManagedUser, UserFiltersValue, UserSortValue } from "../types";
 
 export function queryUsers(users: ManagedUser[], filters: UserFiltersValue): ManagedUser[] {
@@ -29,6 +31,44 @@ export function queryUsers(users: ManagedUser[], filters: UserFiltersValue): Man
     if (terms.length === 0) return true;
     const haystack = normalizeText(
       `${user.name} ${user.username} ${user.email ?? ""} ${user.phone ?? ""} ${user.role} ${user.custom_role_name ?? ""}`,
+    );
+    return terms.every((term) => haystack.includes(term));
+  });
+}
+
+/**
+ * Filtering the role list (Phase 17).
+ *
+ * A role is found by its names, its key, its description, its base role — or by
+ * the permissions it holds. The last one matters most, because the question an
+ * admin actually asks is "which role can approve a refund?", and answering it
+ * should not mean opening five dialogs and reading tick lists.
+ *
+ * `labelOf` is passed in rather than imported so this stays pure and testable:
+ * the caller hands it the dictionary's own label for a capability, in whichever
+ * language the screen is showing, and searching "خصم" finds the role that holds
+ * `apply_discount` exactly as searching "discount" does.
+ */
+export function queryRoles(
+  roles: CustomRole[],
+  search: string,
+  labelOf: (capability: Capability) => string,
+): CustomRole[] {
+  const terms = normalizeText(search).split(" ").filter(Boolean);
+  if (terms.length === 0) return roles;
+
+  return roles.filter((role) => {
+    const haystack = normalizeText(
+      [
+        role.name_en,
+        role.name_ar,
+        role.key,
+        role.description_en ?? "",
+        role.description_ar ?? "",
+        role.base_role,
+        role.capabilities.join(" "),
+        role.capabilities.map(labelOf).join(" "),
+      ].join(" "),
     );
     return terms.every((term) => haystack.includes(term));
   });

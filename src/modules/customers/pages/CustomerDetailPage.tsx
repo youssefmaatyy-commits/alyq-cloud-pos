@@ -16,6 +16,7 @@ import {
 } from "@/components/ui";
 import { useCustomers } from "../hooks/CustomerProvider";
 import { CustomerFormModal } from "../components/CustomerFormModal";
+import { canAct } from "@/lib/permissions/enforce";
 import { usePos } from "@/modules/pos";
 import { useReturns } from "@/modules/returns";
 
@@ -98,14 +99,16 @@ export function CustomerDetailPage() {
         backLabel={t("customers.title")}
         actions={
           <>
-            <Button
-              variant="secondary"
-              onClick={() => setModalOpen(true)}
-              className="gap-1.5"
-            >
-              <EditIcon />
-              {t("common.edit")}
-            </Button>
+            {canAct("edit_customer") ? (
+              <Button
+                variant="secondary"
+                onClick={() => setModalOpen(true)}
+                className="gap-1.5"
+              >
+                <EditIcon />
+                {t("common.edit")}
+              </Button>
+            ) : null}
             <Link
               to="/pos"
               className="alyq-btn-primary alyq-cta h-10 gap-2 rounded-xl px-4 text-sm"

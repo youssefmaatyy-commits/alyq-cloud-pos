@@ -4,6 +4,7 @@ import { Badge, Button, Card, SectionTitle, StatTile } from "@/components/ui";
 import { ArchiveIcon, EditIcon, RestoreIcon } from "@/components/ui";
 import { PRODUCT_TYPE_META } from "../constants";
 import { marginPct, stockStatus, type Product } from "../types";
+import { canAct } from "@/lib/permissions/enforce";
 import { ActiveBadge, ProductTypeBadge } from "./ProductTypeBadge";
 import { StockBadge } from "./ProductTable";
 
@@ -31,6 +32,10 @@ export function ProductDetails({
 }) {
   const { t, money, num, date } = useI18n();
   const margin = marginPct(product.selling_price, product.cost_price);
+  // Phase 17: cost price, profit and margin are one fact seen three ways, so
+  // `view_cost` governs all three. The selling price stays visible to everybody
+  // who can open the catalogue — it is the number the till charges.
+  const maySeeCost = canAct("view_cost");
   const status = stockStatus(product);
   const descAr = product.description_ar;
   const descEn = product.description_en;
@@ -93,13 +98,17 @@ export function ProductDetails({
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile label={t("products.sellingPrice")} value={money(product.selling_price)} tone="success" />
-        <StatTile label={t("products.costPrice")} value={money(product.cost_price)} />
-        <StatTile
-          label={t("products.profit")}
-          value={money(product.selling_price - product.cost_price)}
-          hint={margin === null ? undefined : `${t("products.margin")} ${num(margin, 1)}%`}
-          tone={margin !== null && margin < 0 ? "danger" : "success"}
-        />
+        {maySeeCost ? (
+          <>
+            <StatTile label={t("products.costPrice")} value={money(product.cost_price)} />
+            <StatTile
+              label={t("products.profit")}
+              value={money(product.selling_price - product.cost_price)}
+              hint={margin === null ? undefined : `${t("products.margin")} ${num(margin, 1)}%`}
+              tone={margin !== null && margin < 0 ? "danger" : "success"}
+            />
+          </>
+        ) : null}
         <StatTile
           label={t("common.stock")}
           value={status === "none" ? "—" : num(product.stock_quantity, 0)}

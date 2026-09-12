@@ -266,8 +266,14 @@ test("each screen maps to the capability it needs", () => {
   assert.equal(capabilityForPath("/shifts"), "view_shifts");
   assert.equal(capabilityForPath("/expenses"), "view_shifts");
   assert.equal(capabilityForPath("/audit"), "view_audit_log");
+  // Phase 17: the customer book left the "anybody signed in" group. It is the one
+  // screen holding records about named people — phone numbers, addresses, what
+  // they bought — so it now has a capability of its own. Every shipped role holds
+  // it; a custom role may decline it, and the till's picker declines with it.
+  assert.equal(capabilityForPath("/customers"), "view_customers");
+  assert.equal(capabilityForPath("/customers/C-1"), "view_customers", "a customer's page inherits the book");
   // Read-only screens need a session but no particular capability.
-  for (const open of ["/", "/products", "/categories", "/customers", "/pos/sales"]) {
+  for (const open of ["/", "/products", "/categories", "/pos/sales"]) {
     if (open === "/pos/sales") continue; // sales history sits under the till
     assert.equal(capabilityForPath(open), null, `${open} only needs a session`);
   }

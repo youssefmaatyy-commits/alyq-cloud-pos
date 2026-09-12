@@ -24,6 +24,8 @@ import { useSettings } from "../hooks/SettingsProvider";
 import { queryUsers, sortUsers, summarizeUsers } from "../services/userQuery";
 import { UserFormModal } from "../components/UserFormModal";
 import { ResetPasswordModal } from "../components/ResetPasswordModal";
+import { UserExceptionsModal } from "../components/UserExceptionsModal";
+import type { CapabilityExceptions } from "@/lib/permissions/exceptions";
 import { UserRoleBadge, UserStatusBadge, roleLabel } from "../components/UserStatusBadge";
 import {
   DEFAULT_USER_SORT,
@@ -46,18 +48,25 @@ import {
  *
  * Buttons are hidden when the acting user lacks the capability. That is a
  * courtesy, not the control: the service refuses the same call.
+ *
+ * Phase 17 added one more door per row: permission exceptions. A person whose
+ * permissions differ from their role's says so on the row, because an exception
+ * nobody can see is an exception nobody will remember to remove — and the modal
+ * behind it shows the resulting list before anything is saved.
  */
 export function UsersPage() {
   const { t, date, num } = useI18n();
   const toast = useToast();
   const { user: actor, mode } = useAuth();
-  const { users, roles, loading, error, refresh, saveUser, toggleUserActive, resetPassword } = useSettings();
+  const { users, roles, loading, error, refresh, saveUser, toggleUserActive, resetPassword, saveUserExceptions } =
+    useSettings();
 
   const [filters, setFilters] = useState<UserFiltersValue>(EMPTY_USER_FILTERS);
   const [sort, setSort] = useState<UserSortValue>(DEFAULT_USER_SORT);
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<ManagedUser | null>(null);
   const [resetting, setResetting] = useState<ManagedUser | null>(null);
+  const [exceptionsFor, setExceptionsFor] = useState<ManagedUser | null>(null);
   const [pendingToggle, setPendingToggle] = useState<ManagedUser | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -111,6 +120,23 @@ export function UsersPage() {
       setResetting(null);
     } catch (err) {
       toast.error(errorMessage(err));
+    }
+  }
+
+  /**
+   * Phase 17: replace one person's exceptions. The service asserts `manage_users`,
+   * refuses the self-lockout, writes `user.permissions_changed` to the audit log
+   * and tells any other tab signed in as that person to re-resolve — so the only
+   * thing this handler adds is the sentence that says it worked.
+   */
+  async function submitExceptions(userId: string, exceptions: CapabilityExceptions) {
+    try {
+      const saved = await saveUserExceptions(userId, exceptions);
+      toast.success(`${t("settings.users.exceptions.savedToast")} · ${saved.name}`);
+      setExceptionsFor(null);
+    } catch (err) {
+      toast.error(errorMessage(err));
+      throw err;
     }
   }
 
@@ -363,6 +389,20 @@ export function UsersPage() {
                         </Button>
                         <Button
                           size="sm"
+                          variant="ghost"
+                          disabled={!canManage}
+                          title={t("settings.users.exceptions.open")}
+                          onClick={() => setExceptionsFor(user)}
+                        >
+                          ⚖
+                          {user.extra_capabilities.length + user.denied_capabilities.length > 0 ? (
+                            <span className="ms-1 rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] font-black tabular-nums text-indigo-800">
+                              {num(user.extra_capabilities.length + user.denied_capabilities.length)}
+                            </span>
+                          ) : null}
+                        </Button>
+                        <Button
+                          size="sm"
                           variant={user.active ? "ghost" : "subtle"}
                           // The self-lockout guardrail is visible, not discovered
                           // after a refused request.
@@ -403,6 +443,14 @@ export function UsersPage() {
         user={resetting}
         onClose={() => setResetting(null)}
         onSubmit={submitReset}
+      />
+
+      <UserExceptionsModal
+        open={Boolean(exceptionsFor)}
+        user={exceptionsFor}
+        roles={roles}
+        onClose={() => setExceptionsFor(null)}
+        onSubmit={submitExceptions}
       />
 
       <ConfirmDialog

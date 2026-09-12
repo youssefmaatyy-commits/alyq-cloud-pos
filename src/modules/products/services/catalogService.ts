@@ -68,7 +68,12 @@ export function assertCanChangePrice(): void {
   assertSensitiveAction("product.price_change");
 }
 
-/** Moving a purchase cost needs `change_price` too — it drives margin, not revenue. */
+/**
+ * Moving a purchase cost needs `change_cost` (Phase 17; it used to ride on
+ * `change_price`). It drives margin rather than revenue, so a shop can hand
+ * somebody the retail price without handing them what the shop pays — or the
+ * reverse, for a buyer who records supplier invoices and never touches pricing.
+ */
 export function assertCanChangeCost(): void {
   assertSensitiveAction("product.cost_change");
 }

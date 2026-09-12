@@ -27,6 +27,7 @@
 import { AppError } from "@/modules/products/data/repository";
 import { recordAudit } from "@/modules/audit/services/auditService";
 import { actingUser, assertCapability } from "@/lib/permissions/enforce";
+import { sanitizeCapabilityExceptions, type CapabilityExceptions } from "@/lib/permissions/exceptions";
 import { broadcastAuth } from "@/lib/auth/services/authEvents";
 import type { CustomRole } from "@/lib/permissions/customRoles";
 import type { AuthUser } from "@/lib/auth/types";
@@ -220,6 +221,57 @@ export async function assignCustomRole(
 }
 
 /**
+ * Phase 17: replace one person's permission exceptions.
+ *
+ * Gated by `manage_users` rather than `manage_roles`: this changes what one named
+ * person may do, not what a job means. The write replaces both lists instead of
+ * patching them, so what the admin saw in the picker is what is stored — a
+ * half-applied merge is the kind of state nobody can reason about later.
+ *
+ * Two guards, both restated in `admin_set_user_exceptions` for live mode:
+ *
+ *   • an admin may not deny themselves `manage_users` — the one exception that
+ *     could never be undone, since undoing it needs the capability it removed;
+ *   • a write that changes nothing writes nothing, and records nothing. An audit
+ *     row that says "permissions changed" when they did not is worse than no row.
+ */
+export async function setUserExceptions(
+  id: string,
+  exceptions: CapabilityExceptions,
+  context: UserMutationContext,
+): Promise<ManagedUser> {
+  assertCapability("manage_users");
+
+  const before = context.existing.find((user) => user.id === id);
+  if (!before) throw new AppError("NOT_FOUND", `No such user: ${id}`);
+
+  const next = sanitizeCapabilityExceptions(exceptions);
+  const actor = actingUser();
+  if (id === actor.id && next.denied.includes("manage_users")) {
+    // Same shape as `assertNotSelfLockout` beside it: a sentence an admin can act
+    // on, and the modal shows its own translated version before this is reached.
+    throw new AppError("FORBIDDEN", "You cannot remove your own ability to manage users", "denied_capabilities");
+  }
+
+  const previous = sanitizeCapabilityExceptions({
+    extra: before.extra_capabilities,
+    denied: before.denied_capabilities,
+  });
+  if (sameExceptions(previous, next)) return before;
+
+  const updated = await getSettingsRepository().setUserExceptions(id, next);
+  void auditPermissionsChanged(before, updated, actor);
+  // The person may be signed in elsewhere; their session must re-resolve.
+  announceIdentityChange();
+  return updated;
+}
+
+/** Order-insensitive: two lists holding the same acts are the same decision. */
+function sameExceptions(a: CapabilityExceptions, b: CapabilityExceptions): boolean {
+  return a.extra.join(",") === b.extra.join(",") && a.denied.join(",") === b.denied.join(",");
+}
+
+/**
  * Admin password reset.
  *
  * The policy is applied here as well as in the form, because this is the path
@@ -389,6 +441,49 @@ export function countRoleAssignments(users: ManagedUser[], roleId: string): numb
  * action, and "who changed this person's authority?" is a question an auditor
  * asks directly.
  */
+/**
+ * One row per exception change, naming the acts rather than the arrays: an audit
+ * log that says `extra_capabilities: ["sell"]` asks the reader to know what
+ * `sell` is, and to work out whether it was already there. This says what the
+ * person gained, what they lost, and what is now personal about them.
+ */
+function auditPermissionsChanged(before: ManagedUser, after: ManagedUser, actor: AuthUser): void {
+  const wasExtra = new Set(before.extra_capabilities);
+  const wasDenied = new Set(before.denied_capabilities);
+  const isExtra = new Set(after.extra_capabilities);
+  const isDenied = new Set(after.denied_capabilities);
+
+  const granted = after.extra_capabilities.filter((capability) => !wasExtra.has(capability));
+  const ungranted = before.extra_capabilities.filter((capability) => !isExtra.has(capability));
+  const withheld = after.denied_capabilities.filter((capability) => !wasDenied.has(capability));
+  const restored = before.denied_capabilities.filter((capability) => !isDenied.has(capability));
+
+  void recordAudit({
+    action: "user.permissions_changed",
+    entity: "user",
+    entity_id: after.id,
+    entity_label: `${after.name} (${after.username})`,
+    details: {
+      username: after.username,
+      role: after.role,
+      custom_role: after.custom_role_name ?? after.custom_role_id,
+      // Comma-joined, exactly as the role audit records its capability lists:
+      // `details` is a flat string map, and a joined list stays readable in the
+      // log without a schema of its own.
+      granted: granted.join(","),
+      ungranted: ungranted.join(","),
+      withheld: withheld.join(","),
+      restored: restored.join(","),
+      // The two lists as stored, so the row can be re-read without guessing what
+      // "granted" meant at the time. What they resolve to is the role's business.
+      extra: after.extra_capabilities.join(","),
+      denied: after.denied_capabilities.join(","),
+    },
+    user_id: actor.id,
+    user_name: actor.name,
+  });
+}
+
 function auditUserChange(
   before: ManagedUser,
   after: ManagedUser,

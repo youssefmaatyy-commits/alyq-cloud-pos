@@ -190,6 +190,59 @@ export const CAPABILITIES = [
    * role (an accountant, a branch owner), decides every over-limit request.
    */
   "approve_limit_request",
+
+  // ── Phase 17: the customer book, and what the shop pays ─────────────────
+  /**
+   * Open the customer book: the list, the search, and a customer's own page.
+   *
+   * Purchase history is folded into this capability rather than getting one of
+   * its own, because it is the same screen, the same person and the same reason
+   * for looking — a seat that may see a customer may see what they bought, and a
+   * seat that may not see them sees neither. Splitting it would only create a
+   * role that can open a customer and then stare at an empty page.
+   *
+   * Before this existed nothing gated the book at all: any signed-in seat could
+   * read every phone number and address in it.
+   */
+  "view_customers",
+  /**
+   * Create a customer record — including from the till, mid-sale.
+   *
+   * Separate from `edit_customer` on purpose: adding a customer is an ordinary
+   * act for anybody who sells, while correcting a record somebody else created
+   * is a different judgement, and a shop may want one without the other.
+   */
+  "add_customer",
+  /** Change a customer's name, contact details or notes. */
+  "edit_customer",
+  /**
+   * Delete a customer record.
+   *
+   * Oversight only: deleting a customer erases the anchor their purchase history
+   * hangs from, so it is not a till operation. Sales already recorded keep their
+   * own copy of the name and total, which is why this is destructive but not
+   * catastrophic — and why it is still not something a cashier should hold.
+   */
+  "delete_customer",
+  /**
+   * See what a product cost the shop.
+   *
+   * Scoped to the catalogue: the product form, the product page, the margin in
+   * the table, and the cost columns of the products and inventory exports. It
+   * deliberately does not reach the dashboard's or the reports' valuation
+   * figures, which are management totals rather than a supplier's price list.
+   */
+  "view_cost",
+  /**
+   * Write a product's cost price.
+   *
+   * Separate from `change_price` because the two are different kinds of fact:
+   * the selling price is a decision about what the shop charges, the cost price
+   * is a record of what the shop paid. A buyer who enters supplier invoices
+   * needs this and not the price list; a supervisor who sets prices may need the
+   * price list and not this.
+   */
+  "change_cost",
 ] as const;
 export type Capability = (typeof CAPABILITIES)[number];
 
@@ -243,6 +296,14 @@ export const ROLE_CAPABILITIES: Record<AppRole, readonly Capability[]> = {
     "export_reports",
     "approve_expense",
     "approve_limit_request",
+    // Phase 17: the customer book and cost price, named. A manager may delete a
+    // customer — that is oversight, not a till act.
+    "view_customers",
+    "add_customer",
+    "edit_customer",
+    "delete_customer",
+    "view_cost",
+    "change_cost",
   ],
   cashier: [
     "view_inventory",
@@ -267,6 +328,15 @@ export const ROLE_CAPABILITIES: Record<AppRole, readonly Capability[]> = {
     "export_data",
     "view_reports",
     "export_reports",
+    // Phase 17: the till adds and edits customers (a sale needs one) and already
+    // saw and wrote cost price from the product form it could already open — so
+    // these grants preserve what a cashier could do, now named so a custom role
+    // can narrow it. Deleting a customer is not granted: see `delete_customer`.
+    "view_customers",
+    "add_customer",
+    "edit_customer",
+    "view_cost",
+    "change_cost",
   ],
   inventory_clerk: [
     "view_inventory",
@@ -290,11 +360,30 @@ export const ROLE_CAPABILITIES: Record<AppRole, readonly Capability[]> = {
     "export_data",
     "view_reports",
     "export_reports",
+    // Identical to the cashier's Phase 17 set, so the two roles still differ by
+    // `adjust_stock` and nothing else.
+    "view_customers",
+    "add_customer",
+    "edit_customer",
+    "view_cost",
+    "change_cost",
   ],
   // Read-only, and still read-only: the three additions are all reads or
   // exports of data the viewer could already open. No write capability is
   // granted here, and the role-model self-test asserts exactly this list.
-  viewer: ["view_inventory", "view_shifts", "export_data", "view_reports", "export_reports"],
+  // Phase 17 adds two reads and takes away three writes the viewer only ever
+  // had by accident: nothing gated the customer book, so a read-only seat could
+  // add, edit and delete a customer. That is the one deliberate tightening in
+  // this release, and the role-model self-test pins both halves of it.
+  viewer: [
+    "view_inventory",
+    "view_shifts",
+    "export_data",
+    "view_reports",
+    "export_reports",
+    "view_customers",
+    "view_cost",
+  ],
 };
 
 /**
