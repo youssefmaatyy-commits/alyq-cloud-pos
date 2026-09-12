@@ -27,6 +27,28 @@ export const AUDIT_ACTIONS = [
   // (no database function writes it), while the settlement rows above are
   // written by `pos_settle_refund` live and by the service in demo mode.
   "return.created",
+  // Business events (Phase 13, requirement 6). Each is written by the service
+  // funnel that performs the act — the same place the capability is asserted —
+  // so the trail records what the register refused to let somebody do silently.
+  // No database function writes these, exactly like `return.created`: they are
+  // the app's own acts, in demo mode and live mode alike.
+  //
+  //   `sale.discounted`      a discount was given, with the percentage and the
+  //                          amount taken off — the two numbers a discount
+  //                          report and an approval rule both care about.
+  //   `sale.voided`          a completed invoice was reversed, with the reason.
+  //   `product.price_changed`/`product.cost_changed`  the retail price or the
+  //                          purchase cost moved, previous value and new value,
+  //                          which is what makes a margin move traceable.
+  //   `stock.adjusted`       a manual stock movement (damage, gift, transfer…).
+  //   `stock.corrected`      the same funnel with reason `recount` — the shelf
+  //                          and the system disagreed and the system was fixed.
+  "sale.discounted",
+  "sale.voided",
+  "product.price_changed",
+  "product.cost_changed",
+  "stock.adjusted",
+  "stock.corrected",
   // Approval limits (Phase 12, requirement 2). Live mode writes these from
   // `submit_approval_request` / `decide_approval_request` / `mark_approval_applied`
   // / `set_approval_rules` (migration 0023); demo mode writes the same five from
@@ -78,6 +100,12 @@ export const AUDIT_ENTITIES = [
   "refund",
   /** A sales return (`sales_returns`) — the goods side of a refund. */
   "return",
+  /** An invoice (`sales`) — a discount given against it, or its voiding. */
+  "sale",
+  /** A catalogue product (`products`) — its price or cost moving. */
+  "product",
+  /** A stock level and the movement that changed it (`stock_movements`). */
+  "stock",
   /** An over-limit act waiting for a decision (`approval_requests`). */
   "approval_request",
   /** The threshold document itself (`approval_rules`, one row). */
@@ -120,12 +148,33 @@ export interface NewAuditLogEntry {
   user_name: string;
 }
 
+/**
+ * What the trail can be narrowed to.
+ *
+ * Search and action were the Phase 8 filters. Requirement 6 asks the same
+ * question four ways — who, what, to which kind of record, and when — so the
+ * other three are filters of their own rather than something an operator has to
+ * type into a search box and hope: a user picked from the users actually in the
+ * trail, an entity picked from the vocabulary, and an inclusive date range that
+ * uses the same `withinDateRange` the reports use, so "the audit for March" and
+ * "the sales for March" cannot disagree about what March means.
+ */
 export interface AuditFiltersValue {
   search: string;
   action: AuditAction | "all";
+  entity: AuditEntity | "all";
+  /** Matched on `user_id`, so a renamed employee stays one person. */
+  user: string | "all";
+  /** Inclusive `yyyy-mm-dd` bounds; `null`/`""` means open-ended. */
+  from: string;
+  to: string;
 }
 
 export const EMPTY_AUDIT_FILTERS: AuditFiltersValue = {
   search: "",
   action: "all",
+  entity: "all",
+  user: "all",
+  from: "",
+  to: "",
 };

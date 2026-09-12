@@ -45,6 +45,7 @@ import {
   requirementForDiscount,
 } from "@/modules/approvals/services/approvalService";
 import { AppError } from "@/modules/products/data/repository";
+import { recordAudit } from "@/modules/audit/services/auditService";
 import { getSalesRepository } from "../data";
 import type { CompleteSaleInput, ConfirmPaymentInput, Sale, VoidSaleInput } from "../types";
 
@@ -148,13 +149,59 @@ export async function completeSale(
 
   const sale = await getSalesRepository().completeSale(input);
   if (discounted && approval) await markRequestApplied(approval.requestId, sale.id);
+
+  if (discounted) {
+    // A discount is a price the shop chose not to charge, so it belongs in the
+    // trail with its numbers: the amount taken off, and the percentage the
+    // approval rule is written in (which is also the figure a discount report
+    // needs, so the trail and the report cannot disagree about it). Written from
+    // the funnel rather than the register, because the funnel is what every
+    // discounted sale passes through — the till, an approved online order, and
+    // an approver replaying an over-limit request all land here.
+    // Fire-and-forget: a missing audit row must not un-sell a paid invoice.
+    void recordAudit({
+      action: "sale.discounted",
+      entity: "sale",
+      entity_id: sale.id,
+      entity_label: sale.sale_number,
+      details: {
+        subtotal: sale.subtotal,
+        discount_type: sale.discount_type,
+        discount_value: sale.discount_value,
+        discount_amount: sale.discount_amount,
+        percent: Math.round(discountPercentOf(input) * 100) / 100,
+        total: sale.total,
+        customer: sale.customer_name ?? null,
+        source: sale.source ?? "pos",
+        approval: approval?.requestId ?? null,
+      },
+    });
+  }
   return sale;
 }
 
 /** Void a completed sale, restocking once and keeping the record. */
 export async function voidSale(id: string, input: VoidSaleInput): Promise<Sale> {
   assertCanVoidSale();
-  return getSalesRepository().voidSale(id, input);
+  const sale = await getSalesRepository().voidSale(id, input);
+  // The reversal of a financial record, so the trail keeps the reason, the
+  // amount taken out of revenue and how far the money had got (a void of a paid
+  // invoice is a different event from a void of a pending one — one of them
+  // still needs the cash back out of the drawer).
+  void recordAudit({
+    action: "sale.voided",
+    entity: "sale",
+    entity_id: sale.id,
+    entity_label: sale.sale_number,
+    details: {
+      total: sale.total,
+      items: sale.items.length,
+      payment_status: sale.payment_status,
+      source: sale.source ?? "pos",
+      reason: input.reason ?? null,
+    },
+  });
+  return sale;
 }
 
 /** Confirm a pending InstaPay payment. Totals, items and stock are untouched. */

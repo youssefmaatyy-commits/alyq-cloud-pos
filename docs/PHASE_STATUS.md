@@ -486,3 +486,44 @@ has no coverage because no instance exists.
 | `npm test` | 13/13 suites, including 75/75 online-shop logic tests |
 | `npm run db:check` | migrations 0001–0020 apply, are idempotent, and match every `…Row` interface |
 | `npm run test:e2e` | 3/3 suites — smoke, auth (9 steps), store (14 steps), 0 console errors |
+
+---
+
+## Verification snapshot after Phases 11–14
+
+| Check | Result |
+| --- | --- |
+| `npm run typecheck` | clean — and the EN/AR dictionary is 2373 keys on both sides, with no key on one side only |
+| `npm run build` | green — single self-contained HTML document, 2,255 kB (606 kB gzip) |
+| `npm test` | 19/19 suites — including 29/29 dashboard, 18/18 Phase 8, 12/12 audit-expansion, 10/10 advanced-report analytics |
+| `npm run db:check` | migrations 0001–0024 apply, are idempotent, and match both the app's row types and its role model |
+| `npm run test:e2e` | 3/3 suites — smoke (now covering the advanced reports screen and the dashboard charts), auth, store · 0 console errors · 0 network calls |
+
+What Phases 11–14 added on top of the Phase 9 snapshot:
+
+- **Advanced reports** (`/reports/advanced`) — six tabs (sales, products, customers, expenses, shifts,
+  financial) reading one date window, each with its own Excel report. The arithmetic lives in
+  `src/modules/reports/services/{salesAnalytics,expenseAnalytics,shiftAnalytics}.ts` and the workbooks
+  in `analyticsExport.ts`; the screen renders those and computes nothing of its own, so a table and
+  its spreadsheet cannot drift apart. Access is gated twice — by the route table (`view_shifts`) and
+  by `assertCanViewReports()` — and every button on it is `authority="report"`, so the raw extracts
+  stay on the Reports hub behind `export_data`.
+- **Dashboard analytics** — month-to-date sales, net profit and expenses, the pending approval and
+  online-order queues, the best sellers, and four charts (sales trend, revenue vs expenses, payment
+  mix, product performance) drawn as plain SVG in `src/modules/dashboard/components/Charts.tsx`. No
+  charting dependency was added. Every figure comes from the reports' analytics through
+  `dashboardQuery.ts`, and the whole section renders only behind `mayViewReports()`, so a cashier's
+  dashboard is exactly what it was.
+- **Reports inside their own modules** — the expenses screen gained the reports' date window (list,
+  tiles and export all read the same filtered array), and the shift history screen exports the shift
+  report workbook built by the same analytics the advanced screen uses.
+- **Audit expansion** — `sale.discounted`, `sale.voided`, `product.price_changed`,
+  `product.cost_changed`, `stock.adjusted` and `stock.corrected`, each written by the service funnel
+  that performs the act (the same place the capability is asserted), in demo and live mode alike.
+  Migration `0024_audit_business_events.sql` extends `public.audit_actions` and the entity vocabulary
+  to match, which `npm run db:check` asserts row for row. No second audit trail was created.
+- **Shared date windows** — `src/modules/reports/services/dateRanges.ts` now owns what "today", "this
+  month", "the last 30 days" and "the last N days" mean. The picker renders it, the reports filter
+  with it, and the dashboard charts their span with it, so three screens cannot define a month
+  differently. It moved out of the component so a headless caller can read a window without pulling
+  the UI graph into a logic suite.

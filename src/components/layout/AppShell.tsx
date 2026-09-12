@@ -180,6 +180,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <NavItem to="/shifts/history" icon={<ClockIcon />} label={t("nav.shiftHistory")} visible={canOpen("/shifts/history")} />
         <NavItem to="/expenses" icon={<ReceiptIcon />} label={t("nav.expenses")} visible={canOpen("/expenses")} />
         <NavItem to="/reports" icon={<ReportIcon />} label={t("nav.reports")} visible={canOpen("/reports")} />
+        <NavItem
+          to="/reports/advanced"
+          icon={<LayersIcon />}
+          label={t("nav.advancedReports")}
+          visible={canOpen("/reports/advanced")}
+        />
         <NavItem to="/audit" icon={<ClipboardIcon />} label={t("nav.audit")} visible={canOpen("/audit")} />
         {/* Every signed-in role may open the inbox: an approver decides from it,
             a requester watches their own ask. Deciding is asserted in the

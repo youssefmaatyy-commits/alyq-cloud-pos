@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { PageHeader } from "@/components/layout/AppShell";
 import {
@@ -22,6 +23,9 @@ import { queryExpenses, summarizeExpenses } from "../services/expenseService";
 import { ExpenseFormModal } from "../components/ExpenseFormModal";
 import { buildExpensesSheets } from "../services/expensesExport";
 import { useShifts } from "@/modules/shifts/hooks/ShiftProvider";
+// The reports' picker, reused rather than reimplemented: it speaks the same
+// `yyyy-mm-dd` window `queryExpenses` now filters on, presets included.
+import { DateRangePicker } from "@/modules/reports/components/DateRangePicker";
 import { canAddExpense, canDeleteExpense, canEditExpense } from "@/modules/shifts/permissions";
 import {
   EMPTY_EXPENSE_FILTERS,
@@ -161,6 +165,25 @@ export function ExpensesPage() {
             </SelectInput>
           </div>
         </div>
+
+        {/* Date window (Phase 14, requirement 3). It feeds `filtered`, so the
+            tiles, the table and the export button all read the same span. */}
+        <div className="mt-3 border-t border-slate-100 pt-3">
+          <DateRangePicker
+            value={{ from: filters.from, to: filters.to }}
+            onChange={(next) => setFilters((f) => ({ ...f, from: next.from, to: next.to }))}
+          />
+        </div>
+
+        <p className="mt-3 text-xs font-medium text-slate-600">
+          <Link
+            to="/reports/advanced"
+            className="font-semibold text-indigo-600 hover:text-indigo-700"
+          >
+            {t("expenses.advancedLink")} →
+          </Link>{" "}
+          {t("expenses.advancedHint")}
+        </p>
       </Card>
 
       {error ? (

@@ -14,7 +14,8 @@ import { validateShiftDraft, validateCloseDraft, parseMoney } from "../validatio
 import { EMPTY_SHIFT_FORM, EMPTY_CLOSE_SHIFT_FORM, type Shift } from "../types";
 import { getDemoShiftRepository, resetDemoShifts } from "../data/demoRepository";
 import { getDemoExpenseRepository } from "@/modules/expenses/data/demoRepository";
-import { EMPTY_EXPENSE_FORM } from "@/modules/expenses/types";
+import { EMPTY_EXPENSE_FILTERS, EMPTY_EXPENSE_FORM } from "@/modules/expenses/types";
+import { queryExpenses } from "@/modules/expenses/services/expenseService";
 import { validateExpense, roundMoney } from "@/modules/expenses/validation";
 import { getDemoAuditRepository } from "@/modules/audit/data/demoRepository";
 import { capabilitiesOf } from "@/lib/permissions/roles";
@@ -29,6 +30,7 @@ import {
   canViewAuditLog,
 } from "../permissions";
 import { queryAuditLog, recordAudit } from "@/modules/audit/services/auditService";
+import { EMPTY_AUDIT_FILTERS } from "@/modules/audit/types";
 import { createSession } from "@/lib/auth/services/authService";
 import {
   clearStoredSession,
@@ -429,6 +431,56 @@ test("expense validation: name, positive amount, category, method", () => {
   assert.equal(bad.errors.amount, "expenses.error.amountPositive");
 });
 
+test("expense filters: the date window is inclusive and combines with category and search", () => {
+  const day = (n: number) => new Date(2026, 8, n, 13, 0, 0).toISOString(); // September 2026, local noon
+  const expenses = [
+    expense({ amount: 10, payment_method: "cash", category: "transport", spent_at: day(1), name: "Fuel" }),
+    expense({ amount: 20, payment_method: "cash", category: "supplies", spent_at: day(10), name: "Paper" }),
+    expense({ amount: 30, payment_method: "instapay", category: "transport", spent_at: day(10), name: "Courier" }),
+    expense({ amount: 40, payment_method: "cash", category: "transport", spent_at: day(20), name: "Taxi" }),
+  ];
+
+  // No window: everything, as before.
+  assert.equal(queryExpenses(expenses, { ...EMPTY_EXPENSE_FILTERS }).length, 4);
+
+  // Inclusive on both ends — the 10th and the 20th are inside "10 → 20".
+  const windowed = queryExpenses(expenses, { ...EMPTY_EXPENSE_FILTERS, from: "2026-09-10", to: "2026-09-20" });
+  assert.deepEqual(windowed.map((e) => e.amount).sort((a, b) => a - b), [20, 30, 40]);
+
+  // An open-ended window still filters: only `from` set drops the 1st.
+  assert.equal(
+    queryExpenses(expenses, { ...EMPTY_EXPENSE_FILTERS, from: "2026-09-02", to: "" }).length,
+    3,
+  );
+
+  // The window narrows, it does not replace, the other filters.
+  assert.deepEqual(
+    queryExpenses(expenses, {
+      ...EMPTY_EXPENSE_FILTERS,
+      from: "2026-09-10",
+      to: "2026-09-20",
+      category: "transport",
+    }).map((e) => e.name),
+    // Both transport rows inside the window; the supplies row on the 10th is not.
+    ["Courier", "Taxi"],
+  );
+  assert.deepEqual(
+    queryExpenses(expenses, { ...EMPTY_EXPENSE_FILTERS, from: "2026-09-10", to: "2026-09-10", search: "paper" })
+      .map((e) => e.name),
+    ["Paper"],
+  );
+
+  // A day with spending late in the evening is still inside a window that ends
+  // on that day — `to` covers the whole calendar day, not its midnight.
+  assert.equal(
+    queryExpenses(
+      [expense({ amount: 5, payment_method: "cash", spent_at: new Date(2026, 8, 20, 23, 30).toISOString() })],
+      { ...EMPTY_EXPENSE_FILTERS, from: "", to: "2026-09-20" },
+    ).length,
+    1,
+  );
+});
+
 test("permission matrix: till actions are staff-level, oversight stays manager/admin", () => {
   const user = (role: string) => ({ id: `u-${role}`, name: role, role }) as never;
 
@@ -617,9 +669,9 @@ test("audit repository is append-only and queryable", async () => {
   const all = await audit.listEntries();
   assert.ok(all.some((e) => e.id === entry.id));
 
-  const filtered = queryAuditLog(all, { search: "SH-000009", action: "all" });
+  const filtered = queryAuditLog(all, { ...EMPTY_AUDIT_FILTERS, search: "SH-000009" });
   assert.equal(filtered.length, 1);
-  const none = queryAuditLog(all, { search: "", action: "expense.deleted" });
+  const none = queryAuditLog(all, { ...EMPTY_AUDIT_FILTERS, action: "expense.deleted" });
   assert.equal(none.length, 0, "no expense.deleted entry recorded yet");
 });
 

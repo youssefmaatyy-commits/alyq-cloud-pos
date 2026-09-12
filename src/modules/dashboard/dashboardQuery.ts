@@ -7,6 +7,29 @@
  * module providers that are already mounted in the app tree.
  */
 
+// The dashboard reads the reports' analytics rather than re-deriving its own:
+// requirement 8 asks for KPIs and charts, not for a second set of numbers that
+// could drift from what the Reports hub shows for the same window. The date
+// windows come from the picker's presets for the same reason.
+import {
+  computeFinancialTotals,
+  type DateRange,
+} from "@/modules/reports/services/financialExport";
+import {
+  bestSellers,
+  productPerformance,
+  salesByPaymentMethod,
+  salesInRange,
+  salesTrend,
+  type PaymentMethodSalesRow,
+  type TrendPoint,
+} from "@/modules/reports/services/salesAnalytics";
+import { expensesByDay, expensesInRange } from "@/modules/reports/services/expenseAnalytics";
+import {
+  lastDaysRange as reportLastDaysRange,
+  monthToDateRange,
+} from "@/modules/reports/services/dateRanges";
+
 import type { Product } from "@/modules/products/types";
 import { stockStatus } from "@/modules/products/types";
 import type { Sale } from "@/modules/pos/types";
@@ -233,4 +256,190 @@ export function buildDashboardSnapshot(input: {
     openShift: input.openShift,
     shiftSummary: input.shiftSummary,
   };
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Phase 14 additions — KPI cards and chart series                            */
+/* -------------------------------------------------------------------------- */
+
+/** How many days the trend and revenue-vs-expenses charts cover. */
+export const DASHBOARD_TREND_DAYS = 14;
+
+/**
+ * This month so far, in the inclusive `DateRange` the report builders accept.
+ *
+ * "Monthly sales" on an operations dashboard means the calendar month to date,
+ * not a rolling thirty days — a shopkeeper comparing the tile with their own
+ * books expects the window their accountant uses. The span is the reports
+ * screen's own `thisMonth` preset, so the two screens cannot define the month
+ * differently.
+ */
+export function monthRangeOf(now: Date = new Date()): DateRange {
+  return monthToDateRange(now);
+}
+
+/**
+ * The last `days` calendar days, today included — the reports' helper, with the
+ * dashboard's default span. Re-exported because the dashboard tests assert the
+ * window the charts are drawn over.
+ */
+export function lastDaysRange(
+  now: Date = new Date(),
+  days: number = DASHBOARD_TREND_DAYS,
+): DateRange {
+  return reportLastDaysRange(now, days);
+}
+
+export interface MonthlyKpis {
+  /** Completed invoices in the month to date. */
+  revenue: number;
+  invoices: number;
+  /** Units behind that revenue. */
+  units: number;
+  /** Cost of the goods sold, on the reports' current-cost convention. */
+  cost: number;
+  grossProfit: number;
+  /** Expenses recorded in the same window. */
+  expenses: number;
+  /** Revenue − cost − expenses: the month's net position. */
+  profit: number;
+  /** Net profit as a percent of revenue — the same 0..100 convention the
+   * product analytics use, so one formatter serves both. 0 when nothing sold. */
+  margin: number;
+  /** Paid back out as settled refunds in the window. */
+  refunds: number;
+}
+
+/**
+ * This month's trading position, off the same `computeFinancialTotals` the
+ * Reports hub's financial workbook is built from — so the dashboard tile and the
+ * exported sheet can never disagree.
+ */
+export function computeMonthlyKpis(input: {
+  sales: Sale[];
+  products: Product[];
+  expenses: Expense[];
+  returnsList: SalesReturn[];
+  refundsList: RefundRecord[];
+  now?: Date;
+}): MonthlyKpis {
+  const range = monthRangeOf(input.now);
+  const totals = computeFinancialTotals({
+    sales: salesInRange(input.sales, range),
+    products: input.products,
+    expenses: expensesInRange(input.expenses, range),
+    returnsList: input.returnsList,
+    refundsList: input.refundsList,
+  });
+  return {
+    revenue: totals.revenue,
+    invoices: totals.invoiceCount,
+    units: totals.unitCount,
+    cost: totals.cogs,
+    grossProfit: totals.grossProfit,
+    expenses: totals.expenses,
+    profit: totals.netProfit,
+    margin: totals.revenue > 0 ? (totals.netProfit / totals.revenue) * 100 : 0,
+    refunds: totals.refundsPaid,
+  };
+}
+
+export interface RevenueVsExpensePoint {
+  date: string;
+  revenue: number;
+  expenses: number;
+}
+
+/**
+ * Revenue against expenses, one point per day, oldest first.
+ *
+ * Both series come from the reports analytics — `salesTrend`, which pads the
+ * window so a quiet day is a flat line rather than a gap, and `expensesByDay` —
+ * merged on the day key. A day with spending but no sales therefore still shows
+ * its expense bar.
+ */
+export function revenueVsExpensesSeries(input: {
+  sales: Sale[];
+  expenses: Expense[];
+  days?: number;
+  now?: Date;
+}): RevenueVsExpensePoint[] {
+  const now = input.now ?? new Date();
+  const range = lastDaysRange(now, input.days);
+  const byDate = new Map(
+    expensesByDay(expensesInRange(input.expenses, range)).map((day) => [day.date, day.total]),
+  );
+  return salesTrend(input.sales, range).map((point) => ({
+    date: point.date,
+    revenue: point.revenue,
+    expenses: byDate.get(point.date) ?? 0,
+  }));
+}
+
+/** Daily sales totals for the trend chart — padded and sorted by `salesTrend`. */
+export function salesTrendSeries(input: {
+  sales: Sale[];
+  days?: number;
+  now?: Date;
+}): TrendPoint[] {
+  const now = input.now ?? new Date();
+  return salesTrend(input.sales, lastDaysRange(now, input.days));
+}
+
+/**
+ * Payment-method totals for the distribution donut, over the month to date so it
+ * lines up with the monthly tiles beside it.
+ */
+export function paymentMix(sales: Sale[], now?: Date): PaymentMethodSalesRow[] {
+  return salesByPaymentMethod(salesInRange(sales, monthRangeOf(now)));
+}
+
+export interface TopProductRow {
+  id: string;
+  nameEn: string;
+  nameAr: string;
+  units: number;
+  revenue: number;
+  profit: number;
+}
+
+/**
+ * Best sellers for the dashboard card.
+ *
+ * Ranked by the same `bestSellers` the advanced product report uses, so the
+ * dashboard's "top selling products" and the top of that report's table are the
+ * same list. Names are carried in both languages and the page picks, because a
+ * query module has no locale.
+ */
+export function topProducts(input: {
+  sales: Sale[];
+  products: Product[];
+  limit?: number;
+  now?: Date;
+  days?: number;
+}): TopProductRow[] {
+  const now = input.now ?? new Date();
+  const range = lastDaysRange(now, input.days);
+  const limit = Math.max(1, Math.floor(input.limit ?? 5));
+  return bestSellers(
+    productPerformance(salesInRange(input.sales, range), input.products),
+    limit,
+  ).map((row) => ({
+    id: row.productId,
+    nameEn: row.nameEn,
+    nameAr: row.nameAr,
+    units: row.units,
+    revenue: row.revenue,
+    profit: row.profit,
+  }));
+}
+
+/**
+ * Month-to-date expense total, for the "expenses summary" tile.
+ *
+ * Kept beside {@link computeExpensesKpis} (all-time + today) rather than folded
+ * into it, so the existing tiles and their tests stay exactly as they were.
+ */
+export function monthExpensesTotal(expenses: Expense[], now: Date = new Date()): number {
+  return expensesInRange(expenses, monthRangeOf(now)).reduce((sum, e) => sum + (e.amount ?? 0), 0);
 }

@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { PageHeader } from "@/components/layout/AppShell";
 import {
@@ -7,6 +8,7 @@ import {
   Card,
   EmptyState,
   ErrorState,
+  ExportButton,
   EyeIcon,
   LoadingBlock,
   Modal,
@@ -20,6 +22,12 @@ import { ShiftSummaryGrid } from "../components/ShiftSummaryGrid";
 import { differenceTone } from "../services/shiftCalculations";
 import { shiftDuration } from "../services/shiftService";
 import { EMPTY_SHIFT_FILTERS, type Shift, type ShiftFiltersValue } from "../types";
+// The shift *report* — daily shifts, cash differences and per-employee
+// performance — is built by the reports analytics, so this screen exports the
+// same workbook the advanced reports screen does rather than growing a second
+// builder next to it (Phase 14, requirement 4).
+import { buildShiftAnalyticsSheets } from "@/modules/reports/services/analyticsExport";
+import { OPEN_DATE_RANGE } from "@/modules/reports/services/financialExport";
 
 export function ShiftHistoryPage() {
   const { t, date, num, money } = useI18n();
@@ -75,9 +83,27 @@ export function ShiftHistoryPage() {
         title={t("shifts.historyTitle")}
         subtitle={t("shifts.historySubtitle")}
         actions={
-          <Button variant="secondary" onClick={() => void refresh()} title={t("common.refresh")}>
-            ⟳
-          </Button>
+          <>
+            {/* What the screen lists, as a report: counted drawers only, so the
+                cash columns are the ones the tiles above total. `authority="report"`
+                asks for `export_reports`, which ExportButton asserts on click. */}
+            <ExportButton
+              name="shift-report"
+              authority="report"
+              count={closedShifts.length}
+              build={() =>
+                buildShiftAnalyticsSheets({
+                  shifts: closedShifts,
+                  summaryFor,
+                  range: OPEN_DATE_RANGE,
+                  t,
+                })
+              }
+            />
+            <Button variant="secondary" onClick={() => void refresh()} title={t("common.refresh")}>
+              ⟳
+            </Button>
+          </>
         }
       />
 
@@ -92,6 +118,13 @@ export function ShiftHistoryPage() {
           hint={t("shifts.netDifferenceHint")}
         />
       </div>
+
+      <p className="mb-4 text-xs font-medium text-slate-600">
+        <Link to="/reports/advanced" className="font-semibold text-indigo-600 hover:text-indigo-700">
+          {t("shifts.advancedLink")} →
+        </Link>{" "}
+        {t("shifts.advancedHint")}
+      </p>
 
       <Card className="mb-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">

@@ -48,7 +48,7 @@ import {
   ApprovalRulesPage,
   ApprovalsPage,
 } from "@/modules/approvals";
-import { ReportsPage } from "@/modules/reports";
+import { AdvancedReportsPage, ReportsPage } from "@/modules/reports";
 import { RolesPage, SettingsProvider, UsersPage } from "@/modules/settings";
 
 import {
@@ -175,6 +175,12 @@ function AuthenticatedApp() {
                                 request is asserted in the service. */}
                             <Route path="/approvals" element={<ApprovalsPage />} />
                             <Route path="/reports" element={<ReportsPage />} />
+                            {/* Advanced reports (Phase 14). Same providers, same
+                                date window, same read capability as the hub —
+                                `/reports` in `routes.ts` covers this path by
+                                longest-prefix — but it renders the analysis
+                                instead of the raw extracts. */}
+                            <Route path="/reports/advanced" element={<AdvancedReportsPage />} />
                             <Route path="/online/orders" element={<OnlineOrdersPage />} />
                             <Route path="/online/website" element={<WebsiteSettingsPage />} />
                             <Route path="/online/marketing" element={<MarketingPage />} />

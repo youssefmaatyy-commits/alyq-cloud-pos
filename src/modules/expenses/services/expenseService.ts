@@ -1,3 +1,4 @@
+import { withinDateRange } from "@/lib/export/excelExport";
 import { assertSensitiveAction } from "@/lib/permissions/actions";
 import {
   assertRequestApplicable,
@@ -103,6 +104,8 @@ export function queryExpenses(expenses: Expense[], filters: ExpenseFiltersValue)
   return expenses.filter((expense) => {
     if (filters.category !== "all" && expense.category !== filters.category) return false;
     if (filters.method !== "all" && expense.payment_method !== filters.method) return false;
+    // Same inclusive window the reports apply (`to` covers the whole day).
+    if (!withinDateRange(expense.spent_at, filters.from || null, filters.to || null)) return false;
     if (terms.length === 0) return true;
     const haystack = normalizeText(
       `${expense.expense_number} ${expense.name} ${expense.notes ?? ""} ${expense.user_name} ${expense.branch ?? ""}`,

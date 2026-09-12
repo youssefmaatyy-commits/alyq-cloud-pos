@@ -1,4 +1,5 @@
 import { assertSensitiveAction } from "@/lib/permissions/actions";
+import { recordAudit } from "@/modules/audit/services/auditService";
 import {
   assertRequestApplicable,
   assertWithinApprovalLimit,
@@ -197,6 +198,53 @@ export async function saveProduct({
     const product = await repository.updateProduct(currentId, data);
     if ((changed.selling || changed.cost) && approval) {
       await markRequestApplied(approval.requestId, product.id);
+    }
+
+    // Requirement 6: a price move is the act that silently rewrites every margin
+    // figure the shop has, so the trail keeps the value before and after — that
+    // pair is what makes "why did this product stop being profitable?" answerable
+    // months later, when nobody remembers and the receipt is long gone. Retail
+    // and cost are separate actions because they are separate decisions: one is a
+    // pricing choice, the other is a supplier fact. Both are written from here,
+    // the one funnel every product edit passes through, and both are
+    // fire-and-forget — a failed audit row must not roll back a saved product.
+    const previousSelling = Number(existing.selling_price);
+    const nextSelling = Number(product.selling_price);
+    if (changed.selling) {
+      void recordAudit({
+        action: "product.price_changed",
+        entity: "product",
+        entity_id: product.id,
+        entity_label: product.sku,
+        details: {
+          product: product.name_en,
+          previous: previousSelling,
+          next: nextSelling,
+          delta: Math.round((nextSelling - previousSelling) * 100) / 100,
+          percent:
+            previousSelling > 0
+              ? Math.round(((nextSelling - previousSelling) / previousSelling) * 10000) / 100
+              : null,
+          approval: approval?.requestId ?? null,
+        },
+      });
+    }
+    const previousCost = Number(existing.cost_price ?? 0);
+    const nextCost = Number(product.cost_price ?? 0);
+    if (changed.cost) {
+      void recordAudit({
+        action: "product.cost_changed",
+        entity: "product",
+        entity_id: product.id,
+        entity_label: product.sku,
+        details: {
+          product: product.name_en,
+          previous: previousCost,
+          next: nextCost,
+          delta: Math.round((nextCost - previousCost) * 100) / 100,
+          approval: approval?.requestId ?? null,
+        },
+      });
     }
     return { product, isNew: false };
   }

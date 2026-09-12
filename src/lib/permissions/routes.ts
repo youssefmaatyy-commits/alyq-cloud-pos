@@ -30,6 +30,11 @@ export const ROUTE_CAPABILITIES: ReadonlyArray<readonly [string, Capability]> = 
   // would desynchronise `roles.ts` from `public.role_capabilities`, which
   // `npm run db:check` asserts row-for-row.
   ["/reports", "view_shifts"],
+  // Advanced reports (Phase 14) is the same screen family — read-only analysis
+  // over data the other screens already expose — so it carries the same read
+  // capability. Listed explicitly even though `/reports` would match it by
+  // prefix, because somebody grepping this table for the path should find it.
+  ["/reports/advanced", "view_shifts"],
   // The website is two screens' worth of authority. Working an order —
   // approving, cancelling, verifying an InstaPay proof — is a till-side job, so
   // it uses `manage_online_orders`, which cashiers hold. Editing the shop itself

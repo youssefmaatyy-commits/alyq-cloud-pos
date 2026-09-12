@@ -1,8 +1,10 @@
 import { useMemo, useState, type ReactNode } from "react";
+import { useNavigate } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { PageHeader } from "@/components/layout/AppShell";
 import {
   BoxIcon,
+  Button,
   Card,
   ExportButton,
   HistoryIcon,
@@ -65,6 +67,7 @@ import {
  */
 export function ReportsPage() {
   const { t, pick, money, lang } = useI18n();
+  const navigate = useNavigate();
   const { products: catalogProducts, categories } = useCatalog();
   const { products: inventoryProducts, movements, loading: inventoryLoading } = useInventory();
   const { sales, salesLoading } = usePos();
@@ -279,6 +282,24 @@ export function ReportsPage() {
                   })
                 }
               />
+            </div>
+          </Card>
+
+          {/* ── Advanced reports ───────────────────────────────────────── */}
+          <Card>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0">
+                <SectionTitle>{t("reports.adv.title")}</SectionTitle>
+                <p className="mt-1 text-xs font-medium text-slate-600">
+                  {t("reports.adv.subtitle")}
+                </p>
+              </div>
+              {/* The analysis lives on its own screen and reads this one's date
+                  window; the hub stays the place raw extracts come from. */}
+              <Button variant="secondary" size="sm" onClick={() => navigate("/reports/advanced")}>
+                <ReportIcon className="h-4 w-4" />
+                {t("nav.advancedReports")}
+              </Button>
             </div>
           </Card>
 

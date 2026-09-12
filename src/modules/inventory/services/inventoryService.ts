@@ -1,4 +1,5 @@
 import { assertSensitiveAction } from "@/lib/permissions/actions";
+import { recordAudit } from "@/modules/audit/services/auditService";
 import { AppError } from "@/modules/products/data/repository";
 import { stockStatus, type Product, type StockStatus } from "@/modules/products/types";
 import { applyDemoAdjustment, applySupabaseAdjustment, getInventoryRepository } from "../data";
@@ -92,6 +93,30 @@ export async function adjustStock(args: {
   if (result.product.stock_quantity < 0) {
     throw new AppError("VALIDATION", "Stock cannot be negative", "quantity");
   }
+
+  // Requirement 6: stock is money on a shelf, and a manual movement is the one
+  // act that changes it without a sale, a purchase or a return behind it. The
+  // trail keeps the before/after pair the movement already snapshots, so a
+  // correction can be read back as "the system said 12, the shelf said 9, this
+  // person wrote 9" — which is the whole question an owner asks. A `recount` is
+  // recorded as a correction and every other reason as an adjustment, matching
+  // the two capabilities the funnel asserts above (`stock.correct` / `stock.adjust`).
+  void recordAudit({
+    action: args.reason === "recount" ? "stock.corrected" : "stock.adjusted",
+    entity: "stock",
+    entity_id: result.product.id,
+    entity_label: result.product.sku,
+    details: {
+      product: result.product.name_en,
+      movement: result.movement.type,
+      reason: result.movement.reason,
+      delta: result.movement.delta,
+      before: result.movement.quantity_before,
+      after: result.movement.quantity_after,
+      notes: result.movement.notes ?? null,
+    },
+  });
+
   return { ...result, status: deriveStatus(result.product) };
 }
 

@@ -1,54 +1,26 @@
 import { useCallback } from "react";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { Button, Field, TextInput } from "@/components/ui";
-import type { DateRange } from "../services/financialExport";
+import { presetRange, type DateRangeValue, type RangePreset } from "../services/dateRanges";
 
 /**
  * Date-range selection for the reports screen.
  *
- * Values are `yyyy-mm-dd` strings — what `<input type="date">` speaks — and an
- * empty string means "unbounded on that side". `toExportRange` turns them into
- * the `DateRange` the export builders filter with (`null` = unbounded), so the
- * picker never has to know about the builders and vice versa.
+ * The window maths — what "this month" or "the last 30 days" means, and how a
+ * picker value becomes the range the export builders filter with — lives in
+ * `../services/dateRanges`, so a headless caller (the dashboard query layer) can
+ * read the same windows without importing a component. Everything below is the
+ * rendering of that: two date inputs and the preset buttons.
  */
-export interface DateRangeValue {
-  from: string;
-  to: string;
-}
-
-export const EMPTY_DATE_RANGE: DateRangeValue = { from: "", to: "" };
-
-/** Picker value → the inclusive range the builders accept. */
-export function toExportRange(value: DateRangeValue): DateRange {
-  return { from: value.from || null, to: value.to || null };
-}
-
-const pad = (n: number) => String(n).padStart(2, "0");
-
-/** Local-time `yyyy-mm-dd`, so "today" means the shop's today, not UTC's. */
-export function isoDate(date: Date): string {
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-}
-
-export type RangePreset = "allTime" | "today" | "thisMonth" | "last30";
-
-/** The calendar span a preset covers, in local time. */
-export function presetRange(preset: RangePreset, now: Date = new Date()): DateRangeValue {
-  switch (preset) {
-    case "today":
-      return { from: isoDate(now), to: isoDate(now) };
-    case "thisMonth":
-      return { from: isoDate(new Date(now.getFullYear(), now.getMonth(), 1)), to: isoDate(now) };
-    case "last30": {
-      const from = new Date(now);
-      from.setDate(from.getDate() - 29); // 30 days inclusive of today
-      return { from: isoDate(from), to: isoDate(now) };
-    }
-    case "allTime":
-    default:
-      return EMPTY_DATE_RANGE;
-  }
-}
+export {
+  EMPTY_DATE_RANGE,
+  isoDate,
+  lastDaysRange,
+  monthToDateRange,
+  presetRange,
+  toExportRange,
+} from "../services/dateRanges";
+export type { DateRangeValue, RangePreset } from "../services/dateRanges";
 
 export interface DateRangePickerProps {
   value: DateRangeValue;

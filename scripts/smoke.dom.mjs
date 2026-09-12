@@ -235,6 +235,11 @@ async function main() {
 
   // 1 ─ products list
   await navigate("#/products");
+  // The bounded wait every other screen check in this suite uses. Navigation
+  // alone sleeps 400 ms, which is not always enough for the catalog to arrive
+  // through the demo repository's latency when the three suites run back to back
+  // under load — the assertion then failed on a screen that was still loading.
+  for (let i = 0; i < 25 && !bodyText().includes("ALYQ-1001"); i += 1) await sleep(300);
   assert.ok(bodyText().includes("ALYQ-1001"), "demo SKU visible in the list");
   assert.ok(rows() > 0, "table rows rendered");
   console.log(`  ✓ products list renders demo data (${rows()} rows)`);
@@ -2018,6 +2023,169 @@ async function main() {
   assert.ok(!exportButtonFor("Payments").disabled, "clearing the range makes it exportable again");
   assert.ok(advertisedCount("Payments") > 0, "and the payment lines come back");
   console.log("  ✓ the date range narrows every export, and an empty range writes nothing");
+
+  // ── Phase 14 · Advanced reports: six tabs over one window, and their file ──
+  // The hub above proves the raw extracts still write. This proves the screen
+  // that answers questions *before* anybody knows which file they want renders
+  // the same data — the invoices, the expense and the closed shift this suite
+  // created — and that its own export is a workbook Excel would open.
+  await navigate("#/reports/advanced");
+  for (let i = 0; i < 30 && !bodyText().includes("Advanced reports"); i += 1) await sleep(300);
+  const mainEl = () => document.querySelector("main") ?? document;
+  assert.ok(bodyText().includes("Advanced reports"), "the advanced reports screen renders");
+  assert.ok(navHrefs().includes("#/reports/advanced"), "and the sidebar offers it");
+  assert.ok(bodyText().includes("Date range"), "with the one window every tab reads");
+  assert.ok(bodyText().includes("Sales by employee"), "the sales analysis leads the screen");
+  /** Rows on screen — the analysis is tables, so "has data" means "has rows". */
+  const tableRows = () => mainEl().querySelectorAll("tbody tr").length;
+  assert.ok(tableRows() >= 3, `the sales tables are populated (${tableRows()} rows)`);
+
+  /** Click a tab by its `role="tab"` label — the sidebar also contains "Reports". */
+  const clickTab = async (label, expected) => {
+    const tab = [...document.querySelectorAll('[role="tab"]')].find((n) =>
+      (n.textContent ?? "").trim().startsWith(label),
+    );
+    assert.ok(tab, `the "${label}" tab exists`);
+    clickButton(tab);
+    for (let i = 0; i < 25 && !bodyText().includes(expected); i += 1) await sleep(200);
+    assert.ok(bodyText().includes(expected), `the "${label}" tab renders "${expected}"`);
+    assert.equal(tab.getAttribute("aria-selected"), "true", `and reports itself selected`);
+  };
+  /** The tab's own report file: real workbook, no untranslated cell. */
+  const captureTabExport = async (label) => {
+    const button = [...mainEl().querySelectorAll("button")].find((b) =>
+      (b.textContent ?? "").includes("Export Excel"),
+    );
+    assert.ok(button, `the ${label} tab offers an export`);
+    assert.ok(!button.disabled, `and it is enabled with the data on screen`);
+    return captureExport(`advanced ${label} report`, () => clickButton(button));
+  };
+
+  const salesReport = await captureTabExport("sales");
+  assert.deepEqual(
+    salesReport.sheetNames,
+    ["Summary", "By employee", "By branch & register", "Payments", "Sales trend"],
+    "the sales workbook holds every sales breakdown",
+  );
+  assert.ok(
+    dataRowsOf(salesReport.workbook, "By employee").length >= 1,
+    "and the invoices this suite completed are attributed to whoever sold them",
+  );
+  assert.ok(
+    dataRowsOf(salesReport.workbook, "Sales trend").length >= 1,
+    "with a day in the trend for the day they were taken",
+  );
+
+  await clickTab("Products", "Product profitability");
+  const productReport = await captureTabExport("products");
+  assert.equal(productReport.sheetNames[0], "Summary", "the product workbook opens on a summary");
+  assert.ok(productReport.sheetNames.length >= 4, "with the profitability, movers and stock sheets");
+
+  await clickTab("Customers", "Top customers");
+  assert.ok(bodyText().includes("Purchase history"), "and a customer's purchase history");
+
+  await clickTab("Expenses", "Expenses by category");
+  assert.ok(bodyText().includes("Transport"), "the expense this suite recorded is in the category breakdown");
+  assert.ok(bodyText().includes("Expenses by employee"), "split by category, employee and branch");
+  const expenseReport = await captureTabExport("expenses");
+  assert.equal(expenseReport.sheetNames[0], "Summary", "the expense workbook opens on a summary");
+  assert.ok(expenseReport.sheetNames.length >= 4, "with the category, employee, branch and day sheets");
+
+  await clickTab("Shifts", "Daily shift report");
+  assert.ok(bodyText().includes("Cash differences"), "with the cash difference report");
+  assert.ok(bodyText().includes("Employee shift performance"), "and per-employee performance");
+  const shiftReport = await captureTabExport("shifts");
+  assert.deepEqual(
+    shiftReport.sheetNames,
+    ["Summary", "Shift summaries", "Cash differences", "Daily shifts", "Employee performance"],
+    "the shift workbook holds the daily report, the gaps and the people",
+  );
+  assert.ok(
+    dataRowsOf(shiftReport.workbook, "Shift summaries").length >= 1,
+    "and the drawer this suite closed is in the report",
+  );
+  // The suite balanced its drawer, so the difference report is legitimately
+  // empty — which must read as "everything matched", not as "nothing counted".
+  assert.equal(
+    dataRowsOf(shiftReport.workbook, "Cash differences").length,
+    0,
+    "a balanced drawer is not a discrepancy",
+  );
+  assert.ok(
+    bodyText().includes("Every counted drawer matched"),
+    "and the screen says so rather than showing an empty table",
+  );
+
+  await clickTab("Financial", "Refund impact & net performance");
+  assert.ok(bodyText().includes("Net after refunds"), "net of what the refunds took back out");
+  assert.ok(bodyText().includes("Net profit"), "alongside the hub's own financial totals");
+
+  // One window drives every tab: a range holding nothing empties the screen and
+  // says so, instead of showing yesterday's figures under today's dates.
+  await clickTab("Sales", "Sales by employee");
+  const advDates = document.querySelectorAll('main input[type="date"]');
+  assert.equal(advDates.length, 2, "the advanced screen has its own from and to dates");
+  setDateValue(advDates[0], "2099-01-01");
+  for (let i = 0; i < 25 && !bodyText().includes("Nothing in this window"); i += 1) await sleep(200);
+  assert.ok(bodyText().includes("Nothing in this window"), "a range with no data says so");
+  assert.equal(tableRows(), 0, "and every sales table is empty inside it");
+  click("All time", mainEl());
+  for (let i = 0; i < 25 && bodyText().includes("Nothing in this window"); i += 1) await sleep(200);
+  assert.ok(tableRows() >= 3, "clearing the range brings the figures back");
+  console.log("  ✓ advanced reports: six tabs over one window, four real workbooks, empty range explained");
+
+  // ── Phase 14 · Dashboard: KPI cards and four SVG charts, behind the gate ──
+  await navigate("#/");
+  for (let i = 0; i < 30 && !bodyText().includes("Business performance"); i += 1) await sleep(300);
+  assert.ok(bodyText().includes("Today's revenue"), "the dashboard keeps the tiles it already had");
+  assert.ok(bodyText().includes("Business performance"), "and grows a performance section");
+  for (const card of [
+    "Sales this month",
+    "Net profit this month",
+    "Expenses this month",
+    "Pending approvals",
+    "Pending online orders",
+  ]) {
+    assert.ok(bodyText().includes(card), `with the "${card}" card`);
+  }
+  for (const panel of [
+    "Sales trend",
+    "Revenue vs expenses",
+    "Payment methods",
+    "Product performance",
+    "Top selling products",
+  ]) {
+    assert.ok(bodyText().includes(panel), `and the "${panel}" panel`);
+  }
+  // Hand-drawn SVG, not a charting library and not an image: the four charts put
+  // paths, rects and circles in the document.
+  const svg = [...mainEl().querySelectorAll("svg")];
+  assert.ok(svg.length >= 4, `the charts render as SVG (${svg.length} elements)`);
+  assert.ok(
+    svg.some((node) => node.querySelector("path")) && svg.some((node) => node.querySelector("rect")),
+    "with a trend line and bars drawn in it",
+  );
+  assert.ok(
+    svg.some((node) => node.querySelectorAll("circle").length >= 2),
+    "and a donut for the payment mix",
+  );
+  assert.ok(bodyText().includes("Open advanced reports"), "linking through to the analysis");
+  console.log("  ✓ dashboard: month-to-date KPIs, both queues and four SVG charts");
+
+  // A read-only role may still read reports, so neither screen may over-refuse.
+  await signInAs("viewer");
+  await navigate("#/reports/advanced");
+  for (let i = 0; i < 25 && !bodyText().includes("Sales by employee"); i += 1) await sleep(300);
+  assert.ok(bodyText().includes("Sales by employee"), "a viewer reads the analysis");
+  assert.ok(!denied(), "and is not refused the screen the capability matrix grants");
+  await navigate("#/");
+  for (let i = 0; i < 25 && !bodyText().includes("Business performance"); i += 1) await sleep(300);
+  assert.ok(bodyText().includes("Business performance"), "the dashboard performance section too");
+  console.log("  ✓ advanced reports and the dashboard stay readable for a read-only role");
+
+  await signInAs("admin");
+  await navigate("#/reports");
+  for (let i = 0; i < 25 && !bodyText().includes("Data exports"); i += 1) await sleep(300);
 
   // ── Audit trail is an oversight screen: managers/admins only ──
   // Authentication phase: the acting role now comes from the session, so the

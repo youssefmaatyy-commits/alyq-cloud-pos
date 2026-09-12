@@ -3,8 +3,13 @@
  *
  * Covers every pure function in dashboardQuery.ts: sales KPIs, catalog KPIs,
  * returns KPIs, expenses KPIs, recent-sales ordering, and the composite
- * snapshot builder. No React, no network, no mock data — just reducers over
- * domain records.
+ * snapshot builder, plus the Phase 14 additions — month-to-date KPIs and the
+ * chart series the dashboard draws. No React, no network, no mock data — just
+ * reducers over domain records.
+ *
+ * The Phase 14 cases pin a fixed "now" rather than using the clock: the windows
+ * they assert on (this month, the last N days) are defined relative to today, so
+ * a test that reads the wall clock would change meaning on the first of a month.
  */
 import assert from "node:assert/strict";
 import {
@@ -14,8 +19,16 @@ import {
   computeExpensesKpis,
   recentSales,
   buildDashboardSnapshot,
+  computeMonthlyKpis,
+  lastDaysRange,
+  monthExpensesTotal,
+  monthRangeOf,
+  paymentMix,
+  revenueVsExpensesSeries,
+  salesTrendSeries,
+  topProducts,
 } from "../dashboardQuery";
-import type { Sale } from "@/modules/pos/types";
+import type { Sale, SaleItem, SalePayment } from "@/modules/pos/types";
 import type { Product } from "@/modules/products/types";
 import type { SalesReturn, RefundRecord } from "@/modules/returns/types";
 import type { Expense } from "@/modules/expenses/types";
@@ -394,6 +407,254 @@ test("buildDashboardSnapshot: combines all KPIs", () => {
   assert.equal(snap.customerCount, 1);
   assert.equal(snap.recentSales.length, 1);
   assert.equal(snap.openShift, null);
+});
+
+// ── Phase 14: month-to-date KPIs and chart series ───────────────────────────
+
+/** A fixed "now" so month and rolling-day windows are deterministic. */
+const NOW = new Date(2026, 8, 12, 10, 30, 0); // 2026-09-12 10:30 local
+
+function iso(year: number, monthIndex: number, day: number, hour = 12): string {
+  return new Date(year, monthIndex, day, hour, 0, 0, 0).toISOString();
+}
+
+function line(productId: string, quantity: number, unitPrice: number): SaleItem {
+  return {
+    id: `${productId}-${quantity}`,
+    sale_id: "s",
+    product_id: productId,
+    name_ar: "منتج",
+    name_en: `Product ${productId}`,
+    sku: `SKU-${productId}`,
+    barcode: null,
+    unit_price: unitPrice,
+    quantity,
+    line_total: Math.round(quantity * unitPrice * 100) / 100,
+  };
+}
+
+function paid(method: SalePayment["method"], amount: number): SalePayment {
+  return {
+    id: `pay-${method}-${amount}`,
+    sale_id: "s",
+    method,
+    amount,
+    status: "paid",
+    paid_at: iso(2026, 8, 12),
+    paid_by: "u1",
+    paid_by_name: "Cashier",
+  };
+}
+
+test("monthRangeOf spans the first of the month to today", () => {
+  assert.deepEqual(monthRangeOf(NOW), { from: "2026-09-01", to: "2026-09-12" });
+  // A window is inclusive of the day it ends on, not of its midnight start.
+  assert.deepEqual(monthRangeOf(new Date(2026, 0, 1, 0, 5)), { from: "2026-01-01", to: "2026-01-01" });
+});
+
+test("lastDaysRange counts today as one of the days", () => {
+  assert.deepEqual(lastDaysRange(NOW, 3), { from: "2026-09-10", to: "2026-09-12" });
+  assert.deepEqual(lastDaysRange(NOW, 1), { from: "2026-09-12", to: "2026-09-12" });
+  // Crossing a month boundary must not clamp to the first of the month.
+  assert.deepEqual(lastDaysRange(new Date(2026, 8, 2, 9), 5), { from: "2026-08-29", to: "2026-09-02" });
+});
+
+test("computeMonthlyKpis totals the month, costs the goods and nets the expenses", () => {
+  const products = [product({ id: "p1", cost_price: 50, selling_price: 100 })];
+  const sales = [
+    // In the window: 2 units at 100 = 200 revenue, 100 cost.
+    sale({
+      id: "in-month",
+      total: 200,
+      created_at: iso(2026, 8, 5),
+      items: [line("p1", 2, 100)],
+      payments: [paid("cash", 200)],
+    }),
+    // Last month: excluded from every figure.
+    sale({
+      id: "last-month",
+      total: 900,
+      created_at: iso(2026, 7, 20),
+      items: [line("p1", 9, 100)],
+      payments: [paid("cash", 900)],
+    }),
+    // Voided in the window: not revenue.
+    sale({
+      id: "voided",
+      total: 70,
+      status: "voided",
+      created_at: iso(2026, 8, 6),
+      items: [line("p1", 1, 70)],
+      payments: [paid("cash", 70)],
+    }),
+  ];
+  const expenses = [
+    expense({ id: "e-in", amount: 40, spent_at: iso(2026, 8, 5) }),
+    expense({ id: "e-out", amount: 500, spent_at: iso(2026, 7, 20) }),
+  ];
+
+  const kpis = computeMonthlyKpis({
+    sales,
+    products,
+    expenses,
+    returnsList: [],
+    refundsList: [],
+    now: NOW,
+  });
+
+  assert.equal(kpis.revenue, 200);
+  assert.equal(kpis.invoices, 1);
+  assert.equal(kpis.units, 2);
+  assert.equal(kpis.cost, 100);
+  assert.equal(kpis.grossProfit, 100);
+  assert.equal(kpis.expenses, 40);
+  assert.equal(kpis.profit, 60);
+  // Net margin, in the analytics' 0..100 convention: 60 / 200.
+  assert.equal(Math.round(kpis.margin * 10) / 10, 30);
+});
+
+test("computeMonthlyKpis reports a loss and zero margin when nothing sold", () => {
+  const kpis = computeMonthlyKpis({
+    sales: [],
+    products: [],
+    expenses: [expense({ id: "e", amount: 25, spent_at: iso(2026, 8, 3) })],
+    returnsList: [],
+    refundsList: [],
+    now: NOW,
+  });
+  assert.equal(kpis.revenue, 0);
+  assert.equal(kpis.profit, -25);
+  assert.equal(kpis.margin, 0);
+});
+
+test("salesTrendSeries pads every day of the window and sorts oldest first", () => {
+  const sales = [
+    sale({ id: "d0", total: 100, created_at: iso(2026, 8, 10), payments: [paid("cash", 100)] }),
+    sale({ id: "d2", total: 250, created_at: iso(2026, 8, 12), payments: [paid("cash", 250)] }),
+  ];
+  const points = salesTrendSeries({ sales, days: 3, now: NOW });
+
+  assert.deepEqual(points.map((p) => p.date), ["2026-09-10", "2026-09-11", "2026-09-12"]);
+  assert.deepEqual(points.map((p) => p.revenue), [100, 0, 250]);
+  // A day outside the window is not drawn at all.
+  assert.equal(
+    salesTrendSeries({
+      sales: [...sales, sale({ id: "old", total: 9, created_at: iso(2026, 8, 1) })],
+      days: 3,
+      now: NOW,
+    }).reduce((sum, p) => sum + p.revenue, 0),
+    350,
+  );
+});
+
+test("revenueVsExpensesSeries merges both series on the day, keeping expense-only days", () => {
+  const sales = [sale({ id: "s", total: 300, created_at: iso(2026, 8, 12), payments: [paid("cash", 300)] })];
+  const expenses = [
+    expense({ id: "e1", amount: 50, spent_at: iso(2026, 8, 11) }), // no sales that day
+    expense({ id: "e2", amount: 70, spent_at: iso(2026, 8, 12) }),
+  ];
+
+  const points = revenueVsExpensesSeries({ sales, expenses, days: 3, now: NOW });
+
+  assert.deepEqual(points.map((p) => p.date), ["2026-09-10", "2026-09-11", "2026-09-12"]);
+  assert.deepEqual(points.map((p) => p.revenue), [0, 0, 300]);
+  assert.deepEqual(points.map((p) => p.expenses), [0, 50, 70]);
+});
+
+test("paymentMix covers the month to date and skips voided invoices", () => {
+  const sales = [
+    sale({ id: "cash", total: 100, created_at: iso(2026, 8, 2), payments: [paid("cash", 100)] }),
+    sale({
+      id: "split",
+      total: 300,
+      created_at: iso(2026, 8, 4),
+      payments: [paid("cash", 100), paid("instapay", 200)],
+    }),
+    sale({
+      id: "old",
+      total: 999,
+      created_at: iso(2026, 7, 1),
+      payments: [paid("visa", 999)],
+    }),
+    sale({
+      id: "void",
+      total: 55,
+      status: "voided",
+      created_at: iso(2026, 8, 5),
+      payments: [paid("cash", 55)],
+    }),
+  ];
+
+  const rows = paymentMix(sales, NOW);
+  const byMethod = new Map(rows.map((r) => [r.method, r.amount]));
+
+  assert.equal(byMethod.get("cash"), 200);
+  assert.equal(byMethod.get("instapay"), 200);
+  // Last month's card payment and the voided invoice are both out of the window.
+  assert.equal(byMethod.has("visa"), false);
+  assert.equal(rows.reduce((sum, r) => sum + r.amount, 0), 400);
+});
+
+test("topProducts ranks by units, honours the limit and carries both names", () => {
+  const products = [
+    product({ id: "p1", name_en: "Tea", name_ar: "شاي", cost_price: 5, selling_price: 10 }),
+    product({ id: "p2", name_en: "Coffee", name_ar: "قهوة", cost_price: 20, selling_price: 40 }),
+    product({ id: "p3", name_en: "Water", name_ar: "ماء", cost_price: 1, selling_price: 3 }),
+  ];
+  const sales = [
+    sale({
+      id: "a",
+      total: 100,
+      created_at: iso(2026, 8, 11),
+      items: [line("p1", 10, 10)],
+      payments: [paid("cash", 100)],
+    }),
+    sale({
+      id: "b",
+      total: 120,
+      created_at: iso(2026, 8, 12),
+      items: [line("p2", 3, 40)],
+      payments: [paid("cash", 120)],
+    }),
+  ];
+
+  const top = topProducts({ sales, products, limit: 2, now: NOW, days: 3 });
+
+  assert.deepEqual(top.map((row) => row.id), ["p1", "p2"]);
+  assert.equal(top[0].units, 10);
+  assert.equal(top[0].revenue, 100);
+  assert.equal(top[0].profit, 50); // 10 units × (10 − 5)
+  assert.equal(top[0].nameAr, "شاي");
+  assert.equal(top[0].nameEn, "Tea");
+  // A product nobody bought in the window is not a best seller, and neither is
+  // one whose only sale fell outside it.
+  assert.equal(top.some((row) => row.id === "p3"), false);
+  assert.deepEqual(
+    topProducts({
+      sales: [...sales, sale({
+        id: "outside",
+        total: 30,
+        created_at: iso(2026, 8, 1),
+        items: [line("p3", 10, 3)],
+        payments: [paid("cash", 30)],
+      })],
+      products,
+      limit: 5,
+      now: NOW,
+      days: 3,
+    }).map((row) => row.id),
+    ["p1", "p2"],
+  );
+});
+
+test("monthExpensesTotal counts the month to date only", () => {
+  const expenses = [
+    expense({ id: "a", amount: 30, spent_at: iso(2026, 8, 1) }),
+    expense({ id: "b", amount: 12.5, spent_at: iso(2026, 8, 12) }),
+    expense({ id: "c", amount: 1000, spent_at: iso(2026, 7, 31) }),
+  ];
+  assert.equal(monthExpensesTotal(expenses, NOW), 42.5);
+  assert.equal(monthExpensesTotal([], NOW), 0);
 });
 
 // ── Runner ──────────────────────────────────────────────────────────────────

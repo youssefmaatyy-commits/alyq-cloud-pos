@@ -6,6 +6,9 @@ import type {
   AuditLogEntry,
   NewAuditLogEntry,
 } from "../types";
+import { withinDateRange } from "@/lib/export";
+import { canAct } from "@/lib/permissions/enforce";
+import { sensitiveAction } from "@/lib/permissions/actions";
 import { normalizeText } from "@/modules/products/services/productQuery";
 import { getCurrentUser } from "@/modules/inventory/permissions";
 
@@ -55,6 +58,28 @@ export function assertCanExportAudit(): void {
   assertSensitiveAction("audit.export");
 }
 
+/**
+ * The same question as a boolean, for the export button that should not render
+ * for somebody who may read the trail but not take it out.
+ *
+ * Both capabilities, exactly as `assertCanExportAudit` requires them.
+ */
+export function mayExportAudit(): boolean {
+  return (
+    canAct(sensitiveAction("audit.view").capability) &&
+    canAct(sensitiveAction("audit.export").capability)
+  );
+}
+
+/** The distinct people in the trail, for the "who" filter. Id + display name. */
+export function auditActors(entries: readonly AuditLogEntry[]): { id: string; name: string }[] {
+  const seen = new Map<string, string>();
+  for (const entry of entries) {
+    if (entry.user_id && !seen.has(entry.user_id)) seen.set(entry.user_id, entry.user_name);
+  }
+  return [...seen.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export async function loadAuditLog(): Promise<AuditLogEntry[]> {
   assertCanViewAudit();
   return getAuditRepository().listEntries();
@@ -68,6 +93,9 @@ export function queryAuditLog(
 
   return entries.filter((entry) => {
     if (filters.action !== "all" && entry.action !== filters.action) return false;
+    if (filters.entity !== "all" && entry.entity !== filters.entity) return false;
+    if (filters.user !== "all" && entry.user_id !== filters.user) return false;
+    if (!withinDateRange(entry.created_at, filters.from || null, filters.to || null)) return false;
     if (terms.length === 0) return true;
     const haystack = normalizeText(
       `${entry.entity_label} ${entry.action} ${entry.user_name} ${Object.values(entry.details ?? {}).join(" ")}`,

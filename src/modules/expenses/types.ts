@@ -76,10 +76,20 @@ export interface ExpenseFiltersValue {
   search: string;
   category: ExpenseCategory | "all";
   method: ExpensePaymentMethod | "all";
+  /**
+   * Inclusive `yyyy-mm-dd` window on `spent_at`; `""` means unbounded on that
+   * side. The reports' date picker produces exactly these strings, so the
+   * expense screen and the expense report filter the same way — and the list,
+   * the tiles and the export all read one filtered array.
+   */
+  from: string;
+  to: string;
 }
 
 export const EMPTY_EXPENSE_FILTERS: ExpenseFiltersValue = {
   search: "",
   category: "all",
   method: "all",
+  from: "",
+  to: "",
 };
