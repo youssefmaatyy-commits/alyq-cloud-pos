@@ -50,12 +50,14 @@ import {
   checkCapabilityParity,
   checkColumnParity,
   checkRoleAliasParity,
+  checkSeedParity,
 } from "./lib/schema-parity.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const MIGRATIONS_DIR = path.join(ROOT, "supabase", "migrations");
 const SHIM_FILE = path.join(ROOT, "supabase", "tests", "supabase-shim.sql");
 const SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "scenarios.sql");
+const SEED_FILE = path.join(ROOT, "supabase", "seed.sql");
 const SRC_DIR = path.join(ROOT, "src");
 
 // ── arguments ─────────────────────────────────────────────────────────────
@@ -215,6 +217,7 @@ console.log(c.bold(`\nALYQ migration check · ${migrations.length} files · ${dr
 
 const failures = [];
 const applied = [];
+let seedApplied = false;
 
 if (!VERIFY_ONLY) {
   // ── the Supabase shim (local driver only) ──────────────────────────────
@@ -285,6 +288,28 @@ if (!VERIFY_ONLY) {
         "\nRole scenarios skipped (real server; re-run with --scenarios to include them).",
       ),
     );
+  }
+
+  // ── development seed ───────────────────────────────────────────────────
+  // seed.sql is what a fresh project runs before anybody signs in, so it is
+  // verified the way the migrations are: it must apply, it must be idempotent,
+  // and its own contract block must pass. Same guard as the scenarios — it
+  // creates staff accounts, which nobody should do to a server by accident.
+  if (failures.length === 0 && runScenarios) {
+    console.log(c.bold("\nDevelopment seed (supabase/seed.sql)"));
+    for (const pass of ["apply", "re-apply (idempotency)"]) {
+      try {
+        await driver.exec(fs.readFileSync(SEED_FILE, "utf8"), "seed.sql");
+        seedApplied = true;
+        console.log(`  ${c.green("✓")} seed.sql · ${pass}`);
+      } catch (error) {
+        console.log(`  ${c.red("✗")} seed.sql · ${pass}`);
+        failures.push({ name: "seed.sql", phase: pass, error: String(error.message) });
+        break;
+      }
+    }
+  } else if (failures.length === 0) {
+    console.log(c.dim("\nDevelopment seed skipped (real server; re-run with --scenarios to include it)."));
   }
 }
 
@@ -517,13 +542,19 @@ if (failures.length === 0) {
     root: ROOT,
     rolesFile: path.join(SRC_DIR, "lib", "permissions", "roles.ts"),
     auditTypesFile: path.join(SRC_DIR, "modules", "audit", "types.ts"),
+    presetsFile: path.join(SRC_DIR, "lib", "permissions", "customRoles.ts"),
+    demoUsersFile: path.join(SRC_DIR, "lib", "auth", "demoUsers.ts"),
+    seedFile: SEED_FILE,
   };
-  for (const stage of [
+  // Seed parity reads rows the seed wrote, so it only runs when the seed did.
+  const stages = [
     checkColumnParity,
     checkCapabilityParity,
     checkAuditVocabularyParity,
     checkRoleAliasParity,
-  ]) {
+  ];
+  if (seedApplied) stages.push(checkSeedParity);
+  for (const stage of stages) {
     try {
       await stage(context);
     } catch (error) {

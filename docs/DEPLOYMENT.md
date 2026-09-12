@@ -146,6 +146,38 @@ Application data — users, and therefore roles — lives in Supabase Auth, and 
 user needs a matching row in `public.profiles` before they can sign in. The
 schema now handles that:
 
+### On a development project: `supabase/seed.sql`
+
+`supabase db reset` runs [`supabase/seed.sql`](../supabase/seed.sql) after the
+migrations, and it can be applied by hand to any development database:
+
+```bash
+psql "$SUPABASE_DB_URL" -f supabase/seed.sql
+```
+
+It creates the five demo accounts (`admin`, `manager`, `cashier`,
+`inventory_clerk`, `viewer` — all with the password `alyq1234`, the same five the
+offline demo directory offers), backfills `profiles.email` from `auth.users`, and
+inserts the four custom-role presets the app offers in Settings → Roles. It ends
+with a contract block that raises if a role grants a capability the catalogue
+does not know, if a role is empty, if a system role lost its matrix, if a profile
+has no `auth.users` row, or if there is no active admin — so a database that
+disagrees with the application fails to seed instead of failing later as a button
+that does nothing.
+
+Idempotent: it never resets a password, never creates a second account, and
+leaves an operator's own roles and `active` flags alone (re-running refreshes the
+preset *definitions* only). `npm run db:check` applies it twice and then compares
+the rows it wrote with `CUSTOM_ROLE_PRESETS` in
+`src/lib/permissions/customRoles.ts`, and proves that `public.can()` follows an
+overlay: assign → the custom role's list decides, deactivate → the base role,
+clear → the system matrix.
+
+**Do not run it on production.** It creates real sign-ins with a published
+password. On a live project follow the steps below instead.
+
+### On any project: the first admin, by hand
+
 1. **Create the first admin by hand.** An installation cannot bootstrap its own
    first identity: use the Dashboard (Authentication → Users → *Add user*), set
    the password, and give the account role metadata:
@@ -186,6 +218,47 @@ schema now handles that:
 Migrations 0003 and 0010 also seed a small demo catalog (categories, products)
 and skip it when the SKUs already exist, so applying them to a project that
 already has data is safe.
+
+### The `alyq-admin` edge function (required in live mode)
+
+Two operations in Settings → Users cannot be database functions, because they
+have to create or change credentials in `auth.users` and nothing reachable with
+the anon key may do that: **creating a user** and **resetting somebody else's
+password**. The app calls the edge function
+[`supabase/functions/alyq-admin`](../supabase/functions/alyq-admin/index.ts) for
+both; without it deployed, those two actions fail in live mode (everything else
+on that screen — editing, activating, role and custom-role assignment — is an RPC
+and works without it).
+
+```bash
+supabase secrets set SUPABASE_SERVICE_ROLE_KEY=<project service_role key>
+supabase functions deploy alyq-admin
+```
+
+`SUPABASE_URL` and `SUPABASE_ANON_KEY` are injected into every function by the
+runtime; the service key is the only secret you set. Leave `verify_jwt` at its
+default (`true`).
+
+The function holds the service role for exactly as long as one credential call
+needs it, and not a moment sooner: it resolves the caller with `auth.getUser()`
+from the request's own access token, asks the database `public.can('manage_users')`
+**as that caller** — the same question every RLS policy asks, so a custom role
+counts here as it counts everywhere — and only then builds a service-role client.
+It mirrors the app's username, email, role and password rules, so a request that
+skips the form meets the same bar; it refuses to reset the password of an id that
+has no `profiles` row (staff only); and if the profile write fails after the
+credentials were created it deletes the account rather than leaving a half-made
+one behind.
+
+It writes **no audit rows**: `settingsService` records one attributed entry per
+action (`user.created`, `user.password_reset`, never the password itself), and a
+second row here would put every creation in the trail twice. It also ignores a
+`custom_role_id` in the request — the app assigns overlays with
+`admin_set_custom_role`, which is where the rule "assigning an overlay also moves
+`profiles.role` to its base" lives.
+
+Rotate the service key (Dashboard → Settings → API) if it ever leaks, then
+re-run both commands above.
 
 ## 6. Build and release
 

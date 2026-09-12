@@ -106,6 +106,14 @@ defaulting to something.
 
 ## 4. Migration path to Supabase Auth
 
+> **Status: taken.** The seam below is what Phase 10 migrated across, and it is
+> still the only seam — but it has grown from three methods to nine
+> (`signOut({ everywhere })`, `currentSession`, `refreshSession`, `onAuthChange`,
+> `requestPasswordReset`, `consumeRecoveryLink`, `updatePassword`). Read
+> [`src/lib/auth/data/repository.ts`](../src/lib/auth/data/repository.ts) for the
+> current contract; the sketch below is kept as the shape the migration was
+> planned around.
+
 `UserRepository` is the only seam the app talks to:
 
 ```ts
@@ -145,6 +153,36 @@ repeats the role gating per signed-in account; every earlier phase still runs
 unchanged as an admin.
 
 ## 6. Known gaps / not in this phase
+
+> **Status after Phase 10 (Trustworthy Backend & Identity).** Four of the six are
+> closed, two are narrower than they were:
+>
+> 1. **Closed.** Live mode delegates verification to Supabase Auth; the browser
+>    only ever verifies the *offline demo directory*, and it does so against a
+>    salt and two digests, never clear text.
+> 2. **Closed.** `/forgot-password` and `/reset-password` (both recovery flows,
+>    PKCE `?code=` and implicit `#access_token`), a self-service change, and
+>    Settings → Users / Settings → Roles: create, edit, activate, deactivate,
+>    reset a password, assign a system role or a custom role.
+> 3. **Closed.** `src/lib/permissions/routes.ts` carries the `/settings*`
+>    entries, gated per screen on `manage_users` and `manage_roles`.
+> 4. **Closed.** The session *is* the Supabase access token, revalidated on a
+>    heartbeat and on every `onAuthStateChange` event; authority is decided
+>    server-side by `public.can()` inside RLS policies and every admin RPC, and
+>    the `alyq-admin` edge function re-checks `manage_users` as the caller before
+>    it will touch a credential.
+> 5. **Narrower, still open.** Audit rows are still written by the client, so the
+>    *name* on a row is self-reported. What changed is that every action now
+>    passes a server-side capability check first, so a tampered client can no
+>    longer perform the action it would be mis-attributing. Server-stamped
+>    attribution (writing the trail from a trigger or the edge function) is the
+>    remaining step, and it has to solve double-logging before it is worth doing.
+> 6. **Narrower, still open.** No hosted Supabase project has been used. What now
+>    exercises the live path without one: 27 contract tests drive
+>    `SupabaseUserRepository` against a scripted client, and `npm run db:check`
+>    applies all 21 migrations plus `seed.sql` to a real PostgreSQL engine
+>    (PGlite) twice, runs the RLS role scenarios, and asserts that `public.can()`
+>    follows a custom-role overlay.
 
 1. **Passwords are verified in the browser.** Fine for the demo directory, wrong
    for production: a client is never a trust boundary. Live mode delegates

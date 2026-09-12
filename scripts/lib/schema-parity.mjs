@@ -301,3 +301,347 @@ export async function checkRoleAliasParity({ driver, failures, c, log, rolesFile
 
   log(`  ${c.green("✓")} public.role_aliases matches ROLE_ALIASES (${actual.size} aliases)`);
 }
+
+/**
+ * Seed parity — does `supabase/seed.sql` leave behind the model the app ships?
+ *
+ * Three sources describe the same four custom roles: `CUSTOM_ROLE_PRESETS` in
+ * src/lib/permissions/customRoles.ts (what Settings → Roles offers), the rows
+ * seed.sql writes (what a fresh database contains), and the capability order in
+ * src/lib/permissions/roles.ts (what the app stores after canonicalising). When
+ * they disagree the drift is invisible until somebody signs in as a seeded
+ * "Accountant" and finds a button that does nothing — or one that works when it
+ * should not.
+ *
+ * So the check does three things:
+ *   1. compares the TypeScript presets with the SQL rows, field by field;
+ *   2. reads the rows back out of the seeded database and compares again,
+ *      including the array order the app would have written;
+ *   3. proves the seeded model *behaves*: it assigns the accountant preset to the
+ *      seeded cashier through the same RPC the UI calls, and checks that
+ *      public.can() now follows the overlay instead of the system matrix — then
+ *      puts the account back the way it was.
+ *
+ * Like the other checks it needs a driver, and it only ever touches rows the seed
+ * itself created (fixed ids, fixed usernames), so running it against a project
+ * with real data changes nothing that survives it.
+ */
+export async function checkSeedParity({
+  driver,
+  failures,
+  c,
+  log,
+  rolesFile,
+  presetsFile,
+  demoUsersFile,
+  seedFile,
+}) {
+  log(c.bold("\nSeed parity (supabase/seed.sql ↔ the app's role model)"));
+  const problems = [];
+
+  // ── the catalogue order, which is the order the app writes arrays in ──────
+  const rolesSource = fs.readFileSync(rolesFile, "utf8");
+  const catalogueMatch = rolesSource.match(/export const CAPABILITIES = \[([\s\S]*?)\] as const;/);
+  if (!catalogueMatch) {
+    problems.push("could not parse CAPABILITIES from roles.ts");
+  }
+  const catalogue = catalogueMatch
+    ? [...catalogueMatch[1].matchAll(/"([a-z_]+)"/g)].map((m) => m[1])
+    : [];
+  const canonical = (caps) =>
+    [...new Set(caps)].sort((a, b) => {
+      const ia = catalogue.indexOf(a);
+      const ib = catalogue.indexOf(b);
+      return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib) || a.localeCompare(b);
+    });
+
+  // ── the presets the app offers ────────────────────────────────────────────
+  const presetsSource = fs.readFileSync(presetsFile, "utf8");
+  const presets = [];
+  const presetRe =
+    /presetKey:\s*"([a-z0-9_]+)",\s*name_en:\s*"([^"]*)",\s*name_ar:\s*"([^"]*)",\s*base_role:\s*"([a-z_]+)",\s*capabilities:\s*\[([\s\S]*?)\]/g;
+  for (const entry of presetsSource.matchAll(presetRe)) {
+    presets.push({
+      key: entry[1],
+      name_en: entry[2],
+      name_ar: entry[3],
+      base_role: entry[4],
+      capabilities: canonical([...entry[5].matchAll(/"([a-z_]+)"/g)].map((m) => m[1])),
+    });
+  }
+  if (presets.length === 0) problems.push("no presets parsed from CUSTOM_ROLE_PRESETS");
+
+  // ── the rows the seed writes ──────────────────────────────────────────────
+  const seedSource = fs.readFileSync(seedFile, "utf8");
+  const seeded = [];
+  const seedRe =
+    /'([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})',\s*'([a-z0-9_]+)',\s*'([a-z_]+)',\s*'([^']*)',\s*'([^']*)',\s*'([^']*)',\s*'([^']*)',\s*'\{([a-z0-9_,]*)\}'/g;
+  for (const row of seedSource.matchAll(seedRe)) {
+    seeded.push({
+      id: row[1],
+      key: row[2],
+      base_role: row[3],
+      name_en: row[4],
+      name_ar: row[5],
+      capabilities: row[8].split(",").filter(Boolean),
+    });
+  }
+  if (seeded.length === 0) problems.push("no custom-role rows parsed from supabase/seed.sql");
+
+  // ── 1. TypeScript ↔ SQL ───────────────────────────────────────────────────
+  for (const preset of presets) {
+    const row = seeded.find((candidate) => candidate.key === preset.key);
+    if (!row) {
+      problems.push(`seed.sql does not create the '${preset.key}' preset the app offers`);
+      continue;
+    }
+    if (row.base_role !== preset.base_role) {
+      problems.push(
+        `preset '${preset.key}': seed.sql falls back to '${row.base_role}', the app to '${preset.base_role}'`,
+      );
+    }
+    if (row.name_en !== preset.name_en || row.name_ar !== preset.name_ar) {
+      problems.push(
+        `preset '${preset.key}': seed.sql names it '${row.name_en}'/'${row.name_ar}', the app '${preset.name_en}'/'${preset.name_ar}'`,
+      );
+    }
+    if (row.capabilities.join(",") !== preset.capabilities.join(",")) {
+      problems.push(
+        `preset '${preset.key}': seed.sql grants [${row.capabilities.join(", ")}], the app [${preset.capabilities.join(", ")}]`,
+      );
+    }
+  }
+  for (const row of seeded) {
+    if (!presets.some((preset) => preset.key === row.key)) {
+      problems.push(`seed.sql creates '${row.key}', which the app does not offer as a preset`);
+    }
+  }
+  // Every capability the seed grants must be one the catalogue knows, otherwise
+  // the insert is rejected by custom_roles' own validation.
+  for (const row of seeded) {
+    for (const capability of row.capabilities) {
+      if (!catalogue.includes(capability)) {
+        problems.push(`seed.sql grants '${row.key}' the unknown capability '${capability}'`);
+      }
+    }
+  }
+
+  if (problems.length > 0) {
+    for (const problem of problems) log(`  ${c.red("✗")} ${problem}`);
+    failures.push({ name: "seed parity", phase: "expectation", error: problems[0] });
+    return;
+  }
+  log(
+    `  ${c.green("✓")} seed.sql's ${seeded.length} presets match CUSTOM_ROLE_PRESETS (keys, names, base roles, capabilities in catalogue order)`,
+  );
+
+  // ── 2. what the seeded database actually holds ────────────────────────────
+  const dbProblems = [];
+  const rows = await driver.query(
+    `select key, base_role::text, name_en, name_ar, array_to_string(capabilities, ',')
+       from public.custom_roles
+      where id::text like '22222222-%'
+      order by key`,
+  );
+  for (const preset of presets) {
+    const row = rows.find((candidate) => candidate[0] === preset.key);
+    if (!row) {
+      dbProblems.push(`the seeded database has no '${preset.key}' custom role`);
+      continue;
+    }
+    if (row[1] !== preset.base_role) {
+      dbProblems.push(`custom_roles.'${preset.key}'.base_role is '${row[1]}', expected '${preset.base_role}'`);
+    }
+    if (row[2] !== preset.name_en || row[3] !== preset.name_ar) {
+      dbProblems.push(`custom_roles.'${preset.key}' is named '${row[2]}'/'${row[3]}'`);
+    }
+    const stored = (row[4] ?? "").split(",").filter(Boolean);
+    if (stored.join(",") !== preset.capabilities.join(",")) {
+      dbProblems.push(
+        `custom_roles.'${preset.key}'.capabilities is [${stored.join(", ")}], expected [${preset.capabilities.join(", ")}]`,
+      );
+    }
+  }
+  if (rows.length > presets.length) {
+    dbProblems.push(`the seeded database holds ${rows.length} preset rows, expected ${presets.length}`);
+  }
+
+  // ── the demo staff the login screen promises ──────────────────────────────
+  const demoSource = fs.readFileSync(demoUsersFile, "utf8");
+  const demo = [];
+  const demoRe = /username:\s*"([a-z_]+)",\s*name:\s*"([^"]*)",\s*role:\s*"([a-z_]+)"/g;
+  for (const entry of demoSource.matchAll(demoRe)) {
+    demo.push({ username: entry[1], name: entry[2], role: entry[3] });
+  }
+  if (demo.length === 0) dbProblems.push("no demo accounts parsed from demoUsers.ts");
+
+  const profiles = await driver.query(
+    `select username, role::text, active::text from public.profiles order by username`,
+  );
+  const byUsername = new Map(profiles.map((row) => [row[0], { role: row[1], active: row[2] === "true" }]));
+
+  // The five accounts seed_demo_staff() promises. Its usernames are the role
+  // names ('inventory_clerk'), while the offline demo directory shortens one to
+  // 'clerk' — so the promise that matters is per role: whichever spelling the
+  // login card shows, an active account with that role must exist.
+  for (const role of [...new Set(demo.map((account) => account.role))]) {
+    const holders = profiles.filter((row) => row[1] === role && row[2] === "true");
+    if (holders.length === 0) {
+      dbProblems.push(`no active seeded account has the demo role '${role}'`);
+    }
+  }
+  if (!byUsername.get("admin") || byUsername.get("admin").role !== "admin") {
+    dbProblems.push("the seeded database has no 'admin' profile with the admin role");
+  }
+  for (const username of ["manager", "cashier", "inventory_clerk", "viewer"]) {
+    if (!byUsername.get(username)) {
+      dbProblems.push(`seed_demo_staff() did not leave a '${username}' profile behind`);
+    }
+  }
+
+  if (dbProblems.length > 0) {
+    for (const problem of dbProblems) log(`  ${c.red("✗")} ${problem}`);
+    failures.push({ name: "seed parity", phase: "seed", error: dbProblems[0] });
+    return;
+  }
+  log(
+    `  ${c.green("✓")} the seeded database holds them: ${rows.length} custom roles, ${profiles.length} staff profiles, one per demo role`,
+  );
+
+  // ── 3. the seeded model behaves ───────────────────────────────────────────
+  // Assign the accountant overlay to the seeded cashier through the RPC the UI
+  // calls, and watch public.can() switch from the system matrix to the overlay.
+  // This is the whole point of Phase 10 in one assertion: the same question,
+  // answered by the database the way the app answers it.
+  const behave = [];
+  const asUser = async (id) => {
+    await driver.query(`select set_config('request.jwt.claim.sub', '${id}', false)`);
+    await driver.query(
+      `select set_config('request.jwt.claims', '{"sub":"${id}","role":"authenticated"}', false)`,
+    );
+  };
+  const can = async (capability) =>
+    (await driver.query(`select public.can('${capability}')`))[0][0] === "true";
+
+  try {
+    const adminId = (await driver.query(`select id::text from auth.users where email = 'admin@alyq.local'`))[0]?.[0];
+    const cashierId = (await driver.query(`select id::text from public.profiles where username = 'cashier'`))[0]?.[0];
+    const accountantId = (await driver.query(`select id::text from public.custom_roles where key = 'accountant'`))[0]?.[0];
+    if (!adminId || !cashierId || !accountantId) throw new Error("the seed left no admin, cashier or accountant role to test with");
+
+    // What the overlay is expected to change is *derived*, not written down: the
+    // cashier's own row in public.role_capabilities against the accountant
+    // preset's list, both of which this check has already read. GAINED is what the
+    // overlay grants and the matrix does not; LOST is the other way round. A probe
+    // that hardcoded either list would silently stop testing anything the day
+    // somebody moved `add_expense` — which is precisely what happened when this
+    // probe was first written: a cashier *may* record an expense, and only a
+    // manager may approve or edit one.
+    const cashierMatrix = new Set(
+      (await driver.query(`select capability from public.role_capabilities where role = 'cashier'`)).map(
+        (row) => row[0],
+      ),
+    );
+    const accountant = presets.find((preset) => preset.key === "accountant");
+    if (!accountant) throw new Error("the accountant preset is missing, so the overlay cannot be probed");
+    const overlay = new Set(accountant.capabilities);
+    const GAINED = [...overlay].filter((capability) => !cashierMatrix.has(capability)).slice(0, 4);
+    const LOST = [...cashierMatrix].filter((capability) => !overlay.has(capability)).slice(0, 4);
+    if (GAINED.length === 0 || LOST.length === 0) {
+      behave.push(
+        "the accountant preset and the cashier's matrix do not differ in both directions, so assigning the overlay cannot be shown to replace the matrix",
+      );
+    }
+
+    await asUser(cashierId);
+    for (const capability of LOST) {
+      if (!(await can(capability))) {
+        behave.push(`a seeded cashier does not hold '${capability}' before any overlay is assigned`);
+      }
+    }
+    for (const capability of GAINED) {
+      if (await can(capability)) {
+        behave.push(`a seeded cashier already holds '${capability}' before any overlay is assigned`);
+      }
+    }
+
+    await asUser(adminId);
+    await driver.query(`select public.admin_set_custom_role('${cashierId}', '${accountantId}')`);
+
+    await asUser(cashierId);
+    for (const capability of GAINED) {
+      if (!(await can(capability))) behave.push(`the accountant overlay did not grant '${capability}'`);
+    }
+    for (const capability of LOST) {
+      if (await can(capability)) {
+        behave.push(
+          `the accountant overlay still allows '${capability}' — an overlay replaces the matrix, it does not add to it`,
+        );
+      }
+    }
+
+    // Deactivating the overlay must degrade to the base role, not to nothing —
+    // and not to the role the account had before it was assigned.
+    await asUser(adminId);
+    await driver.query(`select public.admin_set_custom_role_active('${accountantId}', false)`);
+    await asUser(cashierId);
+    const baseRole = (await driver.query(`select role::text from public.profiles where id = '${cashierId}'`))[0][0];
+    if (baseRole !== accountant.base_role) {
+      behave.push(
+        `deactivating the accountant overlay left the account as '${baseRole}', not its base role '${accountant.base_role}'`,
+      );
+    }
+    const baseMatrix = new Set(
+      (
+        await driver.query(
+          `select capability from public.role_capabilities where role = '${accountant.base_role}'`,
+        )
+      ).map((row) => row[0]),
+    );
+    for (const capability of [...GAINED, ...LOST]) {
+      if (await can(capability)) {
+        behave.push(`a deactivated custom role still grants '${capability}'`);
+      }
+    }
+    const retained = [...baseMatrix].slice(0, 3);
+    for (const capability of retained) {
+      if (!(await can(capability))) {
+        behave.push(
+          `after deactivation the account fell back to '${baseRole}' but lost '${capability}', which that role holds`,
+        );
+      }
+    }
+
+    // Put everything back: re-activate the preset, clear the overlay, restore the
+    // cashier's system role (assigning moved it to the preset's base).
+    await asUser(adminId);
+    await driver.query(`select public.admin_set_custom_role_active('${accountantId}', true)`);
+    await driver.query(`select public.admin_set_custom_role('${cashierId}', null)`);
+    await driver.query(`update public.profiles set role = 'cashier' where id = '${cashierId}'`);
+    await asUser(cashierId);
+    for (const capability of LOST) {
+      if (!(await can(capability))) {
+        behave.push(`the cashier did not get '${capability}' back after the overlay was cleared`);
+      }
+    }
+    for (const capability of GAINED) {
+      if (await can(capability)) {
+        behave.push(`clearing the overlay left '${capability}' behind`);
+      }
+    }
+
+    await driver.query(`select set_config('request.jwt.claim.sub', '', false)`);
+    await driver.query(`select set_config('request.jwt.claims', '', false)`);
+  } catch (error) {
+    behave.push(`the overlay behaviour check could not run: ${String(error.message).split("\n")[0]}`);
+  }
+
+  if (behave.length > 0) {
+    for (const problem of behave) log(`  ${c.red("✗")} ${problem}`);
+    failures.push({ name: "seed parity", phase: "behaviour", error: behave[0] });
+    return;
+  }
+  log(
+    `  ${c.green("✓")} public.can() follows the overlay: assign → accountant's list decides, deactivate → base role, clear → system matrix`,
+  );
+}
