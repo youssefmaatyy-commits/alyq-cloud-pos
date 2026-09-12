@@ -41,7 +41,7 @@ export function salesReceiptStrings(t: Translate): ReceiptStrings {
 /** Labels for the return receipt. */
 export function returnReceiptStrings(
   t: Translate,
-  refundStatus: "completed" | "pending",
+  refundStatus: "completed" | "pending" | "rejected",
 ): ReturnReceiptStrings {
   return {
     businessName: t("receipt.businessName"),
@@ -63,7 +63,11 @@ export function returnReceiptStrings(
     refundNumberLabel: t("receipt.refundNumberLabel"),
     reasonLabel: t("receipt.reasonLabel"),
     statusLabel:
-      refundStatus === "completed" ? t("receipt.statusCompleted") : t("receipt.statusPending"),
+      refundStatus === "completed"
+        ? t("receipt.statusCompleted")
+        : refundStatus === "rejected"
+          ? t("receipt.statusRejected")
+          : t("receipt.statusPending"),
     thankYou: t("receipt.returnThankYou"),
   };
 }

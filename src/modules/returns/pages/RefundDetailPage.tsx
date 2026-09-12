@@ -1,9 +1,10 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { PageHeader } from "@/components/layout/AppShell";
 import {
   Badge,
+  Button,
   Card,
   EmptyState,
   LoadingBlock,
@@ -12,11 +13,16 @@ import {
   StatTile,
 } from "@/components/ui";
 import { useReturns } from "../hooks/ReturnProvider";
+import { RefundSettleModal } from "../components/RefundSettleModal";
+import { canSettleRefund } from "../permissions";
+import type { RefundDecision } from "../types";
 
 export function RefundDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { t, date, num } = useI18n();
   const { refundsList, returnsList, loading } = useReturns();
+  const [settleOpen, setSettleOpen] = useState<RefundDecision | null>(null);
+  const canSettle = canSettleRefund();
 
   const refundRecord = useMemo(() => {
     return refundsList.find((r) => r.id === id);
@@ -60,12 +66,24 @@ export function RefundDetailPage() {
         backTo="/refunds"
         backLabel={t("refunds.title")}
         actions={
-          <Link
-            to={`/pos/sales/${refundRecord.sale_id}`}
-            className="inline-flex h-10 items-center gap-1.5 rounded-xl bg-white px-4 text-sm font-semibold text-slate-800 ring-1 ring-slate-300 hover:bg-slate-50"
-          >
-            {t("returns.saleNumber")}: {refundRecord.sale_number}
-          </Link>
+          <>
+            <Link
+              to={`/pos/sales/${refundRecord.sale_id}`}
+              className="inline-flex h-10 items-center gap-1.5 rounded-xl bg-white px-4 text-sm font-semibold text-slate-800 ring-1 ring-slate-300 hover:bg-slate-50"
+            >
+              {t("returns.saleNumber")}: {refundRecord.sale_number}
+            </Link>
+            {refundRecord.status === "pending" && canSettle ? (
+              <>
+                <Button variant="secondary" onClick={() => setSettleOpen("rejected")}>
+                  {t("refunds.rejectAction")}
+                </Button>
+                <Button onClick={() => setSettleOpen("completed")}>
+                  {t("refunds.approveAction")}
+                </Button>
+              </>
+            ) : null}
+          </>
         }
       />
 
@@ -80,8 +98,20 @@ export function RefundDetailPage() {
         />
         <StatTile
           label={t("refunds.status")}
-          value={refundRecord.status === "completed" ? t("refunds.paid") : t("refunds.pending")}
-          tone={refundRecord.status === "completed" ? "success" : "warning"}
+          value={
+            refundRecord.status === "completed"
+              ? t("refunds.paid")
+              : refundRecord.status === "rejected"
+                ? t("refunds.rejected")
+                : t("refunds.pending")
+          }
+          tone={
+            refundRecord.status === "completed"
+              ? "success"
+              : refundRecord.status === "rejected"
+                ? "danger"
+                : "warning"
+          }
         />
         <StatTile
           label={t("pos.cols.user")}
@@ -139,6 +169,56 @@ export function RefundDetailPage() {
           </dl>
         </Card>
 
+        {/* Settlement trail — who decided, when, and why it was refused */}
+        <Card>
+          <SectionTitle>{t("refunds.settlementTrail")}</SectionTitle>
+          {refundRecord.status === "pending" ? (
+            <p className="text-sm text-slate-600">
+              {t("refunds.pendingApprovalsHint")}
+              {canSettle ? null : (
+                <span className="mt-2 block rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-xs font-semibold text-amber-800">
+                  {t("refunds.noSettlePermission")}
+                </span>
+              )}
+            </p>
+          ) : (
+            <dl className="space-y-3 text-sm">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                <dt className="text-slate-500">{t("refunds.status")}</dt>
+                <dd>
+                  <Badge tone={refundRecord.status === "completed" ? "success" : "danger"}>
+                    {refundRecord.status === "completed"
+                      ? t("refunds.paid")
+                      : t("refunds.rejected")}
+                  </Badge>
+                </dd>
+              </div>
+              <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                <dt className="text-slate-500">{t("refunds.settledBy")}</dt>
+                <dd className="font-semibold text-slate-800">
+                  {refundRecord.settled_by_name ?? "—"}
+                </dd>
+              </div>
+              <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                <dt className="text-slate-500">{t("refunds.settledAt")}</dt>
+                <dd className="text-slate-700" dir="ltr">
+                  {refundRecord.settled_at ? date(refundRecord.settled_at) : "—"}
+                </dd>
+              </div>
+              {refundRecord.rejection_reason ? (
+                <div className="pt-1">
+                  <dt className="mb-1 font-semibold text-slate-700">
+                    {t("refunds.rejectionReason")}
+                  </dt>
+                  <dd className="rounded-lg border border-rose-100 bg-rose-50 p-2.5 text-rose-800">
+                    {refundRecord.rejection_reason}
+                  </dd>
+                </div>
+              ) : null}
+            </dl>
+          )}
+        </Card>
+
         {/* Linked Return */}
         <div className="space-y-4">
           {linkedReturn ? (
@@ -173,6 +253,15 @@ export function RefundDetailPage() {
           ) : null}
         </div>
       </div>
+
+      {settleOpen && refundRecord ? (
+        <RefundSettleModal
+          open
+          refund={refundRecord}
+          decision={settleOpen}
+          onClose={() => setSettleOpen(null)}
+        />
+      ) : null}
     </div>
   );
 }

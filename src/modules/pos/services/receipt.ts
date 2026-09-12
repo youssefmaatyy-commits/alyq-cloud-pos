@@ -353,7 +353,7 @@ export interface ReturnReceiptRecord {
   reason: string;
   refund_amount: number;
   refund_method: string;
-  refund_status: "completed" | "pending";
+  refund_status: "completed" | "pending" | "rejected";
   items: {
     id: string;
     name_ar: string;
@@ -415,11 +415,13 @@ export function buildReturnReceiptHtml({
     ? barcodeToSvgString(symbol, { height: 30, moduleWidth: 1, showText: true })
     : "";
 
-  const statusClass = returnRecord.refund_status === "completed" ? "paid" : "pending";
-  const statusText =
+  const statusClass =
     returnRecord.refund_status === "completed"
-      ? `${strings.statusLabel}: completed`
-      : `${strings.statusLabel}: pending`;
+      ? "paid"
+      : returnRecord.refund_status === "rejected"
+        ? "voided"
+        : "pending";
+  const statusText = `${strings.statusLabel}: ${returnRecord.refund_status}`;
 
   const bodyHtml = `    <div class="status">
       <span class="badge ${statusClass}">${escapeXml(statusText)}</span>

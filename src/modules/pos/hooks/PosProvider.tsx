@@ -16,6 +16,11 @@ import { isSupabaseConfigured, getSupabaseClient } from "@/lib/supabase/client";
 import { useInventory } from "@/modules/inventory/hooks/InventoryProvider";
 import { canCompleteSale, canApplyDiscount } from "../permissions";
 import { getSalesRepository, type SalesRepository } from "../data";
+// Money moves through the service, not the repository: `completeSale` asserts
+// `sell` (and `apply_discount` when the input carries one) before anything is
+// written, which the provider's own `canSell` flag cannot do for a caller that
+// never looked at it.
+import { completeSale as completeSaleGuarded } from "../services/saleService";
 import { cartTotals, validateDiscount, type CartTotals as Totals } from "../services/posMath";
 import type {
   CartDiscount,
@@ -238,7 +243,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
           user_id: user.id,
           user_name: user.name,
         };
-        const sale = await repository.completeSale(input);
+        const sale = await completeSaleGuarded(input);
         await loadCatalog();
         setCompletedSale(sale);
         setLines([]);

@@ -1,3 +1,4 @@
+import { assertSensitiveAction } from "@/lib/permissions/actions";
 import { getCatalogRepository } from "../data";
 import { AppError } from "../data/repository";
 import type { Category, NewCategory, Product } from "../types";
@@ -31,6 +32,85 @@ export function describeError(error: unknown): { key: string; field?: string; er
   return { key: appErrorKey(appError), field: appError.field, error: appError };
 }
 
+// ── capability guards ───────────────────────────────────────────────────────
+// Every one of these is an entry in `src/lib/permissions/actions.ts`, which is
+// what makes the map checkable: the enforcement suite reads this file and fails
+// if a guard stops being called. In live mode the same refusals come from RLS on
+// `products` and `categories`; here they come first, in demo mode they are the
+// only ones there are.
+
+/** Adding a product to the catalog needs `add_product`. */
+export function assertCanCreateProduct(): void {
+  assertSensitiveAction("product.create");
+}
+
+/** Editing a product's details needs `edit_product`. */
+export function assertCanEditProduct(): void {
+  assertSensitiveAction("product.edit");
+}
+
+/**
+ * Moving a selling price needs `change_price`, separately from `edit_product`.
+ *
+ * Two capabilities for one form is deliberate: the price is the number the till
+ * charges and every profit figure is derived from it, so an installation can
+ * hand a supervisor the catalog (names, images, categories, stock flags) without
+ * handing them the price list.
+ */
+export function assertCanChangePrice(): void {
+  assertSensitiveAction("product.price_change");
+}
+
+/** Moving a purchase cost needs `change_price` too — it drives margin, not revenue. */
+export function assertCanChangeCost(): void {
+  assertSensitiveAction("product.cost_change");
+}
+
+/** Deleting a product needs `delete_product`. */
+export function assertCanDeleteProduct(): void {
+  assertSensitiveAction("product.delete");
+}
+
+/** Applying a catalog import needs `import_data` — parsing a file does not. */
+export function assertCanImportProducts(): void {
+  assertSensitiveAction("product.import");
+}
+
+/** Adding a category needs `add_product`: it is catalog authoring. */
+export function assertCanCreateCategory(): void {
+  assertSensitiveAction("category.create");
+}
+
+/** Renaming or moving a category needs `edit_product`. */
+export function assertCanEditCategory(): void {
+  assertSensitiveAction("category.edit");
+}
+
+/** Deleting a category needs `delete_product`, and the category must be empty. */
+export function assertCanDeleteCategory(): void {
+  assertSensitiveAction("category.delete");
+}
+
+/** Activating or deactivating a product is an edit. */
+export function assertCanToggleProduct(): void {
+  assertSensitiveAction("product.activate");
+}
+
+/**
+ * What an edit is about to change, so the price gate can be asked only when a
+ * price actually moves. Comparing numbers rather than form text keeps a re-save
+ * of the same price from demanding an authority the user does not need.
+ */
+function priceChanges(existing: Product, next: Pick<Product, "selling_price" | "cost_price">): {
+  selling: boolean;
+  cost: boolean;
+} {
+  return {
+    selling: Number(existing.selling_price) !== Number(next.selling_price),
+    cost: Number(existing.cost_price ?? 0) !== Number(next.cost_price ?? 0),
+  };
+}
+
 export interface SaveProductArgs {
   values: ProductFormValues;
   products: Product[];
@@ -49,6 +129,13 @@ export async function saveProduct({
   categories,
   currentId,
 }: SaveProductArgs): Promise<{ product: Product; isNew: boolean }> {
+  // Permission first, payload second: an unauthorised caller is told they may
+  // not do this, not that they filled the form in wrong. (The price/cost gates
+  // below still need the validated draft, because they only fire when a value
+  // actually moves.)
+  if (currentId) assertCanEditProduct();
+  else assertCanCreateProduct();
+
   const { errors, data } = validateProductDraft(values, { products, categories, currentId });
   if (!data) {
     const firstField = Object.keys(errors)[0] ?? "sku";
@@ -67,9 +154,17 @@ export async function saveProduct({
   if (currentId) {
     const existing = products.find((p) => p.id === currentId);
     if (!existing) throw new AppError("NOT_FOUND");
+    assertCanEditProduct();
+    // The price gate is asked only when a price really moves, and cost is asked
+    // separately from retail: they are the same capability, but the audit entry
+    // and the approval rule (when one is configured) name the field that changed.
+    const changed = priceChanges(existing, data);
+    if (changed.selling) assertCanChangePrice();
+    if (changed.cost) assertCanChangeCost();
     const product = await repository.updateProduct(currentId, data);
     return { product, isNew: false };
   }
+  assertCanCreateProduct();
   const product = await repository.createProduct(data);
   return { product, isNew: true };
 }
@@ -86,6 +181,10 @@ export async function saveCategory({
   categories,
   currentId,
 }: SaveCategoryArgs): Promise<{ category: Category; isNew: boolean }> {
+  // Same order as `saveProduct`: the refusal is about who is asking.
+  if (currentId) assertCanEditCategory();
+  else assertCanCreateCategory();
+
   const { errors, data } = validateCategoryDraft(values, { categories, currentId });
   if (!data) {
     const firstField = Object.keys(errors)[0] ?? "name_ar";
@@ -99,9 +198,11 @@ export async function saveCategory({
     if (data.parent_id && currentId && isDescendant(data.parent_id, currentId, categories)) {
       throw new AppError("CATEGORY_CYCLE", "Cannot move a category under itself", "parent_id");
     }
+    assertCanEditCategory();
     const category = await repository.updateCategory(currentId, data as NewCategory);
     return { category, isNew: false };
   }
+  assertCanCreateCategory();
   const category = await repository.createCategory(data as NewCategory);
   return { category, isNew: true };
 }
@@ -120,12 +221,37 @@ export function assertCategoryDeletable(id: string, ctx: DeleteCategoryCheck): v
 }
 
 export async function deleteCategory(id: string, ctx: DeleteCategoryCheck): Promise<void> {
+  assertCanDeleteCategory();
   assertCategoryDeletable(id, ctx);
   await getCatalogRepository().deleteCategory(id);
 }
 
 export async function setProductActive(id: string, active: boolean): Promise<Product> {
+  assertCanToggleProduct();
   return getCatalogRepository().setProductActive(id, active);
+}
+
+/**
+ * Refused for everybody, at every privilege level — like `saleService.editSale`.
+ *
+ * Neither repository implements a product delete, and that is not an oversight:
+ * a product that has ever been sold is referenced by `sale_items`, by stock
+ * movements and by returns, so deleting it would either fail on the foreign key
+ * or erase the history the numbers on every report are built from. The supported
+ * answer is `setProductActive(id, false)`, which keeps the record and stops the
+ * till selling it.
+ *
+ * `delete_product` stays in the matrix, and the capability is asserted here
+ * before the refusal, so the day a real delete path is built it is already gated
+ * rather than gated by whoever remembers.
+ */
+export async function deleteProduct(_id: string): Promise<never> {
+  assertCanDeleteProduct();
+  throw new AppError(
+    "VALIDATION",
+    "A product cannot be deleted once it has been sold. Deactivate it instead.",
+    "product",
+  );
 }
 
 export async function loadCatalog(): Promise<{ products: Product[]; categories: Category[] }> {

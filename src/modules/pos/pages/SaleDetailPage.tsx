@@ -20,6 +20,10 @@ import type { Sale } from "../types";
 import { buildReceiptHtml, customerInfoIssue, printHtmlDocument } from "../services/receipt";
 import { salesReceiptStrings } from "../services/receiptStrings";
 import { getSalesRepository } from "../data";
+import {
+  confirmPayment as confirmPaymentAction,
+  voidSale as voidSaleAction,
+} from "../services/saleService";
 import { getCurrentUser } from "@/modules/inventory/permissions";
 import { useReturns } from "@/modules/returns";
 import { ReturnFormModal } from "@/modules/returns/components/ReturnFormModal";
@@ -104,7 +108,10 @@ export function SaleDetailPage() {
     try {
       const user = getCurrentUser();
       const repo = getSalesRepository();
-      await repo.voidSale(sale.id, {
+      // The service asserts `void_sale`; the page only decides whether to show
+      // the button. A denial arrives as AppError("FORBIDDEN") and is reported
+      // like any other failure to void.
+      await voidSaleAction(sale.id, {
         user_id: user.id,
         user_name: user.name,
         reason: null,
@@ -127,7 +134,7 @@ export function SaleDetailPage() {
     try {
       const user = getCurrentUser();
       const repo = getSalesRepository();
-      await repo.confirmPayment(sale.id, { user_id: user.id, user_name: user.name });
+      await confirmPaymentAction(sale.id, { user_id: user.id, user_name: user.name });
       toast.success(t("pos.paymentConfirmed"));
       setConfirmPay(false);
       await refreshSales();

@@ -39,6 +39,8 @@ import {
   paymentCountOf,
 } from "../services/financialExport";
 import { buildSuppliersSheets } from "../services/suppliersExport";
+import { assertCanViewReports } from "../services/reportAccess";
+import { deniedMessageKey } from "@/lib/permissions/enforce";
 import {
   DateRangePicker,
   EMPTY_DATE_RANGE,
@@ -155,7 +157,35 @@ export function ReportsPage() {
     shifts.length;
   const supplierRows = movements.length + rangedExpenses.length;
 
+  const mayReadReports = useMemo(() => {
+    try {
+      assertCanViewReports();
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
   const applyPreset = (next: RangePreset) => setPreset(next);
+
+  // The route guard decides who reaches this screen; the service decides who may
+  // read a report. Asking the service is what makes the two agree when a custom
+  // role grants the screen but withholds `view_reports` — and the refusal is the
+  // same one the export buttons would give, in the same words. The assertion runs
+  // in a memo rather than during render so a denial paints a panel instead of
+  // throwing into the nearest error boundary.
+  if (!mayReadReports) {
+    return (
+      <div>
+        <PageHeader title={t("reports.title")} subtitle={t("reports.subtitle")} />
+        <Card>
+          <p className="text-sm font-medium text-slate-700">
+            {t(deniedMessageKey("view_reports") as Parameters<typeof t>[0])}
+          </p>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -232,6 +262,7 @@ export function ReportsPage() {
               </div>
               <ExportButton
                 name="financial-report"
+                authority="report"
                 count={financialRows}
                 variant="primary"
                 build={() =>
@@ -361,6 +392,7 @@ export function ReportsPage() {
               </div>
               <ExportButton
                 name="purchases-suppliers"
+                authority="report"
                 size="sm"
                 count={supplierRows}
                 build={() =>

@@ -1,6 +1,15 @@
 import { useCallback, useState } from "react";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { downloadWorkbook, exportCurrency, type BuiltSheet } from "@/lib/export";
+import { deniedMessageKey } from "@/lib/permissions/enforce";
+import {
+  assertCanExport,
+  exportAuthorityFor,
+  mayExport,
+  type ExportAuthority,
+} from "@/modules/reports/services/reportAccess";
+import type { TranslationKey } from "@/lib/i18n/I18nProvider";
+import { AppError } from "@/modules/products/data/repository";
 import { Button } from "./Button";
 import { DownloadIcon } from "./icons";
 import { useToast } from "./Toast";
@@ -15,6 +24,12 @@ import { useToast } from "./Toast";
  *
  * Read-only by design: it renders a file from data the providers already hold.
  * No repository call, no write, no audit entry.
+ *
+ * Not authority-free, though. An export is the moment data leaves the building,
+ * so the button states which kind of file it produces (`authority`) and the
+ * capability behind that kind is asserted at click time — not merely used to hide
+ * the button. A caller who reaches `run()` without it gets the denial in their
+ * own language instead of a spreadsheet.
  */
 export interface ExportButtonProps {
   /** Base file name without extension; a timestamp is appended. */
@@ -28,6 +43,11 @@ export interface ExportButtonProps {
   variant?: "primary" | "secondary";
   size?: "sm" | "md" | "lg";
   className?: string;
+  /**
+   * What the file is: a summarised `report`, or a raw `data` extract. Decides
+   * which capability is asserted (`export_reports` / `export_data`).
+   */
+  authority?: ExportAuthority;
 }
 
 export function ExportButton({
@@ -38,6 +58,7 @@ export function ExportButton({
   variant = "secondary",
   size = "md",
   className,
+  authority = "data",
 }: ExportButtonProps) {
   const { t, lang } = useI18n();
   const toast = useToast();
@@ -46,11 +67,16 @@ export function ExportButton({
   // An empty export is a mistake, not a feature: say so instead of writing a
   // header-only file the user has to open to discover.
   const nothingToExport = count !== undefined && count <= 0;
+  const allowed = mayExport(authority);
+  const deniedKey = deniedMessageKey(exportAuthorityFor(authority)) as TranslationKey;
 
   const run = useCallback(async () => {
     if (busy || nothingToExport) return;
     setBusy(true);
     try {
+      // Asserted before the sheets are built: a refused export should cost
+      // nothing, and the denial is the same AppError every screen knows.
+      assertCanExport(authority);
       const sheets = await build();
       // Check *before* writing: a builder can legitimately return header-only
       // sheets (e.g. no purchase movements in range), and downloading an empty
@@ -68,21 +94,27 @@ export function ExportButton({
       });
       toast.success(t("export.success", { count: result.totalRows, file: result.filename }));
     } catch (error) {
+      // A denial is an answer, not a failure: name the permission that is missing
+      // rather than reporting that Excel "failed".
+      if (error instanceof AppError && error.code === "FORBIDDEN") {
+        toast.error(t(deniedKey));
+        return;
+      }
       // Never let a failed download look like a silent no-op.
       console.error("Excel export failed:", error);
       toast.error(t("export.failed"));
     } finally {
       setBusy(false);
     }
-  }, [busy, nothingToExport, build, name, lang, t, toast]);
+  }, [busy, nothingToExport, build, name, lang, t, toast, authority, deniedKey]);
 
   return (
     <Button
       variant={variant}
       size={size}
       loading={busy}
-      disabled={nothingToExport}
-      title={nothingToExport ? t("export.empty") : undefined}
+      disabled={nothingToExport || !allowed}
+      title={!allowed ? t(deniedKey) : nothingToExport ? t("export.empty") : undefined}
       className={className}
       onClick={() => void run()}
     >

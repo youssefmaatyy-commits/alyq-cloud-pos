@@ -7,13 +7,20 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import type { CreateReturnInput, RefundRecord, SalesReturn } from "../types";
+import type {
+  CreateReturnInput,
+  RefundDecision,
+  RefundRecord,
+  SalesReturn,
+  SettleRefundResult,
+} from "../types";
 import { getReturnMode, getReturnRepository } from "../data";
 import type { ReturnRepository } from "../data/repository";
 import {
   loadRefunds,
   loadReturns,
   processReturn,
+  settleRefund as settleRefundRequest,
 } from "../services/returnService";
 import { AppError } from "@/modules/products/data/repository";
 
@@ -28,9 +35,21 @@ export interface ReturnContextValue {
   createReturn: (
     input: CreateReturnInput,
   ) => Promise<{ returnRecord: SalesReturn; refundRecord: RefundRecord }>;
+  /**
+   * Complete or reject a pending refund. Throws FORBIDDEN when the acting user
+   * lacks `approve_refund`, so callers show the message rather than guessing.
+   */
+  settleRefund: (
+    refundId: string,
+    decision: RefundDecision,
+    reason: string | null,
+  ) => Promise<SettleRefundResult>;
   getReturnsForSale: (saleId: string) => SalesReturn[];
   getRefundsForSale: (saleId: string) => RefundRecord[];
   returnById: (id: string | null | undefined) => SalesReturn | undefined;
+  refundById: (id: string | null | undefined) => RefundRecord | undefined;
+  /** Refunds still waiting on an approver — the dashboard and list both read it. */
+  pendingRefunds: RefundRecord[];
 }
 
 const ReturnContext = createContext<ReturnContextValue | null>(null);
@@ -71,6 +90,15 @@ export function ReturnProvider({ children }: { children: ReactNode }) {
     [refresh],
   );
 
+  const settleRefund = useCallback(
+    async (refundId: string, decision: RefundDecision, reason: string | null) => {
+      const outcome = await settleRefundRequest(refundId, decision, reason);
+      await refresh();
+      return outcome;
+    },
+    [refresh],
+  );
+
   const getReturnsForSale = useCallback(
     (saleId: string) => returnsList.filter((r) => r.sale_id === saleId),
     [returnsList],
@@ -86,6 +114,16 @@ export function ReturnProvider({ children }: { children: ReactNode }) {
     [returnsList],
   );
 
+  const refundById = useCallback(
+    (id: string | null | undefined) => (id ? refundsList.find((r) => r.id === id) : undefined),
+    [refundsList],
+  );
+
+  const pendingRefunds = useMemo(
+    () => refundsList.filter((r) => r.status === "pending"),
+    [refundsList],
+  );
+
   const value = useMemo<ReturnContextValue>(
     () => ({
       mode,
@@ -96,9 +134,12 @@ export function ReturnProvider({ children }: { children: ReactNode }) {
       error,
       refresh,
       createReturn,
+      settleRefund,
       getReturnsForSale,
       getRefundsForSale,
       returnById,
+      refundById,
+      pendingRefunds,
     }),
     [
       mode,
@@ -109,9 +150,12 @@ export function ReturnProvider({ children }: { children: ReactNode }) {
       error,
       refresh,
       createReturn,
+      settleRefund,
       getReturnsForSale,
       getRefundsForSale,
       returnById,
+      refundById,
+      pendingRefunds,
     ],
   );
 

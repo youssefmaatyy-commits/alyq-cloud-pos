@@ -1,4 +1,11 @@
-import type { CreateReturnInput, RefundRecord, ReturnItem, SalesReturn } from "../types";
+import type {
+  CreateReturnInput,
+  RefundRecord,
+  ReturnItem,
+  SalesReturn,
+  SettleRefundInput,
+  SettleRefundResult,
+} from "../types";
 import { AppError, type ReturnRepository } from "./repository";
 import { safeStorage } from "@/modules/products/data/demoSeed";
 import { getDemoSalesRepository } from "@/modules/pos/data/demoRepository";
@@ -201,6 +208,12 @@ export class DemoReturnRepository implements ReturnRepository {
       user_id: input.user_id,
       user_name: input.user_name,
       created_at: now,
+      // A refund created already-settled carries its own creator as the
+      // settlement trail; a pending one waits for `settleRefund`.
+      rejection_reason: null,
+      settled_at: input.refund_status === "pending" ? null : now,
+      settled_by: input.refund_status === "pending" ? null : input.user_id,
+      settled_by_name: input.refund_status === "pending" ? null : input.user_name,
     };
 
     this.returns = [returnRecord, ...this.returns];
@@ -210,6 +223,51 @@ export class DemoReturnRepository implements ReturnRepository {
     persistRefunds(this.refunds);
 
     return delay({ returnRecord, refundRecord }, 60);
+  }
+
+  async settleRefund(refundId: string, input: SettleRefundInput): Promise<SettleRefundResult> {
+    const refund = this.refunds.find((r) => r.id === refundId);
+    if (!refund) throw new AppError("NOT_FOUND", `Refund ${refundId} not found`);
+
+    // Idempotent in the same direction, refused in the other — the same shape
+    // `pos_settle_refund` enforces in migration 0016.
+    if (refund.status === input.decision) {
+      return delay({ refund, alreadySettled: true }, 40);
+    }
+    if (refund.status !== "pending") {
+      throw new AppError(
+        "VALIDATION",
+        `This refund was already settled as ${refund.status}`,
+      );
+    }
+    const reason = input.reason?.trim() ?? "";
+    if (input.decision === "rejected" && reason.length === 0) {
+      throw new AppError("VALIDATION", "A rejected refund needs a reason");
+    }
+
+    const now = nowIso();
+    const settled: RefundRecord = {
+      ...refund,
+      status: input.decision,
+      rejection_reason: input.decision === "rejected" ? reason : null,
+      settled_at: now,
+      settled_by: input.user_id,
+      settled_by_name: input.user_name,
+    };
+    this.refunds = this.refunds.map((r) => (r.id === refundId ? settled : r));
+    persistRefunds(this.refunds);
+
+    // The linked return follows the money: its refund_status is a mirror of the
+    // settlement, which is what frees the reserved refundable amount for a
+    // rejection. Stock is not reversed — the goods did come back.
+    if (settled.return_id) {
+      this.returns = this.returns.map((r) =>
+        r.id === settled.return_id ? { ...r, refund_status: settled.status } : r,
+      );
+      persistReturns(this.returns);
+    }
+
+    return delay({ refund: settled, alreadySettled: false }, 60);
   }
 
   reset(): void {

@@ -1,3 +1,4 @@
+import { assertSensitiveAction } from "@/lib/permissions/actions";
 import { getShiftRepository } from "../data";
 import { normalizeText } from "@/modules/products/services/productQuery";
 import type { CloseShiftInput, NewShift, Shift, ShiftFiltersValue } from "../types";
@@ -10,11 +11,40 @@ export async function loadOpenShift(): Promise<Shift | null> {
   return getShiftRepository().getOpenShift();
 }
 
+/** Opening the drawer needs `open_shift`. */
+export function assertCanOpenShift(): void {
+  assertSensitiveAction("shift.open");
+}
+
+/** Closing it needs `close_shift`. */
+export function assertCanCloseShift(): void {
+  assertSensitiveAction("shift.close");
+}
+
+/** Signing off somebody else's cash difference needs `approve_shift_adjustment`. */
+export function assertCanApproveShiftAdjustment(): void {
+  assertSensitiveAction("shift.approve_adjustment");
+}
+
+/**
+ * Reading the cash difference needs `view_shifts`.
+ *
+ * The difference is the most sensitive number on a shift: it names a person and
+ * a shortfall. Every role that can open the shift history holds `view_shifts`,
+ * so this refuses nobody who could already see the page — it refuses the caller
+ * who reached the service some other way.
+ */
+export function assertCanViewShiftDifferences(): void {
+  assertSensitiveAction("shift.view_differences");
+}
+
 export async function openShift(input: NewShift): Promise<Shift> {
+  assertCanOpenShift();
   return getShiftRepository().openShift(input);
 }
 
 export async function closeShift(id: string, input: CloseShiftInput): Promise<Shift> {
+  assertCanCloseShift();
   return getShiftRepository().closeShift(id, input);
 }
 
@@ -23,6 +53,7 @@ export async function approveShiftAdjustment(
   approverId: string,
   approverName: string,
 ): Promise<Shift> {
+  assertCanApproveShiftAdjustment();
   return getShiftRepository().approveAdjustment(id, approverId, approverName);
 }
 

@@ -23,6 +23,10 @@ export const AUDIT_ACTIONS = [
   "refund.created",
   "refund.settled",
   "refund.rejected",
+  // Phase 13: the return itself, written by the returns service in both modes
+  // (no database function writes it), while the settlement rows above are
+  // written by `pos_settle_refund` live and by the service in demo mode.
+  "return.created",
   // Online storefront (Phase 9). Approving a website order creates a POS sale
   // and converts its stock reservation; cancelling releases the reservation and
   // keeps the record with a reason. The two payment actions are the human half
@@ -62,6 +66,8 @@ export const AUDIT_ENTITIES = [
   "shift",
   "expense",
   "refund",
+  /** A sales return (`sales_returns`) — the goods side of a refund. */
+  "return",
   "online_order",
   "website_settings",
   /** A sign-in, a sign-out or a refresh: an event with no table behind it. */

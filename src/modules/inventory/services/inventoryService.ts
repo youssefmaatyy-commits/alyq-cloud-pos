@@ -1,3 +1,4 @@
+import { assertSensitiveAction } from "@/lib/permissions/actions";
 import { AppError } from "@/modules/products/data/repository";
 import { stockStatus, type Product, type StockStatus } from "@/modules/products/types";
 import { applyDemoAdjustment, applySupabaseAdjustment, getInventoryRepository } from "../data";
@@ -30,6 +31,34 @@ export async function loadInventory(): Promise<{
   return { products, movements };
 }
 
+/** Any movement of stock needs `adjust_stock` — a cashier sells, they do not adjust. */
+export function assertCanAdjustStock(): void {
+  assertSensitiveAction("stock.adjust");
+}
+
+/**
+ * A correction is an adjustment recorded as a `recount` — the reason the movement
+ * list uses for "the shelf and the system disagreed" — so it needs the same
+ * capability. It gets its own entry in the register because it is the one staff
+ * most often mean when they say "I fixed the stock", and the question "who may
+ * fix the stock?" deserves an answer that is written down.
+ */
+export function assertCanCorrectStock(): void {
+  assertSensitiveAction("stock.correct");
+}
+
+/**
+ * Applying an opening-stock import needs `import_data`.
+ *
+ * The parser (`services/stockImport.ts`) is pure and stays ungated — parsing a
+ * file is not writing to it. This is the gate for the funnel that applies rows,
+ * and every row it applies is an adjustment, so `adjust_stock` is checked again
+ * per row below.
+ */
+export function assertCanImportStock(): void {
+  assertSensitiveAction("stock.import");
+}
+
 export async function adjustStock(args: {
   productId: string;
   type: StockMovement["type"];
@@ -37,6 +66,10 @@ export async function adjustStock(args: {
   quantity: number;
   notes: string | null;
 }): Promise<InventoryAdjustmentResult> {
+  assertCanAdjustStock();
+  // `recount` is the movement list's word for a correction: the count on the
+  // shelf disagreed with the system and somebody wrote the system down to match.
+  if (args.reason === "recount") assertCanCorrectStock();
   const user = getCurrentUser();
   const repository = getInventoryRepository();
   const products = await repository.listProducts();

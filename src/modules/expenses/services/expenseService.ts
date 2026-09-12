@@ -1,3 +1,4 @@
+import { assertSensitiveAction } from "@/lib/permissions/actions";
 import { getExpenseRepository } from "../data";
 import type { Expense, ExpenseFiltersValue, NewExpense } from "../types";
 import { normalizeText } from "@/modules/products/services/productQuery";
@@ -8,7 +9,28 @@ export async function loadExpenses(): Promise<Expense[]> {
   return getExpenseRepository().listExpenses();
 }
 
+/** Creating an expense needs `add_expense`. */
+export function assertCanCreateExpense(): void {
+  assertSensitiveAction("expense.create");
+}
+
+/** Editing one needs `edit_expense` — a cashier may record spending, not rewrite it. */
+export function assertCanEditExpense(): void {
+  assertSensitiveAction("expense.edit");
+}
+
+/** Deleting one needs `delete_expense`. */
+export function assertCanDeleteExpense(): void {
+  assertSensitiveAction("expense.delete");
+}
+
+/** Approving or rejecting one needs `approve_expense`. */
+export function assertCanApproveExpense(): void {
+  assertSensitiveAction("expense.approve");
+}
+
 export async function createExpense(input: NewExpense): Promise<Expense> {
+  assertCanCreateExpense();
   return getExpenseRepository().createExpense(input);
 }
 
@@ -16,10 +38,12 @@ export async function updateExpense(
   id: string,
   patch: Parameters<ReturnType<typeof getExpenseRepository>["updateExpense"]>[1],
 ): Promise<Expense> {
+  assertCanEditExpense();
   return getExpenseRepository().updateExpense(id, patch);
 }
 
 export async function deleteExpense(id: string): Promise<void> {
+  assertCanDeleteExpense();
   return getExpenseRepository().deleteExpense(id);
 }
 

@@ -398,6 +398,160 @@ await (async () => {
   });
 })();
 
+console.log("\nPhase 13 · refund lifecycle (settle / reject)");
+
+/**
+ * A fresh sale + a return whose refund is left pending, so the settlement rules
+ * are exercised independently of whatever the Phase 7 tests consumed above.
+ */
+async function pendingRefundFixture() {
+  const coffee = await bySku("ALYQ-1002");
+  const qty = 2;
+  const sale = await salesRepo.completeSale({
+    client_ref: `p13-sale-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    lines: [{ product_id: coffee.id, qty }],
+    discount_type: "none",
+    discount_value: 0,
+    payments: [
+      {
+        method: "cash",
+        amount: coffee.selling_price * qty,
+        status: "paid",
+        tendered: coffee.selling_price * qty,
+      },
+    ],
+    customer_id: null,
+    customer_name: null,
+    customer_phone: null,
+    user_id: "u1",
+    user_name: "Tester",
+  });
+  const line = sale.items[0];
+  const { returnRecord, refundRecord } = await returnsRepo.createReturn({
+    sale_id: sale.id,
+    reason: "Customer changed mind",
+    refund_method: "cash",
+    refund_status: "pending",
+    items: [{ sale_item_id: line.id, product_id: line.product_id, quantity: 1 }],
+    user_id: "u1",
+    user_name: "Tester",
+  });
+  return { sale, returnRecord, refundRecord };
+}
+
+test("a pending refund is settled once, and settling again is a no-op", async () => {
+  const { refundRecord, returnRecord } = await pendingRefundFixture();
+  assert.equal(refundRecord.status, "pending");
+  assert.equal(returnRecord.refund_status, "pending", "the return mirrors the refund");
+  assert.equal(refundRecord.settled_at, null, "nothing is settled yet");
+
+  const first = await returnsRepo.settleRefund(refundRecord.id, {
+    decision: "completed",
+    reason: null,
+    user_id: "u9",
+    user_name: "Manager",
+  });
+  assert.equal(first.alreadySettled, false);
+  assert.equal(first.refund.status, "completed");
+  assert.equal(first.refund.settled_by, "u9");
+  assert.equal(first.refund.settled_by_name, "Manager");
+  assert.ok(first.refund.settled_at, "settlement is stamped");
+  assert.equal(first.refund.rejection_reason, null);
+
+  const again = await returnsRepo.settleRefund(refundRecord.id, {
+    decision: "completed",
+    reason: null,
+    user_id: "u9",
+    user_name: "Manager",
+  });
+  assert.equal(again.alreadySettled, true, "same direction twice is idempotent");
+
+  await assert.rejects(
+    returnsRepo.settleRefund(refundRecord.id, {
+      decision: "rejected",
+      reason: "changed my mind",
+      user_id: "u9",
+      user_name: "Manager",
+    }),
+    /already settled/,
+    "a completed refund cannot be reversed into a rejection",
+  );
+
+  const returns = await returnsRepo.listReturns();
+  assert.equal(
+    returns.find((r) => r.id === returnRecord.id)?.refund_status,
+    "completed",
+    "the linked return follows the settlement",
+  );
+});
+
+test("a rejection needs a reason, keeps the money intact and frees the return", async () => {
+  const { refundRecord, returnRecord } = await pendingRefundFixture();
+
+  await assert.rejects(
+    returnsRepo.settleRefund(refundRecord.id, {
+      decision: "rejected",
+      reason: "   ",
+      user_id: "u9",
+      user_name: "Manager",
+    }),
+    /needs a reason/,
+    "a blank reason is refused, exactly like the database refuses it",
+  );
+
+  const settled = await returnsRepo.settleRefund(refundRecord.id, {
+    decision: "rejected",
+    reason: "Receipt does not match the returned item",
+    user_id: "u9",
+    user_name: "Manager",
+  });
+  assert.equal(settled.refund.status, "rejected");
+  assert.equal(settled.refund.rejection_reason, "Receipt does not match the returned item");
+  assert.equal(settled.refund.amount, refundRecord.amount, "the money is never rewritten");
+  assert.equal(
+    settled.refund.payment_method,
+    refundRecord.payment_method,
+    "nor is the channel it was refunded through",
+  );
+  assert.equal(settled.refund.refund_number, refundRecord.refund_number);
+
+  const returns = await returnsRepo.listReturns();
+  assert.equal(
+    returns.find((r) => r.id === returnRecord.id)?.refund_status,
+    "rejected",
+    "a rejected refund releases the return's reserved amount",
+  );
+});
+
+test("settlement refuses an unknown refund and cannot move a settled row twice", async () => {
+  await assert.rejects(
+    returnsRepo.settleRefund("ref-does-not-exist", {
+      decision: "completed",
+      reason: null,
+      user_id: "u9",
+      user_name: "Manager",
+    }),
+    /not found/i,
+  );
+
+  const { refundRecord } = await pendingRefundFixture();
+  await returnsRepo.settleRefund(refundRecord.id, {
+    decision: "rejected",
+    reason: "Duplicate request",
+    user_id: "u9",
+    user_name: "Manager",
+  });
+  await assert.rejects(
+    returnsRepo.settleRefund(refundRecord.id, {
+      decision: "completed",
+      reason: null,
+      user_id: "u9",
+      user_name: "Manager",
+    }),
+    /already settled as rejected/,
+  );
+});
+
 // runner — sequential so each test sees a consistent in-memory catalog
 let passed = 0;
 async function main(): Promise<void> {

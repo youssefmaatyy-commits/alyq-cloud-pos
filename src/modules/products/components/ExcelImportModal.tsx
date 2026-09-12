@@ -14,6 +14,13 @@ import {
 } from "../services/excelImport";
 import type { Category, NewProduct, Product } from "../types";
 import { getCatalogRepository } from "../data";
+import { assertCanImportProducts } from "../services/catalogService";
+import { AppError } from "../data/repository";
+import { deniedMessageKey } from "@/lib/permissions/enforce";
+import type { TranslationKey } from "@/lib/i18n/I18nProvider";
+
+/** The copy shown when the acting user may not apply an import. */
+const deniedImportKey = deniedMessageKey("import_data") as TranslationKey;
 
 interface ExcelImportModalProps {
   open: boolean;
@@ -120,6 +127,16 @@ export function ExcelImportModal({
 
   const handleConfirmImport = useCallback(async () => {
     if (!importResult || validRows.length === 0) return;
+
+    // Parsing the file is harmless; writing 400 products from it is not. The
+    // authority is asserted at the point the rows are about to be applied, which
+    // is also the point a preview-only user stops being able to continue.
+    try {
+      assertCanImportProducts();
+    } catch (error) {
+      toast.error(error instanceof AppError && error.code === "FORBIDDEN" ? t(deniedImportKey) : t("import.parseError"));
+      return;
+    }
 
     setStep("importing");
     setImporting(true);

@@ -19,7 +19,7 @@ import { usePos } from "../hooks/PosProvider";
 import { buildSalesSheets } from "../services/salesExport";
 import { normalizeText } from "@/modules/products/services/productQuery";
 import { canConfirmPayment } from "../permissions";
-import { getSalesRepository } from "../data";
+import { confirmPayment as confirmPaymentAction } from "../services/saleService";
 import { getCurrentUser } from "@/modules/inventory/permissions";
 
 /**
@@ -40,7 +40,7 @@ export function SalesHistoryPage() {
     setBusyId(saleId);
     try {
       const user = getCurrentUser();
-      await getSalesRepository().confirmPayment(saleId, {
+      await confirmPaymentAction(saleId, {
         user_id: user.id,
         user_name: user.name,
       });

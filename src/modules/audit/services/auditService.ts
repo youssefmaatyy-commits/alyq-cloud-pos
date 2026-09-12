@@ -1,3 +1,4 @@
+import { assertSensitiveAction } from "@/lib/permissions/actions";
 import { getAuditRepository } from "../data";
 import type {
   AuditAction,
@@ -37,7 +38,25 @@ export async function recordAudit(
   }
 }
 
+/** Reading the trail needs `view_audit_log` — oversight roles only. */
+export function assertCanViewAudit(): void {
+  assertSensitiveAction("audit.view");
+}
+
+/**
+ * Exporting it needs `export_data` on top of being able to read it: an extract
+ * leaves the building, and the trail is append-only precisely because it is
+ * evidence.
+ */
+export function assertCanExportAudit(): void {
+  // Both, deliberately: `export_data` alone would let a till operator pull the
+  // trail they are not allowed to read on screen.
+  assertSensitiveAction("audit.view");
+  assertSensitiveAction("audit.export");
+}
+
 export async function loadAuditLog(): Promise<AuditLogEntry[]> {
+  assertCanViewAudit();
   return getAuditRepository().listEntries();
 }
 

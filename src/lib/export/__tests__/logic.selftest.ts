@@ -260,6 +260,10 @@ function refund(partial: Partial<RefundRecord> & { id: string; amount: number })
     user_id: "u1",
     user_name: "Cashier",
     created_at: ISO,
+    rejection_reason: null,
+    settled_at: ISO,
+    settled_by: "u1",
+    settled_by_name: "Cashier",
     ...partial,
   };
 }
@@ -1229,7 +1233,7 @@ test("every status and method an export interpolates has an English and Arabic l
   const statusValues: Record<
     SaleStatus | PaymentStatus | RefundRecord["status"] | SalesReturn["refund_status"],
     true
-  > = { completed: true, pending: true, voided: true, paid: true };
+  > = { completed: true, pending: true, voided: true, paid: true, rejected: true };
 
   for (const status of Object.keys(statusValues)) {
     for (const [lang, table] of [["en", en], ["ar", ar]] as const) {

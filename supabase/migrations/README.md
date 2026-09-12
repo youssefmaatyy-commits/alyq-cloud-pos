@@ -33,6 +33,12 @@ satisfies what the application code queries.
 | `0014_audit_policies_and_seed.sql` | `role_aliases` + `normalize_app_role()`, `handle_new_user()` (profile on signup), `backfill_staff_profiles()`, `seed_demo_staff()`, `purge_audit_log()` |
 | `0015_pos_card_payments.sql` | card accepted at the register: `pos_complete_sale` takes `visa`, the `sales` cash constraint admits split and card sales, the sale-number bug is fixed, and the POS tables finally get their `select` grant |
 | `0016_refund_settlement.sql` | the refund lifecycle: settlement columns on `refund_records`, `approve_refund` capability, `refund.*` audit vocabulary, invariant trigger, `pos_settle_refund()` RPC, the `RET-`/`REF-` numbering fix, and the returns grants |
+| `0017_online_storefront.sql` | the website: `website_settings` (single-row appearance document), `online_orders` + `online_order_items`, `coupons`, `product_wishlist`, reservations and public-read policies |
+| `0018_online_order_functions.sql` | the guest-side writers: `place_online_order`, `submit_online_payment_proof`, `lookup_online_order`, `list_my_online_orders`, `resolve_online_order` — `security definer` because an anonymous shopper has no identity for RLS to scope |
+| `0019_storefront_public_reads.sql` | derived public reads (best sellers from till + website demand) that never expose `sale_items` or `online_order_items` to an anonymous visitor |
+| `0020_storefront_grants_and_coupon_check.sql` | explicit `grant select` on the new public tables (Supabase stopped granting by default) and the server-side coupon validity check |
+| `0021_identity_custom_roles.sql` | fourteen new capabilities, `profiles.email/phone/last_login_at/custom_role_id`, `custom_roles` (admin-defined overlays on a system role), `can()` consulting the custom role first, staff/role RPCs, session + user audit vocabulary |
+| `0022_business_controls.sql` | Phases 11–14 business control: `return.created` audit vocabulary for the enforced returns/refund service layer (further sections appended as each increment lands) |
 
 ## Column reference — `products`
 

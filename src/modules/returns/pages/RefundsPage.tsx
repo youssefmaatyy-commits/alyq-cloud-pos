@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import type { RefundDecision, RefundRecord } from "../types";
 import { Link, useNavigate } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { PageHeader } from "@/components/layout/AppShell";
@@ -19,16 +20,24 @@ import {
 import { useReturns } from "../hooks/ReturnProvider";
 import { queryRefunds } from "../services/returnService";
 import { ReturnFormModal } from "../components/ReturnFormModal";
-import { canProcessRefund } from "../permissions";
+import { RefundSettleModal } from "../components/RefundSettleModal";
+import { canProcessRefund, canSettleRefund } from "../permissions";
 
 export function RefundsPage() {
   const { t, date, num } = useI18n();
   const navigate = useNavigate();
-  const { refundsList, loading, error, refresh } = useReturns();
+  const { refundsList, pendingRefunds, loading, error, refresh } = useReturns();
 
   const [search, setSearch] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
+  // The settlement dialog is the only way a pending refund moves: completing it
+  // means the cash really left the drawer, rejecting it needs a reason.
+  const [settleTarget, setSettleTarget] = useState<{
+    refund: RefundRecord;
+    decision: RefundDecision;
+  } | null>(null);
   const canRefund = canProcessRefund();
+  const canSettle = canSettleRefund();
 
   const filteredRefunds = useMemo(() => {
     return queryRefunds(refundsList, { search });
@@ -49,12 +58,14 @@ export function RefundsPage() {
 
     return {
       refundsCount: refundsList.length,
+      pendingCount: pendingRefunds.length,
+      pendingAmount: pendingRefunds.reduce((sum, ref) => sum + ref.amount, 0),
       totalRefunded,
       cashRefunded,
       visaRefunded,
       instapayRefunded,
     };
-  }, [refundsList]);
+  }, [refundsList, pendingRefunds]);
 
   return (
     <div>
@@ -88,6 +99,12 @@ export function RefundsPage() {
           label={t("refunds.amount")}
           value={num(stats.totalRefunded, 2)}
           tone="warning"
+        />
+        <StatTile
+          label={t("refunds.pendingApprovals")}
+          value={`${stats.pendingCount} · ${num(stats.pendingAmount, 2)}`}
+          tone={stats.pendingCount > 0 ? "danger" : "neutral"}
+          hint={t("refunds.pendingApprovalsHint")}
         />
         <StatTile
           label={t("refunds.cash")}
@@ -200,22 +217,62 @@ export function RefundsPage() {
                     </Badge>
                   </td>
                   <td className="px-3 py-3 text-xs">
-                    <Badge tone={ref.status === "completed" ? "success" : "warning"}>
-                      {ref.status === "completed" ? t("refunds.paid") : t("refunds.pending")}
-                    </Badge>
+                    <span
+                      title={
+                        ref.status === "rejected" && ref.rejection_reason
+                          ? ref.rejection_reason
+                          : undefined
+                      }
+                    >
+                      <Badge
+                        tone={
+                          ref.status === "completed"
+                            ? "success"
+                            : ref.status === "rejected"
+                              ? "danger"
+                              : "warning"
+                        }
+                      >
+                        {ref.status === "completed"
+                          ? t("refunds.paid")
+                          : ref.status === "rejected"
+                            ? t("refunds.rejected")
+                            : t("refunds.pending")}
+                      </Badge>
+                    </span>
                   </td>
                   <td className="px-3 py-3 text-xs text-slate-500" dir="ltr">
                     {date(ref.created_at)}
                   </td>
                   <td className="px-3 py-3 text-xs text-slate-600">{ref.user_name}</td>
                   <td className="px-4 py-3 text-end">
-                    <Link
-                      to={`/refunds/${ref.id}`}
-                      className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-600 hover:bg-slate-100"
-                      title={t("common.view")}
-                    >
-                      <EyeIcon />
-                    </Link>
+                    <div className="inline-flex items-center gap-1.5">
+                      {ref.status === "pending" && canSettle ? (
+                        <>
+                          <Button
+                            size="sm"
+                            variant="subtle"
+                            onClick={() => setSettleTarget({ refund: ref, decision: "completed" })}
+                          >
+                            {t("refunds.approveAction")}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setSettleTarget({ refund: ref, decision: "rejected" })}
+                          >
+                            {t("refunds.rejectAction")}
+                          </Button>
+                        </>
+                      ) : null}
+                      <Link
+                        to={`/refunds/${ref.id}`}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-600 hover:bg-slate-100"
+                        title={t("common.view")}
+                      >
+                        <EyeIcon />
+                      </Link>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -223,6 +280,16 @@ export function RefundsPage() {
           </table>
         </div>
       )}
+
+      {/* Settlement dialog — approve or reject a pending refund */}
+      {settleTarget ? (
+        <RefundSettleModal
+          open
+          refund={settleTarget.refund}
+          decision={settleTarget.decision}
+          onClose={() => setSettleTarget(null)}
+        />
+      ) : null}
 
       {/* Return/Refund Modal */}
       {modalOpen && (
