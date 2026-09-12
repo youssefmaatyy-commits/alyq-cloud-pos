@@ -36,7 +36,7 @@ import {
   type Translate,
 } from "@/lib/export";
 import { paymentTotals } from "@/modules/pos/services/salesExport";
-import type { Sale, SalePayment } from "@/modules/pos/types";
+import { PAYMENT_METHODS, type PaymentMethod, type Sale, type SalePayment } from "@/modules/pos/types";
 import type { Product } from "@/modules/products/types";
 import type { Expense } from "@/modules/expenses/types";
 import type { RefundRecord, SalesReturn } from "@/modules/returns/types";
@@ -258,12 +258,12 @@ interface MetricRow {
   amount: number | null;
 }
 
-interface PaymentRow {
+export interface PaymentRow {
   sale: Sale;
   payment: SalePayment;
 }
 
-interface LedgerRow extends CashMovementRow {
+export interface LedgerRow extends CashMovementRow {
   balance: number;
 }
 
@@ -326,48 +326,9 @@ export function buildFinancialSheets(input: FinancialExportInput): BuiltSheet[] 
   };
 
   // ── 2. Payments (one row per payment, so splits are visible) ─────────────
-  const paymentRows: PaymentRow[] = [];
-  for (const sale of sales) {
-    for (const payment of sale.payments) paymentRows.push({ sale, payment });
-  }
-
-  const payments: ExportSheet<PaymentRow> = {
-    name: t("export.sheet.payments"),
-    rows: paymentRows,
-    columns: [
-      { header: t("export.col.dateTime"), value: (r) => toDate(r.sale.created_at), kind: "datetime" },
-      { header: t("export.col.invoiceNumber"), value: (r) => r.sale.sale_number, width: 16 },
-      { header: t("export.col.status"), value: (r) => t(`pos.status.${r.sale.status}` as never), width: 12 },
-      { header: t("export.col.customer"), value: (r) => r.sale.customer_name ?? "", width: 24 },
-      { header: t("export.col.cashier"), value: (r) => r.sale.user_name, width: 20 },
-      {
-        header: t("export.col.paymentMethod"),
-        value: (r) => t(`pos.payment.${r.payment.method}` as never),
-        width: 16,
-      },
-      { header: t("export.col.amount"), value: (r) => r.payment.amount, kind: "money" },
-      {
-        header: t("export.col.paymentStatus"),
-        value: (r) => t(`pos.status.${r.payment.status}` as never),
-        width: 14,
-      },
-      { header: t("export.col.confirmedAt"), value: (r) => toDate(r.payment.paid_at), kind: "datetime" },
-      { header: t("export.col.confirmedBy"), value: (r) => r.payment.paid_by_name ?? "", width: 20 },
-    ],
-    totals: [
-      t("export.totalRow"),
-      "",
-      "",
-      "",
-      "",
-      "",
-      money(paymentRows.reduce((acc, r) => acc + r.payment.amount, 0)),
-      "",
-      null,
-      "",
-    ],
-    notes: [`${t("export.col.amount")}: ${paymentRows.length}`],
-  };
+  // Defined in `paymentsSheetOf` below, so the standalone Payments export on the
+  // Reports screen writes exactly the same sheet — one definition, no drift.
+  const payments = paymentsSheetOf(sales, t);
 
   // ── 3–5. Returns, refunds and expenses ─────────────────────────────────
   // Sheet definitions live in the exported factories below so the Returns and
@@ -421,36 +382,8 @@ export function buildFinancialSheets(input: FinancialExportInput): BuiltSheet[] 
   };
 
   // ── 7. Cash movements (derived ledger with a running balance) ────────────
-  const ledger = buildCashLedger({ sales, expenses, refundsList, shifts, t });
-  let running = 0;
-  const ledgerRows: LedgerRow[] = ledger.map((row) => {
-    running = money(running + row.inn - row.out);
-    return { ...row, balance: running };
-  });
-
-  const cashSheet: ExportSheet<LedgerRow> = {
-    name: t("export.sheet.cashLedger"),
-    rows: ledgerRows,
-    columns: [
-      { header: t("export.col.dateTime"), value: (r) => toDate(r.at), kind: "datetime" },
-      { header: t("export.col.type"), value: (r) => r.kind, width: 20 },
-      { header: t("export.col.reference"), value: (r) => r.reference, width: 16 },
-      { header: t("export.col.details"), value: (r) => r.description, width: 34 },
-      { header: t("export.col.cashIn"), value: (r) => (r.inn > 0 ? r.inn : null), kind: "money" },
-      { header: t("export.col.cashOut"), value: (r) => (r.out > 0 ? r.out : null), kind: "money" },
-      { header: t("export.col.balance"), value: (r) => r.balance, kind: "money" },
-    ],
-    totals: [
-      t("export.totalRow"),
-      "",
-      "",
-      "",
-      money(ledgerRows.reduce((acc, r) => acc + r.inn, 0)),
-      money(ledgerRows.reduce((acc, r) => acc + r.out, 0)),
-      ledgerRows.length > 0 ? ledgerRows[ledgerRows.length - 1].balance : 0,
-    ],
-    notes: [t("export.note.cashLedger"), `${t("export.col.type")}: ${ledgerRows.length}`],
-  };
+  // Defined in `cashLedgerSheetOf` below, for the same reason as payments.
+  const cashSheet = cashLedgerSheetOf({ sales, expenses, refundsList, shifts, t });
 
   return buildSheets([summary, payments, returns, refunds, expensesSheet, shiftsSheet, cashSheet]);
 }
@@ -587,4 +520,237 @@ return {
   ],
   notes: [`${t("export.col.expenseNumber")}: ${expenses.length}`],
 }
+}
+
+// ── Sheets shared with the standalone Payments and Cash movements exports ────
+
+/**
+ * One row per payment line, so a split payment stays visible as several rows.
+ *
+ * Exported so the report and the standalone Payments file flatten invoices the
+ * same way.
+ */
+export function paymentRowsOf(sales: readonly Sale[]): PaymentRow[] {
+  const rows: PaymentRow[] = [];
+  for (const sale of sales) {
+    for (const payment of sale.payments) rows.push({ sale, payment });
+  }
+  return rows;
+}
+
+/**
+ * The Payments sheet of the financial report.
+ *
+ * Voided invoices are *included* here and labelled through the Status column:
+ * a payment line is a fact about what was taken at the till, and hiding voided
+ * ones would make this sheet disagree with the invoices screen. The Summary
+ * sheet of the report is where voids are excluded from the money.
+ */
+export function paymentsSheetOf(sales: readonly Sale[], t: Translate): ExportSheet<PaymentRow> {
+  const paymentRows = paymentRowsOf(sales);
+  return {
+    name: t("export.sheet.payments"),
+    rows: paymentRows,
+    columns: [
+      { header: t("export.col.dateTime"), value: (r) => toDate(r.sale.created_at), kind: "datetime" },
+      { header: t("export.col.invoiceNumber"), value: (r) => r.sale.sale_number, width: 16 },
+      { header: t("export.col.status"), value: (r) => t(`pos.status.${r.sale.status}` as never), width: 12 },
+      { header: t("export.col.customer"), value: (r) => r.sale.customer_name ?? "", width: 24 },
+      { header: t("export.col.cashier"), value: (r) => r.sale.user_name, width: 20 },
+      {
+        header: t("export.col.paymentMethod"),
+        value: (r) => t(`pos.payment.${r.payment.method}` as never),
+        width: 16,
+      },
+      { header: t("export.col.amount"), value: (r) => r.payment.amount, kind: "money" },
+      {
+        header: t("export.col.paymentStatus"),
+        value: (r) => t(`pos.status.${r.payment.status}` as never),
+        width: 14,
+      },
+      { header: t("export.col.confirmedAt"), value: (r) => toDate(r.payment.paid_at), kind: "datetime" },
+      { header: t("export.col.confirmedBy"), value: (r) => r.payment.paid_by_name ?? "", width: 20 },
+    ],
+    totals: [
+      t("export.totalRow"),
+      "",
+      "",
+      "",
+      "",
+      "",
+      money(paymentRows.reduce((acc, r) => acc + r.payment.amount, 0)),
+      "",
+      null,
+      "",
+    ],
+    notes: [`${t("export.col.amount")}: ${paymentRows.length}`],
+  };
+}
+
+/**
+ * The Cash movements sheet: `buildCashLedger` with its running balance attached.
+ *
+ * Same drawer rule as `ShiftSummary.expected_cash` — only cash touches it, so
+ * card and InstaPay never appear.
+ */
+export function cashLedgerSheetOf(input: {
+  sales: readonly Sale[];
+  expenses: readonly Expense[];
+  refundsList: readonly RefundRecord[];
+  shifts: readonly Shift[];
+  t: Translate;
+}): ExportSheet<LedgerRow> {
+  const { t } = input;
+  const ledger = buildCashLedger(input);
+  let running = 0;
+  const ledgerRows: LedgerRow[] = ledger.map((row) => {
+    running = money(running + row.inn - row.out);
+    return { ...row, balance: running };
+  });
+  return {
+    name: t("export.sheet.cashLedger"),
+    rows: ledgerRows,
+    columns: [
+      { header: t("export.col.dateTime"), value: (r) => toDate(r.at), kind: "datetime" },
+      { header: t("export.col.type"), value: (r) => r.kind, width: 20 },
+      { header: t("export.col.reference"), value: (r) => r.reference, width: 16 },
+      { header: t("export.col.details"), value: (r) => r.description, width: 34 },
+      { header: t("export.col.cashIn"), value: (r) => (r.inn > 0 ? r.inn : null), kind: "money" },
+      { header: t("export.col.cashOut"), value: (r) => (r.out > 0 ? r.out : null), kind: "money" },
+      { header: t("export.col.balance"), value: (r) => r.balance, kind: "money" },
+    ],
+    totals: [
+      t("export.totalRow"),
+      "",
+      "",
+      "",
+      money(ledgerRows.reduce((acc, r) => acc + r.inn, 0)),
+      money(ledgerRows.reduce((acc, r) => acc + r.out, 0)),
+      ledgerRows.length > 0 ? ledgerRows[ledgerRows.length - 1].balance : 0,
+    ],
+    notes: [t("export.note.cashLedger"), `${t("export.col.type")}: ${ledgerRows.length}`],
+  };
+}
+
+/** "1 Jan → 31 Jan", or "All time" when the range is open on both sides. */
+export function rangeLabelOf(range: DateRange, t: Translate): string {
+  return range.from || range.to
+    ? `${range.from ?? "…"} → ${range.to ?? "…"}`
+    : t("export.range.allTime");
+}
+
+/** How many payment lines a set of sales will produce. */
+export function paymentCountOf(sales: readonly Sale[]): number {
+  return sales.reduce((acc, sale) => acc + sale.payments.length, 0);
+}
+
+/**
+ * Standalone **Payments** workbook.
+ *
+ * The financial report already contains this data; this exists for the user who
+ * wants only the payment lines — two sheets: a per-method summary (count,
+ * settled, awaiting confirmation, total) and every payment line, identical to
+ * the report's Payments sheet because it *is* the same sheet definition.
+ *
+ * The date range is applied here with the same rule the report uses (an invoice
+ * belongs to the range when it was created inside it).
+ */
+export function buildPaymentsSheets(input: {
+  sales: readonly Sale[];
+  range?: DateRange;
+  t: Translate;
+}): BuiltSheet[] {
+  const { t } = input;
+  const range = input.range ?? OPEN_DATE_RANGE;
+  const sales = input.sales.filter((s) => withinDateRange(s.created_at, range.from, range.to));
+  const paymentRows = paymentRowsOf(sales);
+  const rangeLabel = rangeLabelOf(range, t);
+
+  // One summary row per method actually used, in the app's canonical order.
+  interface MethodRow {
+    method: PaymentMethod;
+    count: number;
+    paid: number;
+    pending: number;
+    amount: number;
+  }
+  const byMethod: MethodRow[] = [];
+  for (const { payment } of paymentRows) {
+    let row = byMethod.find((m) => m.method === payment.method);
+    if (!row) {
+      row = { method: payment.method, count: 0, paid: 0, pending: 0, amount: 0 };
+      byMethod.push(row);
+    }
+    row.count += 1;
+    row.amount = money(row.amount + payment.amount);
+    if (payment.status === "paid") row.paid = money(row.paid + payment.amount);
+    else row.pending = money(row.pending + payment.amount);
+  }
+  byMethod.sort((a, b) => PAYMENT_METHODS.indexOf(a.method) - PAYMENT_METHODS.indexOf(b.method));
+
+  const summary: ExportSheet<MethodRow> = {
+    name: t("export.sheet.summary"),
+    rows: byMethod,
+    columns: [
+      {
+        header: t("export.col.paymentMethod"),
+        value: (r) => t(`pos.payment.${r.method}` as never),
+        width: 22,
+      },
+      { header: t("export.col.count"), value: (r) => r.count, kind: "number", width: 12 },
+      { header: t("export.col.paid"), value: (r) => r.paid, kind: "money", width: 16 },
+      { header: t("export.metric.unsettled"), value: (r) => r.pending, kind: "money", width: 20 },
+      { header: t("export.col.total"), value: (r) => r.amount, kind: "money", width: 16 },
+    ],
+    totals: [
+      t("export.totalRow"),
+      byMethod.reduce((acc, r) => acc + r.count, 0),
+      money(byMethod.reduce((acc, r) => acc + r.paid, 0)),
+      money(byMethod.reduce((acc, r) => acc + r.pending, 0)),
+      money(byMethod.reduce((acc, r) => acc + r.amount, 0)),
+    ],
+    notes: [
+      `${t("export.dateRange")}: ${rangeLabel}`,
+      t("export.note.paymentSplit"),
+      `${t("export.col.status")}: ${t("export.note.totalsExcludeVoided")}`,
+    ],
+  };
+
+  const payments = paymentsSheetOf(sales, t);
+  return buildSheets([
+    { ...summary },
+    { ...payments, notes: [`${t("export.dateRange")}: ${rangeLabel}`, ...(payments.notes ?? [])] },
+  ]);
+}
+
+/**
+ * Standalone **Cash movements** workbook — the drawer's ledger on its own.
+ *
+ * Derived, never stored: opening floats and cash sales in, completed cash
+ * refunds and cash expenses out, with a running balance. Each source is ranged
+ * by its own timestamp, exactly as the financial report ranges them (a shift
+ * counts when it *opened* inside the range).
+ */
+export function buildCashMovementsSheets(input: {
+  sales: readonly Sale[];
+  expenses: readonly Expense[];
+  refundsList: readonly RefundRecord[];
+  shifts: readonly Shift[];
+  range?: DateRange;
+  t: Translate;
+}): BuiltSheet[] {
+  const { t } = input;
+  const range = input.range ?? OPEN_DATE_RANGE;
+  const inRange = (iso: string | null | undefined) => withinDateRange(iso, range.from, range.to);
+  const cashSheet = cashLedgerSheetOf({
+    sales: input.sales.filter((s) => inRange(s.created_at)),
+    expenses: input.expenses.filter((e) => inRange(e.spent_at)),
+    refundsList: input.refundsList.filter((r) => inRange(r.created_at)),
+    shifts: input.shifts.filter((s) => inRange(s.opening_at)),
+    t,
+  });
+  const rangeLabel = rangeLabelOf(range, t);
+  return buildSheets([
+    { ...cashSheet, notes: [`${t("export.dateRange")}: ${rangeLabel}`, ...(cashSheet.notes ?? [])] },
+  ]);
 }

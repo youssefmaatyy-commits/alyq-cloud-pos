@@ -54,6 +54,33 @@ globalThis.getComputedStyle = dom.window.getComputedStyle;
 globalThis.requestAnimationFrame = (cb) => setTimeout(() => cb(Date.now()), 0);
 globalThis.cancelAnimationFrame = (id) => clearTimeout(id);
 
+// Demo mode is entirely local — every repository writes to localStorage. Record
+// any attempt to reach the network so a stray call fails the suite *by name*
+// instead of surfacing as an opaque jsdom/Node error (or silently succeeding
+// against a real backend when the suite is run in a browser). Both globals are
+// patched: app code bundled into Node resolves bare `fetch` to Node's own.
+const networkCalls = [];
+const blockedFetch = (input) => {
+  const url = String(typeof input === "object" && input !== null ? (input.url ?? input) : input);
+  networkCalls.push(`fetch ${url}`);
+  return Promise.reject(new Error(`blocked network call: ${url}`));
+};
+dom.window.fetch = blockedFetch;
+globalThis.fetch = blockedFetch;
+class BlockedXHR {
+  open(method, url) {
+    networkCalls.push(`${method} ${url}`);
+  }
+  send() {
+    throw new Error(`blocked network call: ${networkCalls.at(-1) ?? "XHR"}`);
+  }
+  setRequestHeader() {}
+  addEventListener() {}
+  removeEventListener() {}
+}
+dom.window.XMLHttpRequest = BlockedXHR;
+globalThis.XMLHttpRequest = BlockedXHR;
+
 // jsdom has no createObjectURL; the editor uses it for previews. Polyfill it.
 globalThis.File = dom.window.File;
 globalThis.Blob = dom.window.Blob;
@@ -1692,6 +1719,306 @@ async function main() {
   assert.ok(bodyText().includes("ALYQ Admin"), "audit entries carry the acting user");
   console.log("  ✓ audit log records shift.opened, expense.created and shift.closed");
 
+  // ── Reports hub: every export target writes a workbook that really opens ──
+  // The export brief lists ten things that must be exportable: products, stock,
+  // sales invoices, returns, customers, suppliers, expenses, payments, cash
+  // movements and reports. Each is clicked for real here, the bytes the app hands
+  // the browser are captured, and the file is parsed again with the same `xlsx`
+  // the app uses to *import* — a workbook that will not parse here would not open
+  // in Excel either. Row counts are then reconciled with the number each button
+  // advertises on screen, so the file and the UI cannot disagree.
+  await navigate("#/reports");
+  for (let i = 0; i < 25 && !bodyText().includes("Reports & data export"); i += 1) await sleep(300);
+  assert.ok(bodyText().includes("Reports & data export"), "the reports hub renders");
+  assert.ok(bodyText().includes("Data exports"), "with the per-dataset exports");
+
+  /** The "Export Excel" button on the row/card titled `title`. */
+  const exportButtonFor = (title) => {
+    const headings = [...document.querySelectorAll("main p, main h2")].filter(
+      (n) => (n.textContent ?? "").trim() === title,
+    );
+    for (const heading of headings) {
+      let scope = heading.parentElement;
+      for (let depth = 0; scope && depth < 4; depth += 1) {
+        const button = [...scope.querySelectorAll("button")].find((b) =>
+          (b.textContent ?? "").includes("Export Excel"),
+        );
+        if (button) return button;
+        scope = scope.parentElement;
+      }
+    }
+    throw new Error(`no export button found for "${title}"`);
+  };
+  /** The count a row advertises in its hint ("12 payments" → 12). */
+  const advertisedCount = (title) => {
+    const heading = [...document.querySelectorAll("main p")].find(
+      (n) => (n.textContent ?? "").trim() === title,
+    );
+    assert.ok(heading, `"${title}" is offered on the reports page`);
+    const hint = heading.parentElement?.querySelectorAll("p")[1];
+    const count = Number((hint?.textContent ?? "").match(/^(\d+)/)?.[1] ?? NaN);
+    assert.ok(Number.isFinite(count), `"${title}" says how many rows it will write`);
+    return count;
+  };
+  /** Click, capture what the browser was given, and prove it is a real workbook. */
+  const captureExport = async (label, clickIt) => {
+    const before = downloads.length;
+    clickIt();
+    for (let i = 0; i < 40 && downloads.length === before; i += 1) await sleep(150);
+    if (downloads.length === before) return null;
+    assert.equal(downloads.length, before + 1, `${label}: one file was handed to the browser`);
+    const file = downloads[downloads.length - 1];
+    assert.match(
+      file.filename,
+      /^alyq-[a-z0-9-]+-\d{4}-\d{2}-\d{2}-\d{4}\.xlsx$/,
+      `${label}: the file is named predictably`,
+    );
+    const bytes = Buffer.from(await file.blob.arrayBuffer());
+    assert.deepEqual(
+      [...bytes.subarray(0, 4)],
+      [0x50, 0x4b, 0x03, 0x04],
+      `${label}: a real .xlsx (ZIP) file, not a renamed CSV`,
+    );
+    const workbook = XLSX.read(bytes, { type: "buffer" }); // opens, or throws
+    assert.ok(workbook.SheetNames.length > 0, `${label}: the workbook has sheets`);
+    for (const name of workbook.SheetNames) {
+      assert.ok(name.length <= 31, `${label}: sheet "${name}" fits Excel's 31-character limit`);
+      assert.ok(!/[:\\/?*[\]]/.test(name), `${label}: sheet "${name}" has no illegal character`);
+    }
+    assert.equal(
+      new Set(workbook.SheetNames).size,
+      workbook.SheetNames.length,
+      `${label}: sheet names are unique`,
+    );
+    assert.ok(
+      bodyText().includes(file.filename),
+      `${label}: the success toast names the file that was written`,
+    );
+
+    // Labels are interpolated at runtime (`pos.status.${status}`), so a status
+    // with no dictionary entry lands in the spreadsheet as the raw key — that
+    // once made every settled payment read "pos.status.paid". No cell of any
+    // exported file may look like a translation key.
+    const looksLikeKey = /^(app|auth|common|pos|export|products|inventory|customers|reports|expenses|returns|shifts|mode|nav|dashboard|audit)\.[a-zA-Z][a-zA-Z0-9.]*$/;
+    for (const sheetName of workbook.SheetNames) {
+      const grid = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, raw: true });
+      for (const row of grid) {
+        for (const cell of row) {
+          assert.ok(
+            !looksLikeKey.test(String(cell ?? "")),
+            `${label}: no untranslated label reaches the file (found "${cell}" in "${sheetName}")`,
+          );
+        }
+      }
+    }
+    return { filename: file.filename, sheetNames: workbook.SheetNames, workbook };
+  };
+  const clickButton = (button) =>
+    button.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  const downloadWorkbookFor = (title) =>
+    captureExport(title, () => {
+      const button = exportButtonFor(title);
+      assert.ok(!button.disabled, `"${title}" is exportable with the data on screen`);
+      clickButton(button);
+    });
+  /** Data rows of a parsed sheet: between the header and the Total/notes block. */
+  const dataRowsOf = (workbook, sheetName) => {
+    const grid = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, raw: true });
+    const found = [];
+    for (const row of grid.slice(1)) {
+      const first = row[0];
+      if (first === undefined || first === null || first === "") break;
+      if (String(first).trim() === "Total") break;
+      found.push(row);
+    }
+    return found;
+  };
+
+  // Payments: until now this data existed only as one sheet of the big report.
+  const payments = await downloadWorkbookFor("Payments");
+  assert.deepEqual(
+    payments.sheetNames,
+    ["Summary", "Payments"],
+    "a per-method summary plus every payment line",
+  );
+  const paymentLines = dataRowsOf(payments.workbook, "Payments");
+  assert.equal(
+    paymentLines.length,
+    advertisedCount("Payments"),
+    "the file holds exactly the payment lines the button promised",
+  );
+  const methodRows = dataRowsOf(payments.workbook, "Summary");
+  assert.ok(methodRows.length >= 1, "at least one payment method was used");
+  const lineTotal = paymentLines.reduce((acc, row) => acc + Number(row[6]), 0);
+  const methodTotal = methodRows.reduce((acc, row) => acc + Number(row[4]), 0);
+  assert.ok(
+    Math.abs(lineTotal - methodTotal) < 0.005,
+    `the method summary (${methodTotal}) equals the payment lines (${lineTotal})`,
+  );
+  assert.ok(
+    Math.abs(methodRows.reduce((acc, row) => acc + Number(row[2]) + Number(row[3]), 0) - methodTotal) < 0.005,
+    "settled + awaiting confirmation = the amount taken",
+  );
+
+  // Cash movements: the drawer ledger, derived, with a running balance.
+  const cash = await downloadWorkbookFor("Cash movements");
+  assert.deepEqual(cash.sheetNames, ["Cash movements"], "one ledger sheet");
+  const ledgerRows = dataRowsOf(cash.workbook, "Cash movements");
+  assert.equal(
+    ledgerRows.length,
+    advertisedCount("Cash movements"),
+    "the ledger holds exactly the movements the button promised",
+  );
+  let running = 0;
+  for (const row of ledgerRows) {
+    running = Math.round((running + Number(row[4] || 0) - Number(row[5] || 0)) * 100) / 100;
+    assert.ok(
+      Math.abs(Number(row[6]) - running) < 0.005,
+      `the running balance is correct after ${row[2]}`,
+    );
+  }
+  assert.ok(
+    ledgerRows.some((row) => String(row[1]) === "Opening float" && Number(row[4]) === 1000),
+    "the 1000 float this suite opened is money in",
+  );
+  assert.ok(
+    ledgerRows.some((row) => String(row[2]) === "EXP-000001" && Number(row[5]) === 100),
+    "the 100 cash expense this suite recorded is money out",
+  );
+  assert.ok(
+    !ledgerRows.some((row) => String(row[1]) === "Cash sale" && Number(row[4]) === 0),
+    "no zero-value movements are written",
+  );
+
+  // The report contains both — and must not disagree with the standalone files.
+  const financial = await downloadWorkbookFor("Financial report");
+  assert.deepEqual(
+    financial.sheetNames,
+    ["Summary", "Payments", "Returns", "Refunds", "Expenses", "Shift summaries", "Cash movements"],
+    "one sheet per report",
+  );
+  assert.deepEqual(
+    dataRowsOf(financial.workbook, "Payments"),
+    paymentLines,
+    "the report's Payments sheet and the standalone Payments file are identical",
+  );
+  assert.deepEqual(
+    dataRowsOf(financial.workbook, "Cash movements"),
+    ledgerRows,
+    "and so are the two cash-movement ledgers",
+  );
+
+  // The remaining datasets on the hub.
+  const invoices = await downloadWorkbookFor("Invoices");
+  assert.deepEqual(invoices.sheetNames, ["Invoices", "Invoice items"], "invoices plus their lines");
+  assert.equal(
+    dataRowsOf(invoices.workbook, "Invoices").length,
+    advertisedCount("Invoices"),
+    "one row per invoice in range",
+  );
+  assert.ok(
+    dataRowsOf(invoices.workbook, "Invoice items").length >=
+      dataRowsOf(invoices.workbook, "Invoices").length,
+    "and at least one line item each",
+  );
+
+  const inventory = await downloadWorkbookFor("Inventory");
+  assert.deepEqual(inventory.sheetNames, ["Inventory"], "the stock balance sheet");
+  assert.equal(
+    dataRowsOf(inventory.workbook, "Inventory").length,
+    advertisedCount("Inventory"),
+    "one row per tracked product",
+  );
+
+  const products = await downloadWorkbookFor("Products");
+  assert.deepEqual(products.sheetNames, ["Products"], "the catalogue sheet");
+  assert.equal(
+    dataRowsOf(products.workbook, "Products").length,
+    advertisedCount("Products"),
+    "one row per product",
+  );
+
+  const customers = await downloadWorkbookFor("Customers");
+  assert.deepEqual(customers.sheetNames, ["Customers", "Purchase history"], "the book plus history");
+  assert.equal(
+    dataRowsOf(customers.workbook, "Customers").length,
+    advertisedCount("Customers"),
+    "one row per customer",
+  );
+
+  // Suppliers are derived from purchase movements and expenses: with nothing to
+  // derive the app refuses to write an empty file instead of downloading one.
+  const suppliers = await captureExport("Purchases & suppliers", () =>
+    clickButton(exportButtonFor("Purchases & suppliers")),
+  );
+  if (suppliers) {
+    assert.deepEqual(
+      suppliers.sheetNames,
+      ["Purchases & suppliers", "Supplier roll-up"],
+      "purchase activity plus the per-supplier roll-up",
+    );
+  } else {
+    assert.ok(
+      bodyText().includes("Nothing to export yet"),
+      "with no purchase activity the export says so rather than writing an empty file",
+    );
+  }
+  console.log("  ✓ reports hub: payments, cash movements, financial report and every dataset export");
+
+  // Returns and expenses are exported from their own screens.
+  const downloadScreenExport = async (route, waitText) => {
+    await navigate(route);
+    for (let i = 0; i < 25 && !bodyText().includes(waitText); i += 1) await sleep(300);
+    return captureExport(route, () => {
+      const button = [...document.querySelectorAll("main button")].find((b) =>
+        (b.textContent ?? "").includes("Export Excel"),
+      );
+      assert.ok(button, `${route} offers an export`);
+      assert.ok(!button.disabled, `${route} has something to export`);
+      clickButton(button);
+    });
+  };
+  const returns = await downloadScreenExport("#/returns", "Returns");
+  // Order is the builder's: returns, their refunds, then the per-item detail.
+  assert.deepEqual(
+    returns.sheetNames,
+    ["Returns", "Refunds", "Returned items"],
+    "returns, the refunds they triggered, and the items sent back",
+  );
+  assert.ok(dataRowsOf(returns.workbook, "Returns").length >= 1, "the return this suite created is in it");
+  const expenses = await downloadScreenExport("#/expenses", "Expenses");
+  assert.deepEqual(expenses.sheetNames, ["Expenses"], "the expense sheet");
+  assert.ok(
+    dataRowsOf(expenses.workbook, "Expenses").some((row) => String(row[0]) === "EXP-000001"),
+    "the expense this suite recorded is in it",
+  );
+  console.log("  ✓ returns and expenses export from their own screens, with the records just created");
+
+  // The date range drives every time-series export.
+  await navigate("#/reports");
+  for (let i = 0; i < 25 && !bodyText().includes("Data exports"); i += 1) await sleep(300);
+  const dateInputs = document.querySelectorAll('main input[type="date"]');
+  assert.equal(dateInputs.length, 2, "the hub has a from and a to date");
+  const setDateValue = (input, value) => {
+    Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value").set.call(input, value);
+    input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+  };
+  setDateValue(dateInputs[0], "2099-01-01");
+  await sleep(600);
+  const futurePayments = exportButtonFor("Payments");
+  assert.ok(futurePayments.disabled, "a range containing no sales disables the payments export");
+  assert.equal(
+    futurePayments.getAttribute("title"),
+    "Nothing to export yet",
+    "and explains why instead of failing silently",
+  );
+  assert.equal(advertisedCount("Payments"), 0, "the row now advertises zero payment lines");
+  click("All time");
+  await sleep(600);
+  assert.ok(!exportButtonFor("Payments").disabled, "clearing the range makes it exportable again");
+  assert.ok(advertisedCount("Payments") > 0, "and the payment lines come back");
+  console.log("  ✓ the date range narrows every export, and an empty range writes nothing");
+
   // ── Audit trail is an oversight screen: managers/admins only ──
   // Authentication phase: the acting role now comes from the session, so the
   // check signs in as each user instead of flipping a demo role switcher.
@@ -1953,7 +2280,10 @@ async function main() {
     for (const e of errors) console.error("  " + e.split("\n")[0]);
     process.exit(1);
   }
-  console.log("\nAll DOM smoke checks passed with zero console errors.\n");
+  // No screen in this suite may call an API: demo mode is localStorage-only, so
+  // a network attempt is a failed request waiting to happen in production.
+  assert.deepEqual(networkCalls, [], "the whole run made no network calls");
+  console.log("\nAll DOM smoke checks passed with zero console errors and zero network calls.\n");
   process.exit(0);
 }
 

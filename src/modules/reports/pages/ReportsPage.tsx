@@ -5,6 +5,7 @@ import {
   BoxIcon,
   Card,
   ExportButton,
+  HistoryIcon,
   LayersIcon,
   LoadingBlock,
   ReceiptIcon,
@@ -29,7 +30,14 @@ import { buildCustomersSheets } from "@/modules/customers/services/customersExpo
 import { useReturns } from "@/modules/returns/hooks/ReturnProvider";
 import { useExpenses } from "@/modules/expenses/hooks/ExpenseProvider";
 import { useShifts } from "@/modules/shifts/hooks/ShiftProvider";
-import { computeFinancialTotals, buildFinancialSheets } from "../services/financialExport";
+import {
+  buildCashLedger,
+  buildCashMovementsSheets,
+  buildFinancialSheets,
+  buildPaymentsSheets,
+  computeFinancialTotals,
+  paymentCountOf,
+} from "../services/financialExport";
 import { buildSuppliersSheets } from "../services/suppliersExport";
 import {
   DateRangePicker,
@@ -48,8 +56,8 @@ import {
  * is written, and no new capability is required — the screen sits behind the
  * existing `view_shifts` read capability that `/expenses` and `/shifts` use.
  *
- * The date range applies to the time-series data (sales, financial report, cash
- * ledger, supplier activity). Master data — products, inventory, customers — is
+ * The date range applies to the time-series data (sales, payments, the financial
+ * report, cash movements, supplier activity). Master data — products, inventory, customers — is
  * exported whole, because "current stock" and "the customer book" have no
  * meaningful range.
  */
@@ -117,6 +125,25 @@ export function ReportsPage() {
     () => queryInventory(inventoryProducts, EMPTY_INVENTORY_FILTERS, categoryName),
     [inventoryProducts, categoryName],
   );
+
+  // Payment lines and cash movements the two standalone exports will write.
+  // Counted with the very functions the exports use, so the number on the button
+  // and the rows in the file cannot disagree.
+  const rangedShifts = useMemo(
+    () =>
+      shifts.filter((shift) =>
+        withinDateRange(shift.opening_at, exportRange.from, exportRange.to),
+      ),
+    [shifts, exportRange],
+  );
+  const paymentLines = paymentCountOf(rangedSales);
+  const cashMovements = buildCashLedger({
+    sales: rangedSales,
+    expenses: rangedExpenses,
+    refundsList: rangedRefunds,
+    shifts: rangedShifts,
+    t,
+  });
 
   const loading = salesLoading || inventoryLoading || customersLoading || returnsLoading;
 
@@ -283,6 +310,41 @@ export function ReportsPage() {
                   size="sm"
                   count={customers.length}
                   build={() => buildCustomersSheets({ customers, sales, t })}
+                />
+              </ExportRow>
+
+              <ExportRow
+                icon={<WalletIcon />}
+                title={t("export.sheet.payments")}
+                hint={`${paymentLines} ${t("export.sheet.payments").toLowerCase()}`}
+              >
+                <ExportButton
+                  name="payments"
+                  size="sm"
+                  count={paymentLines}
+                  build={() => buildPaymentsSheets({ sales: rangedSales, range: exportRange, t })}
+                />
+              </ExportRow>
+
+              <ExportRow
+                icon={<HistoryIcon />}
+                title={t("export.sheet.cashLedger")}
+                hint={`${cashMovements.length} ${t("export.sheet.cashLedger").toLowerCase()}`}
+              >
+                <ExportButton
+                  name="cash-movements"
+                  size="sm"
+                  count={cashMovements.length}
+                  build={() =>
+                    buildCashMovementsSheets({
+                      sales: rangedSales,
+                      expenses: rangedExpenses,
+                      refundsList: rangedRefunds,
+                      shifts,
+                      range: exportRange,
+                      t,
+                    })
+                  }
                 />
               </ExportRow>
             </div>

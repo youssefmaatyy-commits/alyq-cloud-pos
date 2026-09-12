@@ -32,10 +32,13 @@ import {
 } from "../excelExport";
 import {
   buildCashLedger,
+  buildCashMovementsSheets,
+  buildPaymentsSheets,
   computeFinancialTotals,
   costOfGoodsSold,
   buildFinancialSheets,
   OPEN_DATE_RANGE,
+  paymentCountOf,
   revenueSales,
 } from "@/modules/reports/services/financialExport";
 import {
@@ -61,11 +64,20 @@ import {
   customerPurchaseStats,
   buildCustomersSheets,
 } from "@/modules/customers/services/customersExport";
-import type { PaymentMethod, Sale, SaleItem, SalePayment } from "@/modules/pos/types";
+import { ar, en } from "@/lib/i18n/dictionary";
+import type {
+  PaymentMethod,
+  PaymentStatus,
+  Sale,
+  SaleItem,
+  SalePayment,
+  SaleStatus,
+} from "@/modules/pos/types";
 import type { Category, Product } from "@/modules/products/types";
 import type { Customer } from "@/modules/customers/types";
 import type { Expense } from "@/modules/expenses/types";
 import type { RefundRecord, ReturnItem, SalesReturn } from "@/modules/returns/types";
+import { PAYMENT_METHODS } from "@/modules/pos/types";
 import type { Shift, ShiftSummary } from "@/modules/shifts/types";
 import type { StockMovement } from "@/modules/inventory/types";
 
@@ -970,6 +982,283 @@ test("the expenses export writes exactly the filtered rows it is given", () => {
   assert.equal(sheets[0].rowCount, 2);
   assert.equal(sheets[0].totals?.[4], 42.5, "the amount total");
   assert.equal(sheets[0].rows[0][3], "expenses.category.transport", "category is translated");
+});
+
+// ── standalone payments + cash movements exports ────────────────────────────
+// The financial report has always contained both; these are the same two sheets
+// offered on their own, so the tests below pin down that (a) the numbers are the
+// drawer's and the till's, (b) the date range is honoured per source, and (c) the
+// standalone file and the report cannot drift apart.
+
+/** A split payment: 60 cash settled now, 40 InstaPay awaiting confirmation. */
+const SPLIT_SALE = () =>
+  sale({
+    id: "split",
+    total: 100,
+    created_at: "2026-03-10T10:00:00.000Z",
+    payments: [
+      payment({ id: "p1", sale_id: "split", method: "cash", amount: 60, status: "paid" }),
+      payment({ id: "p2", sale_id: "split", method: "instapay", amount: 40, status: "pending" }),
+    ],
+  });
+const VISA_SALE = () =>
+  sale({
+    id: "visa",
+    total: 250,
+    created_at: "2026-03-11T10:00:00.000Z",
+    payments: [payment({ id: "p3", sale_id: "visa", method: "visa", amount: 250, status: "paid" })],
+  });
+const MARCH = { from: "2026-03-01", to: "2026-03-31" };
+
+test("paymentCountOf counts payment lines, not invoices", () => {
+  assert.equal(paymentCountOf([SPLIT_SALE(), VISA_SALE()]), 3, "a split invoice is two lines");
+  assert.equal(paymentCountOf([]), 0);
+});
+
+test("the payments workbook summarises per method and lists every payment line", () => {
+  const sheets = buildPaymentsSheets({
+    sales: [
+      SPLIT_SALE(),
+      VISA_SALE(),
+      // Out of range: must not appear in either sheet.
+      sale({ id: "old", total: 900, created_at: "2026-01-01T10:00:00.000Z" }),
+    ],
+    range: MARCH,
+    t,
+  });
+
+  assert.deepEqual(sheets.map((sheet) => sheet.name), [
+    "export.sheet.summary",
+    "export.sheet.payments",
+  ]);
+
+  const [summary, payments] = sheets;
+  // Canonical method order (cash, instapay, visa), one row per method used.
+  assert.deepEqual(summary.rows, [
+    ["pos.payment.cash", 1, 60, 0, 60],
+    ["pos.payment.instapay", 1, 0, 40, 40],
+    ["pos.payment.visa", 1, 250, 0, 250],
+  ]);
+  assert.deepEqual(summary.totals, ["export.totalRow", 3, 310, 40, 350]);
+  assert.equal(
+    summary.rows.reduce((acc, row) => acc + Number(row[4]), 0),
+    350,
+    "the per-method totals add up to the money taken in the range",
+  );
+
+  assert.equal(payments.rowCount, 3, "three payment lines from the two in-range invoices");
+  assert.ok(
+    !payments.rows.some((row) => row.includes("INV-old")),
+    "the out-of-range invoice has no payment lines here",
+  );
+  assert.ok(
+    summary.notes.some((note) => note.includes("2026-03-01")),
+    "the range applied is printed on the sheet",
+  );
+  assert.ok(
+    summary.notes.includes("export.note.paymentSplit"),
+    "and the sheet explains why one invoice can be several rows",
+  );
+});
+
+test("the cash movements workbook is the drawer ledger for the range, with a running balance", () => {
+  const sheets = buildCashMovementsSheets({
+    sales: [
+      sale({ id: "cash1", total: 100, created_at: "2026-03-10T10:00:00.000Z" }),
+      sale({
+        id: "inet1",
+        total: 80,
+        created_at: "2026-03-10T09:00:00.000Z",
+        payments: [payment({ id: "p", sale_id: "inet1", method: "instapay", amount: 80 })],
+      }),
+      sale({ id: "void1", total: 40, status: "voided" }),
+      sale({ id: "old1", total: 700, created_at: "2026-01-05T10:00:00.000Z" }),
+    ],
+    expenses: [
+      expense({ id: "e1", amount: 15, spent_at: "2026-03-10T11:00:00.000Z" }),
+      expense({ id: "e2", amount: 900, spent_at: "2026-02-01T11:00:00.000Z" }),
+    ],
+    refundsList: [refund({ id: "f1", amount: 20, created_at: "2026-03-10T12:00:00.000Z" })],
+    shifts: [
+      shift({ id: "sh1", opening_cash: 200, opening_at: "2026-03-10T08:00:00.000Z" }),
+      shift({ id: "sh2", opening_cash: 500, opening_at: "2026-01-02T08:00:00.000Z" }),
+    ],
+    range: MARCH,
+    t,
+  });
+
+  assert.equal(sheets.length, 1);
+  const [ledger] = sheets;
+  assert.equal(ledger.name, "export.sheet.cashLedger");
+  assert.equal(ledger.rowCount, 4, "float, cash sale, cash expense, cash refund");
+
+  assert.deepEqual(
+    ledger.rows.map((row) => row[1]),
+    [
+      "export.ledger.openingFloat",
+      "export.ledger.cashSale",
+      "export.ledger.cashExpense",
+      "export.ledger.cashRefund",
+    ],
+    "ascending by time",
+  );
+  // A side that did not move is written blank, not as a zero: the ledger stays
+  // readable and a column total in Excel is not padded with 0.00 rows.
+  assert.deepEqual(ledger.rows.map((row) => row[4]), [200, 100, "", ""], "money in");
+  assert.deepEqual(ledger.rows.map((row) => row[5]), ["", "", 15, 20], "money out");
+  assert.deepEqual(
+    ledger.rows.map((row) => row[6]),
+    [200, 300, 285, 265],
+    "the running balance",
+  );
+  assert.deepEqual(ledger.totals?.slice(4), [300, 35, 265], "in, out, closing balance");
+
+  const references = ledger.rows.map((row) => String(row[2]));
+  assert.ok(!references.includes("INV-inet1"), "InstaPay never touches the drawer");
+  assert.ok(!references.includes("INV-void1"), "a voided invoice is not a movement");
+  assert.ok(!references.includes("INV-old1"), "an out-of-range invoice is excluded");
+  assert.ok(!references.includes("EXP-e2"), "an out-of-range expense is excluded");
+  assert.ok(
+    !ledger.rows.some((row) => Number(row[4]) === 500),
+    "a shift that opened outside the range contributes no float",
+  );
+  assert.ok(
+    ledger.notes.includes("export.note.cashLedger"),
+    "the sheet states how the ledger is derived",
+  );
+  assert.ok(
+    ledger.notes.some((note) => note.includes("2026-03-01")),
+    "and which range it covers",
+  );
+});
+
+test("the standalone Payments and Cash movements sheets ARE the report's sheets", () => {
+  const sales = [SPLIT_SALE(), VISA_SALE()];
+  const expenses = [expense({ id: "e1", amount: 15 })];
+  const refundsList = [refund({ id: "f1", amount: 20 })];
+  const shifts = [shift({ id: "sh1", opening_cash: 200 })];
+
+  const report = buildFinancialSheets({
+    sales,
+    products: PRODUCTS,
+    expenses,
+    returnsList: [],
+    refundsList,
+    shifts,
+    summaryFor: () => null,
+    range: OPEN_DATE_RANGE,
+    t,
+  });
+  const reportSheet = (name: string) => {
+    const found = report.find((sheet) => sheet.name === name);
+    assert.ok(found, `the report has a ${name} sheet`);
+    return found;
+  };
+
+  const standalonePayments = buildPaymentsSheets({ sales, range: OPEN_DATE_RANGE, t })[1];
+  const standaloneLedger = buildCashMovementsSheets({
+    sales,
+    expenses,
+    refundsList,
+    shifts,
+    range: OPEN_DATE_RANGE,
+    t,
+  })[0];
+
+  // Same header, columns, widths, cells and totals: one definition each, so a
+  // standalone file and the financial report cannot disagree.
+  for (const [standalone, fromReport] of [
+    [standalonePayments, reportSheet("export.sheet.payments")],
+    [standaloneLedger, reportSheet("export.sheet.cashLedger")],
+  ] as const) {
+    for (const field of ["header", "rows", "kinds", "widths", "totals", "rowCount"] as const) {
+      assert.deepEqual(standalone[field], fromReport[field], `${field} matches the report`);
+    }
+    // The only difference is the range line the standalone file prints first.
+    assert.deepEqual(standalone.notes, [
+      "export.dateRange: export.range.allTime",
+      ...fromReport.notes,
+    ]);
+  }
+});
+
+test("the payments and cash-movement workbooks are fully translated into Arabic", () => {
+  // `ar` is typed Record<TranslationKey, string>, so a missing key is a compile
+  // error; this proves it at runtime too, and that nothing reaches the file as a
+  // raw dictionary key.
+  const tAr = ((key: string) => ar[key as keyof typeof ar] ?? key) as unknown as Translate;
+
+  const payments = buildPaymentsSheets({ sales: [SPLIT_SALE(), VISA_SALE()], t: tAr });
+  const cash = buildCashMovementsSheets({
+    sales: [sale({ id: "c1", total: 100 })],
+    expenses: [expense({ id: "e1", amount: 15 })],
+    refundsList: [refund({ id: "f1", amount: 20 })],
+    shifts: [shift({ id: "sh1", opening_cash: 200 })],
+    t: tAr,
+  });
+
+  assert.deepEqual(payments.map((sheet) => sheet.name), ["الملخص", "المدفوعات"]);
+  assert.deepEqual(cash.map((sheet) => sheet.name), ["الحركات النقدية"]);
+
+  for (const sheet of [...payments, ...cash]) {
+    assert.ok(sheet.name.length <= 31, `"${sheet.name}" fits Excel's sheet-name limit`);
+    const cells = [...sheet.header, ...sheet.rows.flat(), ...(sheet.totals ?? []), ...sheet.notes];
+    for (const cell of cells) {
+      assert.ok(
+        !/^(export|pos|expenses|reports|products|inventory|common)\./.test(String(cell ?? "")),
+        `no untranslated key reaches the file (found "${String(cell)}" in ${sheet.name})`,
+      );
+    }
+  }
+  assert.equal(
+    payments[0].rows[0][0],
+    "pos.payment.cash" in ar ? ar["pos.payment.cash" as keyof typeof ar] : "",
+    "the payment method is written in Arabic",
+  );
+});
+
+test("every status and method an export interpolates has an English and Arabic label", () => {
+  // Export sheets build these labels by string interpolation —
+  // `t(\`pos.status.${sale.status}\`)`, `t(\`pos.payment.${method}\`)` — which the
+  // compiler cannot check. A value with no dictionary entry reaches the file as
+  // the raw key: that is how "pos.status.paid" appeared in the Payment status
+  // column of every settled invoice.
+  //
+  // The record below is exhaustive *by type*: adding a member to any of these
+  // unions without listing it here is a compile error, so the list cannot rot.
+  const statusValues: Record<
+    SaleStatus | PaymentStatus | RefundRecord["status"] | SalesReturn["refund_status"],
+    true
+  > = { completed: true, pending: true, voided: true, paid: true };
+
+  for (const status of Object.keys(statusValues)) {
+    for (const [lang, table] of [["en", en], ["ar", ar]] as const) {
+      const key = `pos.status.${status}` as keyof typeof en;
+      assert.ok(key in table, `${key} exists in ${lang}`);
+      assert.ok(table[key].trim().length > 0, `${key} is not blank in ${lang}`);
+      assert.ok(!/^pos\./.test(table[key]), `${key} is a label, not another key, in ${lang}`);
+    }
+  }
+
+  for (const method of PAYMENT_METHODS) {
+    for (const [lang, table] of [["en", en], ["ar", ar]] as const) {
+      const key = `pos.payment.${method}` as keyof typeof en;
+      assert.ok(key in table, `${key} exists in ${lang}`);
+      assert.ok(table[key].trim().length > 0, `${key} is not blank in ${lang}`);
+    }
+  }
+
+  // And rendered through a real dictionary, no label comes back as its own key.
+  const tAr = ((key: string) => ar[key as keyof typeof ar] ?? key) as unknown as Translate;
+  const tEn = ((key: string) => en[key as keyof typeof en] ?? key) as unknown as Translate;
+  for (const status of Object.keys(statusValues)) {
+    // `as never` is the same cast the builders use: the key is assembled at
+    // runtime, which is exactly why this test exists.
+    assert.notEqual(tEn(`pos.status.${status}` as never), `pos.status.${status}`);
+    assert.notEqual(tAr(`pos.status.${status}` as never), `pos.status.${status}`);
+  }
+  assert.equal(tEn("pos.status.paid"), "Paid", "a settled payment reads as Paid");
+  assert.equal(tAr("pos.status.paid"), "مدفوع", "and as مدفوع in Arabic");
 });
 
 async function run() {

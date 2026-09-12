@@ -12,10 +12,17 @@ export type { DateRangeValue, RangePreset } from "./components/DateRangePicker";
 
 export {
   buildCashLedger,
+  buildCashMovementsSheets,
+  buildPaymentsSheets,
+  cashLedgerSheetOf,
   computeFinancialTotals,
   costOfGoodsSold,
   buildFinancialSheets,
   OPEN_DATE_RANGE,
+  paymentCountOf,
+  paymentsSheetOf,
+  paymentRowsOf,
+  rangeLabelOf,
   revenueSales,
 } from "./services/financialExport";
 export type { DateRange, FinancialExportInput, FinancialTotals } from "./services/financialExport";

@@ -73,6 +73,28 @@ async function boot({ seedSession = null } = {}) {
   globalThis.FileReader = dom.window.FileReader;
   URL.createObjectURL = () => `blob:mock-${Math.random().toString(36).slice(2)}`;
   URL.revokeObjectURL = () => {};
+  // Sign-in is localStorage-only in demo mode, so nothing here may reach the
+  // network. Record every attempt; the summary fails the run if there was one.
+  const blockedFetch = (input) => {
+    const url = String(typeof input === "object" && input !== null ? (input.url ?? input) : input);
+    networkCalls.push(`fetch ${url}`);
+    return Promise.reject(new Error(`blocked network call: ${url}`));
+  };
+  dom.window.fetch = blockedFetch;
+  globalThis.fetch = blockedFetch;
+  class BlockedXHR {
+    open(method, url) {
+      networkCalls.push(`${method} ${url}`);
+    }
+    send() {
+      throw new Error(`blocked network call: ${networkCalls.at(-1) ?? "XHR"}`);
+    }
+    setRequestHeader() {}
+    addEventListener() {}
+    removeEventListener() {}
+  }
+  dom.window.XMLHttpRequest = BlockedXHR;
+  globalThis.XMLHttpRequest = BlockedXHR;
   dom.window.console.error = (...args) => {
     consoleErrors.push(args.map((a) => a?.stack ?? String(a)).join(" "));
     process.stderr.write(`[console.error] ${args.map(String).join(" ")}\n`);
@@ -116,6 +138,9 @@ function seededSession({ expiresInMs, issuedMsAgo = 60_000, remember = false }) 
     },
   };
 }
+
+/** Every network attempt made during the run — demo mode must make none. */
+const networkCalls = [];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -486,7 +511,14 @@ const count = (s) => results.filter((r) => r.status === s).length;
 console.log("\n──────── summary ────────");
 for (const r of results) console.log(`${r.status === "PASS" ? "✓" : "✗"} ${r.num}. ${r.title}: ${r.status}`);
 const errors = app.consoleErrors.length;
-console.log(`\n${count("PASS")} passed · ${count("FAIL")} failed · console errors: ${errors}`);
+console.log(
+  `\n${count("PASS")} passed · ${count("FAIL")} failed · console errors: ${errors} · network calls: ${networkCalls.length}`,
+);
+if (networkCalls.length > 0) {
+  console.error(`\n✗ ${networkCalls.length} network call(s) in a localStorage-only demo:`);
+  for (const call of networkCalls) console.error("  " + call);
+  process.exit(1);
+}
 if (count("FAIL") > 0) process.exit(1);
 console.log("\nAuthentication flow verified end to end.\n");
 process.exit(0);

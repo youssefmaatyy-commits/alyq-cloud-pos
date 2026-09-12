@@ -286,6 +286,10 @@ export const en = {
   "pos.status.completed": "Completed",
   "pos.status.pending": "Pending",
   "pos.status.voided": "Voided",
+  // PaymentStatus, not SaleStatus: exports label a payment line with
+  // `pos.status.${payment.status}`, and "paid" had no entry — so every settled
+  // payment printed the raw key into the Payment status column.
+  "pos.status.paid": "Paid",
   "pos.void": "Void sale",
   "pos.voidConfirm": "Void this sale? Stock will be returned to inventory.",
   "pos.voided": "Sale voided — stock returned",
@@ -1347,6 +1351,7 @@ export const ar: Record<TranslationKey, string> = {
   "pos.status.completed": "مكتمل",
   "pos.status.pending": "معلق",
   "pos.status.voided": "ملغى",
+  "pos.status.paid": "مدفوع",
   "pos.void": "إلغاء البيع",
   "pos.voidConfirm": "إلغاء هذا البيع؟ ستتم إعادة المخزون.",
   "pos.voided": "تم إلغاء البيع — أُعيد المخزون",
