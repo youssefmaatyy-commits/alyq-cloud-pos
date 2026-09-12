@@ -740,7 +740,17 @@ async function main() {
   );
   // A missing translation renders as its key, which is how a screen ships saying
   // "holds.verdict.stale" to somebody standing at a till.
-  for (const prefix of ["holds.verdict", "holds.explain", "holds.action", "holds.status", "holds.col"]) {
+  for (const prefix of [
+    "holds.verdict",
+    "holds.explain",
+    "holds.action",
+    "holds.status",
+    "holds.col",
+    "holds.alert",
+    "holds.monitor",
+    "holds.filter",
+    "holds.summary",
+  ]) {
     assert.ok(!bodyText().includes(prefix), `no untranslated ${prefix}.* key reaches the screen`);
   }
 
@@ -940,9 +950,124 @@ async function main() {
     false,
     "a healthy hold still offers no repair",
   );
+
+  // ── monitoring: five counts, each one a filter ───────────────────────────
+  // "How bad is it" and "show me that" are one click apart, so the chips are
+  // buttons with a pressed state rather than a row of decorative numbers.
+  const chips = [...document.querySelectorAll("button[aria-pressed]")];
+  assert.equal(chips.length, 5, "five monitoring counts: healthy, problems, old, missing, duplicate");
+  for (const label of ["Healthy", "Problems", "Old", "Missing", "Duplicate"]) {
+    assert.ok(
+      chips.some((chip) => (chip.textContent ?? "").includes(label)),
+      `the ${label} count is on the screen`,
+    );
+  }
+  const chipOf = (label) =>
+    chips.find((chip) => (chip.textContent ?? "").includes(label)) ?? null;
+  assert.equal(chipOf("Healthy").getAttribute("aria-pressed"), "false", "nothing is filtered yet");
+
+  // A healthy shop is told there are no problems, in words and in counts.
+  assert.ok(!bodyText().includes("Reservation alerts"), "a correct hold raises no alert");
+  assert.ok(bodyText().includes("Oldest hold"), "and the age of the oldest one is a number, not a guess");
+
+  // The old-holds view: this order was placed seconds ago, so it is not old, and
+  // the screen says nothing matches rather than showing a row that does not.
+  chipOf("Old").dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  await waitFor(() => bodyText().includes("No holds match this filter"), {
+    label: "the old-holds view to narrow",
+  });
+  assert.equal(chipOf("Old").getAttribute("aria-pressed"), "true", "the chip shows it is the active filter");
+  assert.ok(
+    !bodyText().includes(pendingNumber),
+    "a hold placed moments ago is not in the old-holds view",
+  );
+
+  // Back to every hold, through the monitoring strip rather than the select.
+  chipOf("Healthy").dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  await waitFor(() => bodyText().includes(pendingNumber), { label: "the healthy view" });
+  assert.ok(bodyText().includes("Held correctly"), "and it is the correct hold, not a problem");
+
+  // ── filters: the four the screen offers, plus a date window ──────────────
+  assert.ok(selectWithOption("Every status"), "the queue's own order status narrows the holds");
+  const productSelect = selectWithOption("Every product");
+  assert.ok(productSelect, "and so does the product being held");
+  assert.ok(
+    [...productSelect.options].some((option) => (option.textContent ?? "").includes(holdName)),
+    "the product list is the products these holds mention, not the whole catalogue",
+  );
+  assert.ok(selectWithOption("Every verdict"), "the problem type is a filter of its own");
+  const dateInputs = [...document.querySelectorAll('input[type="date"]')];
+  assert.equal(dateInputs.length, 2, "a hold can be narrowed to the days it was created");
+  assert.ok(
+    bodyText().includes("All time") && bodyText().includes("Last 30 days"),
+    "with the same presets the reports screen uses",
+  );
+
+  // Filtering by a product nobody holds leaves an honest empty state, and the
+  // button that undoes it says how many filters it is undoing.
+  const searchField = document.querySelector('input[type="search"]');
+  assert.ok(searchField, "the search field is there");
+  setField('input[type="search"]', "no-such-order");
+  await waitFor(() => bodyText().includes("No holds match this filter"), {
+    label: "the search to narrow",
+  });
+  assert.ok(bodyText().includes("Clear every filter"), "and the way out is on the screen");
+  click("Clear every filter");
+  await sleep(300);
+
+  // A search respects the scope it is combined with: the default view lists
+  // problems, so a correct hold is found once "every hold" is selected — and the
+  // button that undoes the search says how many filters it is undoing.
+  const chooseEveryHold = () => {
+    const select = selectWithOption("Every hold");
+    assert.ok(select, "the scope select is still on the screen");
+    Object.getOwnPropertyDescriptor(dom.window.HTMLSelectElement.prototype, "value").set.call(
+      select,
+      "all",
+    );
+    select.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+  };
+  chooseEveryHold();
+  await sleep(250);
+  setField('input[type="search"]', pendingNumber);
+  await waitFor(() => bodyText().includes("Clear filters"), { label: "the clear-filters count" });
+  assert.ok(bodyText().includes(pendingNumber), "searching an order number finds its hold");
+  assert.ok(bodyText().includes("Held correctly"), "with the verdict that says nothing needs doing");
+  click("Clear filters");
+  await sleep(300);
+  assert.equal(
+    document.querySelector('input[type="search"]').value,
+    "",
+    "clearing the filters empties the search",
+  );
+  assert.ok(
+    bodyText().includes("Every hold agrees with its order"),
+    "and returns to the default view — problems only, of which a correct hold is not one",
+  );
+
   console.log(
     `  ✓ ${pendingNumber} shows on the stock-holds screen as ${heldUnits} unit(s) held correctly, with nothing to repair`,
   );
+  console.log(
+    "  ✓ the holds screen monitors healthy/old/missing/duplicate holds and filters by status, product, type and date",
+  );
+
+  // ── 14 · the dashboard widget reads the same review ──────────────────────
+  // It costs no query of its own: the provider already loaded the orders, the
+  // holds and the catalogue, so the widget is four numbers over rows the app had.
+  await navigate("#/", 900);
+  await waitFor(() => bodyText().includes("Active holds"), { label: "the dashboard's holds widget" });
+  assert.ok(bodyText().includes("Can repair now"), "what can be fixed is counted separately");
+  assert.ok(bodyText().includes("Oldest hold"), "and so is how long the oldest has been sitting");
+  assert.ok(
+    document.querySelector('a[href="#/online/reservations"]'),
+    "the widget links to the screen that can act on it",
+  );
+  assert.ok(
+    !bodyText().includes("holds.summary"),
+    "no untranslated widget key reaches the dashboard",
+  );
+  console.log(`  ✓ the dashboard carries the holds widget: ${heldUnits} unit(s) held, nothing to repair`);
 
   if (errors.length > 0) {
     console.error(`\n✗ ${errors.length} console error(s):`);

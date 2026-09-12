@@ -30,6 +30,7 @@ export { OnlineReportsPage } from "./pages/OnlineReportsPage";
 // Providers
 export { OnlineOrdersProvider, useOnlineOrders } from "./hooks/OnlineOrdersProvider";
 export { StockHoldsPage } from "./pages/StockHoldsPage";
+export { ReservationSummaryCard } from "./components/ReservationSummaryCard";
 
 // Stock-hold reconciliation (Phase 15). Exported so the inventory screen can show
 // how many units the website is holding, and so the tests drive the same review

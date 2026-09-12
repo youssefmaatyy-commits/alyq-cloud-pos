@@ -33,12 +33,25 @@ import { useRealtimeWatch } from "@/lib/supabase/useRealtimeWatch";
 import { getSalesRepository } from "@/modules/pos/data";
 import type { Sale } from "@/modules/pos/types";
 import { getOnlineMode, getOnlineOrdersRepository } from "../data";
-import { EMPTY_ORDER_FILTER, OnlineError, toOnlineError } from "../data/repository";
+import {
+  EMPTY_ORDER_FILTER,
+  OnlineError,
+  isEmptyOrderFilter,
+  toOnlineError,
+} from "../data/repository";
 import type { OnlineOrderFilter, OnlineMode, OrderCounts } from "../data/repository";
 import { EMPTY_ORDER_COUNTS } from "../data/repository";
 import type { OnlineOrder, OrderAction, StockReservation } from "../types";
 import { availableActions } from "../services/orderWorkflow";
 import { reservedByProduct } from "../services/availability";
+import {
+  reservationAlerts,
+  reservationAlertSignature,
+  reviewReservations,
+  type ReservationAlert,
+  type ReservationReview,
+} from "../services/reservationRepair";
+import { useOnlineNotificationState } from "./OnlineNotificationsProvider";
 
 export interface OnlineOrdersContextValue {
   mode: OnlineMode;
@@ -75,6 +88,16 @@ export interface OnlineOrdersContextValue {
   sales: Sale[];
   /** Catalogue, so the drawer can show what is in stock beside what is held. */
   products: Product[];
+
+  /**
+   * The stock-hold review of everything this provider already loaded (Phase 15).
+   * Computed here rather than on the holds screen so the queue, the sidebar badge,
+   * the dashboard widget and that screen all read one review — and so no screen
+   * has to fetch the same three lists again to get it.
+   */
+  holdReview: ReservationReview;
+  /** What that review means as alerts, most urgent kind first. */
+  holdAlerts: ReservationAlert[];
 }
 
 const OnlineOrdersContext = createContext<OnlineOrdersContextValue | null>(null);
@@ -269,6 +292,28 @@ export function OnlineOrdersProvider({ children }: { children: ReactNode }) {
 
   const reserved = useMemo(() => reservedByProduct(reservations), [reservations]);
 
+  // A filtered queue is a partial view: a hold whose order is merely out of view
+  // is not an orphan, so the review is told and sets those rows aside instead of
+  // reporting them.
+  const ordersComplete = isEmptyOrderFilter(filter);
+  const holdReview = useMemo(
+    () => reviewReservations({ reservations, orders, products, ordersComplete }),
+    [reservations, orders, products, ordersComplete],
+  );
+  const holdAlerts = useMemo(() => reservationAlerts(holdReview), [holdReview]);
+
+  // Publish the alerts to the notification state above the shell, so the sidebar
+  // badge and the banner on this screen are the same number. The signature is the
+  // guard: the provider re-renders for many reasons, and reporting on each of
+  // them would bounce between two providers forever.
+  const { reportHoldAlerts } = useOnlineNotificationState();
+  const alertSignature = reservationAlertSignature(holdAlerts);
+  const alertsRef = useRef(holdAlerts);
+  alertsRef.current = holdAlerts;
+  useEffect(() => {
+    reportHoldAlerts(alertsRef.current);
+  }, [alertSignature, reportHoldAlerts]);
+
   const value = useMemo<OnlineOrdersContextValue>(
     () => ({
       mode,
@@ -295,6 +340,8 @@ export function OnlineOrdersProvider({ children }: { children: ReactNode }) {
       saleFor,
       sales,
       products,
+      holdReview,
+      holdAlerts,
     }),
     [
       mode,
@@ -320,6 +367,8 @@ export function OnlineOrdersProvider({ children }: { children: ReactNode }) {
       saleFor,
       sales,
       products,
+      holdReview,
+      holdAlerts,
     ],
   );
 

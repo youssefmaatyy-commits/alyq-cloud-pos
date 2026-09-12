@@ -1,30 +1,34 @@
 /**
- * Stock holds & reconciliation (Phase 15).
+ * Stock holds & reconciliation (Phase 15, extended).
  *
  * The website protects inventory by *holding* it: a pending order writes a
  * `reserved` row per tracked line, approving converts that hold into the POS
- * sale's deduction, cancelling releases it, and availability everywhere in the
+ * sale's own deduction, cancelling releases it, and availability everywhere in the
  * app is `stock_quantity − held`. When a transition misses its resolution the
  * hold sticks — units nobody can sell, with nothing on any screen to explain why.
  *
  * This is the screen that answers "what is the website holding, and is any of it
- * wrong?". It has two halves and they are deliberately different in kind:
+ * wrong?". Three layers, in the order somebody actually reads them:
  *
- *   · **Reading** is open to anybody who works the online queue
- *     (`manage_online_orders`, the same capability the orders screen needs — the
- *     route table gates the path). Every hold is listed with its order, its
- *     product, its quantity, its age and a verdict.
- *   · **Repairing** needs `adjust_stock`, because settling a hold changes what the
- *     whole shop can promise to sell — the same consequence as writing the stock
- *     ledger. The buttons are hidden without it, the service refuses without it,
- *     and in live mode `public.repair_stock_reservation` refuses without it.
+ *   · **Monitoring** — five counts (healthy, problems, old, missing, duplicate)
+ *     that double as filters, so "how bad is it" and "show me that" are one click.
+ *   · **Alerts** — the same review phrased as the problems that matter, shared
+ *     with the sidebar badge and the online-orders banner, because a number that
+ *     differs between two screens teaches staff to distrust both.
+ *   · **Repair** — the table, its verdicts and the remedies.
  *
- * What a repair does *not* do is move stock. By the time a hold is wrong the
- * order's transition has already had its effect on the shelf, so the repair
- * settles the hold's own row and writes one audit entry — anything else would be
- * the double-count the reservation model exists to prevent. Findings where both
- * directions would be a guess are listed with no button at all, because "needs a
- * person" is a more useful answer than a confident wrong repair.
+ * Reading is open to anybody who works the online queue (`manage_online_orders`,
+ * gated in the route table). *Repairing* needs `adjust_stock`, because settling a
+ * hold changes what the whole shop can promise to sell — the same consequence as
+ * writing the stock ledger. The buttons are hidden without it, the service refuses
+ * without it, and in live mode `public.repair_stock_reservation` refuses without
+ * it. Findings where both directions would be a guess carry no button at all:
+ * "needs a person" is a more useful answer than a confident wrong repair.
+ *
+ * The review itself comes from the queue provider rather than being recomputed
+ * here, so this screen, the badge, the dashboard widget and the order queue are
+ * all reading one pass over one set of rows — and when the queue is filtered, all
+ * of them are told that some holds could not be judged instead of guessing.
  */
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
@@ -45,14 +49,25 @@ import {
   TextInput,
   useToast,
 } from "@/components/ui";
+import {
+  DateRangePicker,
+  toExportRange,
+} from "@/modules/reports/components/DateRangePicker";
 import { useOnlineOrders } from "../hooks/OnlineOrdersProvider";
 import {
   AGING_HOLD_DAYS,
+  EMPTY_RESERVATION_FILTERS,
+  RESERVATION_ALERT_VERDICTS,
   RESERVATION_VERDICTS,
+  activeReservationFilters,
+  filterReservationRows,
   mayRepairReservations,
   repairAllFindings,
   repairFinding,
+  reservationRowProducts,
   reviewReservations,
+  type ReservationAlert,
+  type ReservationFilters,
   type ReservationReviewRow,
   type ReservationVerdict,
 } from "../services/reservationRepair";
@@ -73,48 +88,75 @@ const VERDICT_TONE: Record<ReservationVerdict, "neutral" | "success" | "danger" 
   orphaned: "danger",
   missing_hold: "danger",
   inconsistent: "danger",
+  duplicate_hold: "danger",
   quantity_mismatch: "warning",
   unexpected_hold: "warning",
   unresolved: "info",
 };
 
+const ORDER_STATUSES: OnlineOrder["status"][] = [
+  "pending",
+  "approved",
+  "processing",
+  "ready",
+  "completed",
+  "cancelled",
+];
+
 export function StockHoldsPage() {
   const { t, pick, num, date } = useI18n();
   const toast = useToast();
-  const { orders, reservations, products, loading, error, refresh, canManage, mode } =
-    useOnlineOrders();
+  const {
+    loading,
+    error,
+    refresh,
+    resetFilter,
+    canManage,
+    mode,
+    reservations,
+    orders,
+    products: catalogue,
+    holdReview: review,
+    holdAlerts: alerts,
+  } = useOnlineOrders();
 
   // Read gate: working the queue. Repair gate: the stock ledger's own capability.
   const mayRepair = mayRepairReservations();
 
-  const [onlyFindings, setOnlyFindings] = useState(true);
-  const [verdict, setVerdict] = useState<ReservationVerdict | "all">("all");
-  const [search, setSearch] = useState("");
+  const [filters, setFilters] = useState<ReservationFilters>(EMPTY_RESERVATION_FILTERS);
   const [pending, setPending] = useState<ReservationReviewRow[] | null>(null);
   const [reason, setReason] = useState("");
   const [running, setRunning] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  const review = useMemo(
-    () => reviewReservations({ reservations, orders, products }),
-    [reservations, orders, products],
-  );
-
-  const rows = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    return review.rows.filter((row) => {
-      if (onlyFindings && row.verdict === "valid") return false;
-      if (verdict !== "all" && row.verdict !== verdict) return false;
-      if (!term) return true;
-      const haystack = `${row.orderNumber} ${row.product?.sku ?? ""} ${row.product?.nameEn ?? ""} ${row.product?.nameAr ?? ""}`.toLowerCase();
-      return haystack.includes(term);
-    });
-  }, [review.rows, onlyFindings, verdict, search]);
-
+  const rows = useMemo(() => filterReservationRows(review.rows, filters), [review.rows, filters]);
+  const products = useMemo(() => reservationRowProducts(review.rows), [review.rows]);
+  const activeFilters = activeReservationFilters(filters);
   const openHolds = useMemo(
-    () => reservations.filter((reservation) => reservation.status === "reserved").length,
-    [reservations],
+    () => review.rows.filter((row) => row.status === "reserved").length,
+    [review.rows],
   );
+
+  const patch = (next: Partial<ReservationFilters>) =>
+    setFilters((current) => ({ ...current, ...next }));
+
+  /** A monitoring chip is a filter with a number on it — clicking narrows the table. */
+  function showVerdict(verdict: ReservationVerdict | readonly ReservationVerdict[]) {
+    setFilters({ ...EMPTY_RESERVATION_FILTERS, verdict, scope: "findings" });
+  }
+
+  function showAlert(alert: ReservationAlert) {
+    if (alert.kind === "aging") {
+      setFilters({ ...EMPTY_RESERVATION_FILTERS, scope: "all", minAgeDays: AGING_HOLD_DAYS });
+      return;
+    }
+    // `aging` is an age rule over correct holds, so it narrows by age instead.
+    setFilters({
+      ...EMPTY_RESERVATION_FILTERS,
+      verdict: RESERVATION_ALERT_VERDICTS[alert.kind],
+      scope: "findings",
+    });
+  }
 
   async function run(target: ReservationReviewRow[]) {
     const trimmed = reason.trim();
@@ -130,7 +172,20 @@ export function StockHoldsPage() {
             : t("holds.repairedOne", { order: target[0].orderNumber }),
         );
       } else {
-        const outcome = await repairAllFindings(review, trimmed);
+        // The batch works from a review of its own over the same rows, so it acts
+        // on what the table is showing rather than on a filter's subset.
+        const outcome = await repairAllFindings(
+          // Re-reviewed from the loaded lists, not rebuilt out of the visible
+          // rows: the batch has to judge what is really held, including anything
+          // the current filter hides, or it would quietly leave rows behind.
+          reviewReservations({
+            reservations,
+            orders,
+            products: catalogue,
+            ordersComplete: !review.partial,
+          }),
+          trimmed,
+        );
         const parts = [
           outcome.repaired.length > 0 ? t("holds.repairedCount", { count: outcome.repaired.length }) : null,
           outcome.skipped.length > 0 ? t("holds.skippedCount", { count: outcome.skipped.length }) : null,
@@ -168,6 +223,45 @@ export function StockHoldsPage() {
     );
   }
 
+  const monitor = [
+    {
+      id: "healthy",
+      value: review.healthy,
+      tone: "text-emerald-700",
+      apply: () => setFilters({ ...EMPTY_RESERVATION_FILTERS, scope: "all", verdict: "valid" }),
+      on: filters.verdict === "valid" && filters.scope === "all",
+    },
+    {
+      id: "problems",
+      value: review.findings.length,
+      tone: review.findings.length > 0 ? "text-amber-700" : "text-slate-500",
+      apply: () => setFilters({ ...EMPTY_RESERVATION_FILTERS, scope: "findings" }),
+      on: filters.scope === "findings" && filters.verdict === "all" && activeFilters <= 1,
+    },
+    {
+      id: "old",
+      value: review.aging,
+      tone: review.aging > 0 ? "text-amber-700" : "text-slate-500",
+      apply: () =>
+        setFilters({ ...EMPTY_RESERVATION_FILTERS, scope: "all", minAgeDays: AGING_HOLD_DAYS }),
+      on: filters.minAgeDays !== null,
+    },
+    {
+      id: "missing",
+      value: review.byVerdict.missing_hold,
+      tone: review.byVerdict.missing_hold > 0 ? "text-rose-700" : "text-slate-500",
+      apply: () => showVerdict("missing_hold"),
+      on: filters.verdict === "missing_hold",
+    },
+    {
+      id: "duplicate",
+      value: review.byVerdict.duplicate_hold,
+      tone: review.byVerdict.duplicate_hold > 0 ? "text-rose-700" : "text-slate-500",
+      apply: () => showVerdict("duplicate_hold"),
+      on: filters.verdict === "duplicate_hold",
+    },
+  ] as const;
+
   return (
     <div>
       <PageHeader
@@ -188,9 +282,7 @@ export function StockHoldsPage() {
                   setPending(review.repairable);
                 }}
                 disabled={review.repairable.length === 0}
-                title={
-                  review.repairable.length === 0 ? t("holds.nothingRepairable") : undefined
-                }
+                title={review.repairable.length === 0 ? t("holds.nothingRepairable") : undefined}
               >
                 {t("holds.repairAll", { count: review.repairable.length })}
               </Button>
@@ -198,6 +290,55 @@ export function StockHoldsPage() {
           </>
         }
       />
+
+      {alerts.length > 0 ? (
+        <Card className="mb-4 border-amber-300 bg-amber-50">
+          <p className="mb-2 text-xs font-bold uppercase tracking-widest text-amber-900">
+            {t("holds.alertsTitle")}
+          </p>
+          <ul className="space-y-2">
+            {alerts.map((alert) => (
+              <li key={alert.kind} className="flex flex-wrap items-center gap-2 text-xs">
+                <Badge tone={alert.severity === "danger" ? "danger" : "warning"}>
+                  {t(`holds.alert.${alert.kind}` as Parameters<typeof t>[0])}
+                </Badge>
+                <span className="font-semibold text-slate-800">
+                  {t("holds.alert.detail", { count: alert.count, units: num(alert.units) })}
+                </span>
+                {alert.oldestDays !== null ? (
+                  <span className="text-slate-600">
+                    {t("holds.alert.oldest", { count: alert.oldestDays })}
+                  </span>
+                ) : null}
+                {alert.orderNumbers.length > 0 ? (
+                  <span className="font-mono text-[11px] text-slate-600">
+                    {alert.orderNumbers.join(" · ")}
+                  </span>
+                ) : null}
+                {!alert.repairable ? (
+                  <span className="font-semibold text-rose-700">{t("holds.needsPerson")}</span>
+                ) : null}
+                <Button size="sm" variant="ghost" onClick={() => showAlert(alert)}>
+                  {t("holds.alert.show")}
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      ) : null}
+
+      {review.partial && review.unjudged > 0 ? (
+        <Card className="mb-4 border-slate-300 bg-slate-50">
+          <div className="flex flex-wrap items-center gap-3">
+            <p className="text-xs font-semibold text-slate-700">
+              {t("holds.partialNotice", { count: review.unjudged })}
+            </p>
+            <Button size="sm" variant="secondary" onClick={() => resetFilter()}>
+              {t("holds.partialAction")}
+            </Button>
+          </div>
+        </Card>
+      ) : null}
 
       <div className="mb-4 grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         <StatTile
@@ -214,20 +355,48 @@ export function StockHoldsPage() {
         />
         <StatTile
           label={t("holds.manual")}
-          value={num(review.findings.length - review.repairable.length)}
-          tone={review.findings.length > review.repairable.length ? "danger" : "neutral"}
+          value={num(review.needsPerson)}
+          tone={review.needsPerson > 0 ? "danger" : "neutral"}
           hint={t("holds.manualHint")}
         />
         <StatTile
-          label={t("holds.aging")}
-          value={num(review.aging)}
-          tone={review.aging > 0 ? "warning" : "neutral"}
+          label={t("holds.oldestHold")}
+          value={review.oldestDays === null ? "—" : num(review.oldestDays)}
+          tone={
+            review.oldestDays === null
+              ? "neutral"
+              : review.oldestDays >= AGING_HOLD_DAYS
+                ? "warning"
+                : "neutral"
+          }
           hint={t("holds.agingHint", { count: AGING_HOLD_DAYS })}
         />
       </div>
 
+      {/* Monitoring: the five counts that answer "how bad is it", each one a
+          filter, because the next question is always "show me". */}
       <Card className="mb-4">
-        <p className="text-sm leading-relaxed text-slate-600">{t("holds.explainer")}</p>
+        <div className="flex flex-wrap gap-2">
+          {monitor.map((chip) => (
+            <button
+              key={chip.id}
+              type="button"
+              onClick={chip.apply}
+              aria-pressed={chip.on}
+              className={`flex min-w-28 flex-col items-start gap-0.5 rounded-xl border px-3 py-2 text-start transition ${
+                chip.on
+                  ? "border-indigo-400 bg-indigo-50"
+                  : "border-slate-200 bg-white hover:border-slate-300"
+              }`}
+            >
+              <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                {t(`holds.monitor.${chip.id}` as Parameters<typeof t>[0])}
+              </span>
+              <span className={`text-lg font-bold tabular-nums ${chip.tone}`}>{num(chip.value)}</span>
+            </button>
+          ))}
+        </div>
+        <p className="mt-3 text-sm leading-relaxed text-slate-600">{t("holds.explainer")}</p>
         <p className="mt-2 text-xs font-semibold leading-relaxed text-slate-700">
           {t("holds.neverStock")}
         </p>
@@ -250,25 +419,29 @@ export function StockHoldsPage() {
       ) : (
         <>
           <Card className="mb-4">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-              <div className="w-full sm:max-w-md">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+              <div className="w-full lg:max-w-xs">
                 <TextInput
-                  value={search}
+                  value={filters.search}
                   leading={<SearchIcon />}
-                  onChange={(event) => setSearch(event.target.value)}
+                  onChange={(event) => patch({ search: event.target.value })}
                   placeholder={t("holds.searchPlaceholder")}
                   aria-label={t("common.search")}
                   type="search"
                 />
               </div>
-              <div className="w-full sm:w-56">
+              <div className="w-full sm:w-48">
                 <SelectInput
-                  value={verdict}
+                  value={typeof filters.verdict === "string" ? filters.verdict : ""}
                   aria-label={t("holds.verdictFilter")}
                   onChange={(event) =>
-                    setVerdict(event.target.value as ReservationVerdict | "all")
+                    patch({
+                      verdict: event.target.value === "" ? "all" : (event.target.value as ReservationVerdict),
+                    })
                   }
                 >
+                  {/* An empty value means "several verdicts at once", which is what
+                      an alert's Show button sets — the option reads as such. */}
                   <option value="all">{t("holds.everyVerdict")}</option>
                   {RESERVATION_VERDICTS.filter((candidate) => candidate !== "valid").map(
                     (candidate) => (
@@ -279,19 +452,74 @@ export function StockHoldsPage() {
                   )}
                 </SelectInput>
               </div>
-              <div className="w-full sm:w-56">
+              <div className="w-full sm:w-44">
                 <SelectInput
-                  value={onlyFindings ? "findings" : "all"}
+                  value={filters.orderStatus}
+                  aria-label={t("holds.filter.orderStatus")}
+                  onChange={(event) =>
+                    patch({ orderStatus: event.target.value as ReservationFilters["orderStatus"] })
+                  }
+                >
+                  <option value="all">{t("holds.filter.everyStatus")}</option>
+                  {ORDER_STATUSES.map((status) => (
+                    <option key={status} value={status}>
+                      {t(`online.status.${status}` as Parameters<typeof t>[0])}
+                    </option>
+                  ))}
+                  <option value="missing">{t("holds.orderMissing")}</option>
+                </SelectInput>
+              </div>
+              <div className="w-full sm:w-52">
+                <SelectInput
+                  value={filters.productId}
+                  aria-label={t("holds.filter.product")}
+                  onChange={(event) => patch({ productId: event.target.value })}
+                >
+                  <option value="all">{t("holds.filter.everyProduct")}</option>
+                  {products.map((product) => (
+                    <option key={product.id} value={product.id}>
+                      {product.label}
+                    </option>
+                  ))}
+                </SelectInput>
+              </div>
+              <div className="w-full sm:w-44">
+                <SelectInput
+                  value={filters.scope}
                   aria-label={t("holds.scopeFilter")}
-                  onChange={(event) => setOnlyFindings(event.target.value === "findings")}
+                  onChange={(event) => patch({ scope: event.target.value as ReservationFilters["scope"] })}
                 >
                   <option value="findings">{t("holds.onlyFindings")}</option>
                   <option value="all">{t("holds.everyHold")}</option>
                 </SelectInput>
               </div>
-              <p className="text-xs font-semibold text-slate-600 sm:ms-auto">
-                {t("holds.resultCount", { count: num(rows.length, 0) })}
-              </p>
+              <div className="flex items-center gap-2 sm:ms-auto">
+                <p className="text-xs font-semibold text-slate-600">
+                  {t("holds.resultCount", { count: num(rows.length, 0) })}
+                </p>
+                {activeFilters > 0 ? (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setFilters(EMPTY_RESERVATION_FILTERS)}
+                  >
+                    {t("holds.filter.clear", { count: activeFilters })}
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+
+            {/* The hold's own creation day, inclusive — the question is usually
+                "what has been sitting there since the weekend". */}
+            <div className="mt-3 border-t border-slate-100 pt-3">
+              <DateRangePicker
+                value={{ from: filters.from ?? "", to: filters.to ?? "" }}
+                onChange={(next) => {
+                  // The picker speaks "" for "no bound"; the review speaks null.
+                  const range = toExportRange(next);
+                  patch({ from: range.from, to: range.to });
+                }}
+              />
             </div>
           </Card>
 
@@ -299,14 +527,30 @@ export function StockHoldsPage() {
             <Card>
               <EmptyState
                 icon="📦"
-                title={review.findings.length === 0 ? t("holds.allClear") : t("holds.noMatch")}
+                title={
+                  activeFilters > 0
+                    ? t("holds.noMatch")
+                    : review.findings.length === 0
+                      ? t("holds.allClear")
+                      : t("holds.noMatch")
+                }
                 description={
-                  review.findings.length === 0 ? t("holds.allClearHint") : t("holds.noMatchHint")
+                  activeFilters > 0
+                    ? t("holds.noMatchHint")
+                    : review.findings.length === 0
+                      ? t("holds.allClearHint")
+                      : t("holds.noMatchHint")
                 }
                 action={
-                  <Link to="/online/orders">
-                    <Button variant="secondary">{t("online.orders.title")}</Button>
-                  </Link>
+                  activeFilters > 0 ? (
+                    <Button variant="secondary" onClick={() => setFilters(EMPTY_RESERVATION_FILTERS)}>
+                      {t("holds.filter.clearAll")}
+                    </Button>
+                  ) : (
+                    <Link to="/online/orders">
+                      <Button variant="secondary">{t("online.orders.title")}</Button>
+                    </Link>
+                  )
                 }
               />
             </Card>

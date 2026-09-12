@@ -13,6 +13,7 @@ import { AppError } from "@/modules/products/data/repository";
 import { getDemoRepository } from "@/modules/products/data/demoRepository";
 import { getSupabaseRepository } from "@/modules/products/data/supabaseRepository";
 import { isSupabaseConfigured, getSupabaseClient } from "@/lib/supabase/client";
+import { useRealtimeWatch } from "@/lib/supabase/useRealtimeWatch";
 import { useInventory } from "@/modules/inventory/hooks/InventoryProvider";
 import { canCompleteSale, canApplyDiscount } from "../permissions";
 import { getSalesRepository, type SalesRepository } from "../data";
@@ -70,7 +71,12 @@ export interface PosContextValue {
   // history
   sales: SaleModel[];
   salesLoading: boolean;
-  refreshSales: () => Promise<void>;
+  /**
+   * Re-read the sales list. `silent` is for a background refresh — a sale written
+   * at another till, arriving over the channel — which must not flash a spinner
+   * over a screen somebody is reading.
+   */
+  refreshSales: (options?: { silent?: boolean }) => Promise<void>;
   // permissions
   canSell: boolean;
   canDiscount: boolean;
@@ -139,22 +145,33 @@ export function PosProvider({ children }: { children: ReactNode }) {
     };
   }, [loadCatalog]);
 
-  const refreshSales = useCallback(async () => {
-    setSalesLoading(true);
-    try {
-      const list = await repository.listSales();
-      setSales(list);
-    } catch (err) {
-      // history failure should not block the till
-      setError(err instanceof AppError ? err : new AppError("DB", String(err)));
-    } finally {
-      setSalesLoading(false);
-    }
-  }, [repository]);
+  const refreshSales = useCallback(
+    async (options: { silent?: boolean } = {}) => {
+      if (!options.silent) setSalesLoading(true);
+      try {
+        const list = await repository.listSales();
+        setSales(list);
+      } catch (err) {
+        // history failure should not block the till
+        setError(err instanceof AppError ? err : new AppError("DB", String(err)));
+      } finally {
+        if (!options.silent) setSalesLoading(false);
+      }
+    },
+    [repository],
+  );
 
   useEffect(() => {
     void refreshSales();
   }, [refreshSales]);
+
+  // A sale written anywhere — the next till, a website order completed into a
+  // sale, an InstaPay confirmation, a refund filed against one — moves this list
+  // and the dashboard's revenue tiles. Watching, not parsing: the listener
+  // re-reads through the same repository it always used, so realtime stays an
+  // optimisation, demo mode is untouched (the bus reports `unavailable` with no
+  // credentials), and a missed event costs freshness rather than correctness.
+  useRealtimeWatch(["sales"], () => refreshSales({ silent: true }));
 
   // ── cart operations ─────────────────────────────────────────────────────
 

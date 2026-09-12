@@ -29,6 +29,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRealtimeWatch } from "@/lib/supabase/useRealtimeWatch";
 import { getOnlineOrdersRepository } from "../data";
+import {
+  reservationAlertCount,
+  reservationAlertSignature,
+  type ReservationAlert,
+} from "../services/reservationRepair";
 import { EMPTY_ORDER_COUNTS, toOnlineError, type OrderCounts } from "../data/repository";
 
 const PREFS_KEY = "alyq.online.notify.v1";
@@ -69,7 +74,15 @@ export function arrivalsOf(previous: number | null, pending: number): number | n
  * means the interval is the only thing working (demo mode, still connecting);
  * `error` means the channel was refused or dropped and the poll has taken over.
  */
-export type NotificationTransport = "realtime" | "polling" | "error";
+/**
+ * How the counts are arriving, for a label that must not overclaim.
+ *
+ * `reconnecting` is its own state rather than being folded into `error`: the
+ * channel dropped and is coming back on its own, which is different from the
+ * server refusing it, and staff who see "reconnecting" know to wait rather than
+ * to go looking for a settings problem.
+ */
+export type NotificationTransport = "realtime" | "polling" | "reconnecting" | "error";
 
 /**
  * The interval to run at, given the shop's preference and whether the channel is
@@ -165,6 +178,21 @@ export interface OnlineNotificationState {
   transport: NotificationTransport;
   /** True while a realtime channel is subscribed to `online_orders`. */
   live: boolean;
+  /**
+   * Stock-hold problems, as the queue provider's own review computed them.
+   *
+   * They are reported *up* from `OnlineOrdersProvider` rather than read here,
+   * because that provider already loads the orders, the holds and the catalogue
+   * in one batch. Reading them again in this hook would triple the poller's
+   * queries to produce a number that could then disagree with the screen it
+   * links to — and a badge that says "2" above a banner listing five is worse
+   * than no badge. One computation, published to whoever needs it.
+   */
+  holdAlerts: ReservationAlert[];
+  /** Rows every alert covers — what the sidebar badge carries. */
+  holdAlertCount: number;
+  /** The queue provider's channel for publishing its alerts. */
+  reportHoldAlerts: (alerts: readonly ReservationAlert[]) => void;
   prefs: NotificationPrefs;
   setPrefs: (prefs: Partial<NotificationPrefs>) => void;
   refresh: () => Promise<void>;
@@ -187,6 +215,9 @@ export const EMPTY_NOTIFICATION_STATE: OnlineNotificationState = {
   ready: false,
   transport: "polling",
   live: false,
+  holdAlerts: [],
+  holdAlertCount: 0,
+  reportHoldAlerts: () => {},
   prefs: DEFAULT_NOTIFICATION_PREFS,
   setPrefs: () => {},
   refresh: async () => {},
@@ -268,7 +299,16 @@ export function useOnlineNotifications(enabled: boolean): OnlineNotificationStat
   // connect and then hear nothing at all.
   const status = useRealtimeWatch(["online_orders"], refresh, { enabled });
   const live = status === "live";
-  const transport: NotificationTransport = status === "error" ? "error" : live ? "realtime" : "polling";
+  // `connecting` is the first attempt and reads as polling, because that is what
+  // the app is doing until the socket answers; only a channel that was up and
+  // dropped claims to be reconnecting.
+  const transport: NotificationTransport = live
+    ? "realtime"
+    : status === "reconnecting"
+      ? "reconnecting"
+      : status === "error"
+        ? "error"
+        : "polling";
 
   useEffect(() => {
     if (!enabled) {
@@ -277,9 +317,46 @@ export function useOnlineNotifications(enabled: boolean): OnlineNotificationStat
       return;
     }
     void refresh();
-    const timer = window.setInterval(() => void refresh(), pollIntervalFor(prefs, live));
+    const timer = window.setInterval(() => {
+      // A background tab is not being read, and browsers throttle its timers
+      // anyway. Skipping the read is the difference between a shop leaving this
+      // open overnight and asking the database four thousand times for nothing —
+      // and the visibility listener below catches it up the moment it is seen.
+      if (typeof document !== "undefined" && document.hidden) return;
+      void refresh();
+    }, pollIntervalFor(prefs, live));
     return () => window.clearInterval(timer);
   }, [enabled, prefs, live, refresh]);
+
+  // Coming back to a tab that was hidden — or a laptop that was asleep, where the
+  // socket may have dropped and the throttled timer never ran — is exactly when a
+  // stale badge is most misleading, so that is when it re-reads.
+  useEffect(() => {
+    if (!enabled || typeof document === "undefined") return;
+    const onVisible = () => {
+      if (!document.hidden) void refresh();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [enabled, refresh]);
+
+  const [holdAlerts, setHoldAlerts] = useState<ReservationAlert[]>([]);
+  const alertSignature = useRef("");
+
+  /**
+   * Take the queue provider's alerts, but only when they actually changed.
+   *
+   * The provider calls this from an effect on every load; setting state
+   * unconditionally would re-render the shell, which re-renders the provider,
+   * which reports again. Comparing a fingerprint of the alerts breaks that loop
+   * without a memo dependency anybody has to keep straight.
+   */
+  const reportHoldAlerts = useCallback((alerts: readonly ReservationAlert[]) => {
+    const signature = reservationAlertSignature(alerts);
+    if (signature === alertSignature.current) return;
+    alertSignature.current = signature;
+    setHoldAlerts([...alerts]);
+  }, []);
 
   const setPrefs = useCallback((patch: Partial<NotificationPrefs>) => {
     setPrefsState((current) => {
@@ -299,6 +376,9 @@ export function useOnlineNotifications(enabled: boolean): OnlineNotificationStat
     ready,
     transport,
     live,
+    holdAlerts,
+    holdAlertCount: reservationAlertCount(holdAlerts),
+    reportHoldAlerts,
     prefs,
     setPrefs,
     refresh,

@@ -220,6 +220,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               icon={<LayersIcon />}
               label={t("nav.stockHolds")}
               visible={canOpen("/online/reservations")}
+              // Stuck holds are stock nobody can sell, so they earn a badge of
+              // their own rather than being folded into the pending-orders count.
+              badge={online.holdAlertCount}
+              badgeLabel={t("nav.stockHoldsBadge", { count: online.holdAlertCount })}
             />
             <NavItem
               to="/online/reports"

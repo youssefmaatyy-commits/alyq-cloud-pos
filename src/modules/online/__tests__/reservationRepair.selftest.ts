@@ -48,19 +48,30 @@ import { AppError } from "@/modules/products/data/repository";
 import type { Product } from "@/modules/products/types";
 
 import { OnlineError } from "../data";
+import { EMPTY_ORDER_FILTER, isEmptyOrderFilter } from "../data/repository";
 import { getDemoOnlineRepository, resetDemoOnlineRepository } from "../data/demoRepository";
 import { availableToPromise, reservedByProduct, reservedOf, totalReserved } from "../services/availability";
 import {
   AGING_HOLD_DAYS,
+  EMPTY_RESERVATION_FILTERS,
+  RESERVATION_ALERT_KINDS,
+  RESERVATION_ALERT_VERDICTS,
   RESERVATION_VERDICTS,
+  activeReservationFilters,
   assertCanRepairReservations,
+  filterReservationRows,
   heldByProduct,
   mayRepairReservations,
   repairAllFindings,
   repairFinding,
   repairHold,
+  reservationAlertCount,
+  reservationAlertSignature,
+  reservationAlerts,
+  reservationRowProducts,
   restoreHold,
   reviewReservations,
+  type ReservationFilters,
   type ReservationReview,
   type ReservationReviewRow,
 } from "../services/reservationRepair";
@@ -217,7 +228,15 @@ async function promiseable(product: Product): Promise<number | null> {
   return availableToPromise(product, reservedOf(reservedByProduct(reservations), product.id));
 }
 
-async function auditRows(): Promise<{ action: AuditAction; entity: string; entity_id: string; details: Record<string, unknown>; user_name: string }[]> {
+async function auditRows(): Promise<{
+  action: AuditAction;
+  entity: string;
+  entity_id: string;
+  details: Record<string, unknown>;
+  user_name: string;
+  user_id: string;
+  created_at: string;
+}[]> {
   const entries = await getDemoAuditRepository().listEntries();
   return entries
     .filter((entry) => entry.entity === "reservation")
@@ -227,6 +246,8 @@ async function auditRows(): Promise<{ action: AuditAction; entity: string; entit
       entity_id: entry.entity_id,
       details: entry.details as Record<string, unknown>,
       user_name: entry.user_name,
+      user_id: entry.user_id,
+      created_at: entry.created_at,
     }));
 }
 
@@ -357,7 +378,12 @@ test("two open holds on one order line need a person, not a guess", () => {
   const [first, second] = reviewed.rows;
 
   assert.equal(first.verdict, "valid", "the first hold on the line is judged on its own");
-  assert.equal(second.verdict, "inconsistent");
+  assert.equal(
+    second.verdict,
+    "duplicate_hold",
+    "its own verdict: a write that happened twice reads differently from a settlement the ledger contradicts",
+  );
+  assert.equal(reviewed.byVerdict.duplicate_hold, 1);
   assert.equal(second.action, null, "releasing either row would be a guess about which one was meant");
   assert.equal(second.severity, "danger");
   assert.equal(reviewed.repairable.length, 0);
@@ -464,7 +490,7 @@ test("a duplicate missing line is reported once, and aging counts open holds onl
 
   assert.equal(reviewed.aging, 1, "only the open hold is aging");
   assert.ok(AGING_HOLD_DAYS > 0);
-  assert.equal(RESERVATION_VERDICTS.length, 8);
+  assert.equal(RESERVATION_VERDICTS.length, 9, "every verdict the classifier can return");
 
   // Every verdict the classifier can return has a label and an explanation in
   // both languages — a new verdict without copy would render as a raw key.
@@ -724,6 +750,27 @@ test("releasing a stuck hold returns the units, and the review then asks for the
   assert.equal(entry.details.order, order.order_number);
   assert.equal(entry.details.quantity_after, 2);
   assert.equal(entry.user_name, "ALYQ Admin", "the acting session, not the row");
+
+  // A repair is only reviewable if the row says what it changed: the state before,
+  // the state after, how much stock it moved, why, who, and when.
+  assert.equal(entry.details.order_id, order.id, "the id joins the row back to the order");
+  assert.equal(entry.details.product_id, product.id);
+  assert.equal(entry.details.sku, product.sku);
+  assert.equal(entry.details.order_status, "pending");
+  assert.equal(entry.details.status_before, "missing", "the state before was no hold at all");
+  assert.equal(entry.details.status_after, "reserved");
+  assert.equal(entry.details.quantity_before, 0, "nothing was held before the restore");
+  assert.equal(entry.details.resolved_at_before, null);
+  assert.equal(entry.details.expected_quantity, 2, "what the order line asked for, so the write can be checked");
+  assert.equal(typeof entry.details.age_days, "number", "how long the problem had been sitting there");
+  assert.equal(entry.details.units_changed, 2, "the units this moved out of the promiseable pool");
+  assert.equal(entry.details.already_resolved, false);
+  assert.ok(entry.user_id.length > 0, "who did it, by id as well as by name");
+  assert.ok(entry.created_at.length > 0, "and when");
+  assert.ok(
+    AUDIT_ACTIONS.includes(entry.action),
+    "written into the existing audit vocabulary, not a second trail",
+  );
 });
 
 test("repeating a repair is a no-op, and a resolution is never reversed", async () => {
@@ -1045,6 +1092,358 @@ test("the audit vocabulary covers every repair the service can perform", () => {
     const label = dictionaries[language][entityKey];
     assert.ok(label && label !== entityKey, `${language}: the entity is translated`);
   }
+});
+
+// ── 5. the screen's filters ───────────────────────────────────────────────
+/**
+ * Three rows in three different shapes: a hold that is correct but old, a hold
+ * its order left behind, and a hold that was never written. Enough to give every
+ * filter something to bite on and something to leave out.
+ */
+function filterFixture(): ReservationReview {
+  const products = [fakeProduct("p1"), fakeProduct("p2")];
+  const orders = [
+    // Nine days pending, holding exactly what it bought: correct, and old.
+    fakeOrder({ id: "o1", created_at: NINE_DAYS_AGO, items: [fakeItem("o1", "p1", 2)] }),
+    // Waiting on a hold nobody wrote.
+    fakeOrder({ id: "o2", items: [fakeItem("o2", "p2", 3)] }),
+    // Approved into a sale whose hold never converted.
+    fakeOrder({ id: "o3", status: "approved", sale_id: "sale-3", items: [fakeItem("o3", "p1", 1)] }),
+  ];
+  const reservations = [
+    fakeReservation({
+      id: "r1",
+      online_order_id: "o1",
+      product_id: "p1",
+      quantity: 2,
+      created_at: NINE_DAYS_AGO,
+    }),
+    fakeReservation({ id: "r3", online_order_id: "o3", product_id: "p1", quantity: 1 }),
+  ];
+  return review({ products, orders, reservations });
+}
+
+test("the holds table narrows by text, verdict, order status, product, age and date", () => {
+  const reviewed = filterFixture();
+  assert.deepEqual(
+    reviewed.rows.map((row) => row.key),
+    ["r1", "r3", "missing:o2:p2"],
+    "two holds, then the one that should exist and does not",
+  );
+  assert.equal(reviewed.findings.length, 2);
+  assert.equal(reviewed.healthy, 1);
+  assert.equal(reviewed.aging, 1);
+  assert.equal(reviewed.oldestDays, 9);
+
+  const narrow = (patch: Partial<ReservationFilters>): string[] =>
+    filterReservationRows(reviewed.rows, { ...EMPTY_RESERVATION_FILTERS, ...patch }).map(
+      (row) => row.key,
+    );
+
+  assert.deepEqual(narrow({}), ["r3", "missing:o2:p2"], "the default view is only problems");
+  assert.deepEqual(
+    narrow({ scope: "all" }),
+    ["r1", "r3", "missing:o2:p2"],
+    "…and every hold is one switch away",
+  );
+
+  assert.deepEqual(narrow({ scope: "all", search: "web-o1" }), ["r1"], "search ignores case");
+  assert.deepEqual(narrow({ scope: "all", search: "SKU-P2" }), ["missing:o2:p2"], "and reaches the SKU");
+  assert.deepEqual(
+    narrow({ scope: "all", search: "منتج p2" }),
+    ["missing:o2:p2"],
+    "and the Arabic product name",
+  );
+  assert.deepEqual(narrow({ scope: "all", search: "  " }), ["r1", "r3", "missing:o2:p2"], "whitespace searches nothing");
+
+  assert.deepEqual(narrow({ scope: "all", verdict: "valid" }), ["r1"]);
+  assert.deepEqual(narrow({ verdict: "valid" }), [], "a verdict the scope excludes stays excluded");
+  assert.deepEqual(
+    narrow({ scope: "all", verdict: ["stale", "missing_hold"] }),
+    ["r3", "missing:o2:p2"],
+    "an alert's Show narrows to several verdicts at once",
+  );
+
+  assert.deepEqual(narrow({ scope: "all", orderStatus: "pending" }), ["r1", "missing:o2:p2"]);
+  assert.deepEqual(narrow({ scope: "all", orderStatus: "approved" }), ["r3"]);
+  assert.deepEqual(narrow({ scope: "all", orderStatus: "missing" }), [], "no hold here has lost its order");
+  assert.deepEqual(narrow({ scope: "all", productId: "p2" }), ["missing:o2:p2"]);
+
+  assert.deepEqual(
+    narrow({ scope: "all", minAgeDays: AGING_HOLD_DAYS }),
+    ["r1"],
+    "the old-holds view is an age, not a verdict",
+  );
+  assert.deepEqual(narrow({ scope: "all", minAgeDays: 30 }), []);
+
+  assert.deepEqual(
+    narrow({ scope: "all", from: "2026-05-01" }),
+    ["r3", "missing:o2:p2"],
+    "the window is inclusive…",
+  );
+  assert.deepEqual(narrow({ scope: "all", to: "2026-04-30" }), ["r1"], "…on both ends");
+  assert.deepEqual(
+    narrow({ scope: "all", from: "2026-04-22", to: "2026-04-22" }),
+    ["r1"],
+    "and a single day is a window of one",
+  );
+});
+
+test("a clear-filters button knows how many filters it is clearing", () => {
+  assert.equal(activeReservationFilters(EMPTY_RESERVATION_FILTERS), 0);
+  assert.equal(
+    activeReservationFilters({ ...EMPTY_RESERVATION_FILTERS, search: "   " }),
+    0,
+    "whitespace alone is not a filter",
+  );
+  assert.equal(
+    activeReservationFilters({
+      ...EMPTY_RESERVATION_FILTERS,
+      search: "web",
+      verdict: "stale",
+      scope: "all",
+      orderStatus: "pending",
+      productId: "p1",
+      from: "2026-04-01",
+      to: "2026-05-01",
+      minAgeDays: 3,
+    }),
+    8,
+    "every field that narrows the table is counted, so the button cannot hide a live filter",
+  );
+});
+
+test("the product filter offers the products the holds actually mention", () => {
+  const reviewed = filterFixture();
+  const products = reservationRowProducts(reviewed.rows);
+  assert.deepEqual(
+    products.map((product) => product.id),
+    ["p1", "p2"],
+    "distinct, in the order the rows mention them",
+  );
+  assert.equal(products[0].label, "Product p1 · SKU-p1", "a label a person can pick from");
+  assert.deepEqual(reservationRowProducts([]), [], "and an empty review offers nothing");
+});
+
+// ── 6. what the review means as alerts ────────────────────────────────────
+/** One of every kind: missing, duplicate, conflict, stuck and aging. */
+function alertFixture(): ReservationReview {
+  const products = [fakeProduct("p1"), fakeProduct("p2")];
+  const orders = [
+    fakeOrder({ id: "o1", created_at: NINE_DAYS_AGO, items: [fakeItem("o1", "p1", 2)] }),
+    fakeOrder({ id: "o2", items: [fakeItem("o2", "p2", 3)] }),
+    fakeOrder({ id: "o3", status: "approved", sale_id: "sale-3", items: [fakeItem("o3", "p1", 1)] }),
+    fakeOrder({ id: "o4", items: [fakeItem("o4", "p1", 1)] }),
+    fakeOrder({ id: "o5", status: "approved", sale_id: "sale-5", items: [fakeItem("o5", "p2", 4)] }),
+  ];
+  const reservations = [
+    fakeReservation({
+      id: "r1",
+      online_order_id: "o1",
+      product_id: "p1",
+      quantity: 2,
+      created_at: NINE_DAYS_AGO,
+    }),
+    fakeReservation({ id: "r3", online_order_id: "o3", product_id: "p1", quantity: 1 }),
+    fakeReservation({ id: "r4a", online_order_id: "o4", product_id: "p1", quantity: 1 }),
+    fakeReservation({ id: "r4b", online_order_id: "o4", product_id: "p1", quantity: 1 }),
+    fakeReservation({
+      id: "r5",
+      online_order_id: "o5",
+      product_id: "p2",
+      quantity: 4,
+      status: "released",
+      resolved_at: HOUR_AGO,
+    }),
+  ];
+  return review({ products, orders, reservations });
+}
+
+test("a review becomes one alert per kind, most urgent first", () => {
+  const reviewed = alertFixture();
+  assert.deepEqual(
+    reviewed.rows.map((row) => row.verdict).sort(),
+    ["duplicate_hold", "inconsistent", "stale", "valid", "valid", "missing_hold"].sort(),
+  );
+
+  const alerts = reservationAlerts(reviewed);
+  assert.deepEqual(
+    alerts.map((alert) => alert.kind),
+    [...RESERVATION_ALERT_KINDS],
+    "every kind is present, in the order the banner shows them",
+  );
+  const byKind = Object.fromEntries(alerts.map((alert) => [alert.kind, alert]));
+
+  assert.equal(byKind.missing.count, 1);
+  assert.equal(byKind.missing.units, 3, "what restoring the hold takes out of the pool");
+  assert.equal(byKind.missing.severity, "danger", "an order the website can oversell");
+  assert.equal(byKind.missing.repairable, true, "and the service knows how to restore it");
+  assert.deepEqual(byKind.missing.orderNumbers, ["WEB-o2"], "named, so a banner can say which");
+
+  assert.equal(byKind.duplicate.count, 1, "the second hold, not both");
+  assert.equal(byKind.duplicate.units, 1);
+  assert.equal(byKind.duplicate.repairable, false, "which of two holds was meant is a person's call");
+
+  assert.equal(byKind.conflict.count, 1);
+  assert.equal(byKind.conflict.units, 4);
+  assert.equal(byKind.conflict.repairable, false);
+  assert.equal(byKind.conflict.oldestDays, null, "a settled hold has no age to report");
+
+  assert.equal(byKind.stuck.count, 1);
+  assert.equal(byKind.stuck.repairable, true);
+  assert.equal(byKind.stuck.severity, "danger");
+
+  assert.equal(byKind.aging.count, 1);
+  assert.equal(byKind.aging.severity, "warning", "correct but old is worth a look, not an alarm");
+  assert.equal(byKind.aging.units, 2, "a correct hold frees nothing, so the number is what it holds");
+  assert.equal(byKind.aging.oldestDays, 9);
+  assert.equal(byKind.aging.repairable, true, "nothing here is waiting on a judgement");
+
+  assert.equal(reservationAlertCount(alerts), 5, "the badge counts rows, not kinds");
+});
+
+test("a healthy review raises nothing, and the fingerprint only moves when the alerts do", () => {
+  const clean = review({
+    products: [fakeProduct("p1")],
+    orders: [fakeOrder({ id: "o1", items: [fakeItem("o1", "p1", 2)] })],
+    reservations: [fakeReservation({ id: "r1", online_order_id: "o1", product_id: "p1", quantity: 2 })],
+  });
+  assert.deepEqual(reservationAlerts(clean), [], "a hold that agrees with its order is not news");
+  assert.equal(reservationAlertCount([]), 0);
+  assert.equal(reservationAlertSignature([]), "");
+
+  // A session that may not work the queue loads nothing, so the review is empty
+  // and the badge is zero: monitoring never reports past a permission.
+  const nothing = reviewReservations({ reservations: [], orders: [], products: [], now: NOW });
+  assert.deepEqual(reservationAlerts(nothing), []);
+  assert.equal(reservationAlertCount(reservationAlerts(nothing)), 0);
+
+  const first = reservationAlertSignature(reservationAlerts(alertFixture()));
+  const second = reservationAlertSignature(reservationAlerts(alertFixture()));
+  assert.equal(first, second, "the same review fingerprints the same — this is what stops a report loop");
+  assert.notEqual(first, reservationAlertSignature([]), "and an empty list is a different fingerprint");
+});
+
+test("aging is a threshold over correct holds, and no row belongs to two kinds", () => {
+  const reviewed = alertFixture();
+  assert.equal(
+    reservationAlerts(reviewed, { agingDays: 30 }).find((alert) => alert.kind === "aging"),
+    undefined,
+    "nothing has been sitting there for a month",
+  );
+  assert.equal(
+    reservationAlerts(reviewed, { agingDays: 1 }).find((alert) => alert.kind === "aging")?.count,
+    1,
+    "and a lower threshold picks the nine-day hold up",
+  );
+  assert.equal(
+    reservationAlerts(reviewed, { sample: 1 }).every((alert) => alert.orderNumbers.length <= 1),
+    true,
+    "the sample size caps how many orders a banner names",
+  );
+
+  // The kinds are a partition: one row, one alert, so the badge cannot count a
+  // hold twice and the banner cannot say the same thing in two voices.
+  const claimed = RESERVATION_ALERT_KINDS.flatMap((kind) => RESERVATION_ALERT_VERDICTS[kind]);
+  assert.equal(new Set(claimed).size, claimed.length, "no verdict belongs to two kinds");
+  for (const verdict of RESERVATION_VERDICTS) {
+    assert.ok(claimed.includes(verdict), `${verdict} is covered by some alert`);
+  }
+  assert.deepEqual([...RESERVATION_ALERT_VERDICTS.aging], ["valid"], "only correct holds can be merely old");
+});
+
+test("every alert kind and monitoring label exists in both languages", () => {
+  const keys = [
+    ...RESERVATION_ALERT_KINDS.map((kind) => `holds.alert.${kind}`),
+    "holds.alertsTitle",
+    "holds.alert.detail",
+    "holds.alert.oldest",
+    "holds.alert.show",
+    "holds.partialNotice",
+    "holds.partialAction",
+    "holds.oldestHold",
+    "holds.monitor.healthy",
+    "holds.monitor.problems",
+    "holds.monitor.old",
+    "holds.monitor.missing",
+    "holds.monitor.duplicate",
+    "holds.filter.orderStatus",
+    "holds.filter.product",
+    "holds.summaryActive",
+    "holds.summaryRepairable",
+    "nav.stockHoldsBadge",
+    "online.notifications.transport.reconnecting",
+  ];
+
+  for (const key of keys) {
+    for (const language of ["en", "ar"] as const) {
+      const value = dictionaries[language][key as keyof (typeof dictionaries)["en"]];
+      assert.ok(value && value !== key, `${language}: ${key} is translated`);
+    }
+  }
+});
+
+// ── 7. a filtered queue is a partial view ─────────────────────────────────
+test("a filtered queue sets aside the holds it cannot see instead of calling them orphans", () => {
+  const products = [fakeProduct("p1")];
+  const orders = [fakeOrder({ id: "o1", items: [fakeItem("o1", "p1", 1)] })];
+  const reservations = [
+    fakeReservation({ id: "r1", online_order_id: "o1", product_id: "p1", quantity: 1 }),
+    // Its order exists; the queue in front of this screen merely filtered it out.
+    fakeReservation({ id: "r2", online_order_id: "o2", product_id: "p1", quantity: 4 }),
+  ];
+
+  const complete = review({ products, orders, reservations });
+  assert.equal(complete.partial, false);
+  assert.equal(complete.unjudged, 0);
+  assert.equal(complete.byVerdict.orphaned, 1, "with every order in view, a hold with no order is an orphan");
+
+  const partial = reviewReservations({
+    products,
+    orders,
+    reservations,
+    now: NOW,
+    ordersComplete: false,
+  });
+  assert.equal(partial.partial, true, "and the review says it could not see everything");
+  assert.equal(partial.unjudged, 1, "one hold was set aside");
+  assert.equal(partial.byVerdict.orphaned, 0, "not reported as a problem it may not be");
+  assert.equal(partial.rows.length, 1, "and not shown in the table either");
+  assert.equal(partial.findings.length, 0);
+  assert.deepEqual(reservationAlerts(partial), [], "so it raises no alert");
+  assert.equal(partial.heldUnits, 5, "the units are still held, whether or not this view can judge them");
+});
+
+test("a partial view cannot claim a hold is missing, because it cannot see every pending order", () => {
+  const products = [fakeProduct("p1")];
+  const orders = [fakeOrder({ id: "o1", items: [fakeItem("o1", "p1", 2)] })];
+
+  const complete = review({ products, orders, reservations: [] });
+  assert.equal(complete.byVerdict.missing_hold, 1, "the whole queue shows the oversell");
+
+  const partial = reviewReservations({
+    products,
+    orders,
+    reservations: [],
+    now: NOW,
+    ordersComplete: false,
+  });
+  assert.equal(partial.byVerdict.missing_hold, 0, "a filtered queue is not evidence of one");
+  assert.equal(partial.rows.length, 0);
+});
+
+test("the queue's own filter decides whether its review is complete", () => {
+  assert.equal(isEmptyOrderFilter(EMPTY_ORDER_FILTER), true, "an untouched queue shows everything");
+  assert.equal(isEmptyOrderFilter(null), true);
+  assert.equal(isEmptyOrderFilter(undefined), true);
+  assert.equal(isEmptyOrderFilter({}), true, "and so does one with nothing set");
+  assert.equal(isEmptyOrderFilter({ ...EMPTY_ORDER_FILTER, status: "pending" }), false);
+  assert.equal(isEmptyOrderFilter({ ...EMPTY_ORDER_FILTER, paymentStatus: "pending" }), false);
+  assert.equal(isEmptyOrderFilter({ ...EMPTY_ORDER_FILTER, search: "web" }), false);
+  assert.equal(isEmptyOrderFilter({ ...EMPTY_ORDER_FILTER, search: "   " }), true, "whitespace is not a search");
+  assert.equal(isEmptyOrderFilter({ ...EMPTY_ORDER_FILTER, from: "2026-01-01" }), false);
+  assert.equal(isEmptyOrderFilter({ ...EMPTY_ORDER_FILTER, to: "2026-01-31" }), false);
+  assert.equal(isEmptyOrderFilter({ ...EMPTY_ORDER_FILTER, limit: 25 }), false, "a capped queue is a partial one");
 });
 
 // ── runner ────────────────────────────────────────────────────────────────

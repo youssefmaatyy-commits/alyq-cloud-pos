@@ -21,7 +21,7 @@ import {
 } from "@/components/ui";
 import { cn } from "@/utils/cn";
 import { useOptionalApprovals } from "@/modules/approvals";
-import { useOnlineOrders } from "@/modules/online";
+import { ReservationSummaryCard, useOnlineOrders } from "@/modules/online";
 import { mayViewReports } from "@/modules/reports/services/reportAccess";
 import {
   CHART_COLORS,
@@ -297,6 +297,11 @@ export function DashboardPage() {
               />
             ) : null}
           </div>
+
+          {/* What the website is holding, from the review the queue provider
+              already computed — no query of its own, and it hides itself for
+              anybody who cannot work the online queue. */}
+          <ReservationSummaryCard className="mt-3" />
 
           {/* ── Charts ─────────────────────────────────────────────────────── */}
           <div className="mt-3 grid gap-3 lg:grid-cols-2">

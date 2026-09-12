@@ -151,6 +151,28 @@ export function OnlineOrdersPage() {
         </div>
       ) : null}
 
+      {/* Stock-hold problems, from the same review the holds screen shows. They
+          belong here too: approving an order is what settles its hold, so this is
+          where an operator can act on "this one has been stuck for six days". */}
+      {notifications.holdAlerts.length > 0 ? (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-bold text-rose-900">{t("holds.alertsTitle")}</p>
+            {notifications.holdAlerts.map((alert) => (
+              <Badge key={alert.kind} tone={alert.severity === "danger" ? "danger" : "warning"}>
+                {t(`holds.alert.${alert.kind}` as Parameters<typeof t>[0])}
+                <span className="ms-1 font-mono tabular-nums">{num(alert.count, 0)}</span>
+              </Badge>
+            ))}
+          </div>
+          <Link to="/online/reservations">
+            <Button size="sm" variant="secondary">
+              {t("nav.stockHolds")}
+            </Button>
+          </Link>
+        </div>
+      ) : null}
+
       <div className="mb-4 grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         <StatTile
           label={t("online.status.pending")}
@@ -255,7 +277,8 @@ export function OnlineOrdersPage() {
               tone={
                 notifications.transport === "realtime"
                   ? "success"
-                  : notifications.transport === "error"
+                  : notifications.transport === "error" ||
+                      notifications.transport === "reconnecting"
                     ? "warning"
                     : "neutral"
               }

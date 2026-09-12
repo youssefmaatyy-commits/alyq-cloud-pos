@@ -185,6 +185,26 @@ export const EMPTY_ORDER_FILTER: OnlineOrderFilter = {
   limit: null,
 };
 
+/**
+ * Is the queue showing everything?
+ *
+ * The stock-hold review needs to know. A hold whose order is merely outside the
+ * current filter is not an orphan, and a reviewer that cannot see the whole queue
+ * cannot tell the difference — so the review sets those rows aside instead of
+ * reporting them, and this is the predicate that decides when that applies.
+ */
+export function isEmptyOrderFilter(filter: Partial<OnlineOrderFilter> | null | undefined): boolean {
+  if (!filter) return true;
+  return (
+    (filter.status ?? "all") === EMPTY_ORDER_FILTER.status &&
+    (filter.paymentStatus ?? "all") === EMPTY_ORDER_FILTER.paymentStatus &&
+    !(filter.search ?? "").trim() &&
+    !filter.from &&
+    !filter.to &&
+    !filter.limit
+  );
+}
+
 /** The counts the POS badge and the dashboard tiles show. */
 export interface OrderCounts {
   total: number;

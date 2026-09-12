@@ -456,6 +456,66 @@ test("the audit vocabulary and the register agree about who may read the trail",
   }
 });
 
+// ── 8. monitoring inherits the gates of what it reports on ────────────────
+test("the reservation monitoring surfaces are gated by the capabilities they act on", () => {
+  const root = repoRoot();
+  const read = (file: string): string => fs.readFileSync(path.join(root, file), "utf8");
+
+  // Reading holds is the online queue's capability; settling them is the stock
+  // ledger's. The screen asks for both, in the places that matter.
+  const holds = read("src/modules/online/pages/StockHoldsPage.tsx");
+  assert.ok(holds.includes("if (!canManage)"), "the screen itself is gated on working the queue");
+  assert.ok(
+    holds.includes("mayRepairReservations()"),
+    "and its repair buttons on the stock ledger's capability",
+  );
+  assert.ok(
+    holds.includes("{mayRepair ?"),
+    "somebody who may read but not repair sees the findings without the buttons",
+  );
+
+  // The dashboard widget reads the same review, so it must not widen who sees it.
+  const widget = read("src/modules/online/components/ReservationSummaryCard.tsx");
+  assert.ok(
+    widget.includes("if (!canManage || holdReview.rows.length === 0) return null;"),
+    "the widget renders nothing for somebody who cannot work the queue",
+  );
+
+  // The sidebar badge sits on the nav row the route table already gates, so a
+  // count never appears for somebody who could not open the screen behind it.
+  const shell = read("src/components/layout/AppShell.tsx");
+  assert.ok(
+    /to="\/online\/reservations"[\s\S]{0,300}?visible=\{canOpen\("\/online\/reservations"\)\}[\s\S]{0,300}?badge=\{online\.holdAlertCount\}/.test(
+      shell,
+    ),
+    "the holds badge is on the gated nav row, not beside it",
+  );
+
+  // The alerts come from the queue provider, which loads nothing at all for a
+  // session that may not work the queue — so there is nothing to report upward,
+  // and no second channel carrying numbers past a permission.
+  const provider = read("src/modules/online/hooks/OnlineOrdersProvider.tsx");
+  assert.ok(
+    provider.includes("if (!canManage) {"),
+    "the provider that computes the alerts loads nothing without the capability",
+  );
+  assert.ok(
+    provider.includes("reportHoldAlerts(alertsRef.current)"),
+    "and publishes them through the existing notification state, not a channel of its own",
+  );
+
+  // Repair still refuses at the funnel, whatever the UI showed: the buttons are a
+  // courtesy, the guard is the gate.
+  const service = read("src/modules/online/services/reservationRepair.ts");
+  for (const funnel of ["repairHold", "restoreHold"]) {
+    const body = service.slice(service.indexOf(`export async function ${funnel}`));
+    assert.ok(
+      body.slice(0, 400).includes("assertCanRepairReservations()"),
+      `${funnel}() asserts the capability before it touches a hold`,
+    );
+  }
+});
+
 // ── runner ────────────────────────────────────────────────────────────────
 let passed = 0;
 let failed = 0;

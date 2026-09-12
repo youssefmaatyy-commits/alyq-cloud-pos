@@ -44,10 +44,14 @@ import {
   createCoalescer,
   createRealtimeBus,
   REALTIME_TABLES,
+  REFUSED_RETRY_LIMIT,
+  RETRY_DELAYS_MS,
   type RealtimeChannelLike,
   type RealtimeClientLike,
   type RealtimeStatus,
   type RealtimeTable,
+  type TimerHandle,
+  type VisibilitySource,
 } from "../realtime";
 
 type TestCase = { name: string; fn: () => void | Promise<void> };
@@ -149,6 +153,73 @@ function fakeClient(): {
         removed.push(fake);
         return Promise.resolve("ok");
       },
+    },
+  };
+}
+
+/**
+ * A clock the test turns by hand.
+ *
+ * Reconnect backoff is the one behaviour here that lives in tens of seconds, and
+ * a suite that sleeps through it is a suite nobody runs. Injecting the scheduler
+ * lets a test watch an hour of outage in microseconds and still assert the actual
+ * delays the bus asked for.
+ */
+function manualClock() {
+  interface Entry {
+    fn: () => void;
+    ms: number;
+    id: number;
+    cancelled: boolean;
+  }
+  const queue: Entry[] = [];
+  let nextId = 1;
+  return {
+    schedule: (fn: () => void, ms: number): TimerHandle => {
+      const entry: Entry = { fn, ms, id: nextId, cancelled: false };
+      nextId += 1;
+      queue.push(entry);
+      return entry.id as unknown as TimerHandle;
+    },
+    unschedule: (handle: TimerHandle): void => {
+      const entry = queue.find((candidate) => candidate.id === (handle as unknown as number));
+      if (entry) entry.cancelled = true;
+    },
+    /** The delays currently waiting, in the order they were asked for. */
+    delays(): number[] {
+      return queue.filter((entry) => !entry.cancelled).map((entry) => entry.ms);
+    },
+    pending(): number {
+      return queue.filter((entry) => !entry.cancelled).length;
+    },
+    /** Run the soonest pending timer, the way the clock would. */
+    advance(): boolean {
+      const entry = queue
+        .filter((candidate) => !candidate.cancelled)
+        .sort((a, b) => a.ms - b.ms)[0];
+      if (!entry) return false;
+      entry.cancelled = true;
+      entry.fn();
+      return true;
+    },
+  };
+}
+
+/** A tab whose visibility the test controls. */
+function fakeVisibility(startHidden = false): VisibilitySource & {
+  setHidden(hidden: boolean): void;
+} {
+  const listeners = new Set<() => void>();
+  let hidden = startHidden;
+  return {
+    hidden: () => hidden,
+    onChange(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    setHidden(next: boolean) {
+      hidden = next;
+      for (const listener of [...listeners]) listener();
     },
   };
 }
@@ -289,30 +360,271 @@ test("unsubscribing the last listener closes the channel, and a dead one cannot 
   assert.equal(bus.status(), "idle");
 });
 
-test("a refused channel is reported as an error, which is the poller's cue", () => {
+test("a refused channel retries a bounded number of times, then says so", () => {
   const { client, channels } = fakeClient();
-  const bus = createRealtimeBus({ client: () => client });
+  const clock = manualClock();
+  const bus = createRealtimeBus({
+    client: () => client,
+    retryDelays: [10, 20, 40],
+    refusedRetries: 2,
+    schedule: clock.schedule,
+    unschedule: clock.unschedule,
+  });
   const seen = statusesOf(bus);
 
   bus.subscribe(["refund_records"], () => {});
-  const channel = channels.at(-1);
-  assert.ok(channel);
-  assert.equal(bus.status(), "connecting");
+  assert.equal(bus.status(), "connecting", "the first attempt is not a retry");
 
-  channel.report("CHANNEL_ERROR");
-  assert.equal(bus.status(), "error", "the UI says so instead of implying liveness");
+  const first = channels.at(-1);
+  assert.ok(first);
+  first.report("CHANNEL_ERROR");
+  assert.equal(bus.status(), "reconnecting", "a failure is announced as a retry in progress");
+  assert.equal(bus.retries(), 1, "and the attempt is counted");
+  assert.deepEqual(clock.delays(), [10], "the first retry waits the first backoff step");
 
-  channel.report("SUBSCRIBED");
-  assert.equal(bus.status(), "live", "and recovers when the socket comes back");
+  // The server refuses again, and again: this is a configuration answer, so the
+  // budget runs out instead of asking forever.
+  assert.ok(clock.advance());
+  channels.at(-1)?.report("CHANNEL_ERROR");
+  assert.equal(bus.retries(), 2);
+  assert.deepEqual(clock.delays(), [20], "the backoff doubles");
 
-  channel.report("CLOSED");
-  assert.equal(bus.status(), "error");
-  assert.deepEqual(seen, ["connecting", "error", "live", "error"], "every transition, no repeats");
+  assert.ok(clock.advance());
+  channels.at(-1)?.report("CHANNEL_ERROR");
+  assert.equal(bus.status(), "error", "after the budget the poller is the transport, and the UI says so");
+  assert.equal(clock.pending(), 0, "no retry is queued for a refusal that will be refused again");
+
+  // Recovery is still possible — by hand, or by anything that calls retry().
+  bus.retry();
+  assert.equal(bus.status(), "connecting", "retry() starts the budget again from the top");
+  assert.equal(bus.retries(), 0);
+  channels.at(-1)?.report("SUBSCRIBED");
+  assert.equal(bus.status(), "live");
+  assert.deepEqual(
+    seen,
+    ["connecting", "reconnecting", "error", "connecting", "live"],
+    "every transition, and no repeats",
+  );
 
   bus.stop();
   assert.equal(bus.status(), "idle", "stop() clears the registrations too");
   bus.subscribe(["refund_records"], () => {});
   assert.equal(bus.status(), "connecting", "and the bus is usable again afterwards");
+});
+
+// ── 3b. recovery ──────────────────────────────────────────────────────────
+test("a dropped channel reconnects on its own, and makes every listener re-read", () => {
+  const { client, channels, removed } = fakeClient();
+  const clock = manualClock();
+  const bus = createRealtimeBus({
+    client: () => client,
+    retryDelays: [10, 20, 40],
+    schedule: clock.schedule,
+    unschedule: clock.unschedule,
+  });
+  const seen = statusesOf(bus);
+  const orders: string[] = [];
+  const products: string[] = [];
+  bus.subscribe(["online_orders"], (change) => orders.push(change.recovered ? "recovered" : change.event));
+  bus.subscribe(["products"], (change) => products.push(change.recovered ? "recovered" : change.event));
+
+  const channel = channels.at(-1);
+  assert.ok(channel);
+  channel.report("SUBSCRIBED");
+  assert.equal(bus.status(), "live");
+  assert.equal(bus.retries(), 0);
+  assert.deepEqual(orders, [], "coming up for the first time is not a recovery: nothing was missed");
+
+  // The connection goes away. Unlike a refusal, this is worth waiting for.
+  channel.report("CLOSED");
+  assert.equal(bus.status(), "reconnecting");
+  assert.equal(bus.retries(), 1);
+  assert.deepEqual(clock.delays(), [10]);
+
+  assert.ok(clock.advance(), "the retry fires when the clock reaches it");
+  // Three channels in all: the first registration, the rebuild when the second
+  // listener asked for another table, and the one this retry built.
+  assert.equal(channels.length, 3, "…and builds a fresh channel");
+  assert.equal(removed.length, channels.length - 1, "every channel but the current one was handed back");
+  assert.ok(removed.includes(channel), "including the one that dropped, rather than leaving it open");
+
+  const revived = channels.at(-1);
+  assert.ok(revived);
+  revived.report("SUBSCRIBED");
+  assert.equal(bus.status(), "live");
+  assert.equal(bus.retries(), 0, "a live channel resets the backoff");
+  // Events written while it was down are gone and cannot be replayed, so the only
+  // honest recovery is to tell everybody to look again.
+  assert.deepEqual(orders, ["recovered"], "each listener re-reads what it missed");
+  assert.deepEqual(products, ["recovered"]);
+  assert.deepEqual(seen, ["connecting", "live", "reconnecting", "live"]);
+});
+
+test("the backoff grows to its ceiling, and one drop queues exactly one retry", () => {
+  const { client, channels } = fakeClient();
+  const clock = manualClock();
+  const bus = createRealtimeBus({
+    client: () => client,
+    retryDelays: [2, 4, 8],
+    schedule: clock.schedule,
+    unschedule: clock.unschedule,
+  });
+  bus.subscribe(["online_orders"], () => {});
+  channels.at(-1)?.report("SUBSCRIBED");
+  assert.equal(bus.status(), "live");
+
+  // An outage that stays an outage: each attempt fails, so the wait grows. A
+  // channel that recovers in between starts again at the short end, which is what
+  // a shop wants — a blip at lunchtime should not inherit the night's backoff.
+  const delays: number[] = [];
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const channel = channels.at(-1);
+    assert.ok(channel);
+    channel.report("CLOSED");
+    assert.equal(bus.status(), "reconnecting", `attempt ${attempt + 1} is waiting to retry`);
+    assert.equal(clock.pending(), 1, "one outage, one queued retry");
+    delays.push(...clock.delays());
+    assert.ok(clock.advance(), `attempt ${attempt + 1} fires when the clock reaches it`);
+    assert.equal(channels.length, attempt + 2, "…and builds a fresh channel");
+  }
+  assert.deepEqual(delays, [2, 4, 8, 8, 8], "it doubles, then holds at the ceiling");
+
+  // A channel that reports twice for one failure must not reconnect twice, or one
+  // outage leaves two sockets competing for the same events.
+  const channel = channels.at(-1);
+  assert.ok(channel);
+  const attemptsBefore = bus.retries();
+  channel.report("CLOSED");
+  channel.report("TIMED_OUT");
+  assert.equal(clock.pending(), 1, "CLOSED then TIMED_OUT is one outage, not two");
+  assert.equal(bus.retries(), attemptsBefore + 1, "and it is counted once");
+
+  // Recovering resets the count, so the next drop starts at two seconds again.
+  assert.ok(clock.advance());
+  channels.at(-1)?.report("SUBSCRIBED");
+  assert.equal(bus.status(), "live");
+  assert.equal(bus.retries(), 0);
+  channels.at(-1)?.report("CLOSED");
+  assert.deepEqual(clock.delays(), [2], "a recovered channel does not carry its old backoff");
+});
+
+test("the shipped backoff is the one the app runs with", () => {
+  assert.equal(RETRY_DELAYS_MS[0], 2_000, "a blip during a shift costs two seconds");
+  assert.equal(RETRY_DELAYS_MS.at(-1), 60_000, "and the ceiling is a minute");
+  for (let index = 1; index < RETRY_DELAYS_MS.length; index += 1) {
+    assert.ok(
+      RETRY_DELAYS_MS[index] >= RETRY_DELAYS_MS[index - 1],
+      "the backoff never shortens",
+    );
+  }
+  assert.ok(REFUSED_RETRY_LIMIT >= 1, "a refusal is retried at least once before being reported");
+  // A POS left open overnight has to come back by itself, so drops retry forever.
+  const source = sources("src/lib/supabase/realtime.ts");
+  assert.ok(
+    source.includes("if (refused && refusals > refusedLimit)"),
+    "only refusals are bounded; a dropped connection is not",
+  );
+});
+
+test("waking a hidden tab reconnects at once instead of waiting out the backoff", () => {
+  const { client, channels } = fakeClient();
+  const clock = manualClock();
+  const visibility = fakeVisibility();
+  const bus = createRealtimeBus({
+    client: () => client,
+    retryDelays: [60_000],
+    schedule: clock.schedule,
+    unschedule: clock.unschedule,
+    recoverOnVisible: true,
+    visibility,
+  });
+  const orders: string[] = [];
+  bus.subscribe(["online_orders"], (change) => orders.push(change.recovered ? "recovered" : change.event));
+  channels.at(-1)?.report("SUBSCRIBED");
+  assert.equal(bus.status(), "live");
+
+  visibility.setHidden(true);
+  channels.at(-1)?.report("CLOSED");
+  assert.equal(bus.status(), "reconnecting");
+  assert.deepEqual(clock.delays(), [60_000], "the retry is a minute away");
+
+  // Still hidden: a throttled tab is not being read, so it keeps waiting.
+  visibility.setHidden(true);
+  assert.deepEqual(clock.delays(), [60_000], "another hidden notification changes nothing");
+
+  // Somebody looks at it: reconnect now rather than in a minute.
+  visibility.setHidden(false);
+  assert.equal(clock.pending(), 0, "the waiting retry was dropped");
+  assert.equal(channels.length, 2, "and a fresh channel was built immediately");
+  channels.at(-1)?.report("SUBSCRIBED");
+  assert.equal(bus.status(), "live");
+  assert.deepEqual(orders, ["recovered"], "the outage it slept through is re-read, not forgotten");
+
+  // A healthy bus ignores the same event.
+  const before = channels.length;
+  visibility.setHidden(true);
+  visibility.setHidden(false);
+  assert.equal(channels.length, before, "a live channel is not rebuilt for looking at the tab");
+});
+
+test("stop() cancels a pending retry, so signing out really closes the socket", () => {
+  const { client, channels, removed } = fakeClient();
+  const clock = manualClock();
+  const bus = createRealtimeBus({
+    client: () => client,
+    retryDelays: [10],
+    schedule: clock.schedule,
+    unschedule: clock.unschedule,
+  });
+  bus.subscribe(["online_orders"], () => {});
+  channels.at(-1)?.report("CLOSED");
+  assert.equal(clock.pending(), 1, "a retry is waiting");
+
+  bus.stop();
+  assert.equal(clock.pending(), 0, "and sign-out cancels it");
+  assert.equal(bus.status(), "idle");
+  assert.equal(clock.advance(), false, "nothing fires afterwards");
+  assert.equal(channels.length, 1, "no channel is built for a bus nobody is watching");
+  assert.equal(removed.length, 1, "the dead one was handed back");
+});
+
+test("one order's writes and a reconnect become one refresh per listener", async () => {
+  const { client, channels } = fakeClient();
+  const clock = manualClock();
+  const bus = createRealtimeBus({
+    client: () => client,
+    retryDelays: [10],
+    schedule: clock.schedule,
+    unschedule: clock.unschedule,
+  });
+
+  let refreshes = 0;
+  const coalescer = createCoalescer(() => {
+    refreshes += 1;
+  }, 25);
+  // One provider watching the three tables a website order is written across.
+  bus.subscribe(["online_orders", "order_events", "stock_reservations"], () => coalescer.trigger());
+  const channel = channels.at(-1);
+  assert.ok(channel);
+  channel.report("SUBSCRIBED");
+
+  channel.emit("online_orders", "INSERT");
+  channel.emit("order_events", "INSERT");
+  channel.emit("stock_reservations", "INSERT");
+  channel.emit("online_orders", "UPDATE");
+  assert.equal(refreshes, 1, "four events about one order read once, immediately");
+  await sleep(70);
+  assert.equal(refreshes, 2, "then once more for the rest of the burst");
+
+  // The channel drops and comes back: recovery is one more nudge per listener,
+  // not one per table it watches.
+  channel.report("CLOSED");
+  assert.ok(clock.advance());
+  channels.at(-1)?.report("SUBSCRIBED");
+  assert.equal(refreshes, 3, "coming back re-reads at once…");
+  await sleep(70);
+  assert.equal(refreshes, 4, "…and the three recovered tables collapse into one trailing read");
+  coalescer.cancel();
 });
 
 // ── 4. bursts ─────────────────────────────────────────────────────────────
@@ -423,17 +735,29 @@ test("only a rise is news, so an event and the poll cannot announce one order tw
 
 // ── 6. the two lists that must agree ──────────────────────────────────────
 test("every watched table is published to supabase_realtime, and nothing else is claimed", () => {
-  const migration = fs.readFileSync(
-    path.join(repoRoot(), "supabase/migrations/0026_realtime_publication.sql"),
-    "utf8",
-  );
-  const wanted = migration.match(/wanted text\[\] := array\[([\s\S]*?)\];/);
-  assert.ok(wanted, "the migration lists the tables it publishes");
-  const published = [...wanted[1].matchAll(/'([a-z_]+)'/g)].map((match) => match[1]);
+  // Scanned across *every* migration rather than read out of one file: the
+  // publication grew in 0027 and will grow again, and a parity test that only
+  // knows about the migration it was written next to passes while the two lists
+  // drift apart — which is the failure this test exists to catch.
+  const dir = path.join(repoRoot(), "supabase/migrations");
+  const published = new Set<string>();
+  for (const name of fs.readdirSync(dir).filter((file) => file.endsWith(".sql"))) {
+    const sql = fs.readFileSync(path.join(dir, name), "utf8");
+    // The array a publication migration iterates…
+    for (const block of sql.matchAll(/wanted text\[\] := array\[([\s\S]*?)\];/g)) {
+      for (const match of block[1].matchAll(/'([a-z_]+)'/g)) published.add(match[1]);
+    }
+    // …and any table a migration adds to the publication directly.
+    for (const match of sql.matchAll(
+      /alter publication supabase_realtime add table public\.([a-z_]+)/g,
+    )) {
+      published.add(match[1]);
+    }
+  }
 
-  assert.ok(published.length > 0, "the list was parsed");
+  assert.ok(published.size > 0, "the migrations were parsed");
   for (const table of REALTIME_TABLES) {
-    assert.ok(published.includes(table), `${table} is watched by the client and published by the migration`);
+    assert.ok(published.has(table), `${table} is watched by the client and published by a migration`);
   }
   for (const table of published) {
     assert.ok(
@@ -472,6 +796,7 @@ test("the providers that must go live actually watch their tables", () => {
     { file: "src/modules/approvals/hooks/ApprovalProvider.tsx", tables: ["approval_requests"] },
     { file: "src/modules/returns/hooks/ReturnProvider.tsx", tables: ["sales_returns", "refund_records"] },
     { file: "src/modules/inventory/hooks/InventoryProvider.tsx", tables: ["products", "stock_movements"] },
+    { file: "src/modules/pos/hooks/PosProvider.tsx", tables: ["sales"] },
   ];
 
   for (const { file, tables } of wiring) {

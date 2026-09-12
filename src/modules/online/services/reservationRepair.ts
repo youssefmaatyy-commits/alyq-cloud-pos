@@ -84,6 +84,14 @@ export const RESERVATION_VERDICTS = [
   "unresolved",
   /** Settled in a direction its order contradicts — needs a person, not a button. */
   "inconsistent",
+  /**
+   * A second open hold on one order line, so the same units are hidden twice and
+   * the website understates what it can sell by more than the order deserves.
+   * Its own verdict rather than a flavour of `inconsistent` because the two read
+   * differently at a glance: this one is a write that happened twice, that one is
+   * a settlement the ledger contradicts. Neither is safe to settle automatically.
+   */
+  "duplicate_hold",
   /** A pending order line with no hold at all: an oversell waiting to happen. */
   "missing_hold",
 ] as const;
@@ -98,6 +106,7 @@ const SEVERITY: Record<ReservationVerdict, ReservationSeverity> = {
   orphaned: "danger",
   missing_hold: "danger",
   inconsistent: "danger",
+  duplicate_hold: "danger",
   quantity_mismatch: "warning",
   unexpected_hold: "warning",
   unresolved: "info",
@@ -148,6 +157,19 @@ export interface ReservationReview {
   byVerdict: Record<ReservationVerdict, number>;
   /** Open holds older than {@link AGING_HOLD_DAYS}, correct or not. */
   aging: number;
+  /** Findings no automated remedy is safe for — the "needs a person" pile. */
+  needsPerson: number;
+  /**
+   * The age of the oldest open hold in days, or `null` when nothing is held.
+   * The one number that says how far behind the queue is: a shop with forty
+   * correct holds from this morning and one from last Tuesday needs to see the
+   * Tuesday one.
+   */
+  oldestDays: number | null;
+  /** True when the order list was filtered, so some holds could not be judged. */
+  partial: boolean;
+  /** Holds set aside because their order was not in view. */
+  unjudged: number;
 }
 
 const DAY_MS = 86_400_000;
@@ -194,13 +216,27 @@ function productOf(
  * Pure on purpose: the screen, the tests and the bulk repair all call the same
  * function, so what the operator sees is exactly what the repair will act on.
  */
-export function reviewReservations(input: {
+export interface ReservationReviewInput {
   reservations: readonly StockReservation[];
   orders: readonly OnlineOrder[];
   products: readonly Product[];
   now?: Date;
-}): ReservationReview {
+  /**
+   * Whether `orders` is the whole queue, which is the default.
+   *
+   * The queue provider applies the screen's filter, and a hold whose order is
+   * merely out of view is not an orphan — reporting it would send somebody to
+   * repair a hold that is perfectly fine. With a partial list those rows are set
+   * aside as `unjudged`, and the missing-hold pass is skipped because the pending
+   * orders cannot be enumerated from a filtered list.
+   */
+  ordersComplete?: boolean;
+}
+
+export function reviewReservations(input: ReservationReviewInput): ReservationReview {
   const now = input.now ?? new Date();
+  const ordersComplete = input.ordersComplete !== false;
+  let unjudged = 0;
   const ordersById = new Map(input.orders.map((order) => [order.id, order]));
   const rows: ReservationReviewRow[] = [];
   const byVerdict = emptyVerdictCounts();
@@ -230,6 +266,12 @@ export function reviewReservations(input: {
     // missing-hold pass below does, and both feed the same row shape.
     let action: ReservationRepairAction | null = null;
 
+    if (!order && !ordersComplete) {
+      // Out of view is not the same as gone. Set the row aside rather than guess.
+      unjudged += 1;
+      continue;
+    }
+
     if (!order) {
       // Nothing to compare it with, and nothing that can ever resolve it.
       verdict = reservation.status === "reserved" ? "orphaned" : "valid";
@@ -243,12 +285,11 @@ export function reviewReservations(input: {
         verdict = "stale";
         action = order.sale_id && order.status !== "cancelled" ? "convert" : "release";
       } else if (openLines.has(line)) {
-        // A second open hold on one order line hides the same units twice, so the
-        // website understates what it can sell by more than the order deserves.
+        // A second open hold on one order line hides the same units twice.
         // Releasing either row would be a guess about which one the workflow
         // meant, and a reconcile cannot express "these two are really one" — so
-        // this is the one finding the pass refuses to settle for anybody.
-        verdict = "inconsistent";
+        // this is reported for a person rather than settled.
+        verdict = "duplicate_hold";
         action = null;
       } else {
         openLines.add(line);
@@ -309,6 +350,8 @@ export function reviewReservations(input: {
 
   // The other half of the review: a pending order line with no open hold is an
   // oversell waiting to happen, and it has no row of its own to appear above.
+  // Only possible over the whole queue — a filtered list cannot say which pending
+  // orders exist, so it cannot say which of them are holding nothing.
   const openHolds = new Set(
     input.reservations
       .filter((reservation) => reservation.status === "reserved")
@@ -320,7 +363,7 @@ export function reviewReservations(input: {
       .map((product) => product.id),
   );
 
-  for (const order of input.orders) {
+  for (const order of ordersComplete ? input.orders : []) {
     if (!holdsReservation(order.status)) continue;
     // Per product, not per line. An order can carry the same product twice, and
     // `orderedQuantity` — which both repositories restore against — sums those
@@ -364,6 +407,9 @@ export function reviewReservations(input: {
   }
 
   const findings = rows.filter((row) => row.verdict !== "valid");
+  const openAges = rows
+    .filter((row) => !row.resolved && row.ageDays !== null)
+    .map((row) => row.ageDays as number);
   return {
     rows,
     findings,
@@ -372,7 +418,11 @@ export function reviewReservations(input: {
     heldUnits: totalReserved(input.reservations),
     affectedUnits: findings.reduce((sum, row) => sum + row.unitsFreed, 0),
     byVerdict,
-    aging: rows.filter((row) => (row.ageDays ?? 0) >= AGING_HOLD_DAYS && !row.resolved).length,
+    aging: openAges.filter((days) => days >= AGING_HOLD_DAYS).length,
+    needsPerson: findings.filter((row) => row.action === null).length,
+    oldestDays: openAges.length > 0 ? Math.max(...openAges) : null,
+    partial: !ordersComplete,
+    unjudged,
   };
 }
 
@@ -454,7 +504,14 @@ async function auditRepair(args: {
   reservation: StockReservation;
   alreadyResolved: boolean;
   reason: string;
-  before: { status: ReservationStatus; quantity: number };
+  /**
+   * The state the hold was in before the repair.
+   *
+   * `missing` is a legitimate previous state: restoring a hold a pending order
+   * lost writes a row that did not exist, and an audit entry claiming it was
+   * "reserved" beforehand would describe a change that never happened.
+   */
+  before: { status: ReservationStatus | "missing"; quantity: number; resolvedAt: string | null };
 }): Promise<void> {
   await recordAudit({
     action: auditActionFor(args.action),
@@ -464,14 +521,26 @@ async function auditRepair(args: {
     details: {
       repair: args.action,
       order: args.row.orderNumber,
+      // Ids beside the labels: the label is what a person reads in the log, the
+      // id is what joins this row back to the order and the catalogue later.
+      order_id: args.row.order?.id ?? null,
       order_status: args.row.orderStatus,
       product: args.row.product?.nameEn ?? null,
+      product_id: args.row.product?.id ?? null,
       sku: args.row.product?.sku ?? null,
       verdict: args.row.verdict,
+      // Previous state in full, then the new one, then what the move was worth.
       status_before: args.before.status,
       status_after: args.reservation.status,
       quantity_before: args.before.quantity,
       quantity_after: args.reservation.quantity,
+      resolved_at_before: args.before.resolvedAt,
+      // What the order actually asked for, so a corrected quantity can be checked
+      // against the line it came from rather than taken on trust.
+      expected_quantity: args.row.expected,
+      // How long the hold had been sitting there: the same action after nine days
+      // and after nine minutes is a different level of urgent.
+      age_days: args.row.ageDays,
       // A repair moves availability, never stock: the number worth recording is
       // how many units it put back in (or took out of) the promiseable pool.
       units_changed: args.reservation.quantity - args.before.quantity,
@@ -522,7 +591,11 @@ export async function repairHold(
     reservation: result.reservation,
     alreadyResolved: result.alreadyResolved,
     reason: trimmed,
-    before: { status: result.before.status, quantity: result.before.quantity },
+    before: {
+      status: result.before.status,
+      quantity: result.before.quantity,
+      resolvedAt: result.before.resolved_at ?? null,
+    },
   });
 
   return { row, reservation: result.reservation, alreadyResolved: result.alreadyResolved };
@@ -556,7 +629,11 @@ export async function restoreHold(
     // An existing open hold comes back unchanged rather than being duplicated.
     alreadyResolved: reservation.quantity === row.held && row.held > 0,
     reason: trimmed,
-    before: { status: "reserved", quantity: row.held },
+    // The state before a hold that did not exist is "no hold", not "reserved":
+    // an audit row claiming it was reserved before it was written describes a
+    // change that never happened, and the whole point of the row is that a reader
+    // can trust it. `row.status` is `missing` here by construction.
+    before: { status: row.status, quantity: row.held, resolvedAt: null },
   });
 
   return { row, reservation, alreadyResolved: false };
@@ -604,4 +681,260 @@ export async function repairAllFindings(
   }
 
   return outcome;
+}
+
+/* ── filters ─────────────────────────────────────────────────────────────────
+ * Pure, and separate from the review, because the two answer different
+ * questions: the review says what is wrong with the shop's holds, the filters say
+ * which of them the operator is looking at right now. Keeping them apart is what
+ * lets a filter change re-render a table without re-reading anything, and what
+ * lets the filtering be tested without a repository.
+ */
+
+export interface ReservationFilters {
+  /** Order number, SKU or either product name. */
+  search: string;
+  /**
+   * Problem type: one verdict, a list of them (an alert covers several), or all.
+   */
+  verdict: ReservationVerdict | readonly ReservationVerdict[] | "all";
+  /** Only the findings, or every hold including the healthy ones. */
+  scope: "findings" | "all";
+  /** The order's own status, or `missing` for a hold whose order is gone. */
+  orderStatus: OnlineOrderStatus | "missing" | "all";
+  productId: string | "all";
+  /** Inclusive ISO dates (`yyyy-mm-dd`) against the day the hold was created. */
+  from: string | null;
+  to: string | null;
+  /** Only holds at least this old, in days — the "old reservations" view. */
+  minAgeDays: number | null;
+}
+
+export const EMPTY_RESERVATION_FILTERS: ReservationFilters = {
+  search: "",
+  verdict: "all",
+  scope: "findings",
+  orderStatus: "all",
+  productId: "all",
+  from: null,
+  to: null,
+  minAgeDays: null,
+};
+
+/**
+ * How many filters are doing something.
+ *
+ * A "clear filters" button that appears when nothing is filtered is noise, and
+ * one that hides while a date window is silently narrowing the table is worse.
+ */
+export function activeReservationFilters(filters: ReservationFilters): number {
+  let active = 0;
+  if (filters.search.trim()) active += 1;
+  if (filters.verdict !== EMPTY_RESERVATION_FILTERS.verdict) active += 1;
+  if (filters.scope !== EMPTY_RESERVATION_FILTERS.scope) active += 1;
+  if (filters.orderStatus !== EMPTY_RESERVATION_FILTERS.orderStatus) active += 1;
+  if (filters.productId !== EMPTY_RESERVATION_FILTERS.productId) active += 1;
+  if (filters.from) active += 1;
+  if (filters.to) active += 1;
+  if (filters.minAgeDays !== null) active += 1;
+  return active;
+}
+
+/**
+ * The rows a set of filters leaves.
+ *
+ * Search matches either language without being told which one is on screen: an
+ * operator in Arabic typing a Latin SKU and an operator in English typing an
+ * Arabic name are both doing the same thing.
+ */
+export function filterReservationRows(
+  rows: readonly ReservationReviewRow[],
+  filters: ReservationFilters,
+): ReservationReviewRow[] {
+  const term = filters.search.trim().toLowerCase();
+  const from = filters.from?.trim() || null;
+  const to = filters.to?.trim() || null;
+
+  return rows.filter((row) => {
+    if (filters.scope === "findings" && row.verdict === "valid") return false;
+    if (filters.verdict !== "all") {
+      const wanted = Array.isArray(filters.verdict) ? filters.verdict : [filters.verdict];
+      if (!wanted.includes(row.verdict)) return false;
+    }
+    if (filters.orderStatus !== "all" && row.orderStatus !== filters.orderStatus) return false;
+    if (filters.productId !== "all" && (row.product?.id ?? "") !== filters.productId) return false;
+
+    if (filters.minAgeDays !== null && (row.ageDays ?? -1) < filters.minAgeDays) return false;
+
+    if (from || to) {
+      const day = row.createdAt ? row.createdAt.slice(0, 10) : null;
+      // A row with no creation date cannot be placed in a window. Leaving it out
+      // is the honest answer — and it is a row that needs a person regardless.
+      if (!day) return false;
+      // ISO dates compare correctly as strings, which is the point of ISO dates.
+      if (from && day < from) return false;
+      if (to && day > to) return false;
+    }
+
+    if (term) {
+      const haystack = [row.orderNumber, row.product?.sku, row.product?.nameEn, row.product?.nameAr]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      if (!haystack.includes(term)) return false;
+    }
+
+    return true;
+  });
+}
+
+/** The products a set of rows mentions, for a filter that only offers real choices. */
+export function reservationRowProducts(
+  rows: readonly ReservationReviewRow[],
+): { id: string; label: string }[] {
+  const seen = new Map<string, { id: string; label: string }>();
+  for (const row of rows) {
+    const product = row.product;
+    if (!product || seen.has(product.id)) continue;
+    seen.set(product.id, {
+      id: product.id,
+      label: product.sku === "—" ? product.nameEn : `${product.nameEn} · ${product.sku}`,
+    });
+  }
+  return [...seen.values()];
+}
+
+/* ── alerts ──────────────────────────────────────────────────────────────────
+ * An alert is a *reading*, not an event: it is derived from the same review the
+ * screen shows, so the badge, the banner and the table can never disagree about
+ * how many holds need attention. That is also why nothing here chimes or toasts
+ * on its own — a stale hold is a state, and announcing a state every twenty
+ * seconds teaches staff to ignore the announcement. The orders' own arrival keeps
+ * the chime; holds get a number and a banner.
+ *
+ * The kinds do not overlap. Every unhealthy row is claimed by exactly one alert,
+ * and `aging` covers only the rows that are otherwise correct — a hold that is
+ * right but old is the abandoned-basket signal, and it would otherwise be
+ * reported twice: once for its problem and once for its age.
+ */
+
+export const RESERVATION_ALERT_KINDS = [
+  /** A pending order holding nothing: the website can oversell it. */
+  "missing",
+  /** Two open holds on one order line: the same units hidden twice. */
+  "duplicate",
+  /** A settlement the ledger contradicts. Needs a person. */
+  "conflict",
+  /** A hold its order left behind, or one that disagrees with its line. */
+  "stuck",
+  /** Correct, but sitting there: the order may have been abandoned. */
+  "aging",
+] as const;
+
+export type ReservationAlertKind = (typeof RESERVATION_ALERT_KINDS)[number];
+
+export interface ReservationAlert {
+  kind: ReservationAlertKind;
+  severity: "warning" | "danger";
+  /** Rows this alert covers. */
+  count: number;
+  /** Units those rows keep out of the pool, or fail to keep in it. */
+  units: number;
+  /** The oldest row in the alert, in days — `null` when none of them is open. */
+  oldestDays: number | null;
+  /** Up to three order numbers, so a banner can name the problem. */
+  orderNumbers: string[];
+  /** True when every row has a remedy this module will apply. */
+  repairable: boolean;
+}
+
+/**
+ * Which verdicts each alert kind reports.
+ *
+ * Exported because the holds screen turns an alert's "show me" into exactly this
+ * verdict filter. One mapping, or the alert and the table it opens would drift.
+ */
+export const RESERVATION_ALERT_VERDICTS: Record<ReservationAlertKind, readonly ReservationVerdict[]> = {
+  missing: ["missing_hold"],
+  duplicate: ["duplicate_hold"],
+  conflict: ["inconsistent"],
+  stuck: ["stale", "orphaned", "unexpected_hold", "quantity_mismatch", "unresolved"],
+  /** Correct holds only, further narrowed by age in {@link reservationAlerts}. */
+  aging: ["valid"],
+};
+
+export interface ReservationAlertOptions {
+  /** Days after which a correct hold is worth mentioning. Defaults to {@link AGING_HOLD_DAYS}. */
+  agingDays?: number;
+  /** How many order numbers an alert carries for display. */
+  sample?: number;
+}
+
+/**
+ * The alerts a review implies, most urgent kind first.
+ *
+ * Pure and total: the same review always produces the same alerts, which is what
+ * lets a child provider compute them once and hand them to the shell without the
+ * two ever showing different numbers.
+ */
+export function reservationAlerts(
+  reviewed: ReservationReview,
+  options: ReservationAlertOptions = {},
+): ReservationAlert[] {
+  const agingDays = options.agingDays ?? AGING_HOLD_DAYS;
+  const sample = options.sample ?? 3;
+  const alerts: ReservationAlert[] = [];
+
+  for (const kind of RESERVATION_ALERT_KINDS) {
+    const verdicts = RESERVATION_ALERT_VERDICTS[kind];
+    let rows = reviewed.rows.filter((row) => verdicts.includes(row.verdict));
+    if (kind === "aging") {
+      // Correct holds only, and only the ones that have been sitting there.
+      rows = rows.filter(
+        (row) => !row.resolved && (row.ageDays ?? 0) >= agingDays,
+      );
+    }
+    if (rows.length === 0) continue;
+
+    const ages = rows
+      .filter((row) => row.ageDays !== null)
+      .map((row) => row.ageDays as number);
+    alerts.push({
+      kind,
+      severity: rows.some((row) => row.severity === "danger") ? "danger" : "warning",
+      count: rows.length,
+      // What a repair would move where one applies. A correct hold frees nothing,
+      // so for those the number that matters is what it is sitting on — reporting
+      // "0 units" for a week-old hold would hide the stock it keeps out of the pool.
+      units: rows.reduce(
+        (sum, row) => sum + (row.verdict === "valid" ? row.held : row.unitsFreed),
+        0,
+      ),
+      oldestDays: ages.length > 0 ? Math.max(...ages) : null,
+      orderNumbers: [...new Set(rows.map((row) => row.orderNumber))].slice(0, sample),
+      // "Nothing here needs a human judgement." A valid row has no action because
+      // it needs no repair at all, which is not the same as being stuck.
+      repairable: rows.every((row) => row.verdict === "valid" || row.action !== null),
+    });
+  }
+
+  return alerts;
+}
+
+/** How many rows every alert on a review covers — the number a badge carries. */
+export function reservationAlertCount(alerts: readonly ReservationAlert[]): number {
+  return alerts.reduce((sum, alert) => sum + alert.count, 0);
+}
+
+/**
+ * A cheap fingerprint of an alert list.
+ *
+ * The queue provider reports its alerts up to the shell, and a report that fires
+ * on every render would be a render loop. Comparing this string is what makes the
+ * report happen only when an alert actually changed.
+ */
+export function reservationAlertSignature(alerts: readonly ReservationAlert[]): string {
+  return alerts
+    .map((alert) => `${alert.kind}:${alert.count}:${alert.units}:${alert.oldestDays ?? "-"}`)
+    .join("|");
 }
