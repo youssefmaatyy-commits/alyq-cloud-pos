@@ -25,7 +25,18 @@ export const SESSION_STORAGE_KEY = "alyq.auth.session.v1";
  * `normalizeRole` rejects it and every capability is denied (fail closed).
  * `id` is empty so audit rows written without a session show no actor.
  */
-export const ANONYMOUS_USER: AuthUser = { id: "", username: "", name: "", role: "" as AuthUser["role"] };
+/**
+ * The identity of a signed-out caller. Carries no capabilities at all, which is
+ * what makes every gate fail closed: `hasCapability(ANONYMOUS_USER, anything)`
+ * is false without any caller having to check for a session first.
+ */
+export const ANONYMOUS_USER: AuthUser = {
+  id: "",
+  username: "",
+  name: "",
+  role: "" as AuthUser["role"],
+  capabilities: [],
+};
 
 let cachedSession: AuthSession | null = null;
 let cachedLoaded = false;

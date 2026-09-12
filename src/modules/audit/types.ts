@@ -32,6 +32,27 @@ export const AUDIT_ACTIONS = [
   "online_order.payment_approved",
   "online_order.payment_rejected",
   "website_settings.updated",
+  // Identity (Phase 10). A session event is written by the app because there is
+  // no table behind it; the user and role events are written by the settings
+  // service in demo mode and by the RPCs in live mode. Password events record
+  // that a reset happened and who asked for it — never the password, never a
+  // reset token, never the address a reset mail was sent to.
+  "session.login",
+  "session.logout",
+  "session.login_failed",
+  "session.refreshed",
+  "user.created",
+  "user.updated",
+  "user.activated",
+  "user.deactivated",
+  "user.role_changed",
+  "user.password_reset_requested",
+  "user.password_reset",
+  "user.password_changed",
+  "role.created",
+  "role.updated",
+  "role.activated",
+  "role.deactivated",
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -43,6 +64,12 @@ export const AUDIT_ENTITIES = [
   "refund",
   "online_order",
   "website_settings",
+  /** A sign-in, a sign-out or a refresh: an event with no table behind it. */
+  "session",
+  /** A staff profile (`profiles` in live mode, the demo directory offline). */
+  "user",
+  /** An admin-defined role and its permission set. */
+  "custom_role",
 ] as const;
 export type AuditEntity = (typeof AUDIT_ENTITIES)[number];
 

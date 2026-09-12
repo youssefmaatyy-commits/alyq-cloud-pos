@@ -11,6 +11,7 @@
  *
  * Demo password for every account: `alyq1234`
  */
+import { capabilitiesOf } from "@/lib/permissions/roles";
 import type { PasswordVerifier } from "./services/password";
 import type { AuthUser } from "./types";
 
@@ -20,10 +21,18 @@ export interface AuthUserRecord extends AuthUser {
   demo: true;
 }
 
+/**
+ * The seed rows below carry no capability list: `AuthUser.capabilities` is
+ * required (an identity without a resolved list would read as "unknown" rather
+ * than "denied"), and deriving it from `role` here is what keeps the demo
+ * directory in step with `ROLE_CAPABILITIES` instead of restating it.
+ */
+type DemoUserSeed = Omit<AuthUserRecord, "capabilities">;
+
 /** The shared demo password, surfaced on the login card in demo mode. */
 export const DEMO_PASSWORD = "alyq1234";
 
-export const DEMO_USERS: AuthUserRecord[] = [
+const DEMO_USER_SEEDS: DemoUserSeed[] = [
   {
     id: "user-admin",
     username: "admin",
@@ -85,6 +94,12 @@ export const DEMO_USERS: AuthUserRecord[] = [
     },
   },
 ];
+
+/** The five demo accounts, each with its role's capabilities resolved. */
+export const DEMO_USERS: AuthUserRecord[] = DEMO_USER_SEEDS.map((user) => ({
+  ...user,
+  capabilities: capabilitiesOf(user.role),
+}));
 
 /** Credentials for the login screen's demo hint (never the digests). */
 export const DEMO_CREDENTIAL_HINT: { username: string; role: string }[] = DEMO_USERS.map(

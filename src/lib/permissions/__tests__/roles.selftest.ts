@@ -37,6 +37,7 @@ import {
 import {
   APP_ROLES,
   CAPABILITIES,
+  type AppRole,
   capabilitiesOf,
   hasCapability,
   isAppRole,
@@ -52,6 +53,32 @@ const test = (name: string, fn: () => void) => tests.push({ name, fn });
 /** A user with an explicit role, for tests (never reads storage). */
 const userWith = (role: string): InventoryUser =>
   ({ id: `u-${role}`, name: `Test ${role}`, role }) as InventoryUser;
+
+/**
+ * Every capability the app had before Phase 10 named the granular ones. Used by
+ * the "no role lost a capability" test below.
+ */
+const PRE_PHASE_10_CAPABILITIES: readonly Capability[] = [
+  "view_inventory",
+  "adjust_stock",
+  "sell",
+  "apply_discount",
+  "void_sale",
+  "confirm_payment",
+  "process_return",
+  "process_refund",
+  "approve_refund",
+  "open_shift",
+  "close_shift",
+  "add_expense",
+  "edit_expense",
+  "delete_expense",
+  "view_shifts",
+  "approve_shift_adjustment",
+  "view_audit_log",
+  "manage_online_orders",
+  "manage_website",
+];
 
 /** The roles the application ships today (inventory owns this list). */
 const SHIPPED_ROLES = ["admin", "manager", "inventory_clerk", "viewer"] as const;
@@ -177,7 +204,107 @@ test("every capability is granted to at least one role (no dead gates)", () => {
 
 test("read-only role can read but never mutate", () => {
   const viewer = capabilitiesOf("viewer").sort();
-  assert.deepEqual(viewer, ["view_inventory", "view_shifts"]);
+  // Phase 10 added three capabilities here — `view_reports`, `export_reports`
+  // and `export_data` — and every one is a read (or an export) of data the
+  // viewer could already open: `/reports` was reachable through `view_shifts`
+  // and the export buttons were not gated at all. The write list below is the
+  // real assertion: the viewer holds none of it.
+  assert.deepEqual(viewer, [
+    "export_data",
+    "export_reports",
+    "view_inventory",
+    "view_reports",
+    "view_shifts",
+  ]);
+
+  const writes: Capability[] = [
+    "adjust_stock",
+    "sell",
+    "apply_discount",
+    "void_sale",
+    "edit_sale",
+    "confirm_payment",
+    "process_return",
+    "approve_return",
+    "process_refund",
+    "approve_refund",
+    "open_shift",
+    "close_shift",
+    "add_expense",
+    "edit_expense",
+    "delete_expense",
+    "approve_expense",
+    "approve_shift_adjustment",
+    "add_product",
+    "edit_product",
+    "change_price",
+    "delete_product",
+    "import_data",
+    "manage_online_orders",
+    "manage_website",
+    "manage_users",
+    "manage_roles",
+    "manage_settings",
+  ];
+  for (const capability of writes) {
+    assert.equal(hasCapability("viewer", capability), false, `viewer may not ${capability}`);
+  }
+});
+
+test("no role lost a capability when Phase 10 extended the matrix", () => {
+  // The matrix may only ever grow for a shipped role: tightening is something an
+  // admin does per custom role, never something a release does to everyone.
+  // These are the five role definitions as they stood before Phase 10.
+  const before: Record<AppRole, readonly Capability[]> = {
+    admin: PRE_PHASE_10_CAPABILITIES,
+    manager: PRE_PHASE_10_CAPABILITIES,
+    cashier: [
+      "view_inventory",
+      "sell",
+      "confirm_payment",
+      "process_return",
+      "process_refund",
+      "open_shift",
+      "close_shift",
+      "add_expense",
+      "view_shifts",
+      "manage_online_orders",
+    ],
+    inventory_clerk: [
+      "view_inventory",
+      "adjust_stock",
+      "sell",
+      "confirm_payment",
+      "process_return",
+      "process_refund",
+      "open_shift",
+      "close_shift",
+      "add_expense",
+      "view_shifts",
+      "manage_online_orders",
+    ],
+    viewer: ["view_inventory", "view_shifts"],
+  };
+
+  const lost: string[] = [];
+  for (const role of APP_ROLES) {
+    const now = capabilitiesOf(role);
+    for (const capability of before[role]) {
+      if (!now.includes(capability)) lost.push(`${role}/${capability}`);
+    }
+  }
+  assert.deepEqual(lost, [], `capabilities removed from a shipped role: ${lost.join(", ")}`);
+});
+
+test("manager differs from admin only by the three identity capabilities", () => {
+  // Phase 10 is the first time the two oversight roles are not identical: who
+  // manages users, roles and system settings is admin's alone.
+  const admin = capabilitiesOf("admin");
+  const manager = capabilitiesOf("manager");
+  const onlyAdmin = admin.filter((c) => !manager.includes(c)).sort();
+  const onlyManager = manager.filter((c) => !admin.includes(c));
+  assert.deepEqual(onlyAdmin, ["manage_roles", "manage_settings", "manage_users"]);
+  assert.deepEqual(onlyManager, [], "manager holds nothing admin lacks");
 });
 
 test("oversight capabilities are limited to admin + manager", () => {

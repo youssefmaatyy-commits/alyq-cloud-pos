@@ -8,15 +8,30 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import type { AuthErrorCode, AuthSession, AuthUser, Credentials, SessionEndReason } from "../types";
+import type {
+  AuthErrorCode,
+  AuthSession,
+  AuthUser,
+  Credentials,
+  PasswordResetOutcome,
+  SessionEndReason,
+} from "../types";
+import type { PasswordUpdateResult } from "../data/repository";
 import {
+  adoptProviderSession,
+  forgetSession,
+  revalidateSession,
   restoreSession,
   signIn as signInRequest,
   signOut as signOutRequest,
   validateSession,
+  requestPasswordReset as requestResetRequest,
+  updatePassword as updatePasswordRequest,
 } from "../services/authService";
 import { resetSessionCache } from "../services/sessionStore";
-import { getAuthMode } from "../data";
+import { subscribeAuthEvents } from "../services/authEvents";
+import { getAuthMode, getUserRepository } from "../data";
+import { recordAudit } from "@/modules/audit/services/auditService";
 
 export interface AuthContextValue {
   mode: "demo" | "supabase";
@@ -32,9 +47,17 @@ export interface AuthContextValue {
   expiresAt: string | null;
   signIn: (credentials: Credentials) => Promise<boolean>;
   signOut: () => Promise<void>;
+  /** Revoke every session the provider holds for this user, not just this tab. */
+  signOutEverywhere: () => Promise<void>;
   clearError: () => void;
   /** Re-check expiry now (used by tests and by the route guard). */
   revalidate: () => void;
+  /** Self-service password recovery. */
+  requestPasswordReset: (identifier: string) => Promise<PasswordResetOutcome>;
+  /** Set a new password on the current (or recovering) session. */
+  updatePassword: (password: string) => Promise<PasswordUpdateResult>;
+  /** True while a provider session is being read back on boot. */
+  syncing: boolean;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -42,32 +65,112 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 /** How often a live session is re-checked while the app is open. */
 const HEARTBEAT_MS = 60_000;
 
+/** Audit a session event. Never allowed to break the flow it describes. */
+function auditSession(
+  action: "session.login" | "session.logout" | "session.login_failed" | "session.refreshed",
+  user: { id: string; name: string; username?: string } | null,
+  detail: Record<string, string | number | boolean | null> = {},
+): void {
+  void recordAudit({
+    action,
+    entity: "session",
+    entity_id: user?.id ?? "",
+    entity_label: user?.name || user?.username || "—",
+    details: detail,
+    user_id: user?.id ?? "",
+    user_name: user?.name ?? "",
+  });
+}
+
 /**
  * Owns the session for the whole app. Mounted above the router so the acting
  * user is available to every provider and screen.
  *
- * Expiry is enforced in three places, cheapest first: on boot, on navigation
- * (hash change), and on a heartbeat — so a session that lapses while a tab sits
- * open still ends instead of lingering until the next full reload.
+ * Expiry is enforced in four places, cheapest first: on boot, on navigation
+ * (hash change), on a heartbeat, and — in live mode — by the provider's own
+ * `onAuthStateChange`, which is how a session revoked elsewhere (or an account
+ * deactivated by an admin) ends here within seconds instead of at the next
+ * reload. A third channel covers the other tabs of this same browser
+ * (`services/authEvents`).
  */
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<AuthSession | null>(null);
   const [status, setStatus] = useState<AuthContextValue["status"]>("loading");
   const [endReason, setEndReason] = useState<SessionEndReason>(null);
   const [error, setError] = useState<AuthErrorCode | null>(null);
+  const [syncing, setSyncing] = useState(false);
   const booted = useRef(false);
 
-  // Boot: restore a persisted session once.
+  // ── boot ────────────────────────────────────────────────────────────────
   useEffect(() => {
     if (booted.current) return;
     booted.current = true;
+
+    // Offline model first: it is synchronous, so the app renders immediately
+    // with whatever was persisted rather than showing a spinner on every reload.
     const { session: restored, reason } = restoreSession();
     setSession(restored);
     setEndReason(reason);
     setStatus(restored ? "authenticated" : "anonymous");
+
+    if (getAuthMode() !== "supabase") return;
+
+    // Live mode: the provider is the authority, so ask it and adopt what it
+    // says — including "nothing", which clears a record the browser outlived.
+    let cancelled = false;
+    setSyncing(true);
+    void (async () => {
+      try {
+        const live = await getUserRepository().currentSession();
+        if (cancelled) return;
+        if (!live || !live.user) {
+          forgetSession();
+          setSession(null);
+          setStatus("anonymous");
+          return;
+        }
+        const adopted = adoptProviderSession(live, restored?.remember ?? false);
+        if (!adopted) return;
+        setSession(adopted);
+        setStatus("authenticated");
+        setEndReason(null);
+      } catch {
+        /* a provider failure on boot keeps the persisted session; the heartbeat retries */
+      } finally {
+        if (!cancelled) setSyncing(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const revalidate = useCallback(() => {
+    if (getAuthMode() === "supabase") {
+      // The provider answer is async; the sync check still runs first so an
+      // obviously-dead record is dropped without waiting for a round trip.
+      const immediate = validateSession();
+      if (!immediate.session && immediate.changed) {
+        setSession(null);
+        setStatus("anonymous");
+        setEndReason(immediate.reason);
+        return;
+      }
+      void (async () => {
+        const { session: next, reason, changed } = await revalidateSession();
+        if (!next) {
+          if (changed) {
+            setSession(null);
+            setStatus("anonymous");
+            setEndReason(reason);
+          }
+          return;
+        }
+        if (changed) setSession(next);
+      })();
+      return;
+    }
+
     const { session: next, reason, changed } = validateSession();
     if (!next) {
       if (changed) {
@@ -99,26 +202,141 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [status, revalidate]);
 
+  // ── provider events (live) + other tabs (both modes) ────────────────────
+  useEffect(() => {
+    const unsubscribeProvider =
+      getAuthMode() === "supabase"
+        ? getUserRepository().onAuthChange((event) => {
+            if (event.type === "signed_out") {
+              forgetSession();
+              setSession(null);
+              setStatus("anonymous");
+              setEndReason("signed_out");
+              return;
+            }
+            const live = {
+              token: "",
+              issued_at: new Date().toISOString(),
+              expires_at: new Date(Date.now() + HEARTBEAT_MS).toISOString(),
+              refreshable: true,
+              user: event.user,
+            };
+            // Read the real session back rather than trusting a synthesised
+            // expiry; if that fails, keep the user we were just handed.
+            void (async () => {
+              const current = await getUserRepository().currentSession().catch(() => null);
+              const adopted = adoptProviderSession(current ?? live, session?.remember ?? false);
+              if (!adopted) return;
+              setSession(adopted);
+              setStatus("authenticated");
+              setEndReason(null);
+            })();
+          })
+        : () => undefined;
+
+    const unsubscribeTabs = subscribeAuthEvents((event) => {
+      if (event.kind === "signed_out") {
+        // Another tab ended the session. Drop this one's record and re-read
+        // storage rather than trusting the message's contents.
+        resetSessionCache();
+        const { session: current } = restoreSession();
+        if (!current) {
+          setSession(null);
+          setStatus("anonymous");
+          setEndReason("signed_out");
+        }
+      }
+    });
+
+    return () => {
+      unsubscribeProvider();
+      unsubscribeTabs();
+    };
+    // `session?.remember` is read inside the callback; re-subscribing on every
+    // session change would drop provider events mid-flight, so the ref-less
+    // read is intentional and the subscription is mounted once.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── actions ─────────────────────────────────────────────────────────────
   const signIn = useCallback(async (credentials: Credentials) => {
     setError(null);
     const outcome = await signInRequest(credentials);
     if (!outcome.ok || !outcome.session) {
       setError(outcome.code ?? "unknown");
+      auditSession("session.login_failed", null, {
+        username: credentials.username.trim(),
+        reason: outcome.code ?? "unknown",
+      });
       return false;
     }
     setSession(outcome.session);
     setEndReason(null);
     setStatus("authenticated");
+    auditSession("session.login", outcome.session.user, {
+      username: outcome.session.user.username,
+      role: outcome.session.user.role,
+      custom_role_id: outcome.session.user.custom_role_id ?? null,
+      remember: outcome.session.remember,
+    });
     return true;
   }, []);
 
   const signOut = useCallback(async () => {
+    const actor = session?.user ?? null;
     await signOutRequest();
     setSession(null);
     setError(null);
     setEndReason("signed_out");
     setStatus("anonymous");
-  }, []);
+    auditSession("session.logout", actor, { username: actor?.username ?? null });
+  }, [session]);
+
+  const signOutEverywhere = useCallback(async () => {
+    const actor = session?.user ?? null;
+    await signOutRequest({ everywhere: true });
+    setSession(null);
+    setError(null);
+    setEndReason("signed_out");
+    setStatus("anonymous");
+    auditSession("session.logout", actor, {
+      username: actor?.username ?? null,
+      everywhere: true,
+    });
+  }, [session]);
+
+  const requestPasswordReset = useCallback(async (identifier: string) => {
+    const outcome = await requestResetRequest(identifier);
+    if (outcome.ok) {
+      void recordAudit({
+        action: "user.password_reset_requested",
+        entity: "user",
+        entity_id: session?.user?.id ?? "",
+        entity_label: identifier.trim(),
+        details: { channel: outcome.channel },
+        user_id: session?.user?.id ?? "",
+        user_name: session?.user?.name ?? "",
+      });
+    }
+    return outcome;
+  }, [session]);
+
+  const updatePassword = useCallback(async (password: string) => {
+    const outcome = await updatePasswordRequest(password);
+    if (outcome.ok) {
+      auditSession("session.refreshed", session?.user ?? null, { reason: "password_changed" });
+      void recordAudit({
+        action: "user.password_changed",
+        entity: "user",
+        entity_id: session?.user?.id ?? "",
+        entity_label: session?.user?.name ?? "",
+        details: { self_service: true },
+        user_id: session?.user?.id ?? "",
+        user_name: session?.user?.name ?? "",
+      });
+    }
+    return outcome;
+  }, [session]);
 
   const clearError = useCallback(() => setError(null), []);
 
@@ -133,10 +351,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       expiresAt: session?.expires_at ?? null,
       signIn,
       signOut,
+      signOutEverywhere,
       clearError,
       revalidate,
+      requestPasswordReset,
+      updatePassword,
+      syncing,
     }),
-    [session, status, endReason, error, signIn, signOut, clearError, revalidate],
+    [
+      session,
+      status,
+      endReason,
+      error,
+      syncing,
+      signIn,
+      signOut,
+      signOutEverywhere,
+      clearError,
+      revalidate,
+      requestPasswordReset,
+      updatePassword,
+    ],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

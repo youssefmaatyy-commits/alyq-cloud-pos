@@ -17,6 +17,7 @@ import { getDemoExpenseRepository } from "@/modules/expenses/data/demoRepository
 import { EMPTY_EXPENSE_FORM } from "@/modules/expenses/types";
 import { validateExpense, roundMoney } from "@/modules/expenses/validation";
 import { getDemoAuditRepository } from "@/modules/audit/data/demoRepository";
+import { capabilitiesOf } from "@/lib/permissions/roles";
 import {
   canAddExpense,
   canApproveAdjustment,
@@ -650,7 +651,16 @@ test("audit entries carry the signed-in user (Authentication phase)", async () =
 
   writeStoredSession(
     createSession(
-      { id: "user-cashier", username: "cashier", name: "Cashier One", role: "cashier" },
+      // `capabilities` is required on an identity (Phase 10): a user with no
+      // resolved list would read as "unknown" instead of "denied". The fixture
+      // derives it from the role rather than restating the matrix.
+      {
+        id: "user-cashier",
+        username: "cashier",
+        name: "Cashier One",
+        role: "cashier",
+        capabilities: capabilitiesOf("cashier"),
+      },
       false,
     ),
     "session",

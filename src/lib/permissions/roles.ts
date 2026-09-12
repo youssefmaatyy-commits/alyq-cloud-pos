@@ -132,6 +132,49 @@ export const CAPABILITIES = [
    * capability would let the two drift apart.
    */
   "manage_website",
+
+  // ── Phase 10: the granular permissions a custom role can be built from ──
+  //
+  // Every one of these existed as *behaviour* before it existed as a
+  // capability: the catalogue was editable by anyone signed in, every list
+  // screen had an export button, and approving a return or an expense was not
+  // a separate act from creating one. Naming them is what makes them
+  // assignable — and the grants below keep each system role's effective access
+  // exactly as it was, so tightening is a choice an admin makes per custom
+  // role rather than a regression shipped by default.
+  /** Amend a recorded sale (the till itself is frozen; this is the back office). */
+  "edit_sale",
+  /** Add a product to the catalogue. */
+  "add_product",
+  /** Edit a product's details. */
+  "edit_product",
+  /** Change a selling price. */
+  "change_price",
+  /** Delete or archive a product. */
+  "delete_product",
+  /** Run an Excel import. */
+  "import_data",
+  /** Run an Excel/CSV export of any list. */
+  "export_data",
+  /** Approve a return that is waiting for a decision. */
+  "approve_return",
+  /** Open the reports screen. */
+  "view_reports",
+  /** Export a report. */
+  "export_reports",
+  /** Approve an expense that is waiting for a decision. */
+  "approve_expense",
+  /**
+   * Manage staff: view users, add employees, edit their details, activate or
+   * deactivate them, reset a password and assign a role. Admin only — this is
+   * the capability that decides who holds every other capability, so it is the
+   * one place `manager` deliberately differs from `admin`.
+   */
+  "manage_users",
+  /** Create and edit custom roles and their permission sets. Admin only. */
+  "manage_roles",
+  /** Change system-wide settings. Admin only. */
+  "manage_settings",
 ] as const;
 export type Capability = (typeof CAPABILITIES)[number];
 
@@ -150,7 +193,41 @@ export type Capability = (typeof CAPABILITIES)[number];
  */
 export const ROLE_CAPABILITIES: Record<AppRole, readonly Capability[]> = {
   admin: CAPABILITIES,
-  manager: CAPABILITIES,
+  // Manager holds everything except the three capabilities that decide who
+  // holds capabilities. That is the first real difference between the two
+  // oversight roles, and it is what `manage_users` exists to express.
+  manager: [
+    "view_inventory",
+    "adjust_stock",
+    "sell",
+    "apply_discount",
+    "void_sale",
+    "confirm_payment",
+    "process_return",
+    "process_refund",
+    "approve_refund",
+    "open_shift",
+    "close_shift",
+    "add_expense",
+    "edit_expense",
+    "delete_expense",
+    "view_shifts",
+    "approve_shift_adjustment",
+    "view_audit_log",
+    "manage_online_orders",
+    "manage_website",
+    "edit_sale",
+    "add_product",
+    "edit_product",
+    "change_price",
+    "delete_product",
+    "import_data",
+    "export_data",
+    "approve_return",
+    "view_reports",
+    "export_reports",
+    "approve_expense",
+  ],
   cashier: [
     "view_inventory",
     "sell",
@@ -163,6 +240,17 @@ export const ROLE_CAPABILITIES: Record<AppRole, readonly Capability[]> = {
     "view_shifts",
     // Works the online queue like the till; may not restyle the website.
     "manage_online_orders",
+    // The catalogue tier: exactly what the till tier could already do when the
+    // products screen had no capability gate at all, now named so a custom role
+    // can take it away.
+    "add_product",
+    "edit_product",
+    "change_price",
+    "delete_product",
+    "import_data",
+    "export_data",
+    "view_reports",
+    "export_reports",
   ],
   inventory_clerk: [
     "view_inventory",
@@ -176,8 +264,21 @@ export const ROLE_CAPABILITIES: Record<AppRole, readonly Capability[]> = {
     "add_expense",
     "view_shifts",
     "manage_online_orders",
+    // Identical to the cashier's set: the two roles differ by `adjust_stock`
+    // and nothing else, which the role-model self-test pins.
+    "add_product",
+    "edit_product",
+    "change_price",
+    "delete_product",
+    "import_data",
+    "export_data",
+    "view_reports",
+    "export_reports",
   ],
-  viewer: ["view_inventory", "view_shifts"],
+  // Read-only, and still read-only: the three additions are all reads or
+  // exports of data the viewer could already open. No write capability is
+  // granted here, and the role-model self-test asserts exactly this list.
+  viewer: ["view_inventory", "view_shifts", "export_data", "view_reports", "export_reports"],
 };
 
 /**

@@ -1,6 +1,6 @@
 import { getSupabaseClient, isSupabaseConfigured } from "@/lib/supabase/client";
-import { getDemoUserRepository } from "./demoRepository";
-import { getSupabaseUserRepository } from "./supabaseRepository";
+import { getDemoUserRepository, resetDemoUserRepository } from "./demoRepository";
+import { getSupabaseUserRepository, resetSupabaseUserRepository } from "./supabaseRepository";
 import type { UserRepository } from "./repository";
 
 export type AuthMode = "supabase" | "demo";
@@ -15,6 +15,19 @@ export function getAuthMode(): AuthMode {
   return isSupabaseConfigured && getSupabaseClient() ? "supabase" : "demo";
 }
 
-export { DemoUserRepository, getDemoUserRepository } from "./demoRepository";
-export { SupabaseUserRepository, getSupabaseUserRepository } from "./supabaseRepository";
-export type { UserRepository, AuthenticateResult, AuthUserSummary } from "./repository";
+export { DemoUserRepository, getDemoUserRepository, resetDemoUserRepository } from "./demoRepository";
+export { SupabaseUserRepository, getSupabaseUserRepository, resetSupabaseUserRepository } from "./supabaseRepository";
+export type {
+  UserRepository,
+  AuthenticateResult,
+  AuthUserSummary,
+  AuthChangeEvent,
+  LiveSessionInfo,
+  PasswordUpdateResult,
+} from "./repository";
+
+/** Test seam: drop the repository singletons so the next call re-reads state. */
+export function resetAuthRepositories(): void {
+  resetDemoUserRepository();
+  resetSupabaseUserRepository();
+}
