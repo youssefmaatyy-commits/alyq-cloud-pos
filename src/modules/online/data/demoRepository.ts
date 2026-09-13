@@ -313,7 +313,7 @@ function seedContent(products: readonly Product[]) {
         product_id: null,
         author_name: "Mona A.",
         rating: 5,
-        body: "Ordering was easy and the coffee arrived the next morning.",
+        body: "Ordering was easy and the earrings arrived beautifully packed.",
         visible: true,
         sort_order: 1,
         created_at: nowIso(),
@@ -762,7 +762,7 @@ export class DemoOnlineRepository
       const products = await getDemoRepository().listProducts();
       const byId = new Map(products.map((product) => [product.id, product]));
 
-      // Aggregate quantities per product: the same coffee added twice must not be
+      // Aggregate quantities per product: the same piece added twice must not be
       // promised the last unit twice.
       const wanted = new Map<string, number>();
       for (const line of input.lines) {

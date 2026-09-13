@@ -184,10 +184,10 @@ async function bySku(sku: string) {
 }
 
 test("cash-only sale returns a numbered sale with recomputed totals + change", async () => {
-  const coffee = await bySku("ALYQ-1001"); // price 32.5
+  const earrings = await bySku("ALYQ-1001"); // price 32.5
   const sale = await repo.completeSale({
     client_ref: `test-${Date.now()}`,
-    lines: [{ product_id: coffee.id, qty: 2 }],
+    lines: [{ product_id: earrings.id, qty: 2 }],
     discount_type: "none",
     discount_value: 0,
     payments: [cash(65, 100)],
@@ -199,7 +199,7 @@ test("cash-only sale returns a numbered sale with recomputed totals + change", a
   assert.equal(sale.status, "completed");
   assert.equal(sale.items.length, 1);
   assert.equal(sale.items[0].sku, "ALYQ-1001");
-  assert.equal(sale.items[0].name_en, "Arabic Ground Coffee 250g"); // snapshot preserved
+  assert.equal(sale.items[0].name_en, "Gold Pearl Earrings"); // snapshot preserved
   assert.equal(sale.items[0].unit_price, 32.5);
   assert.equal(sale.items[0].quantity, 2);
   assert.equal(sale.subtotal, 65);
@@ -212,12 +212,12 @@ test("cash-only sale returns a numbered sale with recomputed totals + change", a
 });
 
 test("completing a sale deducts stock and writes a movement", async () => {
-  const coffee = await bySku("ALYQ-1001");
-  const before = coffee.stock_quantity;
+  const earrings = await bySku("ALYQ-1001");
+  const before = earrings.stock_quantity;
 
   const sale = await repo.completeSale({
     client_ref: `deduct-${Date.now()}`,
-    lines: [{ product_id: coffee.id, qty: 1 }],
+    lines: [{ product_id: earrings.id, qty: 1 }],
     discount_type: "percent",
     discount_value: 10,
     payments: [cash(round2(32.5 * 0.9), 100)],
@@ -225,11 +225,11 @@ test("completing a sale deducts stock and writes a movement", async () => {
     user_name: "Tester",
   });
 
-  const after = (await catalog.listProducts()).find((p) => p.id === coffee.id)!;
+  const after = (await catalog.listProducts()).find((p) => p.id === earrings.id)!;
   assert.equal(after.stock_quantity, before - 1, "stock deducted by sold qty");
   assert.ok(after.stock_quantity >= 0, "never negative");
 
-  const movements = await inventory.listMovementsForProduct(coffee.id);
+  const movements = await inventory.listMovementsForProduct(earrings.id);
   const saleMovement = movements.find((m) => m.notes?.includes(sale.sale_number));
   assert.ok(saleMovement, "a stock movement references the sale number");
   assert.equal(saleMovement?.type, "issue");
@@ -239,10 +239,10 @@ test("completing a sale deducts stock and writes a movement", async () => {
 });
 
 test("percent discount is recomputed server-side, not trusted from the client", async () => {
-  const milk = await bySku("ALYQ-1020"); // 11.5
+  const bracelet = await bySku("ALYQ-1020"); // 11.5
   const sale = await repo.completeSale({
     client_ref: `disc-${Date.now()}`,
-    lines: [{ product_id: milk.id, qty: 2 }],
+    lines: [{ product_id: bracelet.id, qty: 2 }],
     discount_type: "percent",
     discount_value: 50,
     payments: [cash(11.5)],
@@ -255,11 +255,11 @@ test("percent discount is recomputed server-side, not trusted from the client", 
 });
 
 test("overselling is rejected", async () => {
-  const coffee = await bySku("ALYQ-1001");
+  const earrings = await bySku("ALYQ-1001");
   await assert.rejects(
     repo.completeSale({
       client_ref: `oversell-${Date.now()}`,
-      lines: [{ product_id: coffee.id, qty: 99 }],
+      lines: [{ product_id: earrings.id, qty: 99 }],
       discount_type: "none",
       discount_value: 0,
       payments: [cash(1)],
@@ -271,12 +271,12 @@ test("overselling is rejected", async () => {
 });
 
 test("out-of-stock and non-tracked products cannot be sold", async () => {
-  const juice = await bySku("ALYQ-1010"); // stock 0
+  const necklace = await bySku("ALYQ-1010"); // stock 0
   const service = await bySku("ALYQ-3001"); // stock_tracking_enabled = false
   await assert.rejects(
     repo.completeSale({
       client_ref: `oos-${Date.now()}`,
-      lines: [{ product_id: juice.id, qty: 1 }],
+      lines: [{ product_id: necklace.id, qty: 1 }],
       discount_type: "none",
       discount_value: 0,
       payments: [cash(5)],
@@ -300,11 +300,11 @@ test("out-of-stock and non-tracked products cannot be sold", async () => {
 });
 
 test("insufficient cash is rejected", async () => {
-  const milk = await bySku("ALYQ-1020"); // 11.5
+  const bracelet = await bySku("ALYQ-1020"); // 11.5
   await assert.rejects(
     repo.completeSale({
       client_ref: `cash-${Date.now()}`,
-      lines: [{ product_id: milk.id, qty: 1 }],
+      lines: [{ product_id: bracelet.id, qty: 1 }],
       discount_type: "none",
       discount_value: 0,
       payments: [cash(11.5, 5)],
@@ -316,11 +316,11 @@ test("insufficient cash is rejected", async () => {
 });
 
 test("invalid quantities are rejected", async () => {
-  const milk = await bySku("ALYQ-1020");
+  const bracelet = await bySku("ALYQ-1020");
   await assert.rejects(
     repo.completeSale({
       client_ref: `qty-${Date.now()}`,
-      lines: [{ product_id: milk.id, qty: 0 }],
+      lines: [{ product_id: bracelet.id, qty: 0 }],
       discount_type: "none",
       discount_value: 0,
       payments: [cash(100)],
@@ -344,12 +344,12 @@ test("invalid quantities are rejected", async () => {
 });
 
 test("payment sums that don't match the total are rejected", async () => {
-  const milk = await bySku("ALYQ-1020"); // 11.5
+  const bracelet = await bySku("ALYQ-1020"); // 11.5
   // Underpaid
   await assert.rejects(
     repo.completeSale({
       client_ref: `under-${Date.now()}`,
-      lines: [{ product_id: milk.id, qty: 1 }],
+      lines: [{ product_id: bracelet.id, qty: 1 }],
       discount_type: "none",
       discount_value: 0,
       payments: [cash(10)],
@@ -362,7 +362,7 @@ test("payment sums that don't match the total are rejected", async () => {
   await assert.rejects(
     repo.completeSale({
       client_ref: `over-${Date.now()}`,
-      lines: [{ product_id: milk.id, qty: 1 }],
+      lines: [{ product_id: bracelet.id, qty: 1 }],
       discount_type: "none",
       discount_value: 0,
       payments: [cash(12)],
@@ -374,10 +374,10 @@ test("payment sums that don't match the total are rejected", async () => {
 });
 
 test("concurrent completion is rejected (double-submission guard)", async () => {
-  const milk = await bySku("ALYQ-1020");
+  const bracelet = await bySku("ALYQ-1020");
   const p1 = repo.completeSale({
     client_ref: `concurrent-${Date.now()}`,
-    lines: [{ product_id: milk.id, qty: 1 }],
+    lines: [{ product_id: bracelet.id, qty: 1 }],
     discount_type: "none",
     discount_value: 0,
     payments: [cash(11.5)],
@@ -386,7 +386,7 @@ test("concurrent completion is rejected (double-submission guard)", async () => 
   });
   const p2 = repo.completeSale({
     client_ref: `concurrent-2-${Date.now()}`,
-    lines: [{ product_id: milk.id, qty: 1 }],
+    lines: [{ product_id: bracelet.id, qty: 1 }],
     discount_type: "none",
     discount_value: 0,
     payments: [cash(11.5)],
@@ -398,13 +398,13 @@ test("concurrent completion is rejected (double-submission guard)", async () => 
 });
 
 test("retrying the same client_ref returns the same sale (idempotency)", async () => {
-  const milk = await bySku("ALYQ-1020");
+  const bracelet = await bySku("ALYQ-1020");
   const ref = `idempotent-${Date.now()}`;
-  const before = (await catalog.listProducts()).find((p) => p.id === milk.id)!.stock_quantity;
+  const before = (await catalog.listProducts()).find((p) => p.id === bracelet.id)!.stock_quantity;
 
   const payload = {
     client_ref: ref,
-    lines: [{ product_id: milk.id, qty: 1 }],
+    lines: [{ product_id: bracelet.id, qty: 1 }],
     discount_type: "none" as const,
     discount_value: 0,
     payments: [cash(11.5)],
@@ -418,20 +418,20 @@ test("retrying the same client_ref returns the same sale (idempotency)", async (
   assert.equal(retry.id, first.id, "same sale returned");
   assert.equal(retry.sale_number, first.sale_number, "no second invoice number burned");
 
-  const after = (await catalog.listProducts()).find((p) => p.id === milk.id)!.stock_quantity;
+  const after = (await catalog.listProducts()).find((p) => p.id === bracelet.id)!.stock_quantity;
   assert.equal(after, before - 1, "stock deducted exactly once");
   const sales = await repo.listSales();
   assert.equal(sales.filter((s) => s.client_ref === ref).length, 1, "only one sale persisted");
 });
 
 test("ledger keeps every movement across consecutive sales (regression)", async () => {
-  const milk = await bySku("ALYQ-1020");
-  const startCount = (await inventory.listMovementsForProduct(milk.id)).length;
+  const bracelet = await bySku("ALYQ-1020");
+  const startCount = (await inventory.listMovementsForProduct(bracelet.id)).length;
   const refs = [`led-a-${Date.now()}`, `led-b-${Date.now()}`, `led-c-${Date.now()}`];
   for (const ref of refs) {
     await repo.completeSale({
       client_ref: ref,
-      lines: [{ product_id: milk.id, qty: 1 }],
+      lines: [{ product_id: bracelet.id, qty: 1 }],
       discount_type: "none",
       discount_value: 0,
       payments: [cash(11.5)],
@@ -439,17 +439,17 @@ test("ledger keeps every movement across consecutive sales (regression)", async 
       user_name: "Tester",
     });
   }
-  const endCount = (await inventory.listMovementsForProduct(milk.id)).length;
+  const endCount = (await inventory.listMovementsForProduct(bracelet.id)).length;
   assert.equal(endCount, startCount + refs.length, "one movement recorded per sale, none lost");
 });
 
 test("invoice numbers are sequential and never reused", async () => {
-  const milk = await bySku("ALYQ-1020");
+  const bracelet = await bySku("ALYQ-1020");
   const numbers: string[] = [];
   for (let i = 0; i < 3; i += 1) {
     const sale = await repo.completeSale({
       client_ref: `seq-${i}-${Date.now()}`,
-      lines: [{ product_id: milk.id, qty: 1 }],
+      lines: [{ product_id: bracelet.id, qty: 1 }],
       discount_type: "none",
       discount_value: 0,
       payments: [cash(11.5)],
@@ -466,10 +466,10 @@ test("invoice numbers are sequential and never reused", async () => {
 });
 
 test("InstaPay-only sale can be marked pending", async () => {
-  const milk = await bySku("ALYQ-1020");
+  const bracelet = await bySku("ALYQ-1020");
   const sale = await repo.completeSale({
     client_ref: `instapay-${Date.now()}`,
-    lines: [{ product_id: milk.id, qty: 1 }],
+    lines: [{ product_id: bracelet.id, qty: 1 }],
     discount_type: "none",
     discount_value: 0,
     payments: [insta(11.5, "pending")],
@@ -486,10 +486,10 @@ test("InstaPay-only sale can be marked pending", async () => {
 });
 
 test("mixed Cash + InstaPay split payment", async () => {
-  const milk = await bySku("ALYQ-1020"); // 11.5 × 4 = 46
+  const bracelet = await bySku("ALYQ-1020"); // 11.5 × 4 = 46
   const sale = await repo.completeSale({
     client_ref: `split-${Date.now()}`,
-    lines: [{ product_id: milk.id, qty: 4 }],
+    lines: [{ product_id: bracelet.id, qty: 4 }],
     discount_type: "none",
     discount_value: 0,
     payments: [cash(20), insta(26, "pending")],
@@ -515,10 +515,10 @@ test("mixed Cash + InstaPay split payment", async () => {
 });
 
 test("confirming a mixed sale marks only the InstaPay payment paid", async () => {
-  const milk = await bySku("ALYQ-1020");
+  const bracelet = await bySku("ALYQ-1020");
   const sale = await repo.completeSale({
     client_ref: `split-confirm-${Date.now()}`,
-    lines: [{ product_id: milk.id, qty: 2 }],
+    lines: [{ product_id: bracelet.id, qty: 2 }],
     discount_type: "none",
     discount_value: 0,
     payments: [cash(11.5), insta(11.5, "pending")],
@@ -540,12 +540,12 @@ test("confirming a mixed sale marks only the InstaPay payment paid", async () =>
 });
 
 test("confirming an InstaPay payment records who/when and preserves totals", async () => {
-  const coffee2 = await bySku("ALYQ-1002"); // price 68, high stock
-  const stockBefore = (await catalog.listProducts()).find((p) => p.id === coffee2.id)!.stock_quantity;
+  const ring = await bySku("ALYQ-1002"); // price 68, high stock
+  const stockBefore = (await catalog.listProducts()).find((p) => p.id === ring.id)!.stock_quantity;
 
   const sale = await repo.completeSale({
     client_ref: `ip-confirm-${Date.now()}`,
-    lines: [{ product_id: coffee2.id, qty: 2 }],
+    lines: [{ product_id: ring.id, qty: 2 }],
     discount_type: "none",
     discount_value: 0,
     payments: [insta(136, "pending")],
@@ -563,16 +563,16 @@ test("confirming an InstaPay payment records who/when and preserves totals", asy
   assert.equal(confirmed.total, 136);
   assert.deepEqual(confirmed.items.map((i) => i.id), sale.items.map((i) => i.id));
 
-  const stockAfter = (await catalog.listProducts()).find((p) => p.id === coffee2.id)!.stock_quantity;
+  const stockAfter = (await catalog.listProducts()).find((p) => p.id === ring.id)!.stock_quantity;
   assert.equal(stockAfter, stockBefore - 2, "stock deducted once at creation");
 });
 
 test("confirming a payment is idempotent and safe for cash/voided sales", async () => {
-  const coffee2 = await bySku("ALYQ-1002"); // price 68
+  const ring = await bySku("ALYQ-1002"); // price 68
 
   const instaSale = await repo.completeSale({
     client_ref: `ip-idem-${Date.now()}`,
-    lines: [{ product_id: coffee2.id, qty: 1 }],
+    lines: [{ product_id: ring.id, qty: 1 }],
     discount_type: "none",
     discount_value: 0,
     payments: [insta(68, "pending")],
@@ -587,7 +587,7 @@ test("confirming a payment is idempotent and safe for cash/voided sales", async 
 
   const cashSale = await repo.completeSale({
     client_ref: `cash-noop-${Date.now()}`,
-    lines: [{ product_id: coffee2.id, qty: 1 }],
+    lines: [{ product_id: ring.id, qty: 1 }],
     discount_type: "none",
     discount_value: 0,
     payments: [cash(68)],
@@ -602,10 +602,10 @@ test("confirming a payment is idempotent and safe for cash/voided sales", async 
 });
 
 test("receipt lists every split payment", async () => {
-  const coffee2 = await bySku("ALYQ-1002"); // price 68 × 4 = 272
+  const ring = await bySku("ALYQ-1002"); // price 68 × 4 = 272
   const sale = await repo.completeSale({
     client_ref: `receipt-${Date.now()}`,
-    lines: [{ product_id: coffee2.id, qty: 4 }],
+    lines: [{ product_id: ring.id, qty: 4 }],
     discount_type: "none",
     discount_value: 0,
     payments: [cash(120, 120), insta(152, "pending")],
@@ -647,10 +647,10 @@ test("receipt lists every split payment", async () => {
 });
 
 test("receipt branding: logo, boutique header, paid/remaining/change, contacts", async () => {
-  const coffee2 = await bySku("ALYQ-1002"); // price 68, high stock
+  const ring = await bySku("ALYQ-1002"); // price 68, high stock
   const sale = await repo.completeSale({
     client_ref: `brand-${Date.now()}`,
-    lines: [{ product_id: coffee2.id, qty: 2 }],
+    lines: [{ product_id: ring.id, qty: 2 }],
     discount_type: "none",
     discount_value: 0,
     payments: [cash(136, 140)],
@@ -897,8 +897,8 @@ test("sales receipt renders customer name + phone only when linked", () => {
         id: "i1",
         sale_id: "s1",
         product_id: "p1",
-        name_ar: "قهوة",
-        name_en: "Coffee",
+        name_ar: "أقراط",
+        name_en: "Earrings",
         sku: "ALYQ-1001",
         barcode: "6281000000013",
         unit_price: 30,
@@ -981,8 +981,8 @@ test("return receipt reuses the shared design and carries return + invoice data"
     items: [
       {
         id: "ri1",
-        name_ar: "قهوة",
-        name_en: "Coffee",
+        name_ar: "أقراط",
+        name_en: "Earrings",
         sku: "ALYQ-1001",
         barcode: "6281000000013",
         unit_price: 34,
@@ -1060,7 +1060,7 @@ test("return receipt reuses the shared design and carries return + invoice data"
   const rtl = buildReturnReceiptHtml({ returnRecord, direction: "rtl", strings });
   assert.ok(rtl.includes('lang="ar"'), "arabic lang in RTL");
   assert.ok(rtl.includes('dir="rtl"'), "rtl direction set");
-  assert.ok(rtl.includes("قهوة"), "arabic item name in RTL");
+  assert.ok(rtl.includes("أقراط"), "arabic item name in RTL");
 
   // mixed refund methods render without changing the data model
   const mixed = buildReturnReceiptHtml({
@@ -1100,10 +1100,10 @@ test("receipt shows customer section only when a customer is linked", async () =
     thankYou: "Thanks",
     voidedNotice: "Voided",
   };
-  const coffee2 = await bySku("ALYQ-1002");
+  const ring = await bySku("ALYQ-1002");
   const guestSale = await repo.completeSale({
     client_ref: `guest-${Date.now()}`,
-    lines: [{ product_id: coffee2.id, qty: 1 }],
+    lines: [{ product_id: ring.id, qty: 1 }],
     discount_type: "none",
     discount_value: 0,
     payments: [cash(68)],
@@ -1116,7 +1116,7 @@ test("receipt shows customer section only when a customer is linked", async () =
 
   const linkedSale = await repo.completeSale({
     client_ref: `linked-${Date.now()}`,
-    lines: [{ product_id: coffee2.id, qty: 1 }],
+    lines: [{ product_id: ring.id, qty: 1 }],
     discount_type: "none",
     discount_value: 0,
     payments: [cash(68)],

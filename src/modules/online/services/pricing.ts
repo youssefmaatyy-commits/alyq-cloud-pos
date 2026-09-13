@@ -172,8 +172,8 @@ export function couponApplies(coupon: Coupon, context: CouponContext): boolean {
  * Validate a code against a cart and compute the discount.
  *
  * The discount is taken from the **whole subtotal**, not from the eligible lines
- * of a restricted coupon: a coupon on "coffee" that takes 20 EGP off an order
- * containing coffee is what a customer expects, and it can never exceed the
+ * of a restricted coupon: a coupon on "earrings" that takes 20 EGP off an order
+ * containing earrings is what a customer expects, and it can never exceed the
  * subtotal, so it cannot make an order negative.
  */
 export function checkCoupon(

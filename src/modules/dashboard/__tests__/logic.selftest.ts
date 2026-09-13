@@ -598,7 +598,7 @@ test("paymentMix covers the month to date and skips voided invoices", () => {
 test("topProducts ranks by units, honours the limit and carries both names", () => {
   const products = [
     product({ id: "p1", name_en: "Tea", name_ar: "شاي", cost_price: 5, selling_price: 10 }),
-    product({ id: "p2", name_en: "Coffee", name_ar: "قهوة", cost_price: 20, selling_price: 40 }),
+    product({ id: "p2", name_en: "Earrings", name_ar: "أقراط", cost_price: 20, selling_price: 40 }),
     product({ id: "p3", name_en: "Water", name_ar: "ماء", cost_price: 1, selling_price: 3 }),
   ];
   const sales = [

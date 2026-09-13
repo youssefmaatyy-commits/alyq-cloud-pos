@@ -12,9 +12,30 @@ import { buildDemoCategories, buildDemoProducts, safeStorage } from "./demoSeed"
 const STORAGE_KEY = "alyq.demo.catalog.v1";
 const LATENCY = 140;
 
+/**
+ * Which revision of the demo range this build seeds.
+ *
+ * Bumped when `buildDemoProducts` / `buildDemoCategories` are rewritten, so a
+ * browser that cached an earlier default catalogue picks up the replacement on
+ * its next load instead of serving a retired range forever. Without it the shop
+ * keeps showing whatever it was first seeded with, and a catalogue change only
+ * ever reaches a fresh profile.
+ *
+ * The storage key deliberately does *not* move with the revision. That key is
+ * part of the backup module's contract — `backup/schema.ts` lists it,
+ * `backup/services/health.ts` reads products and categories out of it, and both
+ * the backup suite and the backup flow assert on it — so renaming it would
+ * orphan every snapshot already taken. The revision travels inside the state
+ * instead: a snapshot restores carrying the revision it was taken at, and is
+ * therefore left exactly as it was.
+ */
+const SEED_REVISION = 2;
+
 interface DemoState {
   categories: Category[];
   products: Product[];
+  /** Stamp of the default range this state came from — see SEED_REVISION. */
+  seed_revision?: number;
 }
 
 function nowIso(): string {
@@ -43,9 +64,15 @@ export class DemoRepository implements CatalogRepository {
     if (raw) {
       try {
         const parsed = JSON.parse(raw) as DemoState;
-        if (Array.isArray(parsed.categories) && Array.isArray(parsed.products)) {
+        if (
+          Array.isArray(parsed.categories) &&
+          Array.isArray(parsed.products) &&
+          parsed.seed_revision === SEED_REVISION
+        ) {
           return parsed;
         }
+        /* Otherwise fall through: the blob is either damaged, or it holds a
+           default range this build has since replaced. */
       } catch {
         /* fall through to reseed */
       }
@@ -53,6 +80,7 @@ export class DemoRepository implements CatalogRepository {
     const seeded: DemoState = {
       categories: buildDemoCategories(),
       products: buildDemoProducts(),
+      seed_revision: SEED_REVISION,
     };
     this.persist(seeded);
     return seeded;
@@ -137,6 +165,7 @@ export class DemoRepository implements CatalogRepository {
     this.state = {
       categories: buildDemoCategories(),
       products: buildDemoProducts(),
+      seed_revision: SEED_REVISION,
     };
     this.persist();
   }

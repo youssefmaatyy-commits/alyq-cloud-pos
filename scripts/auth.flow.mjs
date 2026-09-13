@@ -228,7 +228,7 @@ function makeHarness(dom, consoleErrors) {
     stageSale: async () => {
       await navigate("#/pos");
       for (let i = 0; i < 12 && !bodyText().includes("ALYQ-1001"); i += 1) await sleep(300);
-      clickEl(byText("Ethiopian Specialty") ?? byText("ALYQ-1001"));
+      clickEl(byText("Classic Gold Ring") ?? byText("ALYQ-1001"));
       await sleep(350);
       const exact = byText("Exact");
       if (exact) clickEl(exact);

@@ -77,7 +77,7 @@ export function findOversell(
   const byId = new Map(products.map((product) => [product.id, product]));
 
   // Quantities of the same product across two lines add up: a customer who adds
-  // the same coffee twice must not be promised the last unit twice.
+  // the same piece twice must not be promised the last unit twice.
   const wanted = new Map<string, number>();
   for (const line of lines) {
     wanted.set(line.product_id, (wanted.get(line.product_id) ?? 0) + Math.max(line.quantity, 0));

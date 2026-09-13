@@ -922,8 +922,8 @@ test("repairing everything at once writes one audit row per hold, reports failur
   resetDemoOnlineRepository();
   const repository = getDemoOnlineRepository();
   const catalogue = await getDemoRepository().listProducts();
-  const coffee = await demoProduct("ALYQ-1002");
-  const machine = await demoProduct("ALYQ-2001");
+  const ring = await demoProduct("ALYQ-1002");
+  const jewellerySet = await demoProduct("ALYQ-2001");
 
   const first = await repository.placeOrder({
     client_ref: "ref-batch-1",
@@ -932,7 +932,7 @@ test("repairing everything at once writes one audit row per hold, reports failur
     delivery_type: "pickup",
     address: null,
     payment_method: "cod",
-    lines: [{ product_id: coffee.id, qty: 2 }],
+    lines: [{ product_id: ring.id, qty: 2 }],
   });
   const second = await repository.placeOrder({
     client_ref: "ref-batch-2",
@@ -941,9 +941,9 @@ test("repairing everything at once writes one audit row per hold, reports failur
     delivery_type: "pickup",
     address: null,
     payment_method: "cod",
-    lines: [{ product_id: machine.id, qty: 1 }],
+    lines: [{ product_id: jewellerySet.id, qty: 1 }],
   });
-  const stockBefore = (await getDemoRepository().listProducts()).find((p) => p.id === coffee.id)?.stock_quantity ?? 0;
+  const stockBefore = (await getDemoRepository().listProducts()).find((p) => p.id === ring.id)?.stock_quantity ?? 0;
 
   // Both holds are stuck: released in the store while their orders still wait.
   for (const orderId of [first.order.id, second.order.id]) {
@@ -955,15 +955,15 @@ test("repairing everything at once writes one audit row per hold, reports failur
   // A review of the store, plus two rows that only exist on paper: one whose
   // reservation is gone (a failure the batch must collect, not throw) and one
   // that contradicts the ledger (a judgement call the batch must not touch).
-  const fabricatedOrder = fakeOrder({ id: "o-converted", status: "completed", sale_id: null, items: [fakeItem("o-converted", coffee.id, 1)] });
+  const fabricatedOrder = fakeOrder({ id: "o-converted", status: "completed", sale_id: null, items: [fakeItem("o-converted", ring.id, 1)] });
   const reviewed = reviewReservations({
     reservations: [
       ...(await repository.listReservations()),
-      fakeReservation({ id: "rsv-gone", online_order_id: "o-vanished", product_id: coffee.id, quantity: 3 }),
+      fakeReservation({ id: "rsv-gone", online_order_id: "o-vanished", product_id: ring.id, quantity: 3 }),
       fakeReservation({
         id: "rsv-converted",
         online_order_id: fabricatedOrder.id,
-        product_id: coffee.id,
+        product_id: ring.id,
         status: "converted",
         resolved_at: HOUR_AGO,
       }),
@@ -1010,7 +1010,7 @@ test("repairing everything at once writes one audit row per hold, reports failur
   assert.equal(after.findings.length, 0);
   assert.equal(after.heldUnits, 3);
   assert.equal(
-    (await getDemoRepository().listProducts()).find((p) => p.id === coffee.id)?.stock_quantity,
+    (await getDemoRepository().listProducts()).find((p) => p.id === ring.id)?.stock_quantity,
     stockBefore,
     "a batch repair writes no stock either",
   );

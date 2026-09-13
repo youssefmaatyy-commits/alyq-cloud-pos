@@ -293,7 +293,7 @@ export function findCatalogProduct(
  * Products to show beside this one.
  *
  * Same category first, then same brand, then whatever is selling: a customer who
- * has looked at one coffee should be shown other coffees before other best
+ * has looked at one ring should be shown other rings before other best
  * sellers, and never the product they are already looking at.
  */
 export function relatedProducts(

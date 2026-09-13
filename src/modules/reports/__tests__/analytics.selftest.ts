@@ -270,22 +270,22 @@ console.log("\nPhase 14 · advanced reports");
 
 // ── 1. sales by employee ──────────────────────────────────────────────────
 test("sales are attributed to the employee who rang them, voids to nobody", () => {
-  const coffee = product({ id: "p1", selling_price: 100, cost_price: 60 });
+  const earrings = product({ id: "p1", selling_price: 100, cost_price: 60 });
   const sales = [
     // Cashier: 2 invoices, 200 + 300, one with a 20 discount already inside total.
-    sale({ items: [item(coffee.id, 2, 100)], created_at: "2026-03-02T10:00:00.000Z", user_id: "u-1", user_name: "Cashier" }),
+    sale({ items: [item(earrings.id, 2, 100)], created_at: "2026-03-02T10:00:00.000Z", user_id: "u-1", user_name: "Cashier" }),
     sale({
-      items: [item(coffee.id, 3, 100)],
+      items: [item(earrings.id, 3, 100)],
       created_at: "2026-03-03T10:00:00.000Z",
       user_id: "u-1",
       user_name: "Cashier",
       discount_amount: 20,
     }),
     // Manager: 1 invoice, 500.
-    sale({ items: [item(coffee.id, 5, 100)], created_at: "2026-03-04T10:00:00.000Z", user_id: "u-2", user_name: "Manager" }),
+    sale({ items: [item(earrings.id, 5, 100)], created_at: "2026-03-04T10:00:00.000Z", user_id: "u-2", user_name: "Manager" }),
     // Voided: 999 that must not appear anywhere.
     sale({
-      items: [item(coffee.id, 1, 999)],
+      items: [item(earrings.id, 1, 999)],
       created_at: "2026-03-05T10:00:00.000Z",
       user_id: "u-3",
       user_name: "Ghost",
@@ -324,7 +324,7 @@ test("an empty range reports zeros rather than NaN", () => {
 
 // ── 2. sales by branch / register ─────────────────────────────────────────
 test("an invoice is placed by the shift window it happened inside", () => {
-  const coffee = product({ id: "p1" });
+  const earrings = product({ id: "p1" });
   const morning = shift({
     id: "s1",
     branch: "Main",
@@ -341,10 +341,10 @@ test("an invoice is placed by the shift window it happened inside", () => {
   });
 
   const sales = [
-    sale({ items: [item(coffee.id, 1, 100)], created_at: "2026-03-10T09:30:00.000Z" }),
-    sale({ items: [item(coffee.id, 2, 100)], created_at: "2026-03-10T18:00:00.000Z" }),
+    sale({ items: [item(earrings.id, 1, 100)], created_at: "2026-03-10T09:30:00.000Z" }),
+    sale({ items: [item(earrings.id, 2, 100)], created_at: "2026-03-10T18:00:00.000Z" }),
     // No shift was open on the 1st: this one cannot be placed, and says so.
-    sale({ items: [item(coffee.id, 3, 100)], created_at: "2026-03-01T09:00:00.000Z" }),
+    sale({ items: [item(earrings.id, 3, 100)], created_at: "2026-03-01T09:00:00.000Z" }),
   ];
 
   const rows = salesByRegister(sales, [morning, evening]);
@@ -362,15 +362,15 @@ test("an invoice is placed by the shift window it happened inside", () => {
 
 // ── 3. sales by payment method ────────────────────────────────────────────
 test("a split payment counts once per method and never twice", () => {
-  const coffee = product({ id: "p1" });
+  const earrings = product({ id: "p1" });
   // 500 invoice: 300 cash + 200 InstaPay still pending confirmation.
   const split = sale({
-    items: [item(coffee.id, 5, 100)],
+    items: [item(earrings.id, 5, 100)],
     created_at: "2026-03-06T10:00:00.000Z",
     payments: [payment("cash", 300), payment("instapay", 200, "pending")],
   });
   const cashOnly = sale({
-    items: [item(coffee.id, 1, 100)],
+    items: [item(earrings.id, 1, 100)],
     created_at: "2026-03-07T10:00:00.000Z",
   });
 
@@ -393,12 +393,12 @@ test("a split payment counts once per method and never twice", () => {
 
 // ── 4. trend ──────────────────────────────────────────────────────────────
 test("a trend fills the quiet days inside a bounded range", () => {
-  const coffee = product({ id: "p1" });
+  const earrings = product({ id: "p1" });
   const sales = [
-    sale({ items: [item(coffee.id, 1, 100)], created_at: "2026-03-01T10:00:00.000Z" }),
-    sale({ items: [item(coffee.id, 2, 100)], created_at: "2026-03-04T10:00:00.000Z" }),
+    sale({ items: [item(earrings.id, 1, 100)], created_at: "2026-03-01T10:00:00.000Z" }),
+    sale({ items: [item(earrings.id, 2, 100)], created_at: "2026-03-04T10:00:00.000Z" }),
     // Outside the range: must not appear, and must not stretch the series.
-    sale({ items: [item(coffee.id, 9, 100)], created_at: "2026-04-01T10:00:00.000Z" }),
+    sale({ items: [item(earrings.id, 9, 100)], created_at: "2026-04-01T10:00:00.000Z" }),
   ];
 
   const series = salesTrend(sales, { from: "2026-03-01", to: "2026-03-05" });
@@ -419,31 +419,31 @@ test("a trend fills the quiet days inside a bounded range", () => {
 
 // ── 5. products ───────────────────────────────────────────────────────────
 test("product performance costs sold units at the current purchase price", () => {
-  const coffee = product({ id: "coffee", selling_price: 100, cost_price: 60, stock_quantity: 8 });
-  const beans = product({ id: "beans", selling_price: 200, cost_price: 250, stock_quantity: 4 }); // sold below cost
+  const earrings = product({ id: "earrings", selling_price: 100, cost_price: 60, stock_quantity: 8 });
+  const pearls = product({ id: "pearls", selling_price: 200, cost_price: 250, stock_quantity: 4 }); // sold below cost
   const idle = product({ id: "idle", selling_price: 500, cost_price: 300, stock_quantity: 6 }); // no sales
   const off = product({ id: "off", selling_price: 50, cost_price: 30, stock_quantity: 3, active: false });
   const untracked = product({ id: "service", stock_tracking_enabled: false, stock_quantity: 0 });
 
-  const products = [coffee, beans, idle, off, untracked];
+  const products = [earrings, pearls, idle, off, untracked];
   const sales = [
-    sale({ items: [item(coffee.id, 3, 100), item(beans.id, 1, 200)], created_at: "2026-03-02T10:00:00.000Z" }),
-    sale({ items: [item(coffee.id, 2, 100)], created_at: "2026-03-03T10:00:00.000Z" }),
+    sale({ items: [item(earrings.id, 3, 100), item(pearls.id, 1, 200)], created_at: "2026-03-02T10:00:00.000Z" }),
+    sale({ items: [item(earrings.id, 2, 100)], created_at: "2026-03-03T10:00:00.000Z" }),
   ];
 
   const rows = productPerformance(sales, products);
   assert.equal(rows.length, products.length, "every catalogue product gets a row, sold or not");
 
-  const coffeeRow = rows.find((row) => row.productId === coffee.id)!;
-  assert.equal(coffeeRow.units, 5);
-  assert.equal(coffeeRow.revenue, 500);
-  assert.equal(coffeeRow.cost, 300, "5 × the current cost of 60");
-  assert.equal(coffeeRow.profit, 200);
-  assert.equal(coffeeRow.margin, 40, "200 of 500");
-  assert.equal(coffeeRow.stockValue, 480, "8 on hand × 60");
+  const earringsRow = rows.find((row) => row.productId === earrings.id)!;
+  assert.equal(earringsRow.units, 5);
+  assert.equal(earringsRow.revenue, 500);
+  assert.equal(earringsRow.cost, 300, "5 × the current cost of 60");
+  assert.equal(earringsRow.profit, 200);
+  assert.equal(earringsRow.margin, 40, "200 of 500");
+  assert.equal(earringsRow.stockValue, 480, "8 on hand × 60");
 
-  const beansRow = rows.find((row) => row.productId === beans.id)!;
-  assert.equal(beansRow.profit, -50, "sold below cost, and the report says so in the negative");
+  const pearlsRow = rows.find((row) => row.productId === pearls.id)!;
+  assert.equal(pearlsRow.profit, -50, "sold below cost, and the report says so in the negative");
 
   const idleRow = rows.find((row) => row.productId === idle.id)!;
   assert.equal(idleRow.sold, false);
@@ -453,7 +453,7 @@ test("product performance costs sold units at the current purchase price", () =>
   const best = bestSellers(rows, 5);
   assert.deepEqual(
     best.map((row) => row.productId),
-    ["coffee", "beans"],
+    ["earrings", "pearls"],
   );
 
   // Slow movers: tracked, active, holding stock, unsold. Inactive and untracked
@@ -475,37 +475,37 @@ test("product performance costs sold units at the current purchase price", () =>
   assert.equal(stock.lowStock, 1, "the deactivated product is at its threshold, which still counts as low");
 
   const margin = marginSummary(sales, products, rows);
-  assert.equal(margin.revenue, 700, "500 coffee + 200 beans");
-  assert.equal(margin.cogs, 550, "(5 × 60) + (1 × 250) — beans cost more than they sold for");
+  assert.equal(margin.revenue, 700, "500 earrings + 200 pearls");
+  assert.equal(margin.cogs, 550, "(5 × 60) + (1 × 250) — pearls cost more than they sold for");
   assert.equal(margin.profit, 150);
   assert.equal(margin.margin, 21.43, "150 of 700");
   assert.deepEqual(
     margin.lossMakers.map((row) => row.productId),
-    ["beans"],
+    ["pearls"],
     "the finding the summary exists to surface",
   );
-  assert.equal(margin.best?.productId, "coffee");
+  assert.equal(margin.best?.productId, "earrings");
 });
 
 // ── 6. customers ──────────────────────────────────────────────────────────
 test("top customers rank the book, and walk-in sales stay unattributed", () => {
-  const coffee = product({ id: "p1" });
+  const earrings = product({ id: "p1" });
   const lana = customer({ id: "c-lana", name: "Lana" });
   const omar = customer({ id: "c-omar", name: "Omar" });
   const quiet = customer({ id: "c-quiet", name: "Quiet" });
 
   const sales = [
-    sale({ items: [item(coffee.id, 5, 100)], created_at: "2026-03-02T10:00:00.000Z", customer_id: lana.id, customer_name: lana.name }),
+    sale({ items: [item(earrings.id, 5, 100)], created_at: "2026-03-02T10:00:00.000Z", customer_id: lana.id, customer_name: lana.name }),
     sale({
-      items: [item(coffee.id, 2, 100)],
+      items: [item(earrings.id, 2, 100)],
       created_at: "2026-03-05T10:00:00.000Z",
       customer_id: lana.id,
       customer_name: lana.name,
       payments: [payment("cash", 100), payment("instapay", 100, "pending")],
     }),
-    sale({ items: [item(coffee.id, 3, 100)], created_at: "2026-03-06T10:00:00.000Z", customer_id: omar.id, customer_name: omar.name }),
+    sale({ items: [item(earrings.id, 3, 100)], created_at: "2026-03-06T10:00:00.000Z", customer_id: omar.id, customer_name: omar.name }),
     // Walk-in: no customer on the invoice.
-    sale({ items: [item(coffee.id, 1, 100)], created_at: "2026-03-07T10:00:00.000Z" }),
+    sale({ items: [item(earrings.id, 1, 100)], created_at: "2026-03-07T10:00:00.000Z" }),
   ];
 
   const rows = topCustomers([lana, omar, quiet], sales, 10);
@@ -709,9 +709,9 @@ test("the shift report reads the drawer instead of recomputing it", () => {
 
 // ── 9. the exports write what the reports computed ────────────────────────
 test("each report exports, and the file carries the same rows", () => {
-  const coffee = product({ id: "coffee", selling_price: 100, cost_price: 60 });
+  const earrings = product({ id: "earrings", selling_price: 100, cost_price: 60 });
   const sales = [
-    sale({ items: [item(coffee.id, 2, 100)], created_at: "2026-03-02T10:00:00.000Z", customer_id: "c-1" }),
+    sale({ items: [item(earrings.id, 2, 100)], created_at: "2026-03-02T10:00:00.000Z", customer_id: "c-1" }),
   ];
   const shifts = [shift({ id: "s1" })];
   const summaries = new Map<string, ShiftSummary>([
@@ -737,11 +737,11 @@ test("each report exports, and the file carries the same rows", () => {
     "every sheet says which window it covers",
   );
 
-  const productSheets = buildProductAnalyticsSheets({ sales, products: [coffee], range: MARCH, t, pick });
+  const productSheets = buildProductAnalyticsSheets({ sales, products: [earrings], range: MARCH, t, pick });
   assert.equal(productSheets.length, 5);
   const performance = productSheets[1];
   assert.equal(performance.rowCount, 1);
-  assert.deepEqual(performance.rows[0].slice(0, 4), ["COFFEE", "coffee", 1, 2]);
+  assert.deepEqual(performance.rows[0].slice(0, 4), ["EARRINGS", "earrings", 1, 2]);
 
   const customerSheets = buildCustomerAnalyticsSheets({
     customers: [customer({ id: "c-1", name: "Lana" })],

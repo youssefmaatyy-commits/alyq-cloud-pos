@@ -158,11 +158,11 @@ function makeProduct(overrides: Partial<Product> = {}): Product {
     id: "prd-1",
     sku: "SKU-1",
     barcode: "6221000000017",
-    name_ar: "قهوة",
-    name_en: "Coffee",
+    name_ar: "أقراط",
+    name_en: "Earrings",
     description_ar: null,
-    description_en: "Freshly roasted coffee.",
-    category_id: "cat-coffee",
+    description_en: "Gold-plated and hypoallergenic.",
+    category_id: "cat-earrings",
     product_type: "physical",
     selling_price: 100,
     cost_price: 60,
@@ -298,7 +298,7 @@ function makeContent(overrides: Partial<ProductContent> = {}): ProductContent {
     product_id: "prd-1",
     brand_ar: "أَلِــيْـــق",
     brand_en: "ALYQ",
-    slug: "coffee",
+    slug: "earrings",
     seo_title: null,
     seo_description: null,
     specs: [],
@@ -309,13 +309,13 @@ function makeContent(overrides: Partial<ProductContent> = {}): ProductContent {
 }
 
 const CATALOG: Product[] = [
-  makeProduct({ id: "prd-1", sku: "SKU-1", name_en: "Coffee beans", selling_price: 120, stock_quantity: 8 }),
+  makeProduct({ id: "prd-1", sku: "SKU-1", name_en: "Gold earrings", selling_price: 120, stock_quantity: 8 }),
   makeProduct({
     id: "prd-2",
     sku: "SKU-2",
     barcode: "6221000000024",
-    name_en: "Cold brew",
-    category_id: "cat-cold",
+    name_en: "Pearl necklace",
+    category_id: "cat-hair",
     selling_price: 60,
     stock_quantity: 0,
     is_featured: true,
@@ -325,7 +325,7 @@ const CATALOG: Product[] = [
     id: "prd-3",
     sku: "SKU-3",
     barcode: "6221000000031",
-    name_en: "Grinder",
+    name_en: "Silver ring",
     category_id: "cat-tools",
     selling_price: 900,
     stock_quantity: 3,
@@ -335,16 +335,16 @@ const CATALOG: Product[] = [
 ];
 
 const CONTENTS: ProductContent[] = [
-  makeContent({ product_id: "prd-1", brand_en: "ALYQ", slug: "coffee-beans" }),
-  makeContent({ product_id: "prd-2", brand_en: "ALYQ", slug: "cold-brew" }),
-  makeContent({ product_id: "prd-3", brand_en: "Baratza", slug: null }),
+  makeContent({ product_id: "prd-1", brand_en: "ALYQ", slug: "gold-earrings" }),
+  makeContent({ product_id: "prd-2", brand_en: "ALYQ", slug: "pearl-necklace" }),
+  makeContent({ product_id: "prd-3", brand_en: "Lumina", slug: null }),
 ];
 
 const CATEGORIES: Category[] = [
   {
-    id: "cat-coffee",
-    name_ar: "قهوة",
-    name_en: "Coffee",
+    id: "cat-earrings",
+    name_ar: "أقراط",
+    name_en: "Earrings",
     parent_id: null,
     active: true,
     sort_order: 1,
@@ -439,7 +439,7 @@ const couponContext = (subtotal: number, lines: CouponLine[] = []) => ({ subtota
 test("a percent coupon is capped by max_discount and never exceeds the subtotal", () => {
   const capped = checkCoupon(
     makeCoupon({ value: 50, max_discount: 40 }),
-    couponContext(200, [{ product_id: "prd-1", category_id: "cat-coffee", line_total: 200 }]),
+    couponContext(200, [{ product_id: "prd-1", category_id: "cat-earrings", line_total: 200 }]),
   );
   assert.deepEqual(capped, { ok: true, coupon: capped.ok ? capped.coupon : makeCoupon(), discount: 40 });
 
@@ -448,7 +448,7 @@ test("a percent coupon is capped by max_discount and never exceeds the subtotal"
 });
 
 test("every coupon refusal reason is reported, not swallowed", () => {
-  const lines = [{ product_id: "prd-1", category_id: "cat-coffee", line_total: 100 }];
+  const lines = [{ product_id: "prd-1", category_id: "cat-earrings", line_total: 100 }];
   assert.equal(checkCoupon(null, couponContext(100, lines)).ok, false);
   assert.deepEqual(checkCoupon(null, couponContext(100, lines)), { ok: false, reason: "not_found" });
   assert.deepEqual(checkCoupon(makeCoupon({ active: false }), couponContext(100, lines)), {
@@ -476,8 +476,8 @@ test("every coupon refusal reason is reported, not swallowed", () => {
     { ok: false, reason: "not_applicable" },
   );
   assert.deepEqual(
-    checkCoupon(makeCoupon({ applies_to: "categories", target_ids: ["cat-coffee"] }), couponContext(100, lines)),
-    { ok: true, coupon: makeCoupon({ applies_to: "categories", target_ids: ["cat-coffee"] }), discount: 10 },
+    checkCoupon(makeCoupon({ applies_to: "categories", target_ids: ["cat-earrings"] }), couponContext(100, lines)),
+    { ok: true, coupon: makeCoupon({ applies_to: "categories", target_ids: ["cat-earrings"] }), discount: 10 },
   );
 });
 
@@ -506,7 +506,7 @@ test("free-delivery progress tells the customer what is left", () => {
 test("priceCart reprices from the catalogue, applies a campaign and adds the fee", () => {
   const totals = priceCart({
     items: [
-      { product_id: "prd-1", list_price: 100, quantity: 2, category_id: "cat-coffee" },
+      { product_id: "prd-1", list_price: 100, quantity: 2, category_id: "cat-earrings" },
       { product_id: "prd-3", list_price: 900, quantity: 1, category_id: "cat-tools" },
     ],
     campaigns: [makeCampaign({ discount_type: "percent", discount_value: 10, product_ids: ["prd-1"] })],
@@ -526,7 +526,7 @@ test("priceCart reprices from the catalogue, applies a campaign and adds the fee
 
 test("priceCart charges the fee on the discounted subtotal and applies a coupon", () => {
   const totals = priceCart({
-    items: [{ product_id: "prd-1", list_price: 100, quantity: 2, category_id: "cat-coffee" }],
+    items: [{ product_id: "prd-1", list_price: 100, quantity: 2, category_id: "cat-earrings" }],
     campaigns: [],
     coupon: makeCoupon({ discount_type: "fixed", value: 20 }),
     couponCode: "WELCOME10",
@@ -564,20 +564,20 @@ test("an approved order becomes a sale for the goods only — the fee stays on t
 
 test("brands are grouped out of the storefront content, strongest first", () => {
   const brands = brandsOf(CONTENTS, pick);
-  assert.deepEqual(brands.map((brand) => brand.name_en), ["ALYQ", "Baratza"]);
+  assert.deepEqual(brands.map((brand) => brand.name_en), ["ALYQ", "Lumina"]);
   assert.equal(brands[0]?.count, 2);
   assert.equal(brands[1]?.count, 1);
   assert.deepEqual(brandsOf([makeContent({ brand_ar: null, brand_en: null })], pick), []);
 
   const facet = brandFacet(CATALOG, CONTENTS);
-  assert.deepEqual(facet.map((entry) => entry.key), ["alyq", "baratza"]);
+  assert.deepEqual(facet.map((entry) => entry.key), ["alyq", "lumina"]);
   assert.equal(facet[0]?.count, 2, "only website-visible products are counted");
 
   const categories = categoryFacet(CATALOG, CATEGORIES);
-  assert.deepEqual(categories.map((entry) => entry.id), ["cat-coffee", "cat-tools"]);
+  assert.deepEqual(categories.map((entry) => entry.id), ["cat-earrings", "cat-tools"]);
   assert.deepEqual(categories.map((entry) => entry.count), [1, 1]);
   assert.equal(
-    categories.some((entry) => entry.id === "cat-cold"),
+    categories.some((entry) => entry.id === "cat-hair"),
     false,
     "a category the shop does not list is left out, however many products point at it",
   );
@@ -913,7 +913,7 @@ test("only website-visible, active products are ever listed", () => {
 
 test("search matches name, SKU and barcode", () => {
   assert.deepEqual(
-    searchCatalog(CATALOG, filters({ search: "cold" }), CONTEXT).map((entry) => entry.product.id),
+    searchCatalog(CATALOG, filters({ search: "pearl" }), CONTEXT).map((entry) => entry.product.id),
     ["prd-2"],
   );
   assert.deepEqual(
@@ -1004,7 +1004,7 @@ test("related products stay in the same category and exclude the product itself"
 
 test("filters survive a round trip through the URL", () => {
   const original = filters({
-    search: "coffee",
+    search: "earrings",
     categoryId: "cat-tools",
     brand: "alyq",
     minPrice: 50,
@@ -1015,7 +1015,7 @@ test("filters survive a round trip through the URL", () => {
   const params = filtersToSearchParams(original);
   const restored = filtersFromSearchParams(params);
   assert.deepEqual(restored, original);
-  assert.equal(params.get("q"), "coffee");
+  assert.equal(params.get("q"), "earrings");
   assert.equal(params.get("sort"), "price_desc");
 
   // A section's own cap and product list are not a shopper's filter: they stay
@@ -1170,22 +1170,22 @@ test("the theme document becomes CSS variables, and shades stay valid hex", () =
 // ── SEO ─────────────────────────────────────────────────────────────────────
 
 test("slugs are ASCII, so an Arabic product name still gets a usable URL", () => {
-  assert.equal(slugifyAscii("  Coffee  Beans!! "), "coffee-beans");
-  assert.equal(slugifyAscii("Arabic Ground Coffee 250g", "prd-7"), "arabic-ground-coffee-250g");
-  assert.equal(slugifyAscii("قهوة عربية", "prd-7"), "prd-7", "Arabic-only text falls back rather than going empty");
-  assert.equal(slugifyAscii("قهوة عربية ٢٥٠", ""), "", "with no fallback there is nothing ASCII to store");
-  assert.match(slugifyAscii("قهوة عربية", "prd-7"), /^[a-z0-9]+(?:-[a-z0-9]+)*$/, "the shape the database constrains");
+  assert.equal(slugifyAscii("  Gold  Earrings!! "), "gold-earrings");
+  assert.equal(slugifyAscii("Gold Pearl Earrings", "prd-7"), "gold-pearl-earrings");
+  assert.equal(slugifyAscii("أقراط لؤلؤ", "prd-7"), "prd-7", "Arabic-only text falls back rather than going empty");
+  assert.equal(slugifyAscii("أقراط لؤلؤ ٢٥٠", ""), "", "with no fallback there is nothing ASCII to store");
+  assert.match(slugifyAscii("أقراط لؤلؤ", "prd-7"), /^[a-z0-9]+(?:-[a-z0-9]+)*$/, "the shape the database constrains");
 
-  assert.equal(suggestedSlug({ name_ar: "قهوة", name_en: "Coffee Beans", sku: "SKU-1" }), "coffee-beans");
+  assert.equal(suggestedSlug({ name_ar: "أقراط", name_en: "Gold Earrings", sku: "SKU-1" }), "gold-earrings");
   assert.equal(
-    suggestedSlug({ name_ar: "قهوة", name_en: null, sku: "SKU-1" }),
+    suggestedSlug({ name_ar: "أقراط", name_en: null, sku: "SKU-1" }),
     "sku-1",
     "an Arabic-only name suggests the SKU, which is always storable and always unique",
   );
 });
 
 test("product links prefer the admin's slug", () => {
-  assert.equal(productPath({ id: "prd-1" }, { slug: "coffee-beans" }), "#/store/products/coffee-beans");
+  assert.equal(productPath({ id: "prd-1" }, { slug: "gold-earrings" }), "#/store/products/gold-earrings");
   assert.equal(productPath({ id: "prd-1" }, null), "#/store/products/prd-1");
   assert.equal(
     productPath({ id: "prd-1" }, { slug: "  " }),
@@ -1198,26 +1198,26 @@ test("product links prefer the admin's slug", () => {
 });
 
 test("meta titles and descriptions are clipped and fall back sensibly", () => {
-  assert.equal(titleForProduct({ name: "Coffee", seoTitle: null, storeName: "ALYQ" }), "Coffee | ALYQ");
+  assert.equal(titleForProduct({ name: "Earrings", seoTitle: null, storeName: "ALYQ" }), "Earrings | ALYQ");
   assert.equal(
-    titleForProduct({ name: "Coffee", seoTitle: "Best coffee", storeName: "ALYQ" }),
-    "Best coffee | ALYQ",
+    titleForProduct({ name: "Earrings", seoTitle: "Best earrings", storeName: "ALYQ" }),
+    "Best earrings | ALYQ",
     "what the admin wrote leads, and the shop's name still brands the result",
   );
   assert.equal(
-    titleForProduct({ name: "Coffee", seoTitle: "ALYQ coffee", storeName: "ALYQ" }),
-    "ALYQ coffee",
+    titleForProduct({ name: "Earrings", seoTitle: "ALYQ earrings", storeName: "ALYQ" }),
+    "ALYQ earrings",
     "the store name is not repeated when the title already carries it",
   );
   assert.equal(titleForProduct({ name: "", seoTitle: null, storeName: "ALYQ" }), "ALYQ");
 
-  assert.equal(descriptionForProduct({ seoDescription: "Written by the shop", fallbackName: "Coffee" }), "Written by the shop");
+  assert.equal(descriptionForProduct({ seoDescription: "Written by the shop", fallbackName: "Earrings" }), "Written by the shop");
   assert.equal(
-    descriptionForProduct({ seoDescription: null, productDescription: "**Bold** body", fallbackName: "Coffee" }),
+    descriptionForProduct({ seoDescription: null, productDescription: "**Bold** body", fallbackName: "Earrings" }),
     "Bold body",
     "markdown is stripped out of a product description before it becomes a meta tag",
   );
-  assert.equal(descriptionForProduct({ fallbackName: "Coffee" }), "Coffee", "never empty");
+  assert.equal(descriptionForProduct({ fallbackName: "Earrings" }), "Earrings", "never empty");
 
   const clipped = clipDescription("word ".repeat(80), 40);
   assert.ok(clipped.length <= 41, "a long description is trimmed to what a search result shows");

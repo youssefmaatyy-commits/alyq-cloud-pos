@@ -97,10 +97,10 @@ test("add + edit customer, then link customer to a sale", async () => {
   });
   assert.equal(updated.address, "Jeddah");
 
-  const coffee = await bySku("ALYQ-1002"); // price 68, high stock
+  const ring = await bySku("ALYQ-1002"); // price 68, high stock
   const sale = await salesRepo.completeSale({
     client_ref: `p7-sale-${Date.now()}`,
-    lines: [{ product_id: coffee.id, qty: 2 }],
+    lines: [{ product_id: ring.id, qty: 2 }],
     discount_type: "none",
     discount_value: 0,
     payments: [{ method: "cash", amount: 136, status: "paid", tendered: 136 }],
@@ -387,13 +387,13 @@ await (async () => {
       refund_amount: 100, refund_method: "cash", refund_status: "completed",
       user_id: "u1", user_name: "Cashier",
       items: [
-        { id: "i1", return_id: "r1", sale_item_id: "si1", product_id: "p1", name_ar: "", name_en: "Coffee", sku: "C-1", barcode: null, unit_price: 10, quantity: 3, line_total: 30 },
+        { id: "i1", return_id: "r1", sale_item_id: "si1", product_id: "p1", name_ar: "", name_en: "Earrings", sku: "C-1", barcode: null, unit_price: 10, quantity: 3, line_total: 30 },
         { id: "i2", return_id: "r1", sale_item_id: "si2", product_id: "p2", name_ar: "", name_en: "Tea", sku: "T-1", barcode: null, unit_price: 5, quantity: 1, line_total: 5 },
       ],
       created_at: "2026-09-10T12:00:00Z",
     }];
     const report = computeReturnsAnalytics(returns as any, []);
-    assert.equal(report.topReturnedProducts[0].name_en, "Coffee");
+    assert.equal(report.topReturnedProducts[0].name_en, "Earrings");
     assert.equal(report.topReturnedProducts[0].totalReturned, 3);
   });
 })();
@@ -405,19 +405,19 @@ console.log("\nPhase 13 · refund lifecycle (settle / reject)");
  * are exercised independently of whatever the Phase 7 tests consumed above.
  */
 async function pendingRefundFixture() {
-  const coffee = await bySku("ALYQ-1002");
+  const ring = await bySku("ALYQ-1002");
   const qty = 2;
   const sale = await salesRepo.completeSale({
     client_ref: `p13-sale-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-    lines: [{ product_id: coffee.id, qty }],
+    lines: [{ product_id: ring.id, qty }],
     discount_type: "none",
     discount_value: 0,
     payments: [
       {
         method: "cash",
-        amount: coffee.selling_price * qty,
+        amount: ring.selling_price * qty,
         status: "paid",
-        tendered: coffee.selling_price * qty,
+        tendered: ring.selling_price * qty,
       },
     ],
     customer_id: null,

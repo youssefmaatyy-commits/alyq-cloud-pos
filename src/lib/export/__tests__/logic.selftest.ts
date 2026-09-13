@@ -139,8 +139,8 @@ function category(partial: Partial<Category> & { id: string }): Category {
 function item(partial: Partial<SaleItem> & { id: string; sale_id: string }): SaleItem {
   return {
     product_id: "p1",
-    name_ar: "قهوة",
-    name_en: "Coffee",
+    name_ar: "أقراط",
+    name_en: "Earrings",
     sku: "ALYQ-1001",
     barcode: null,
     unit_price: 50,
@@ -947,8 +947,8 @@ const RETURN_ITEMS: ReturnItem[] = [
     return_id: "r1",
     sale_item_id: "si1",
     product_id: "p1",
-    name_ar: "قهوة",
-    name_en: "Coffee",
+    name_ar: "أقراط",
+    name_en: "Earrings",
     sku: "ALYQ-1001",
     barcode: "6281000000013",
     unit_price: 30,
@@ -988,7 +988,7 @@ test("the returns export writes returns, refunds and the items behind them", () 
   assert.equal(items.rows[0][0], "RET-r1");
   assert.deepEqual(items.rows[0][1], new Date(ISO), "the return's date, as a real date");
   assert.equal(items.rows[0][2], "INV-s1", "the invoice it came from");
-  assert.equal(items.rows[0][4], "Coffee", "the product name in the active language");
+  assert.equal(items.rows[0][4], "Earrings", "the product name in the active language");
   assert.equal(items.rows[0][6], "6281000000013");
   assert.equal(items.rows[0][7], 2, "quantity");
   assert.equal(items.rows[0][8], 30, "unit price");

@@ -100,7 +100,7 @@ interface Row {
 }
 
 const ROWS: readonly Row[] = [
-  { item: "Ethiopian Specialty", when: "2026-09-11T09:30:00.000Z", price: 68.5, qty: 2, share: 12.345 },
+  { item: "Classic Gold Ring", when: "2026-09-11T09:30:00.000Z", price: 68.5, qty: 2, share: 12.345 },
   { item: "Cold Brew", when: null, price: 0, qty: 1, share: 0 },
 ];
 

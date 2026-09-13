@@ -462,20 +462,20 @@ test("a refund over the cap is recorded pending and released by approval", async
   // A sale big enough to refund over the cap.
   signInAs("cashier");
   const products = await catalog().listProducts();
-  const coffee = products.find((p) => p.sku === "ALYQ-1002");
-  assert.ok(coffee, "the seed catalogue has ALYQ-1002");
-  const qty = Math.max(3, Math.ceil(400 / Math.max(1, coffee.selling_price)));
+  const ring = products.find((p) => p.sku === "ALYQ-1002");
+  assert.ok(ring, "the seed catalogue has ALYQ-1002");
+  const qty = Math.max(3, Math.ceil(400 / Math.max(1, ring.selling_price)));
   const sale = await sales().completeSale({
     client_ref: `p12-refund-${Date.now()}`,
-    lines: [{ product_id: coffee.id, qty }],
+    lines: [{ product_id: ring.id, qty }],
     discount_type: "none",
     discount_value: 0,
     payments: [
       {
         method: "cash",
-        amount: coffee.selling_price * qty,
+        amount: ring.selling_price * qty,
         status: "paid",
-        tendered: coffee.selling_price * qty,
+        tendered: ring.selling_price * qty,
       },
     ],
     customer_id: null,
@@ -539,10 +539,10 @@ test("a discount over the cap is refused with the whole sale draft", async () =>
   assert.equal(maySelfApproveLimits(), false, "the custom role may discount, but not approve");
 
   const products = await catalog().listProducts();
-  const coffee = products.find((p) => p.sku === "ALYQ-1002");
-  assert.ok(coffee);
-  const line = { product_id: coffee.id, qty: 2 };
-  const gross = coffee.selling_price * 2;
+  const ring = products.find((p) => p.sku === "ALYQ-1002");
+  assert.ok(ring);
+  const line = { product_id: ring.id, qty: 2 };
+  const gross = ring.selling_price * 2;
   const discountValue = gross * 0.25;
   const input: CompleteSaleInput = {
     client_ref: `p12-discount-${Date.now()}`,

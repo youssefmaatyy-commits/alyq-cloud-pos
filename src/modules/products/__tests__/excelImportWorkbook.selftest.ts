@@ -73,7 +73,7 @@ const HEADERS = [
 ];
 
 const GOOD_ROWS: unknown[][] = [
-  ["ALYQ-9001", "قهوة إثيوبية", "Ethiopian Coffee", 68.5, 40, 25, "Coffee"],
+  ["ALYQ-9001", "أقراط ذهبية", "Ethiopian Earrings", 68.5, 40, 25, "Earrings"],
   ["ALYQ-9002", "شاي أخضر", "Green Tea", 30, 18.75, 12, "Tea"],
 ];
 
@@ -88,12 +88,12 @@ const tests: { name: string; fn: () => void | Promise<void> }[] = [
       assert.equal(result.invalidRows.length, 0);
       const first = result.validRows[0].data;
       assert.equal(first.sku, "ALYQ-9001");
-      assert.equal(first.name_ar, "قهوة إثيوبية", "Arabic survives the round trip");
-      assert.equal(first.name_en, "Ethiopian Coffee");
+      assert.equal(first.name_ar, "أقراط ذهبية", "Arabic survives the round trip");
+      assert.equal(first.name_en, "Ethiopian Earrings");
       assert.equal(first.selling_price, 68.5, "a numeric cell becomes the right price");
       assert.equal(first.cost_price, 40);
       assert.equal(first.stock_quantity, 25);
-      assert.equal(first._categoryName, "Coffee");
+      assert.equal(first._categoryName, "Earrings");
     },
   },
   {
@@ -136,7 +136,7 @@ const tests: { name: string; fn: () => void | Promise<void> }[] = [
   {
     name: "detects the format by content, so a CSV named .xlsx still imports",
     async fn() {
-      const csv = new TextEncoder().encode("SKU,Name,Price\nALYQ-9001,Ethiopian Coffee,68.5");
+      const csv = new TextEncoder().encode("SKU,Name,Price\nALYQ-9001,Ethiopian Earrings,68.5");
       assert.equal(looksLikeWorkbook(csv), false, "text is not a workbook");
       const result = await importProductsFromFile(fileFrom(csv, "stock.xlsx", "text/csv"));
       assert.equal(result.validRows.length, 1);
@@ -146,7 +146,7 @@ const tests: { name: string; fn: () => void | Promise<void> }[] = [
   {
     name: "still imports CSV and strips the BOM Excel writes",
     async fn() {
-      const csv = "\uFEFFSKU,Name,Price,Stock\nALYQ-9001,Ethiopian Coffee,68.5,25\n";
+      const csv = "\uFEFFSKU,Name,Price,Stock\nALYQ-9001,Ethiopian Earrings,68.5,25\n";
       const result = await importProductsFromFile(
         fileFrom(new TextEncoder().encode(csv), "stock.csv", "text/csv"),
       );
@@ -161,7 +161,7 @@ const tests: { name: string; fn: () => void | Promise<void> }[] = [
       const fromWorkbook = await importGrid([HEADERS, ...GOOD_ROWS]);
       const fromCsv = importProductsFromCsv(
         "SKU,Product Name (Arabic),Product Name (English),Selling Price,Cost Price,Stock Quantity,Category\n" +
-          "ALYQ-9001,قهوة إثيوبية,Ethiopian Coffee,68.5,40,25,Coffee\n" +
+          "ALYQ-9001,أقراط ذهبية,Ethiopian Earrings,68.5,40,25,Earrings\n" +
           "ALYQ-9002,شاي أخضر,Green Tea,30,18.75,12,Tea\n",
       );
       assert.deepEqual(
@@ -292,13 +292,13 @@ const tests: { name: string; fn: () => void | Promise<void> }[] = [
     async fn() {
       const result = await importGrid([
         ["رمز المنتج", "الاسم", "سعر البيع", "سعر التكلفة", "الكمية بالمخزون", "الفئة"],
-        ["ALYQ-9701", "قهوة", 68.5, 40, 25, "مشروبات"],
+        ["ALYQ-9701", "أقراط", 68.5, 40, 25, "مشروبات"],
       ]);
       assert.deepEqual(result.globalErrors, []);
       assert.equal(result.validRows.length, 1);
       const data = result.validRows[0].data;
       assert.equal(data.sku, "ALYQ-9701");
-      assert.equal(data.name_ar, "قهوة");
+      assert.equal(data.name_ar, "أقراط");
       assert.equal(data.selling_price, 68.5);
       assert.equal(data._categoryName, "مشروبات");
     },
@@ -334,7 +334,7 @@ const tests: { name: string; fn: () => void | Promise<void> }[] = [
     async fn() {
       const result = await importProductsFromFile(
         fileFrom(
-          new TextEncoder().encode("SKU,Name,Price,Stock\nALYQ-9901,قهوة,٦٨٫٥,٢٥\n"),
+          new TextEncoder().encode("SKU,Name,Price,Stock\nALYQ-9901,أقراط,٦٨٫٥,٢٥\n"),
           "arabic.csv",
           "text/csv",
         ),

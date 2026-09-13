@@ -35,7 +35,7 @@ import { resolveSettings } from "./settingsDefaults";
  * the one a crawler, a share card and a hand-typed link all handle without
  * percent-encoding. An Arabic product name therefore slugs from whatever Latin
  * text it has (a size, a brand, a code) and falls back to the SKU, which is
- * always there and always unique: "arabic-ground-coffee-250g" if it can, and
+ * always there and always unique: "gold-pearl-earrings" if it can, and
  * "alyq-1001" rather than an empty string or a percent-encoded wall if it cannot.
  *
  * Matching what a customer *typed* is a different job and stays Arabic-aware:

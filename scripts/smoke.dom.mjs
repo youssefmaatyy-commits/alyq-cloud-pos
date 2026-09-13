@@ -246,7 +246,7 @@ async function main() {
 
   // 2 ─ search
   const before = rows();
-  setField('input[type="search"]', "coffee");
+  setField('input[type="search"]', "earrings");
   await sleep(200);
   const after = rows();
   assert.ok(after > 0 && after < before, `search narrows (${before}→${after})`);
@@ -459,7 +459,7 @@ async function main() {
 
   // 10 ─ categories
   await navigate("#/categories");
-  assert.ok(bodyText().includes("Coffee"), "category tree rendered");
+  assert.ok(bodyText().includes("Earrings"), "category tree rendered");
   click("Add category");
   await sleep(250);
   assert.ok(document.querySelector("#cat-name-en"), "category modal rendered");
@@ -474,12 +474,12 @@ async function main() {
   console.log("  ✓ categories add flow + bilingual validation");
 
   // 11 ─ delete guard on a category that holds products
-  const coffeeDelete = [...document.querySelectorAll('button[title="Delete"]')].find((btn) => {
+  const populatedDelete = [...document.querySelectorAll('button[title="Delete"]')].find((btn) => {
     const row = btn.closest(".group");
-    return row && (row.textContent ?? "").includes("Coffee");
+    return row && (row.textContent ?? "").includes("Earrings");
   });
-  assert.ok(coffeeDelete, "delete action for a populated category present");
-  coffeeDelete.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  assert.ok(populatedDelete, "delete action for a populated category present");
+  populatedDelete.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
   await sleep(250);
   const dialogText = dialog()?.textContent ?? "";
   assert.ok(dialogText.includes("cannot be deleted"), "delete guard explains why");
@@ -528,7 +528,7 @@ async function main() {
   assert.ok(bodyText().includes("barcode is already used"), "duplicate barcode rejected");
 
   // f) non-Code128 characters are rejected
-  setField("#barcode", "قهوة");
+  setField("#barcode", "أقراط");
   await sleep(300);
   assert.ok(
     bodyText().includes("Code 128") && bodyText().includes("Use letters"),
@@ -647,15 +647,15 @@ async function main() {
     "Selling Price", "Cost Price", "Stock Quantity", "Category",
   ];
   const importedRows = [
-    ["SMOKE-IMP-1", "منتج استيراد", "Smoke Import One", 42.5, 20, 8, "Coffee"],
-    ["SMOKE-IMP-2", "منتج استيراد ٢", "Smoke Import Two", 15, 7.25, 3, "Tea"],
+    ["SMOKE-IMP-1", "منتج استيراد", "Smoke Import One", 42.5, 20, 8, "Earrings"],
+    ["SMOKE-IMP-2", "منتج استيراد ٢", "Smoke Import Two", 15, 7.25, 3, "Necklaces"],
   ];
   await openImportModal();
   await uploadToImport(
     buildWorkbook([
       IMPORT_HEADERS,
       ...importedRows,
-      ["SMOKE-IMP-3", "سعر سالب", "Negative Price", -5, 1, 1, "Coffee"],
+      ["SMOKE-IMP-3", "سعر سالب", "Negative Price", -5, 1, 1, "Earrings"],
     ]),
     "smoke-products.xlsx",
   );
@@ -706,8 +706,8 @@ async function main() {
   await uploadToImport(
     buildWorkbook([
       IMPORT_HEADERS,
-      ["SMOKE-IMP-1", "منتج استيراد", "Smoke Import One", 55, 20, 8, "Coffee"],
-      ["SMOKE-IMP-2", "منتج استيراد ٢", "Smoke Import Two", 18, 7.25, 3, "Tea"],
+      ["SMOKE-IMP-1", "منتج استيراد", "Smoke Import One", 55, 20, 8, "Earrings"],
+      ["SMOKE-IMP-2", "منتج استيراد ٢", "Smoke Import Two", 18, 7.25, 3, "Necklaces"],
     ]),
     "smoke-update.xlsx",
   );
@@ -927,7 +927,7 @@ async function main() {
   console.log("  ✓ POS screen loads with the product grid");
 
   // Search by name / SKU / barcode
-  setField('input[aria-label="Search"]', "Ethiopian");
+  setField('input[aria-label="Search"]', "Classic");
   await sleep(220);
   assert.ok(bodyText().includes("ALYQ-1002") && !bodyText().includes("ALYQ-1001"), "name search filters");
   setField('input[aria-label="Search"]', "6281000000013");
@@ -955,7 +955,7 @@ async function main() {
 
   // Click-to-add another product
   const card = [...document.querySelectorAll("button")].find((b) =>
-    (b.textContent ?? "").includes("Ethiopian Specialty"),
+    (b.textContent ?? "").includes("Classic Gold Ring"),
   );
   card.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
   await sleep(250);
@@ -1042,7 +1042,7 @@ async function main() {
 
   // ── Mixed Cash + InstaPay: cash 30 auto-fills InstaPay 38 (total 68) ──
   const secondCard = [...document.querySelectorAll("button")].find((b) =>
-    (b.textContent ?? "").includes("Ethiopian Specialty"),
+    (b.textContent ?? "").includes("Classic Gold Ring"),
   );
   secondCard.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
   await sleep(250);
@@ -1072,7 +1072,7 @@ async function main() {
 
   // ── InstaPay-only: instapay 68 auto-fills cash 0 ──
   const thirdCard = [...document.querySelectorAll("button")].find((b) =>
-    (b.textContent ?? "").includes("Ethiopian Specialty"),
+    (b.textContent ?? "").includes("Classic Gold Ring"),
   );
   thirdCard.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
   await sleep(250);
@@ -1099,7 +1099,7 @@ async function main() {
 
   // ── Underpayment blocks completion ──
   const fourthCard = [...document.querySelectorAll("button")].find((b) =>
-    (b.textContent ?? "").includes("Ethiopian Specialty"),
+    (b.textContent ?? "").includes("Classic Gold Ring"),
   );
   fourthCard.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
   await sleep(250);
@@ -1213,10 +1213,10 @@ async function main() {
 
   // Out-of-stock products cannot be added to the cart
   await navigate("#/pos");
-  setField('input[aria-label="Search"]', "Fresh Orange");
+  setField('input[aria-label="Search"]', "Pearl Necklace");
   await sleep(220);
   const oosCard = [...document.querySelectorAll("button")].find((b) =>
-    (b.textContent ?? "").includes("Fresh Orange Juice"),
+    (b.textContent ?? "").includes("Pearl Necklace"),
   );
   assert.ok(oosCard && oosCard.disabled === true, "out-of-stock card disabled");
   oosCard.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
@@ -1298,7 +1298,7 @@ async function main() {
     await sleep(120);
   }
   const smokeCard = [...document.querySelectorAll("button")].find((b) =>
-    (b.textContent ?? "").includes("Ethiopian Specialty"),
+    (b.textContent ?? "").includes("Classic Gold Ring"),
   );
   assert.ok(smokeCard, "product card present");
   smokeCard.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
@@ -1581,7 +1581,7 @@ async function main() {
   // ── Cash sale: pay the exact total in cash ──
   await navigate("#/pos");
   const posCard = () =>
-    findButton("Ethiopian Specialty") ?? findButton("ALYQ-1001");
+    findButton("Classic Gold Ring") ?? findButton("ALYQ-1001");
   clickEl(posCard());
   await sleep(300);
   clickEl(findButton("Exact"));
