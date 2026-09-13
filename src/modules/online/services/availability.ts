@@ -35,7 +35,7 @@ export function reservedByProduct(
  * How many units of a product may still be promised.
  *
  * `null` means unlimited: a product with stock tracking switched off (a service,
- * a made-to-order drink) has no shelf to run down.
+ * or anything made to order) has no shelf to run down.
  */
 export function availableToPromise(
   product: { stock_tracking_enabled: boolean; stock_quantity: number },
