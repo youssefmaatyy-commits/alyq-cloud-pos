@@ -23,7 +23,7 @@
  * sidebar or the guard about what opens a screen — the selftest asserts every
  * path here is a real route in `App.tsx`.
  */
-import { CAPABILITIES, capabilitiesOf, type AppRole, type Capability } from "./roles";
+import { CAPABILITIES, type AppRole, type Capability } from "./roles";
 import {
   CAPABILITY_GROUPS,
   PERMISSION_ACTIONS,
@@ -158,11 +158,6 @@ export function previewSystemRole(role: AppRole, exceptions?: CapabilityExceptio
   return previewAccess({ role, customRole: null, exceptions });
 }
 
-/** The label key for one capability's verb, for the picker and the preview. */
-export function actionLabelKeyOf(capability: Capability): string {
-  return `permissions.action.${actionOfCapability(capability)}`;
-}
-
 /** How many acts a role holds, by verb — the summary line on a role card. */
 export function actionTally(
   capabilities: readonly Capability[],
@@ -178,9 +173,4 @@ export function actionTally(
     action,
     count: counts.get(action) as number,
   }));
-}
-
-/** Convenience for callers that only have a system role name. */
-export function systemRoleCapabilities(role: AppRole): Capability[] {
-  return capabilitiesOf(role);
 }

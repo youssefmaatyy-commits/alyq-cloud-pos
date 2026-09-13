@@ -38,11 +38,6 @@ export function isNewArrival(
   return ageDays >= 0 && ageDays <= days;
 }
 
-export interface SoldUnit {
-  product_id: string;
-  quantity: number;
-}
-
 /**
  * Units sold per product, from the two places demand is recorded.
  *

@@ -17,7 +17,7 @@ import { useI18n } from "@/lib/i18n/I18nProvider";
 import { useStoreCart } from "../hooks/StoreCartProvider";
 import { useStorefront } from "../hooks/StorefrontProvider";
 import { whatsappHref } from "../components/storefront/StoreLayout";
-import { Money, OrderStatusPill, PaymentStatusPill } from "../components/storefront/StorePrimitives";
+import { OrderStatusPill, OrderSummary, PaymentStatusPill } from "../components/storefront/StorePrimitives";
 import { PaymentProofPanel } from "../components/storefront/PaymentProofPanel";
 import { applyDocumentMeta, clearDocumentMeta } from "../services/seo";
 
@@ -144,28 +144,13 @@ export function StoreConfirmationPage() {
             </div>
           </dl>
 
-          <dl className="mt-4 space-y-1.5 border-t border-[var(--store-border)] pt-3 text-sm">
-            <div className="flex justify-between gap-2">
-              <dt className="text-[var(--store-muted)]">{t("store.cart.subtotal")}</dt>
-              <dd className="font-bold"><Money value={order.subtotal} /></dd>
-            </div>
-            {order.discount_amount > 0 ? (
-              <div className="flex justify-between gap-2 text-emerald-700">
-                <dt>{t("store.cart.discount")}{order.discount_code ? ` · ${order.discount_code}` : ""}</dt>
-                <dd className="font-bold">−<Money value={order.discount_amount} /></dd>
-              </div>
-            ) : null}
-            {order.delivery_fee > 0 ? (
-              <div className="flex justify-between gap-2">
-                <dt className="text-[var(--store-muted)]">{t("store.cart.deliveryFee")}</dt>
-                <dd className="font-bold"><Money value={order.delivery_fee} /></dd>
-              </div>
-            ) : null}
-            <div className="flex justify-between gap-2 border-t border-[var(--store-border)] pt-2 text-base">
-              <dt className="font-black text-[var(--store-text)]">{t("store.cart.total")}</dt>
-              <dd className="font-black text-[var(--store-text)]"><Money value={order.total} /></dd>
-            </div>
-          </dl>
+                    <OrderSummary
+            subtotal={order.subtotal}
+            discountAmount={order.discount_amount}
+            discountCode={order.discount_code}
+            deliveryFee={order.delivery_fee}
+            total={order.total}
+          />
         </section>
       </div>
 

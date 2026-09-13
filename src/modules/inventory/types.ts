@@ -61,9 +61,6 @@ export type NewStockMovement = Omit<StockMovement, "id" | "created_at" | "quanti
 
 /** Stored shape (snake_case) — what the repository writes back to disk. */
 
-/** Snapshot payload for a recorded movement — same shape as `StockMovement`. */
-export type MovementSnapshot = StockMovement;
-
 /** Adjustable values supplied by the admin via the Stock Adjustment dialog. */
 export interface StockAdjustmentFormValues {
   type: StockMovementType;

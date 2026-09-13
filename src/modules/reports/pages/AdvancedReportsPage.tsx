@@ -24,7 +24,7 @@
  * so a custom role that grants the screen but withholds `view_reports` gets the
  * same denial in the same words it would get from an export button.
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { PageHeader } from "@/components/layout/AppShell";
 import {
@@ -47,7 +47,8 @@ import { useReturns } from "@/modules/returns/hooks/ReturnProvider";
 import { useShifts } from "@/modules/shifts/hooks/ShiftProvider";
 import { withinDateRange } from "@/lib/export";
 import { assertCanViewReports } from "../services/reportAccess";
-import { computeFinancialTotals, buildFinancialSheets } from "../services/financialExport";
+import { computeFinancialTotals, buildFinancialSheets, type FinancialTotals } from "../services/financialExport";
+import { fetchFinancialSummary } from "../services/reportAggregates";
 import {
   DateRangePicker,
   EMPTY_DATE_RANGE,
@@ -101,7 +102,7 @@ export function AdvancedReportsPage() {
 
   // The financial picture, from the hub's own totals — including what the
   // refunds took back out of it, which is the figure nobody can see elsewhere.
-  const financial = useMemo(() => {
+  const clientFinancial = useMemo(() => {
     const inRange = (iso: string | null | undefined) =>
       withinDateRange(iso, exportRange.from, exportRange.to);
     return computeFinancialTotals({
@@ -112,6 +113,44 @@ export function AdvancedReportsPage() {
       refundsList: refundsList.filter((record) => inRange(record.created_at)),
     });
   }, [sales, products, expenses, returnsList, refundsList, exportRange]);
+
+  /**
+   * The same totals as the DATABASE added them up, or null when it could not —
+   * demo mode, a project whose migrations predate 0032, a caller without
+   * `view_reports`. Null is the signal to fall back, never a zero.
+   *
+   * Phase 22.1 gave this to the reports hub and not to this page, which left the
+   * two screens able to disagree about the same month: this page reads the
+   * providers' rows, and those are capped at SALES_ROW_CAP, so a period holding
+   * more invoices than that showed a smaller revenue here than on `/reports`
+   * for the identical window. Same shape, same differential suite holding both
+   * sides to the same values, so nothing downstream has to know which arrived.
+   */
+  const [dbFinancial, setDbFinancial] = useState<FinancialTotals | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const aggregated = await fetchFinancialSummary({
+          from: exportRange.from || null,
+          to: exportRange.to || null,
+        });
+        if (!cancelled) setDbFinancial(aggregated.ok ? aggregated.value : null);
+      } catch {
+        // `fetchFinancialSummary` reports its failures rather than throwing, so
+        // this is the unexpected case; falling back keeps the screen readable.
+        if (!cancelled) setDbFinancial(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // The window is passed as its two strings, not as the object: a new object
+    // identity on every render would re-run the read.
+  }, [exportRange.from, exportRange.to]);
+
+  const financial = dbFinancial ?? clientFinancial;
 
   const netAfterRefunds = Math.round((financial.netProfit - financial.refundsPaid) * 100) / 100;
 

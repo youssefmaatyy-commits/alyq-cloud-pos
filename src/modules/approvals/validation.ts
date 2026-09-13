@@ -17,7 +17,6 @@
  * and it is what the tests pin.
  */
 import type {
-  ApprovalKind,
   ApprovalRequirement,
   ApprovalRules,
   ApprovalRulesFormValues,
@@ -95,19 +94,6 @@ export function evaluatePriceChangeRule(
     limit_value: roundMoney(previous.selling_price),
     ruleLabelKey: "approvals.rule.priceChange",
   };
-}
-
-/** Every evaluator, by kind — used by the UI to explain which rule fired. */
-export const APPROVAL_RULE_LABEL_KEYS: Record<ApprovalKind, string> = {
-  discount: "approvals.rule.discount",
-  refund: "approvals.rule.refund",
-  expense: "approvals.rule.expense",
-  price_change: "approvals.rule.priceChange",
-};
-
-/** Is `amount` a percentage rather than money? Only discounts are. */
-export function isPercentageKind(kind: ApprovalKind): boolean {
-  return kind === "discount";
 }
 
 function round2(value: number): number {

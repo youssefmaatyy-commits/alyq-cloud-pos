@@ -57,19 +57,9 @@ export function actingUser(): AuthUser {
   return getCurrentAuthUser();
 }
 
-/** What the acting user may do right now. */
-export function actingCapabilities(): Capability[] {
-  return capabilitiesOfUser(actingUser());
-}
-
 /** Service-layer form of `userCan` for the current session. */
 export function canAct(capability: Capability): boolean {
   return userCan(actingUser(), capability);
-}
-
-/** Every capability in a list the acting user holds. */
-export function canActAll(capabilities: readonly Capability[]): boolean {
-  return capabilities.every((capability) => canAct(capability));
 }
 
 /** Any capability in a list the acting user holds. */
@@ -124,21 +114,6 @@ export function canActAs(user: unknown, capability: Capability): boolean {
   // is answered from what it carries: its resolved list if it has one, otherwise
   // the system matrix for its role. Pure, and fail-closed for an empty role.
   return userCan(identity, capability);
-}
-
-/** Refuse unless the acting user holds *every* capability listed. */
-export function assertAllCapabilities(capabilities: readonly Capability[], message?: string): void {
-  for (const capability of capabilities) assertCapability(capability, message);
-}
-
-/** Refuse unless the acting user holds *at least one* of the capabilities. */
-export function assertAnyCapability(capabilities: readonly Capability[], message?: string): void {
-  if (canActAny(capabilities)) return;
-  throw new AppError(
-    "FORBIDDEN",
-    message ?? `You do not have permission to do this (${capabilities.join(" or ")})`,
-    capabilities[0],
-  );
 }
 
 /** `permissions.denied.apply_discount` — the copy a screen shows on a denial. */

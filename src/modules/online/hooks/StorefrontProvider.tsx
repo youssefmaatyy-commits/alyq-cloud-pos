@@ -46,10 +46,7 @@ import type {
   WebsiteSettings,
   WebsiteSettingsMeta,
 } from "../types";
-import {
-  DEFAULT_WEBSITE_SETTINGS,
-  resolveSettings,
-} from "../services/settingsDefaults";
+import { resolveSettings } from "../services/settingsDefaults";
 import { unitsSold } from "../services/badges";
 import { brandsOf, type BrandEntry } from "../services/pricing";
 import {
@@ -353,6 +350,3 @@ export function StorefrontProvider({ children }: { children: ReactNode }) {
 
   return <StorefrontContext.Provider value={value}>{children}</StorefrontContext.Provider>;
 }
-
-/** The defaults, for screens that render before the first paint of settings. */
-export const FALLBACK_SETTINGS: WebsiteSettings = DEFAULT_WEBSITE_SETTINGS;

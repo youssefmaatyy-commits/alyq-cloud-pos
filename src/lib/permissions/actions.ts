@@ -441,16 +441,3 @@ export function assertSensitiveAction(key: SensitiveActionKey | string, message?
 export function registeredCapabilities(): Capability[] {
   return [...new Set(SENSITIVE_ACTIONS.map((action) => action.capability))];
 }
-
-/**
- * Capabilities the matrix grants but no sensitive action requires.
- *
- * Not an error on its own — `manage_users`, `manage_roles` and `manage_settings`
- * are asserted directly by the settings service, and the online-store
- * capabilities by its own providers — but a capability that appears here *and*
- * nowhere in `src/` is a dead gate, and the enforcement suite says so.
- */
-export function unregisteredCapabilities(granted: readonly Capability[]): Capability[] {
-  const registered = new Set(registeredCapabilities());
-  return granted.filter((capability) => !registered.has(capability));
-}

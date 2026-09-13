@@ -102,7 +102,3 @@ export interface CreateReturnInput {
 export interface ReturnFiltersValue {
   search: string;
 }
-
-export const EMPTY_RETURN_FILTERS: ReturnFiltersValue = {
-  search: "",
-};

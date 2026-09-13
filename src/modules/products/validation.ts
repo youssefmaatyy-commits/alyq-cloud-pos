@@ -5,10 +5,8 @@ import {
   MAX_SKU_LENGTH,
   MAX_TEXT_LENGTH,
   SKU_PATTERN,
-  STOCK_DEFAULT_BY_TYPE,
 } from "./constants";
 import type { Category, NewProduct, Product, ProductImageItem, ProductType } from "./types";
-import { PRODUCT_TYPES } from "./types";
 import { validateImageFile } from "./services/imageStorage";
 import { validateBarcodePayload } from "./services/barcode";
 
@@ -385,13 +383,6 @@ export function categoryUsage(
     childCount: categories.filter((c) => c.parent_id === categoryId).length,
   };
 }
-
-/** Default stock-tracking flag when the product type changes in the form. */
-export function defaultStockTracking(type: ProductType): boolean {
-  return STOCK_DEFAULT_BY_TYPE[type];
-}
-
-export const PRODUCT_TYPE_OPTIONS = PRODUCT_TYPES;
 
 /** Human-readable i18n keys for each field error code. */
 export const FIELD_ERROR_KEY: Record<FieldErrorCode, string> = {

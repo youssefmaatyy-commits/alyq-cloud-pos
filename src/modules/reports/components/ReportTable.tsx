@@ -16,7 +16,6 @@
  * Neither component fetches, filters or computes anything. They are handed rows.
  */
 import type { ReactNode } from "react";
-import { useI18n } from "@/lib/i18n/I18nProvider";
 
 export interface ReportColumn<T> {
   /** Stable key for React and for the totals row alignment. */
@@ -188,10 +187,4 @@ export function ReportSection({
       {children}
     </section>
   );
-}
-
-/** A percentage, printed the way the rest of the app prints one. */
-export function usePercent() {
-  const { num } = useI18n();
-  return (value: number | null | undefined) => `${num(value ?? 0, 1)}%`;
 }

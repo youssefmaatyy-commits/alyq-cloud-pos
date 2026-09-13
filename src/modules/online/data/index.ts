@@ -8,9 +8,9 @@
  * mean one instance holds the authoritative in-memory state in demo mode.
  */
 import { getSupabaseClient, isSupabaseConfigured } from "@/lib/supabase/client";
-import { getDemoOnlineRepository, resetDemoOnlineRepository } from "./demoRepository";
-import { getSupabaseOnlineRepository, resetSupabaseOnlineRepository } from "./supabaseRepository";
-import { getLocalStoreAccounts, resetLocalStoreAccounts } from "./localAccounts";
+import { getDemoOnlineRepository } from "./demoRepository";
+import { getSupabaseOnlineRepository } from "./supabaseRepository";
+import { getLocalStoreAccounts } from "./localAccounts";
 import type {
   OnlineMode,
   OnlineOrdersRepository,
@@ -40,13 +40,6 @@ export function getStoreAccountsRepository(): StoreAccountsRepository {
   // Accounts are local in both modes (see `localAccounts.ts`); the mode is only
   // reported so the UI can say where data lives.
   return getLocalStoreAccounts(getOnlineMode());
-}
-
-/** Test/demo hook: drop every in-memory singleton so state is re-read. */
-export function resetOnlineRepositories(): void {
-  resetDemoOnlineRepository();
-  resetSupabaseOnlineRepository();
-  resetLocalStoreAccounts();
 }
 
 export { OnlineError, toOnlineError } from "./repository";

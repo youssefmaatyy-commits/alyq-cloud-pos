@@ -308,24 +308,6 @@ export interface StoreCustomer {
   last_login_at: string | null;
 }
 
-/**
- * Credentials are never part of the domain model. In live mode the id IS the
- * Supabase Auth uid and `auth.users` holds the secret; in demo mode the digest
- * stays in localStorage beside the account and is documented as demo-only.
- */
-export interface StoreRegisterInput {
-  name: string;
-  phone: string;
-  email?: string | null;
-  password: string;
-}
-
-export interface StoreLoginInput {
-  /** Phone or email — whichever the customer typed. */
-  identifier: string;
-  password: string;
-}
-
 // ── marketing ───────────────────────────────────────────────────────────────
 
 export type CouponTarget = "all" | "products" | "categories";

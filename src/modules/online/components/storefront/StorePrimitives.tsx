@@ -361,3 +361,62 @@ export function FreeDeliveryBar({
     </div>
   );
 }
+
+/**
+ * The money block of an order: subtotal, any discount, any delivery fee, total.
+ *
+ * One component, two screens — the confirmation a shopper lands on after
+ * checkout, and the tracking page they return to with an order number and a
+ * phone. Both showed these same five rows because the markup had been copied,
+ * and a copy is a promise that the next change gets made twice: a currency fix,
+ * an RTL fix or a new fee line would have to be remembered in both places, and
+ * the day it is not, the two screens quote the customer different totals for the
+ * same order.
+ *
+ * It takes the money fields rather than the whole order on purpose. The
+ * confirmation page holds the order the cart provider just returned and the
+ * tracking page holds one fetched by number; neither has to hand over a shape
+ * the other does not have, and neither can pass a field this block would
+ * silently ignore.
+ */
+export function OrderSummary({
+  subtotal,
+  discountAmount,
+  discountCode = null,
+  deliveryFee,
+  total,
+  className,
+}: {
+  subtotal: number;
+  discountAmount: number;
+  discountCode?: string | null;
+  deliveryFee: number;
+  total: number;
+  className?: string;
+}) {
+  const { t } = useI18n();
+  return (
+    <dl className={cn("mt-4 space-y-1.5 border-t border-[var(--store-border)] pt-3 text-sm", className)}>
+      <div className="flex justify-between gap-2">
+        <dt className="text-[var(--store-muted)]">{t("store.cart.subtotal")}</dt>
+        <dd className="font-bold"><Money value={subtotal} /></dd>
+      </div>
+      {discountAmount > 0 ? (
+        <div className="flex justify-between gap-2 text-emerald-700">
+          <dt>{t("store.cart.discount")}{discountCode ? ` · ${discountCode}` : ""}</dt>
+          <dd className="font-bold">−<Money value={discountAmount} /></dd>
+        </div>
+      ) : null}
+      {deliveryFee > 0 ? (
+        <div className="flex justify-between gap-2">
+          <dt className="text-[var(--store-muted)]">{t("store.cart.deliveryFee")}</dt>
+          <dd className="font-bold"><Money value={deliveryFee} /></dd>
+        </div>
+      ) : null}
+      <div className="flex justify-between gap-2 border-t border-[var(--store-border)] pt-2 text-base">
+        <dt className="font-black text-[var(--store-text)]">{t("store.cart.total")}</dt>
+        <dd className="font-black text-[var(--store-text)]"><Money value={total} /></dd>
+      </div>
+    </dl>
+  );
+}

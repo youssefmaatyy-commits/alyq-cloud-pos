@@ -85,15 +85,6 @@ export type ProductImageItem =
   | { id: string; kind: "remote"; url: string }
   | { id: string; kind: "local"; file: File; previewUrl: string };
 
-/** Generate a stable, collision-safe id for an image item (used as React key). */
-export function newImageId(prefix = "img"): string {
-  const rand =
-    typeof crypto !== "undefined" && "randomUUID" in crypto
-      ? crypto.randomUUID().slice(0, 13)
-      : Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
-  return `${prefix}-${rand}`;
-}
-
 /** Stock state derived from a product's tracking + quantity + threshold. */
 export type StockStatus = "none" | "in" | "low" | "out";
 

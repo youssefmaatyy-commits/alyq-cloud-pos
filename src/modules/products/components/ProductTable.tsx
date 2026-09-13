@@ -281,8 +281,3 @@ function TableAction({
     </Link>
   );
 }
-
-export function ProductCountBadge({ count }: { count: number }) {
-  const { tPlural } = useI18n();
-  return <Badge tone="info">{tPlural("products.count", count)}</Badge>;
-}

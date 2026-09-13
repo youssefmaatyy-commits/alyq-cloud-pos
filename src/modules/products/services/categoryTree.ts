@@ -97,14 +97,6 @@ export function flattenCategoryTree(
   return out;
 }
 
-/** Indented label such as "Jewellery · Earrings" honouring the active language. */
-export function categoryLabel(
-  node: CategoryNode,
-  pick: (ar: string, en: string) => string,
-): string {
-  return `${"· ".repeat(node.depth)}${pick(node.name_ar, node.name_en)}`;
-}
-
 /**
  * Searchable text resolver: returns a category's own name plus all ancestor
  * names, so searching "jewellery" also finds products in Earrings.

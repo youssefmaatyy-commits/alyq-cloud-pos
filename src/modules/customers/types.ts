@@ -18,7 +18,3 @@ export type CustomerPatch = Partial<NewCustomer>;
 export interface CustomerFiltersValue {
   search: string;
 }
-
-export const EMPTY_CUSTOMER_FILTERS: CustomerFiltersValue = {
-  search: "",
-};

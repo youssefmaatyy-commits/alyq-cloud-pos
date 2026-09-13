@@ -2112,6 +2112,210 @@ begin
 end
 $$;
 
+-- ════════════════════════════════════════════════════════════════════════════
+-- Phase 23: the POS write RPCs must enforce the matrix themselves
+--
+-- 0033 and 0034 fixed two things that no test in this file covered, and both
+-- were invisible for the same reason: the application checks capabilities before
+-- it calls, and the end-to-end suites run the bundle in DEMO mode, where orders
+-- and sales live in localStorage and never reach PostgreSQL. So the browser was
+-- always well behaved, and nothing ever asked what the database does on its own.
+--
+--   1. `pos_complete_sale`, `pos_process_return`, `pos_confirm_payment` and
+--      `pos_void_sale` are SECURITY DEFINER — RLS does not apply inside them —
+--      and were EXECUTE-granted to `authenticated` with no predicate. Any
+--      signed-in seat could call them directly. A viewer, whose can('sell'),
+--      can('process_return'), can('void_sale') and can('confirm_payment') are all
+--      false, did all four: wrote a sale and its stock movement, issued a refund,
+--      marked a pending InstaPay payment as paid, and voided a completed sale.
+--      `void_sale` is held by managers and admins alone, so even a cashier could
+--      void — the capability existed and nothing enforced it.
+--
+--   2. `place_online_order` priced the cart correctly in its first loop and then
+--      wrote the snapshot rows from `p_payload->'lines'->>'unit_price'`, a key the
+--      app never sends (its contract is `{ product_id, qty }`). Against a real
+--      database every checkout failed the NOT NULL constraint on
+--      online_order_items.unit_price — online ordering did not work in live mode
+--      at all — and a caller who did send a price set the shop's own record: a
+--      forged 0.01 was stored as the line price.
+--
+-- What is asserted below is therefore the database on its own terms: the caller
+-- is impersonated with the claim, the RPC is called directly, and the answer has
+-- to come from the function and not from any screen.
+-- ════════════════════════════════════════════════════════════════════════════
+do $$
+declare
+  v_admin      uuid := '00000000-0000-4000-8000-0000000000a1';
+  v_cashier    uuid := '00000000-0000-4000-8000-0000000000c1';
+  v_viewer     uuid := '00000000-0000-4000-8000-0000000000e1';
+  v_product    uuid := '00000000-0000-4000-8000-0000000000f2';
+  v_sale       jsonb;
+  v_sale_id    uuid;
+  v_item_id    uuid;
+  v_pending_id uuid;
+  v_void_id    uuid;
+  v_order      jsonb;
+  v_order_id   uuid;
+  v_snapshot   record;
+  v_forged_id  uuid;
+  v_forged     record;
+  v_list       numeric(14,2);
+  v_online_sale bigint;
+begin
+  -- ── the sales the attacks are aimed at, made legitimately by a cashier ─────
+  perform pg_temp.become(v_cashier, 'authenticated');
+
+  v_sale := public.pos_complete_sale(jsonb_build_object(
+    'client_ref', 'p23-return-target-' || gen_random_uuid()::text,
+    'user_id', v_cashier::text, 'user_name', 'Karim Cashier',
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 2)),
+    'payments', jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', 20.00))));
+  v_sale_id := (v_sale->>'sale_id')::uuid;
+  select id into v_item_id from public.sale_items where sale_id = v_sale_id limit 1;
+
+  v_sale := public.pos_complete_sale(jsonb_build_object(
+    'client_ref', 'p23-pending-' || gen_random_uuid()::text,
+    'user_id', v_cashier::text, 'user_name', 'Karim Cashier',
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 2)),
+    'payments', jsonb_build_array(jsonb_build_object('method', 'instapay', 'amount', 20.00, 'status', 'pending'))));
+  v_pending_id := (v_sale->>'sale_id')::uuid;
+
+  v_sale := public.pos_complete_sale(jsonb_build_object(
+    'client_ref', 'p23-void-' || gen_random_uuid()::text,
+    'user_id', v_cashier::text, 'user_name', 'Karim Cashier',
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 2)),
+    'payments', jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', 20.00))));
+  v_void_id := (v_sale->>'sale_id')::uuid;
+
+  select selling_price into v_list from public.products where id = v_product;
+
+  -- ── DENY: a viewer holds none of the four capabilities ─────────────────────
+  perform pg_temp.become(v_viewer, 'authenticated');
+
+  if public.can('sell') or public.can('process_return')
+     or public.can('void_sale') or public.can('confirm_payment') then
+    raise exception 'the viewer fixture gained a POS capability; the denials below would prove nothing';
+  end if;
+
+  begin
+    perform public.pos_complete_sale(jsonb_build_object(
+      'client_ref', 'p23-viewer-' || gen_random_uuid()::text,
+      'user_id', v_viewer::text, 'user_name', 'Vera Viewer',
+      'lines', jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 1)),
+      'payments', jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', 10.00))));
+    raise exception 'a viewer completed a sale by calling the RPC directly';
+  exception when insufficient_privilege then
+    null;
+  end;
+
+  begin
+    perform public.pos_process_return(jsonb_build_object(
+      'sale_id', v_sale_id::text, 'reason', 'viewer should not be able to return',
+      'refund_method', 'cash', 'refund_status', 'completed',
+      'user_id', v_viewer::text, 'user_name', 'Vera Viewer',
+      'items', jsonb_build_array(jsonb_build_object('sale_item_id', v_item_id::text, 'quantity', 1))));
+    raise exception 'a viewer processed a return and issued a refund';
+  exception when insufficient_privilege then
+    null;
+  end;
+
+  begin
+    perform public.pos_confirm_payment(v_pending_id, v_viewer::text, 'Vera Viewer');
+    raise exception 'a viewer confirmed an InstaPay payment as received';
+  exception when insufficient_privilege then
+    null;
+  end;
+
+  begin
+    perform public.pos_void_sale(v_void_id, v_viewer::text, 'Vera Viewer', 'viewer should not void');
+    raise exception 'a viewer voided a completed sale';
+  exception when insufficient_privilege then
+    null;
+  end;
+
+  -- ── DENY: a cashier may sell but not void — the guard reads the matrix, it
+  --    does not merely wave staff through ─────────────────────────────────────
+  perform pg_temp.become(v_cashier, 'authenticated');
+  if public.can('void_sale') then
+    raise exception 'the cashier fixture holds void_sale; the cashier denial below would prove nothing';
+  end if;
+  begin
+    perform public.pos_void_sale(v_void_id, v_cashier::text, 'Karim Cashier', 'cashier should not void');
+    raise exception 'a cashier voided a sale, which only a manager or admin may do';
+  exception when insufficient_privilege then
+    null;
+  end;
+
+  -- ── ALLOW: the seats that legitimately hold each capability still work ─────
+  perform public.pos_process_return(jsonb_build_object(
+    'sale_id', v_sale_id::text, 'reason', 'damaged in transit',
+    'refund_method', 'cash', 'refund_status', 'completed',
+    'user_id', v_cashier::text, 'user_name', 'Karim Cashier',
+    'items', jsonb_build_array(jsonb_build_object('sale_item_id', v_item_id::text, 'quantity', 1))));
+
+  perform public.pos_confirm_payment(v_pending_id, v_cashier::text, 'Karim Cashier');
+
+  perform pg_temp.become(v_admin, 'authenticated');
+  perform public.pos_void_sale(v_void_id, v_admin::text, 'Amina Admin', 'entry error');
+
+  -- ── the online path the guard could so easily have broken ──────────────────
+  -- `resolve_online_order` completes a customer's order by calling
+  -- pos_complete_sale with source = 'online', under the resolving seat's claim.
+  -- A guard that demanded `sell` alone would still pass for every shipped role,
+  -- so this is the assertion that catches the careless version of the fix.
+  perform pg_temp.become(null, 'anon');
+  v_order := public.place_online_order(jsonb_build_object(
+    'client_ref', 'p23-online-' || gen_random_uuid()::text,
+    'customer_name', 'Probe Shopper', 'customer_phone', '01000000000',
+    'delivery_type', 'pickup', 'payment_method', 'cod',
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 2))));
+  v_order_id := (v_order->>'order_id')::uuid;
+
+  -- A second order, this one carrying a forged unit_price. The snapshot must
+  -- record the shop's price either way; the customer does not get to set it.
+  v_order := public.place_online_order(jsonb_build_object(
+    'client_ref', 'p23-forged-' || gen_random_uuid()::text,
+    'customer_name', 'Probe Forger', 'customer_phone', '01000000001',
+    'delivery_type', 'pickup', 'payment_method', 'cod',
+    'lines', jsonb_build_array(jsonb_build_object(
+      'product_id', v_product::text, 'qty', 2, 'unit_price', 0.01))));
+  v_forged_id := (v_order->>'order_id')::uuid;
+
+  perform pg_temp.become(v_cashier, 'authenticated');
+
+  select unit_price, quantity, line_total into v_snapshot
+    from public.online_order_items where order_id = v_order_id limit 1;
+  if v_snapshot.unit_price is distinct from v_list then
+    raise exception 'the order snapshot recorded % where the catalogue says %',
+      v_snapshot.unit_price, v_list;
+  end if;
+  if v_snapshot.line_total is distinct from round((v_list * v_snapshot.quantity)::numeric, 2) then
+    raise exception 'the order line total % disagrees with the catalogue price', v_snapshot.line_total;
+  end if;
+
+  select unit_price into v_forged
+    from public.online_order_items where order_id = v_forged_id limit 1;
+  if v_forged.unit_price is distinct from v_list then
+    raise exception 'a forged unit_price of 0.01 was stored as % instead of the shop''s %',
+      v_forged.unit_price, v_list;
+  end if;
+
+  perform public.resolve_online_order(jsonb_build_object(
+    'order_id', v_order_id::text, 'action', 'approve',
+    'user_id', v_cashier::text, 'user_name', 'Karim Cashier'));
+
+  select count(*) into v_online_sale from public.sales
+   where client_ref = 'online-' || v_order_id::text;
+  if v_online_sale <> 1 then
+    raise exception 'approving an online order no longer creates its sale (% found)', v_online_sale;
+  end if;
+
+  perform pg_temp.become(v_admin, 'authenticated');
+
+  raise notice 'Phase 23 RPC authorization — a viewer is refused all four POS writers, a cashier may sell but not void, an admin may, and the storefront still places an order at the shop''s price that approval still turns into a sale';
+end
+$$;
+
 -- ── leave no session claim behind ─────────────────────────────────────────
 do $$
 begin

@@ -7,10 +7,6 @@ export async function loadShifts(): Promise<Shift[]> {
   return getShiftRepository().listShifts();
 }
 
-export async function loadOpenShift(): Promise<Shift | null> {
-  return getShiftRepository().getOpenShift();
-}
-
 /** Opening the drawer needs `open_shift`. */
 export function assertCanOpenShift(): void {
   assertSensitiveAction("shift.open");

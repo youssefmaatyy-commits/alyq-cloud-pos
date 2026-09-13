@@ -318,8 +318,3 @@ export function clearStoreTheme(defaultFaviconHref?: string | null): void {
   document.getElementById(THEME_STYLE_ID)?.remove();
   applyFavicon(null, defaultFaviconHref);
 }
-
-/** Attribute the storefront root carries, so dark mode can style children. */
-export function storefrontThemeAttributes(settings: WebsiteSettings): Record<string, string> {
-  return { "data-store-theme": settings.theme.dark_mode ? "dark" : "light" };
-}

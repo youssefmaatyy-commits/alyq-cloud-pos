@@ -23,7 +23,7 @@
  * migration 0021 implements the same rule server-side, so the UI hiding a
  * button and the database refusing the write agree.
  */
-import { APP_ROLES, CAPABILITIES, capabilitiesOf, normalizeRole, type AppRole, type Capability } from "./roles";
+import { APP_ROLES, CAPABILITIES, capabilitiesOf, type AppRole, type Capability } from "./roles";
 import { applyExceptions, type CapabilityExceptions } from "./exceptions";
 
 /** A role an admin defined. Mirrors `public.custom_roles`. */
@@ -210,41 +210,10 @@ export function resolveCapabilities(
   return applyExceptions(capabilitiesOf(role), exceptions);
 }
 
-/** One question, asked the way the database asks it. */
-export function canWithCustomRole(
-  role: string | null | undefined,
-  custom: { capabilities: readonly string[]; active: boolean } | null | undefined,
-  capability: Capability,
-  exceptions?: CapabilityExceptions | null,
-): boolean {
-  return resolveCapabilities(role, custom, exceptions).includes(capability);
-}
-
 /** A role's name in the language on screen. */
 export function customRoleName(role: CustomRole, lang: "en" | "ar"): string {
   const name = lang === "ar" ? role.name_ar : role.name_en;
   return name.trim() || (lang === "ar" ? role.name_en : role.name_ar);
-}
-
-/** What a profile's role is called: the custom role's name, or the system label. */
-export function effectiveRoleLabel(
-  custom: Pick<CustomRole, "name_en" | "name_ar" | "active"> | null | undefined,
-  systemLabel: string,
-  lang: "en" | "ar",
-): string {
-  if (!custom || !custom.active) return systemLabel;
-  const name = lang === "ar" ? custom.name_ar : custom.name_en;
-  return name.trim() || systemLabel;
-}
-
-/** A role draft from a system role, as the "start from…" shortcut in the form. */
-export function draftFromSystemRole(role: AppRole, keyHint?: string): CustomRoleDraft {
-  return {
-    ...EMPTY_CUSTOM_ROLE_DRAFT,
-    key: normalizeRoleKey(keyHint ?? role),
-    base_role: normalizeRole(role) ?? "viewer",
-    capabilities: [...capabilitiesOf(role)],
-  };
 }
 
 /**

@@ -15,7 +15,19 @@
  *      add it up, then threw it away.
  *
  * Migration 0032 adds five RPCs that do the SUM/COUNT/GROUP BY where the rows
- * already are. This module is the only place that calls them.
+ * already are. This module calls the financial one, which is the aggregate a
+ * screen renders as a headline number.
+ *
+ * The other four (`reports_sales_summary`, `reports_product_performance`,
+ * `reports_inventory_summary`, `reports_expense_summary`) are in the database,
+ * gated by the same `public.can('view_reports')` and covered by the role
+ * scenarios and the differential suite, but they have no TypeScript client and
+ * deliberately do not gain one here. Their would-be consumers are the advanced
+ * report tabs, whose contract is raw rows on purpose — `ReportTabProps` says why
+ * — and `stockValueTotals` reads the whole catalogue, which no row cap limits,
+ * so a round trip would add latency without changing a number. Phase 22.1 shipped
+ * these four wrappers ahead of a caller; the Phase 23 audit removed them rather
+ * than leave mapping code that nothing executes and no test covers.
  *
  * What is deliberately NOT in the database: percentages, averages and margins.
  * The RPCs return additive parts — counts, units, sums of money — and every
@@ -39,19 +51,8 @@
  * gated by.
  */
 import { getSupabaseClient } from "@/lib/supabase/client";
-import { roundMoney } from "@/modules/expenses/validation";
-import type { PaymentMethod } from "@/modules/pos/types";
 import { toTimestampBounds } from "./dateRanges";
 import type { DateRange, FinancialTotals } from "./financialExport";
-import {
-  share,
-  type EmployeeSalesRow,
-  type PaymentMethodSalesRow,
-  type ProductPerformanceRow,
-  type StockValueTotals,
-  type TrendPoint,
-} from "./salesAnalytics";
-import type { ExpenseBreakdownRow, ExpenseDayRow } from "./expenseAnalytics";
 
 // ── the result every caller gets ────────────────────────────────────────────
 /**
@@ -87,9 +88,6 @@ const n = (v: unknown): number => {
   }
   return 0;
 };
-const str = (v: unknown): string => (typeof v === "string" ? v : v === null || v === undefined ? "" : String(v));
-const bool = (v: unknown): boolean => v === true || v === "t" || v === "true";
-const list = (v: unknown): Json[] => (Array.isArray(v) ? (v.filter((x) => x && typeof x === "object") as Json[]) : []);
 const record = (v: unknown): Json | null =>
   v && typeof v === "object" && !Array.isArray(v) ? (v as Json) : null;
 
@@ -130,32 +128,6 @@ async function callRpc<T>(
   }
 }
 
-/**
- * Call an RPC that answers with a jsonb ARRAY of rows.
- *
- * Only `reports_product_performance` does — it mirrors a function that returns
- * a list, not a summary — so it gets its own path rather than forcing the row
- * array through an object wrapper the database never promised.
- */
-async function callRpcRows<T>(
-  fn: string,
-  params: Record<string, unknown>,
-  map: (rows: Json[]) => T,
-): Promise<AggregateResult<T>> {
-  const client = safeClient();
-  if (!client || typeof client.rpc !== "function") return { ok: false, reason: NO_DATABASE };
-
-  const { data, error } = await client.rpc(fn, params);
-  if (error) return { ok: false, reason: error.message || fn };
-  const rows = list(data);
-  if (!Array.isArray(data)) return { ok: false, reason: `${fn} returned nothing` };
-  try {
-    return { ok: true, value: map(rows) };
-  } catch (cause) {
-    return { ok: false, reason: `${fn}: ${(cause as Error).message}` };
-  }
-}
-
 // ── 1. financial totals ─────────────────────────────────────────────────────
 /**
  * The headline numbers of the financial report, over EVERY invoice in the
@@ -186,230 +158,4 @@ export async function fetchFinancialSummary(range: DateRange): Promise<Aggregate
     refundsPending: n(raw.refundsPending),
     unitCount: n(raw.unitCount),
   }));
-}
-
-// ── 2. the sales report ─────────────────────────────────────────────────────
-export interface SalesSummaryTotals {
-  invoices: number;
-  revenue: number;
-  discounts: number;
-  units: number;
-  voidedCount: number;
-}
-
-export interface SalesSummary {
-  totals: SalesSummaryTotals;
-  byMethod: PaymentMethodSalesRow[];
-  byEmployee: EmployeeSalesRow[];
-  byDay: TrendPoint[];
-}
-
-/**
- * Totals, payment mix, per employee and per day, in one call.
- *
- * The percentages are added here: `share` is the same function the browser-side
- * builders use, so a row read from the database and a row computed in the
- * browser carry the same share for the same money.
- */
-export async function fetchSalesSummary(range: DateRange): Promise<AggregateResult<SalesSummary>> {
-  return callRpc(
-    "reports_sales_summary",
-    { ...boundsOf(range), p_timezone: clientTimeZone() },
-    (raw) => {
-      const totals: SalesSummaryTotals = {
-        invoices: n(raw.invoices),
-        revenue: n(raw.revenue),
-        discounts: n(raw.discounts),
-        units: n(raw.units),
-        voidedCount: n(raw.voidedCount),
-      };
-
-      const methods = list(raw.byMethod);
-      // salesByPaymentMethod's denominator is the money APPLIED to invoices,
-      // which sums to more than the invoice total when a payment was tendered
-      // with change. Summing the rows keeps that column adding to 100%.
-      const applied = roundMoney(methods.reduce((acc, m) => acc + n(m.amount), 0));
-      const byMethod: PaymentMethodSalesRow[] = methods.map((m) => ({
-        method: str(m.method) as PaymentMethod,
-        invoices: n(m.invoices),
-        amount: n(m.amount),
-        paid: n(m.paid),
-        pending: n(m.pending),
-        share: share(n(m.amount), applied),
-      }));
-
-      const byEmployee: EmployeeSalesRow[] = list(raw.byEmployee).map((e) => {
-        const revenue = n(e.revenue);
-        const invoices = n(e.invoices);
-        return {
-          userId: str(e.userId),
-          userName: str(e.userName),
-          invoices,
-          units: n(e.units),
-          revenue,
-          discounts: n(e.discounts),
-          avgInvoice: invoices > 0 ? roundMoney(revenue / invoices) : 0,
-          share: share(revenue, totals.revenue),
-        };
-      });
-
-      const byDay: TrendPoint[] = list(raw.byDay).map((d) => ({
-        date: str(d.date),
-        invoices: n(d.invoices),
-        units: n(d.units),
-        revenue: n(d.revenue),
-        discounts: n(d.discounts),
-      }));
-
-      return { totals, byMethod, byEmployee, byDay };
-    },
-  );
-}
-
-// ── 3. product performance ──────────────────────────────────────────────────
-/**
- * One row per catalogue product, sold or not — `productPerformance`'s own
- * contract, which is why the RPC left-joins the shelf rather than the sales.
- *
- * Profit and margin are derived here from the returned revenue and cost, with
- * the same `share()` the browser path uses.
- */
-export async function fetchProductPerformance(
-  range: DateRange,
-): Promise<AggregateResult<ProductPerformanceRow[]>> {
-  return callRpcRows("reports_product_performance", boundsOf(range), (rows) =>
-    rows.map((r) => {
-      const revenue = n(r.revenue);
-      const cost = n(r.cost);
-      const profit = roundMoney(revenue - cost);
-      return {
-        productId: str(r.productId),
-        sku: str(r.sku),
-        nameEn: str(r.nameEn),
-        nameAr: str(r.nameAr),
-        sold: bool(r.sold),
-        invoices: n(r.invoices),
-        units: n(r.units),
-        revenue,
-        sellingPrice: n(r.sellingPrice),
-        cost,
-        profit,
-        margin: share(profit, revenue),
-        stock: n(r.stock),
-        stockValue: n(r.stockValue),
-      } satisfies ProductPerformanceRow;
-    }),
-  );
-}
-
-// ── 4. the shelf, valued ────────────────────────────────────────────────────
-/** A snapshot of now — `stockValueTotals` has no window, and neither does this. */
-export async function fetchInventorySummary(): Promise<AggregateResult<StockValueTotals>> {
-  return callRpc("reports_inventory_summary", {}, (raw) => ({
-    products: n(raw.products),
-    tracked: n(raw.tracked),
-    units: n(raw.units),
-    atCost: n(raw.atCost),
-    atRetail: n(raw.atRetail),
-    potentialMargin: n(raw.potentialMargin),
-    lowStock: n(raw.lowStock),
-    outOfStock: n(raw.outOfStock),
-  }));
-}
-
-// ── 5. expenses ─────────────────────────────────────────────────────────────
-/** The headline expense of the window: its identity, not the whole expense book. */
-export interface LargestExpense {
-  id: string;
-  expenseNumber: string;
-  name: string;
-  amount: number;
-  category: string;
-  method: string;
-  spentAt: string;
-}
-
-export interface ExpenseAggregate {
-  count: number;
-  total: number;
-  cash: number;
-  instapay: number;
-  visa: number;
-  activeDays: number;
-  /** Total ÷ active days: what a working day costs the shop. */
-  avgPerActiveDay: number;
-  byCategory: ExpenseBreakdownRow[];
-  byMethod: ExpenseBreakdownRow[];
-  byEmployee: ExpenseBreakdownRow[];
-  byBranch: ExpenseBreakdownRow[];
-  byDay: ExpenseDayRow[];
-  largest: LargestExpense | null;
-}
-
-/**
- * The expense report's aggregates, filtered on `spent_at` as the screen filters.
- *
- * `share` and `avg` are derived per row from the returned count and total, and
- * `avgPerActiveDay` from the returned total and active days — the same three
- * divisions `buildExpenseReport` performs.
- */
-export async function fetchExpenseSummary(range: DateRange): Promise<AggregateResult<ExpenseAggregate>> {
-  return callRpc(
-    "reports_expense_summary",
-    { ...boundsOf(range), p_timezone: clientTimeZone() },
-    (raw) => {
-      const total = n(raw.total);
-      const activeDays = n(raw.activeDays);
-
-      const breakdown = (value: unknown): ExpenseBreakdownRow[] =>
-        list(value).map((r) => {
-          const rowTotal = n(r.total);
-          const count = n(r.count);
-          return {
-            key: str(r.key),
-            label: str(r.label),
-            count,
-            total: rowTotal,
-            cash: n(r.cash),
-            instapay: n(r.instapay),
-            visa: n(r.visa),
-            share: share(rowTotal, total),
-            avg: count > 0 ? roundMoney(rowTotal / count) : 0,
-          };
-        });
-
-      const largestRaw = record(raw.largest);
-      return {
-        count: n(raw.count),
-        total,
-        cash: n(raw.cash),
-        instapay: n(raw.instapay),
-        visa: n(raw.visa),
-        activeDays,
-        avgPerActiveDay: activeDays > 0 ? roundMoney(total / activeDays) : 0,
-        byCategory: breakdown(raw.byCategory),
-        byMethod: breakdown(raw.byMethod),
-        byEmployee: breakdown(raw.byEmployee),
-        byBranch: breakdown(raw.byBranch),
-        byDay: list(raw.byDay).map((d) => ({
-          date: str(d.date),
-          count: n(d.count),
-          total: n(d.total),
-          largest: n(d.largest),
-          largestName: str(d.largestName),
-        })),
-        largest: largestRaw
-          ? {
-              id: str(largestRaw.id),
-              expenseNumber: str(largestRaw.expenseNumber),
-              name: str(largestRaw.name),
-              amount: n(largestRaw.amount),
-              category: str(largestRaw.category),
-              method: str(largestRaw.method),
-              spentAt: str(largestRaw.spentAt),
-            }
-          : null,
-      };
-    },
-  );
 }

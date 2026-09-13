@@ -39,9 +39,6 @@ export type BackupKind = "manual" | "automatic" | "pre_restore";
 export const BACKUP_FORMAT = "alyq-backup" as const;
 export const BACKUP_SCHEMA_VERSION = 1;
 
-/** Business + identity stores a demo backup carries. Session state is not data. */
-export type DemoStoreKey = string;
-
 export interface BackupPayload {
   /** Live mode: table name → rows, in foreign-key dependency order. */
   tables?: Record<string, unknown[]>;
@@ -124,17 +121,6 @@ export interface RestoreOutcome {
   pre_restore_backup_id: string | null;
   origin: "stored" | "uploaded";
 }
-
-/** What a restore refused to do, in a code the UI can translate. */
-export type RestoreErrorCode =
-  | "not_found"
-  | "bad_format"
-  | "bad_version"
-  | "mode_mismatch"
-  | "checksum_mismatch"
-  | "incomplete"
-  | "forbidden"
-  | "failed";
 
 // ── data health ──────────────────────────────────────────────────────────────
 
