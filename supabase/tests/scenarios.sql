@@ -1849,6 +1849,72 @@ begin
   raise notice 'catalogue authority — a viewer writes nothing, the till tier writes what it could before, a denial stops a price, and no session owns a counter';
 end
 $$;
+-- ── Phase 31: the shape of the policy set, and the category gate ──────────
+-- 0030 gated the catalogue writes and 0031 removes the one policy that stayed
+-- open beside them. The failure mode is not visible from any single statement:
+-- row level security ORs the policies for a command, so `with check (true)`
+-- sitting next to a capability gate silently defeats it, and every gated
+-- statement in this file still passes while the ungated path is wide open.
+--
+-- So both halves are asserted here — the attack a viewer could actually make,
+-- and the shape of pg_policies that would let a future migration reintroduce
+-- it. The second is the one that earns its keep: it fails on ANY table, for ANY
+-- command, the day someone creates an open write policy again, which is how the
+-- category one survived thirty migrations.
+do $$
+declare
+  v_viewer   uuid := '00000000-0000-4000-8000-0000000000e1';
+  v_cashier  uuid := '00000000-0000-4000-8000-0000000000c1';
+  v_new_cat  uuid := '00000000-0000-4000-8000-000000000f31';
+  v_till_cat uuid := '00000000-0000-4000-8000-000000000f32';
+  v_open     text;
+  v_rows     integer;
+begin
+  -- ── no public table may carry an ungated write policy ────────────────────
+  -- `qual` guards UPDATE/DELETE visibility, `with_check` guards INSERT/UPDATE
+  -- rows; either one reading literally TRUE means the command is open to every
+  -- signed-in identity regardless of capability.
+  select string_agg(tablename || '.' || policyname || ' [' || cmd || ']', ', '
+                    order by tablename, policyname)
+    into v_open
+    from pg_policies
+   where schemaname = 'public'
+     and cmd in ('INSERT', 'UPDATE', 'DELETE', 'ALL')
+     and (coalesce(qual, '') = 'true' or coalesce(with_check, '') = 'true');
+  if v_open is not null then
+    raise exception 'an ungated write policy is live: %', v_open;
+  end if;
+
+  -- ── a viewer cannot add a shelf ──────────────────────────────────────────
+  perform pg_temp.become(v_viewer);
+  begin
+    insert into public.categories (id, name_ar, name_en)
+    values (v_new_cat, 'رف', 'Viewer Shelf');
+    raise exception 'RLS let a viewer add a category';
+  exception when insufficient_privilege then
+    null;
+  end;
+  select count(*) into v_rows from public.categories where id = v_new_cat;
+  if v_rows <> 0 then
+    raise exception 'the viewer''s category landed (% row(s))', v_rows;
+  end if;
+
+  -- ── the till tier still can, or the gate is a lockout ────────────────────
+  -- A cashier holds add_product, so refusing this would mean the fix narrowed
+  -- the catalogue instead of securing it.
+  perform pg_temp.become(v_cashier);
+  insert into public.categories (id, name_ar, name_en)
+  values (v_till_cat, 'رف', 'Cashier Shelf');
+  select count(*) into v_rows from public.categories where id = v_till_cat;
+  if v_rows <> 1 then
+    raise exception 'a cashier lost the right to add a category';
+  end if;
+  delete from public.categories where id = v_till_cat;
+
+  raise notice 'policy set — no ungated write policy on any table, a viewer cannot add a category, the till tier still can';
+end
+$$;
+
 -- ── leave no session claim behind ─────────────────────────────────────────
 do $$
 begin

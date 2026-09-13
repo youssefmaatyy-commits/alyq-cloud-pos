@@ -9,9 +9,18 @@
 
 Every Critical and High finding from the audit is fixed and verified. The two
 Medium findings that were code-level (Excel upload limits, CI/CD hygiene) are
-fixed too, along with the dead-code and test-harness items. **The work is
-committed but not pushed** — GitHub authentication in this workspace has expired
-(§12).
+fixed too, along with the dead-code and test-harness items. **Pushed** to
+`origin/arena/01a09298-alyq-cloud-pos` (§12).
+
+> **Correction, added by the verification pass (§14).** This verdict was written
+> before the fixes were independently re-tested, and it was wrong in one place:
+> **H1 was not fully closed.** A stale `with check (true)` insert policy from
+> migration 0003 survived beside the new gated one on `categories`, and because
+> row level security ORs the policies for a command, a viewer — who holds no
+> write capability at all — could still insert a category with a forged request.
+> The scenario suite passed with the hole open, because it tested the category
+> UPDATE and DELETE paths but never the INSERT. Fixed in `0031`, with a
+> schema-wide guard that now fails on any open write policy on any table (§14).
 
 Nothing in the POS, inventory, order lifecycle, permission architecture, or
 storefront design was changed. No new business feature was added.
@@ -42,8 +51,9 @@ storefront design was changed. No new business feature was added.
 
 ## 4. Migrations
 
-**30 migrations**, `0030_live_mode_hardening.sql` (410 lines) is new. Verified by
-`npm run db:check`: all 30 apply cleanly, **are idempotent** (re-applied in the
+**31 migrations**, `0030_live_mode_hardening.sql` (410 lines) and
+`0031_category_insert_gate.sql` are new. Verified by `npm run db:check`: all 31
+apply cleanly, **are idempotent** (re-applied in the
 same run), and satisfy the application contract — 28 tables exist with RLS
 enabled, 32 RPCs exist and are executable by `authenticated`, every repository
 row interface matches its table, `role_capabilities` matches the app's matrix
@@ -119,22 +129,143 @@ escalation, write gates, bounded reports"*. The message documents each finding
 and the reasoning behind the non-obvious decisions (why the cap is declared once,
 why local-day bounds, why a failed ranged read falls back instead of blanking).
 
-## 12. Push status — ⚠️ BLOCKED
+## 12. Push status — ✅ PUSHED
+
+`0cce7af` (the fixes) and `83b8fb8` (this report) were committed while the
+workspace's GitHub credential was expired, so they sat local-only. The credential
+is valid again and both were pushed:
 
 ```
-fatal: could not read Username for 'https://github.com': terminal prompts disabled
-gh auth status → X github.com: authentication failed
-                 The github.com token in GH_TOKEN is no longer valid.
+c1f9b86..83b8fb8  arena/01a09298-alyq-cloud-pos -> arena/01a09298-alyq-cloud-pos
 ```
 
-The GitHub credential available in this workspace has expired, so **the commit
-exists locally only**. Nothing was force-pushed, no remote was rewritten, and no
-credentials were requested or stored. **Reconnect GitHub in Arena and the push is
-a single command:** `git push -u origin arena/01a09298-alyq-cloud-pos`.
+`0031` and the policy-set scenario (§14) were pushed in the same session. Nothing
+was force-pushed, no remote was rewritten, and no credentials were requested or
+stored.
 
 ## 13. Working tree status
 
-**Clean.** `git status` reports nothing to commit: all 134 file changes are in
-`0cce7af`. The branch has no upstream configured yet (that happens with the
-blocked push). `dist/` remains gitignored, so the verification build did not
-pollute the tree.
+**Clean.** All 134 file changes of the first pass are in `0cce7af`; the
+verification pass adds two files (§14) and nothing else. `dist/` remains
+gitignored, so the re-run build did not pollute the tree. Temporary probe scripts
+were deleted after use — no `scripts/tmp-*` remains.
+
+---
+
+## 14. Verification pass — what was re-tested, and the one hole it found
+
+Everything above was re-verified from scratch rather than taken on trust, using a
+49-check probe written from the audit findings instead of from the fixes: each
+attack the audit proved possible is re-attempted, and each legitimate write is
+re-allowed, so an over-tight policy fails the probe rather than failing in
+production. **49/49 pass** after the fix below — 48/49 before it.
+
+### 14.1 The finding: an open policy beside a gated one
+
+| | |
+|---|---|
+| Table | `public.categories` |
+| Policies in force | `categories_insert_authenticated` (0030, `with check (public.can('add_product'))`) **and** `categories_write_authenticated` (0003, `with check (true)`) |
+| Why it mattered | RLS ORs the policies applying to a command, so one open policy defeats every gated policy beside it — any signed-in identity could insert a category. |
+| Who could do it | A viewer. The seeded viewer holds *no* write capability: `add_product`, `edit_product`, `delete_product`, `change_price`, `change_cost` and `adjust_stock` all resolve false. |
+| Why nothing caught it | The scenario suite asserted the category UPDATE and DELETE paths, never INSERT. 0030 dropped the policy name it knew — a name that did not exist until 0030 created it — and never looked for a differently-named one. |
+| Why the UI hid it | `catalogService.ts` requires `add_product` before offering the button and `actions.ts` already declares the rule as "RLS insert on categories — add_product". The policy set simply disagreed with the rule the application documented. |
+
+**Fix — `0031_category_insert_gate.sql`:** drops `categories_write_authenticated`
+and restates the gated policy, so the migration states its own end condition and
+re-applies cleanly. Nothing else writes categories: the only other inserts are
+the migration seed and the test fixture, both running as the table owner, and no
+security-invoker function touches the table.
+
+### 14.2 The guard that keeps this class of bug dead
+
+`scenarios.sql` now asserts the *shape of the policy set* rather than the outcome
+of one statement: it fails if **any** public table carries an INSERT / UPDATE /
+DELETE / ALL policy whose `qual` or `with_check` is literally `true`. Proven to
+bite — reintroducing the 0003 policy fails the check, and so does an open UPDATE
+on `sales`; removing either passes. `npm run db:check` runs in CI (twice), so the
+guard gates every push and pull request.
+
+That is how the hole survived thirty migrations: a per-table test can only catch
+the attack somebody thought to write. The sweep catches the ones nobody wrote.
+
+### 14.3 What the probe confirmed, by finding
+
+**C1 (9 checks)** — anon browses 3/3 website-visible products and 6 categories
+through the definer RPCs; the 20 returned columns include no `cost_price`, no
+`low_stock_level`, no `created_by`/`updated_by`; anon still reads 0 rows from
+`products` and `customers` directly and cannot call the till RPC; staff still
+read `products` directly.
+
+**C2 (9 checks)** — signups declaring `admin`, `owner`, `superadmin`, `manager`,
+nothing at all, and a quote-injection string each land `viewer` + inactive; a
+real admin can still promote and activate; a cashier cannot promote anybody; a
+viewer cannot self-promote.
+
+**H1 (18 checks)** — a viewer is refused on price, cost, product insert,
+**category insert**, stock-movement insert, counter rewrite and product delete;
+anon is refused on the counter. Every legitimate write still works: all four
+roles that hold `change_price` in the shipped matrix (admin, manager, cashier,
+inventory_clerk) can reprice, admin can move a cost, manager can add a product,
+cashier can add a category, and a clerk can record a movement and adjust stock.
+
+The price trigger bites an *overlay* rather than the base matrix, so it was
+tested that way: denying `change_price` for one cashier via
+`admin_set_user_exceptions` stops that cashier moving a price ("Changing a
+selling price requires the change_price capability") while leaving every other
+edit intact, and clearing the denial restores the right.
+
+**Regression (3 checks)** — a cashier still completes a sale end to end through
+`pos_complete_sale`, stock decrements 10 → 8 through the definer path with the
+new BEFORE UPDATE trigger installed, and the storefront still serves anon
+afterwards.
+
+**Quality (6 checks)** — `updated_at` advances at millisecond precision on write
+(22 tables carry the trigger), `profiles.custom_role_id` is indexed, 0030 and
+0031 both re-apply cleanly, and no ungated write policy remains anywhere.
+
+### 14.4 Four probe failures that were the probe's fault
+
+Recorded because each is a fact about the system that is easy to get wrong:
+
+* **"a viewer deleted a product"** — it did not. A refused DELETE affects 0 rows
+  and raises nothing, so the probe's own detail label was misleading; the row
+  count is the assertion.
+* **"a clerk moved a price"** — `inventory_clerk` *holds* `change_price` in the
+  shipped matrix, so allowing it is correct. Expectations are now read from
+  `role_capabilities` instead of assumed.
+* **"the till refused a sale"** — the payload key is `lines`; `items` is not read
+  by the current definition. Every seeded product also ships with
+  `stock_quantity = 0`, so a sale needs a stocked shelf first.
+* **"`updated_at` did not move"** — it moved by 14 ms; the probe compared
+  second-precision `Date` strings.
+
+### 14.5 Gates re-run
+
+| Check | Result |
+|---|---|
+| `npm run typecheck` | ✅ 0 errors |
+| `npm run lint` | ✅ 0 errors, 23 warnings |
+| `npm test` | ✅ exit 0 — 27/27 suites |
+| `npm run db:check` | ✅ 31 migrations, idempotent, all scenarios and contract checks green, including the new policy-set guard |
+| `npm run build` | ✅ 6.69 s — `dist/index.html` 2,446.71 kB (gzip 656.23 kB) |
+| `npm run test:e2e` | ✅ 4/4 suites, 0 console errors, 0 network calls |
+| Independent security probe | ✅ 49/49 |
+
+The E2E flake noted in §10.3 did not recur.
+
+`xlsx` was re-checked against the registry rather than assumed: **npm's latest is
+0.18.5**, the version already pinned, so §10.2 stands — the maintained releases
+ship only from the SheetJS CDN and the size / shape / row guards remain the
+mitigation.
+
+### 14.6 Remaining limitation, unchanged
+
+§10.1 is still the main open item. Report reads are bounded, date-filtered in
+SQL, paged, counted, and honest about truncation — `listSales` and `countSales`
+over one window, with a coverage line in English and Arabic whenever `total`
+exceeds what was shown — but the aggregation is still client-side, so a period
+wider than the 1,000-row cap displays its most recent 1,000 sales and says so.
+Closing it properly means a database-side aggregation RPC computing totals in
+SQL, which is a change to the reports data path that this phase's "no
+architecture churn" constraint excluded.
