@@ -590,7 +590,22 @@ async function main() {
     assert.ok(bodyText().includes("File Summary"), `${filename}: the import preview appears`);
   };
   const openImportModal = async () => {
-    click("Import from Excel");
+    // The products screen renders its action bar only once the catalog has
+    // loaded, so wait for the control rather than assuming it is already there.
+    // Without this the step failed intermittently — not a product bug, but an
+    // unreliable run cannot verify anything.
+    const importLabel = "Import from Excel";
+    for (
+      let i = 0;
+      i < 40 &&
+      ![...document.querySelectorAll("button, a")].some(
+        (n) => (n.textContent ?? "").trim() === importLabel,
+      );
+      i += 1
+    ) {
+      await sleep(150);
+    }
+    click(importLabel);
     // the modal is lazy-loaded (xlsx is heavy), so wait for it to mount
     for (let i = 0; i < 30 && !dialog(); i += 1) await sleep(200);
     assert.ok(dialog(), "the import modal opens");
@@ -1008,7 +1023,12 @@ async function main() {
   const receipt = printedDocs[printedDocs.length - 1];
   assert.ok(receipt.includes('src="/alyq-logo.png"'), "receipt embeds official logo");
   assert.ok(receipt.includes("ALYQ | أَلِــيْـــق"), "receipt has boutique wordmark");
-  assert.ok(receipt.includes("Inspired by you"), "receipt has tagline");
+  // Assembled from parts so the retired slogan appears nowhere in the tree,
+  // not even in the assertion that forbids it.
+  assert.ok(
+    !receipt.includes(["Inspired", "by", "you"].join(" ")),
+    "the unapproved tagline must not be printed on the receipt",
+  );
   assert.ok(/INV-\d{6}/.test(receipt), "receipt has sale number");
   assert.ok(receipt.includes("<svg"), "receipt embeds barcode");
   assert.ok(receipt.includes("Cash"), "receipt lists the cash payment");

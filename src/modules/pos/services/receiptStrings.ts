@@ -15,7 +15,6 @@ type Translate = (key: TranslationKey, vars?: Record<string, string | number>) =
 export function salesReceiptStrings(t: Translate): ReceiptStrings {
   return {
     businessName: t("receipt.businessName"),
-    businessTagline: t("receipt.businessTagline"),
     saleLabel: t("receipt.saleLabel"),
     dateLabel: t("receipt.dateLabel"),
     cashierLabel: t("receipt.cashierLabel"),
@@ -45,7 +44,6 @@ export function returnReceiptStrings(
 ): ReturnReceiptStrings {
   return {
     businessName: t("receipt.businessName"),
-    businessTagline: t("receipt.businessTagline"),
     returnTitle: t("receipt.returnTitle"),
     returnLabel: t("receipt.returnLabel"),
     dateLabel: t("receipt.dateLabel"),

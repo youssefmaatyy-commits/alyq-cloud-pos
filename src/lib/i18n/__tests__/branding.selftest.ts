@@ -63,6 +63,10 @@ const BRAND_AR = cp(
 /** The official Latin wordmark. Always upper case, always these four letters. */
 const BRAND_EN = "ALYQ";
 
+/** What the business is. Plain letters, so it is safe to write literally. */
+const BUSINESS_AR = "إكسسوارات حريمي";
+const BUSINESS_EN = "Women's Accessories Store";
+
 /**
  * Spellings that have shipped by mistake and must not ship again. Each is
  * described, because "this one is wrong" is not actionable at 2am.
@@ -84,6 +88,11 @@ const FORBIDDEN: ReadonlyArray<readonly [string, string]> = [
   [[B1, lc(B2), lc(B3), lc(B4)].join(""), "Latin in mixed case"],
   [[B1, lc(B2), lc(B3), B4].join(""), "Latin in mixed case"],
   [[B1, B2, lc(B3), lc(B4)].join(""), "Latin in mixed case"],
+  [["Inspired", "by", "you"].join(" "), "the unapproved receipt tagline — removed, and nothing invented to replace it"],
+  [[BRAND_EN, "Store"].join(" "), "the retired shop name, which prefixed the wordmark"],
+  [[cp(0x0645, 0x062a, 0x062c, 0x0631), BRAND_AR].join(" "), "the retired Arabic shop name, which prefixed the wordmark"],
+  [["Speciality", "coffee"].join(" "), "the retired coffee-shop tagline"],
+  [["Retail", "operations", "suite"].join(" "), "the retired application tagline"],
 ];
 
 /** Every text file that can reach a screen, a receipt or a search result. */
@@ -145,10 +154,10 @@ test("a fresh installation names the shop with the official wordmark", () => {
     const settings = resolveSettings(stored);
     assert.equal(
       settings.contact.store_name_ar,
-      `متجر ${BRAND_AR}`,
+      BRAND_AR,
       `resolveSettings(${JSON.stringify(stored) ?? String(stored)})`,
     );
-    assert.equal(settings.contact.store_name_en, `${BRAND_EN} Store`);
+    assert.equal(settings.contact.store_name_en, BRAND_EN);
   }
 });
 
@@ -158,7 +167,51 @@ test("the shop name stays configurable — the brand is a default, not a hardcod
   const settings = resolveSettings({ contact: { store_name_ar: "متجر القاهرة" } });
   assert.equal(settings.contact.store_name_ar, "متجر القاهرة");
   // And a partial override leaves the other language on the official default.
-  assert.equal(settings.contact.store_name_en, `${BRAND_EN} Store`);
+  assert.equal(settings.contact.store_name_en, BRAND_EN);
+});
+
+test("the business type is stated in both languages, in the app and in the shop", () => {
+  // The identity is the wordmark plus what the shop sells: أَلِــيْـــق /
+  // إكسسوارات حريمي and ALYQ / Women's Accessories Store.
+  assert.equal(en["app.tagline"], BUSINESS_EN);
+  assert.equal(ar["app.tagline"], BUSINESS_AR);
+  for (const stored of [{}, null]) {
+    const settings = resolveSettings(stored);
+    assert.equal(settings.contact.tagline_en, BUSINESS_EN);
+    assert.equal(settings.contact.tagline_ar, BUSINESS_AR);
+  }
+});
+
+test("the shop hero carries the identity and no invented slogan", () => {
+  const settings = resolveSettings({});
+  const hero = settings.images.hero_slides[0];
+  assert.ok(hero, "a fresh install has no hero slide");
+  // Only the approved identity appears: the brand as the title, the business
+  // type as the subtitle. Nothing was written to fill the space.
+  assert.equal(hero.title_en, BRAND_EN);
+  assert.equal(hero.title_ar, BRAND_AR);
+  assert.equal(hero.subtitle_en, BUSINESS_EN);
+  assert.equal(hero.subtitle_ar, BUSINESS_AR);
+});
+
+test("the unapproved receipt tagline is gone, not replaced", () => {
+  // Removing the key from both dictionaries is what retires it: an empty value
+  // would fail the invariant that no translation may be blank, and a substitute
+  // would be a slogan nobody approved.
+  assert.equal("receipt.businessTagline" in en, false, "the English dictionary still carries the tagline key");
+  assert.equal("receipt.businessTagline" in ar, false, "the Arabic dictionary still carries the tagline key");
+  // The receipt still renders the wordmark, and renders a tagline if a merchant
+  // ever supplies one — the field is optional rather than deleted.
+  const receipt = read("src/modules/pos/services/receipt.ts");
+  assert.ok(receipt.includes("businessTagline?: string"), "the tagline field should stay optional");
+  assert.ok(
+    receipt.includes("businessTagline?.trim()"),
+    "the receipt must render the tagline only when one exists",
+  );
+  assert.ok(
+    !read("src/modules/pos/services/receiptStrings.ts").includes("businessTagline"),
+    "the receipt no longer sources a tagline from the dictionary",
+  );
 });
 
 test("the storefront surfaces actually read the name that was corrected", () => {
@@ -178,14 +231,27 @@ test("the storefront surfaces actually read the name that was corrected", () => 
   }
 });
 
-test("the static document title and meta description carry the Latin brand", () => {
+test("the static document title and meta description carry the identity", () => {
   // index.html is what a crawler and a browser tab see before React runs.
   const html = read("index.html");
-  assert.ok(html.includes(`<title>${BRAND_EN} Cloud POS`), "index.html title lost the brand");
   assert.ok(
-    html.includes(`content="${BRAND_EN} Cloud POS`),
-    "index.html meta description lost the brand",
+    html.includes(`<title>${BRAND_EN} | ${BUSINESS_EN}</title>`),
+    "index.html title must be the brand and the business type",
   );
+  const meta = /name="description"\s+content="([^"]*)"/.exec(html.replace(/\s+/g, " "))
+    ?? /content="([^"]*)"\s+name="description"/.exec(html.replace(/\s+/g, " "));
+  assert.ok(meta, "index.html has no meta description");
+  assert.ok(meta[1].includes(BRAND_EN), "the meta description lost the Latin brand");
+  assert.ok(meta[1].includes(BUSINESS_EN), "the meta description lost the business type");
+  assert.ok(meta[1].includes(BUSINESS_AR), "the meta description lost the Arabic business type");
+});
+
+test("the SEO defaults lead with the approved identity", () => {
+  const settings = resolveSettings({});
+  assert.equal(settings.seo.meta_title, `${BRAND_EN} | ${BUSINESS_EN}`);
+  assert.ok(settings.seo.meta_description.includes(BRAND_EN), "meta description lost the brand");
+  assert.ok(settings.seo.meta_description.includes(BUSINESS_AR), "meta description lost the Arabic business type");
+  assert.ok(!settings.seo.keywords.includes("coffee"), "the retired coffee keywords are still there");
 });
 
 // ── nothing wrong anywhere ──────────────────────────────────────────────────

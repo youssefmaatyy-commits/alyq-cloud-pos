@@ -21,17 +21,17 @@ import type {
 import { HOMEPAGE_SECTIONS } from "../types";
 
 /** The shop's name before the admin sets one. Both languages, like everything. */
-const DEFAULT_STORE_NAME_AR = "متجر أَلِــيْـــق";
-const DEFAULT_STORE_NAME_EN = "ALYQ Store";
+const DEFAULT_STORE_NAME_AR = "أَلِــيْـــق";
+const DEFAULT_STORE_NAME_EN = "ALYQ";
 
 export const DEFAULT_HERO_SLIDES: HeroSlide[] = [
   {
     id: "hero-1",
     image_url: null,
-    title_ar: "قهوة طازجة كل يوم",
-    title_en: "Fresh coffee, every day",
-    subtitle_ar: "اطلب أونلاين واستلم من الفرع أو نوصلك لحد الباب",
-    subtitle_en: "Order online and collect in store, or we deliver to your door",
+    title_ar: "أَلِــيْـــق",
+    title_en: "ALYQ",
+    subtitle_ar: "إكسسوارات حريمي",
+    subtitle_en: "Women's Accessories Store",
     cta_label_ar: "تسوق الآن",
     cta_label_en: "Shop now",
     cta_href: "#/store/products",
@@ -83,8 +83,8 @@ export const DEFAULT_WEBSITE_SETTINGS: WebsiteSettings = {
   contact: {
     store_name_ar: DEFAULT_STORE_NAME_AR,
     store_name_en: DEFAULT_STORE_NAME_EN,
-    tagline_ar: "قهوة ومشروبات طازجة",
-    tagline_en: "Speciality coffee & fresh drinks",
+    tagline_ar: "إكسسوارات حريمي",
+    tagline_en: "Women's Accessories Store",
     phone: "01000000000",
     email: "hello@alyq.example",
     address_ar: "شارع السلطان حسين، الإسماعيلية، مصر",
@@ -153,10 +153,10 @@ export const DEFAULT_WEBSITE_SETTINGS: WebsiteSettings = {
     instapay_enabled: true,
   },
   seo: {
-    meta_title: "ALYQ Store — Speciality coffee & fresh drinks",
+    meta_title: "ALYQ | Women's Accessories Store",
     meta_description:
-      "Order ALYQ coffee and drinks online. Delivery across Ismailia or collect from the branch. Pay with InstaPay or cash on delivery.",
-    keywords: "coffee, ismailia, online order, instapay, delivery",
+      "ALYQ | Women's Accessories Store — إكسسوارات حريمي. Order online with delivery across Ismailia, or collect from the branch. Pay with InstaPay or cash on delivery.",
+    keywords: "alyq, أَلِــيْـــق, women's accessories, إكسسوارات حريمي, ismailia, online order, instapay, delivery",
     og_image_url: null,
   },
   announcement: {

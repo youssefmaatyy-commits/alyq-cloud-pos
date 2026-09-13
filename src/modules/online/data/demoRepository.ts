@@ -197,7 +197,7 @@ function seedContent(products: readonly Product[]) {
         brand_ar: brand.ar,
         brand_en: brand.en,
         slug: slugifyAscii(name, product.sku) || null,
-        seo_title: `${name} | ALYQ Store`,
+        seo_title: `${name} | ALYQ`,
         seo_description:
           product.description_en?.trim() ||
           product.description_ar?.trim() ||

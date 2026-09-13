@@ -128,7 +128,7 @@ export function titleForProduct(input: {
 }): string {
   const base = String(input.seoTitle ?? "").trim() || String(input.name ?? "").trim();
   const store = String(input.storeName ?? "").trim();
-  if (!base) return store || "ALYQ Store";
+  if (!base) return store || "ALYQ";
   if (!store || base.includes(store)) return base;
   return `${base} | ${store}`;
 }
@@ -232,7 +232,7 @@ export function productJsonLd(input: ProductSchemaInput): Record<string, unknown
 /** `schema.org/Store` JSON-LD for the homepage — what makes the shop itself findable. */
 export function storeJsonLd(settings: WebsiteSettings, baseUrl: string): Record<string, unknown> {
   const name =
-    settings.contact.store_name_en.trim() || settings.contact.store_name_ar.trim() || "ALYQ Store";
+    settings.contact.store_name_en.trim() || settings.contact.store_name_ar.trim() || "ALYQ";
   const schema: Record<string, unknown> = {
     "@context": "https://schema.org",
     "@type": "Store",

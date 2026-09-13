@@ -6,7 +6,7 @@
 export const en = {
   // ── App shell ────────────────────────────────────────────────────────────
   "app.name": "ALYQ Cloud POS",
-  "app.tagline": "Retail operations suite",
+  "app.tagline": "Women's Accessories Store",
   "auth.login.title": "Sign in",
   "auth.login.subtitle": "Enter your account to open the register.",
   "auth.username": "Username",
@@ -310,7 +310,6 @@ export const en = {
   "pos.paidAtLabel": "Confirmed at",
   "pos.paymentAwaiting": "Awaiting InstaPay confirmation",
   "receipt.businessName": "ALYQ | أَلِــيْـــق",
-  "receipt.businessTagline": "Inspired by you",
   "receipt.saleLabel": "Sale #",
   "receipt.dateLabel": "Date",
   "receipt.cashierLabel": "Cashier",
@@ -2920,7 +2919,7 @@ export type TranslationKey = keyof typeof en;
 export const ar: Record<TranslationKey, string> = {
   // ── App shell ────────────────────────────────────────────────────────────
   "app.name": "أَلِــيْـــق كلاود POS",
-  "app.tagline": "منظومة إدارة التجزئة",
+  "app.tagline": "إكسسوارات حريمي",
   "auth.login.title": "تسجيل الدخول",
   "auth.login.subtitle": "أدخل بيانات حسابك لفتح نقطة البيع.",
   "auth.username": "اسم المستخدم",
@@ -3220,7 +3219,6 @@ export const ar: Record<TranslationKey, string> = {
   "pos.paidAtLabel": "وقت التأكيد",
   "pos.paymentAwaiting": "بانتظار تأكيد إنستا باي",
   "receipt.businessName": "ALYQ | أَلِــيْـــق",
-  "receipt.businessTagline": "Inspired by you",
   "receipt.saleLabel": "رقم البيع",
   "receipt.dateLabel": "التاريخ",
   "receipt.cashierLabel": "الكاشير",

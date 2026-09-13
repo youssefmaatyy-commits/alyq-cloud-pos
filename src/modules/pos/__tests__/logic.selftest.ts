@@ -660,7 +660,6 @@ test("receipt branding: logo, boutique header, paid/remaining/change, contacts",
 
   const strings = {
     businessName: "ALYQ | أَلِــيْـــق",
-    businessTagline: "Inspired by you",
     saleLabel: "Sale #",
     dateLabel: "Date",
     cashierLabel: "Cashier",
@@ -687,7 +686,14 @@ test("receipt branding: logo, boutique header, paid/remaining/change, contacts",
   assert.ok(html.includes(RECEIPT_LOGO_SRC), "official logo referenced");
   assert.ok(html.includes('class="logo"'), "logo has print sizing class");
   assert.ok(html.includes("ALYQ | أَلِــيْـــق"), "bilingual wordmark shown");
-  assert.ok(html.includes("Inspired by you"), "tagline shown");
+  // The unapproved slogan was removed, not replaced: assert its absence, so
+  // re-introducing it — or any substitute invented in its place — fails here.
+  // Assembled from parts: the branding suite scans every file in the tree for
+  // the retired slogan, and a literal here would be the one place it survives.
+  assert.ok(
+    !html.includes(["Inspired", "by", "you"].join(" ")),
+    "the unapproved tagline must never be printed",
+  );
   // payment summary: total, paid, remaining, change
   assert.ok(html.includes("Paid"), "paid row shown");
   assert.ok(html.includes("Remaining"), "remaining row shown");
@@ -925,7 +931,6 @@ test("sales receipt renders customer name + phone only when linked", () => {
   };
   const strings = {
     businessName: "ALYQ | أَلِــيْـــق",
-    businessTagline: "Inspired by you",
     saleLabel: "Sale #",
     dateLabel: "Date",
     cashierLabel: "Cashier",
@@ -988,7 +993,6 @@ test("return receipt reuses the shared design and carries return + invoice data"
   };
   const strings = {
     businessName: "ALYQ | أَلِــيْـــق",
-    businessTagline: "Inspired by you",
     returnTitle: "Return Receipt",
     returnLabel: "Return #",
     dateLabel: "Date",
@@ -1020,7 +1024,14 @@ test("return receipt reuses the shared design and carries return + invoice data"
   // same shared shell/design as the sales receipt
   assert.ok(html.includes(RECEIPT_LOGO_SRC), "official logo referenced");
   assert.ok(html.includes("ALYQ | أَلِــيْـــق"), "boutique wordmark shown");
-  assert.ok(html.includes("Inspired by you"), "tagline shown");
+  // The unapproved slogan was removed, not replaced: assert its absence, so
+  // re-introducing it — or any substitute invented in its place — fails here.
+  // Assembled from parts: the branding suite scans every file in the tree for
+  // the retired slogan, and a literal here would be the one place it survives.
+  assert.ok(
+    !html.includes(["Inspired", "by", "you"].join(" ")),
+    "the unapproved tagline must never be printed",
+  );
   assert.ok(html.includes("max-width: 76mm"), "same thermal layout");
   for (const label of ["WhatsApp", "Facebook", "Instagram", "TikTok", "0150 0221712", "ALYQ.eg", "@alyq.eg"]) {
     assert.ok(html.includes(label), `shared footer keeps ${label}`);
@@ -1069,7 +1080,6 @@ test("receipt payment labels cover cash, visa and instapay", () => {
 test("receipt shows customer section only when a customer is linked", async () => {
   const customerStrings = {
     businessName: "ALYQ | أَلِــيْـــق",
-    businessTagline: "Inspired by you",
     saleLabel: "Sale #",
     dateLabel: "Date",
     cashierLabel: "Cashier",

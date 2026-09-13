@@ -28,7 +28,7 @@ import { orderedSections, resolvedSlides, sectionImage } from "../../services/se
 export function StorefrontPreview({ settings }: { settings: WebsiteSettings }) {
   const { t, pick } = useI18n();
 
-  const storeName = pick(settings.contact.store_name_ar, settings.contact.store_name_en) || "ALYQ Store";
+  const storeName = pick(settings.contact.store_name_ar, settings.contact.store_name_en) || "ALYQ";
   const tagline = pick(settings.contact.tagline_ar, settings.contact.tagline_en);
   const slides = resolvedSlides(settings, (arabic, english) => pick(arabic, english));
   const slide = slides[0] ?? null;

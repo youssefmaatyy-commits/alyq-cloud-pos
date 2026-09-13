@@ -79,7 +79,8 @@ export function customerInfoIssue(
 
 export interface ReceiptStrings {
   businessName: string;
-  businessTagline: string;
+  /** Rendered under the wordmark only when a merchant sets one. */
+  businessTagline?: string;
   saleLabel: string;
   dateLabel: string;
   cashierLabel: string;
@@ -171,13 +172,21 @@ function receiptCss(rtl: boolean): string {
 </style>`;
 }
 
-/** Shared brand header (logo + wordmark + tagline) used by every receipt. */
+/** Shared brand header (logo + wordmark) used by every receipt. */
 function receiptBrandHeader(strings: Pick<ReceiptStrings, "businessName" | "businessTagline">): string {
   const { businessName, businessTagline } = strings;
+  // The tagline is rendered only when there is one. The unapproved slogan that
+  // used to sit under the wordmark is gone and nothing was invented to replace
+  // it: the brand header carries the official identity and stops there. The
+  // field stays so a merchant who writes their own tagline still gets it
+  // printed, which is a settings decision rather than a branding one.
+  const tag = businessTagline?.trim()
+    ? `
+      <div class="btag">${escapeXml(businessTagline)}</div>`
+    : "";
   return `<div class="brand">
       <img class="logo" src="${RECEIPT_LOGO_SRC}" alt="ALYQ" onerror="this.style.display='none'" />
-      <div class="bname">${escapeXml(businessName)}</div>
-      <div class="btag">${escapeXml(businessTagline)}</div>
+      <div class="bname">${escapeXml(businessName)}</div>${tag}
     </div>`;
 }
 
@@ -318,7 +327,8 @@ export function buildReceiptHtml({ sale, strings, direction }: ReceiptData): str
 
 export interface ReturnReceiptStrings {
   businessName: string;
-  businessTagline: string;
+  /** Rendered under the wordmark only when a merchant sets one. */
+  businessTagline?: string;
   /** "Return Receipt" / "إيصال مرتجع" */
   returnTitle: string;
   /** "Return #" / "رقم المرتجع" */
