@@ -8,12 +8,16 @@
  *   node scripts/test.e2e.mjs auth          # only scripts/auth.flow.mjs
  *   node scripts/test.e2e.mjs store         # only scripts/store.flow.mjs
  *   node scripts/test.e2e.mjs crash         # only scripts/crash.flow.mjs
+ *   node scripts/test.e2e.mjs reports       # only scripts/reports.aggregates.mjs
  *
  * Each suite imports the bundle from `/tmp/alyq-app.mjs`, so the build step here
  * is what the header comments of those files describe by hand. The exception is
  * `crash`, which bundles `scripts/lib/crash-entry.ts` to `/tmp/alyq-crash.mjs`
- * because it needs a component that throws on demand and the app has none. Exit code 1 if a
- * suite fails. Exits 2 without a bundle when esbuild is unavailable.
+ * because it needs a component that throws on demand and the app has none, and
+ * `reports`, which bundles `scripts/lib/reportAggregates-entry.ts` to
+ * `/tmp/alyq-reports.mjs` because it compares the database's aggregates against
+ * the shipped builder functions rather than against a rendered screen.
+ * Exit code 1 if a suite fails. Exits 2 without a bundle when esbuild is unavailable.
  */
 import { spawnSync } from "node:child_process";
 import path from "node:path";
@@ -32,6 +36,11 @@ const SUITES = [
   { id: "store", file: "scripts/store.flow.mjs", title: "Storefront → POS flow (browse, checkout, approve, verify, cancel)" },
   { id: "backup", file: "scripts/backup.flow.mjs", title: "Backup & recovery flow (snapshot, download, health, schedule, restore, permissions)" },
   { id: "crash", file: "scripts/crash.flow.mjs", title: "Crash recovery (ErrorBoundary: the screen, no leaked detail, the sibling survives)" },
+  {
+    id: "reports",
+    file: "scripts/reports.aggregates.mjs",
+    title: "Report aggregates — PostgreSQL vs the shipped builders over 2,500 invoices",
+  },
 ];
 
 const c = {
@@ -50,7 +59,7 @@ try {
 
 const selected = SUITES.filter((s) => FILTERS.length === 0 || FILTERS.includes(s.id));
 if (selected.length === 0) {
-  console.error(c.red(`✗ no suite matched ${FILTERS.join(", ")} (try: smoke, auth, store, backup, crash)`));
+  console.error(c.red(`✗ no suite matched ${FILTERS.join(", ")} (try: smoke, auth, store, backup, crash, reports)`));
   process.exit(1);
 }
 

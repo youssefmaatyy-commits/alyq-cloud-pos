@@ -1064,6 +1064,8 @@ export const en = {
       "Showing the {shown} most recent sales in this period — {total} exist.",
     "reports.salesCoverageHint":
       "Narrow the date range to see the rest. Every total on this page covers the sales shown, not the whole period.",
+  "reports.salesCoverageHintAggregated":
+    "Narrow the date range to list the rest. Every total on this page is added up by the database over the whole period, not over the rows listed here.",
   "reports.financialTitle": "Financial report",
   "reports.financialHint":
     "Revenue, cost of goods sold, profit, payments, refunds, shift summaries and cash movements.",
@@ -3977,6 +3979,8 @@ export const ar: Record<TranslationKey, string> = {
       "يتم عرض أحدث {shown} عملية بيع في هذه الفترة — وإجماليها {total} عملية.",
     "reports.salesCoverageHint":
       "لتظهر باقي العمليات يمكن تضييق نطاق التاريخ. الأرقام في هذه الصفحة تغطي العمليات الظاهرة فقط وليس الفترة كاملة.",
+  "reports.salesCoverageHintAggregated":
+    "لتظهر باقي العمليات يمكن تضييق نطاق التاريخ. كل الأرقام الإجمالية في هذه الصفحة تجمعها قاعدة البيانات عن الفترة كاملة وليس عن العمليات المعروضة هنا.",
   "reports.financialTitle": "التقرير المالي",
   "reports.financialHint":
     "الإيرادات وتكلفة البضاعة المباعة والأرباح والمدفوعات والاستردادات وملخصات الورديات والحركات النقدية.",

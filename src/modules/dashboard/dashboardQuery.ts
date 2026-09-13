@@ -14,6 +14,7 @@
 import {
   computeFinancialTotals,
   type DateRange,
+  type FinancialTotals,
 } from "@/modules/reports/services/financialExport";
 import {
   bestSellers,
@@ -331,6 +332,20 @@ export function computeMonthlyKpis(input: {
     returnsList: input.returnsList,
     refundsList: input.refundsList,
   });
+  return monthlyKpisFromTotals(totals);
+}
+
+/**
+ * The dashboard's monthly tile, from any `FinancialTotals`.
+ *
+ * Split out of `computeMonthlyKpis` so the tile can be fed from either side of
+ * the same agreement: totals this browser summed from the rows it holds, or
+ * totals the database summed over every invoice in the month
+ * (`reports_financial_summary`, via `reportAggregates.ts`). Both are
+ * `FinancialTotals`, so both pass through this one mapping and the tile cannot
+ * drift from the report it summarises whichever way it was filled.
+ */
+export function monthlyKpisFromTotals(totals: FinancialTotals): MonthlyKpis {
   return {
     revenue: totals.revenue,
     invoices: totals.invoiceCount,

@@ -51,8 +51,15 @@ import {
   type DateRange,
 } from "./financialExport";
 
-/** Share of a whole, in percent, with the empty case answered as 0. */
-function share(part: number, whole: number): number {
+/**
+ * Share of a whole, in percent, with the empty case answered as 0.
+ *
+ * Exported for `reportAggregates.ts`: the database returns the additive parts
+ * (an employee's revenue, the range's revenue) and the percentage is derived
+ * here, in the one place that has always defined it. A second definition of
+ * `share` in the database would be a second answer to the same question.
+ */
+export function share(part: number, whole: number): number {
   if (!(whole > 0)) return 0;
   return roundMoney((part / whole) * 100);
 }

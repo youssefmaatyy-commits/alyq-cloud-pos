@@ -1915,6 +1915,203 @@ begin
 end
 $$;
 
+-- ── Phase 22.1: the report aggregates, and who may read them ────────────────
+-- 0032 moved the reports' arithmetic into five RPCs. Two things are asserted
+-- here that the differential suite in scripts/reports.aggregates.mjs cannot:
+--
+--   1. the gate is `public.can('view_reports')` and nothing weaker — including
+--      the case that matters most, an ADMIN narrowed by a custom role. can()
+--      lets an active custom role decide absolutely, so a role without
+--      view_reports must refuse even though the system role underneath is
+--      admin. A gate that read `profiles.role` instead would pass this file and
+--      leak every report to a narrowed user.
+--   2. the payload is a fixed set of keys. A report that starts returning a
+--      column nobody asked for — a customer's phone, an employee's contact, a
+--      cost the screen never shows — fails no arithmetic test anywhere, because
+--      every number it returns is still correct. Only a shape assertion catches
+--      it, and it catches it the day it is added.
+--
+-- What is NOT asserted here is the values: that the database and the shipped
+-- TypeScript builders return the same numbers over 2,500 invoices is the
+-- differential suite's job, and it is a much better place for it.
+create or replace function pg_temp.report_shape(p jsonb, allowed text[])
+returns text
+language sql
+as $$
+  -- "unexpected|missing": both halves empty means the payload is exactly the
+  -- promised shape. Order is irrelevant, so neither list is sorted against the
+  -- other — a collation difference must not be able to fail this.
+  select coalesce((select string_agg(k, ', ' order by k)
+                     from jsonb_object_keys(p) k
+                    where not (k = any(allowed))), '')
+      || '|'
+      || coalesce((select string_agg(a, ', ' order by a)
+                     from unnest(allowed) a
+                    where not (p ? a)), '')
+$$;
+
+do $$
+declare
+  v_admin    uuid := '00000000-0000-4000-8000-0000000000a1';
+  v_viewer   uuid := '00000000-0000-4000-8000-0000000000e1';
+  v_cashier  uuid := '00000000-0000-4000-8000-0000000000c1';
+  v_stranger uuid := '00000000-0000-4000-8000-00000000f032';
+  v_role_id  uuid;
+  v_shape    text;
+  v_fin      jsonb;
+  v_sales    jsonb;
+  v_inv      jsonb;
+  v_exp      jsonb;
+  v_prod     jsonb;
+begin
+  -- ── an admin reads all five, and each answers with exactly its promised keys
+  perform pg_temp.become(v_admin);
+
+  select public.reports_financial_summary(null, null) into v_fin;
+  v_shape := pg_temp.report_shape(v_fin, array[
+    'invoiceCount','revenue','cogs','grossProfit','expenses','netProfit','cash','card',
+    'instapay','unsettled','voidedCount','voidedTotal','returnsCount','returnsTotal',
+    'refundsCount','refundsPaid','refundsPending','unitCount']);
+  if v_shape <> '|' then
+    raise exception 'the financial summary changed shape (unexpected|missing): %', v_shape;
+  end if;
+
+  select public.reports_sales_summary(null, null, 'UTC') into v_sales;
+  v_shape := pg_temp.report_shape(v_sales, array[
+    'invoices','revenue','discounts','units','voidedCount','byMethod','byEmployee','byDay']);
+  if v_shape <> '|' then
+    raise exception 'the sales summary changed shape (unexpected|missing): %', v_shape;
+  end if;
+
+  select public.reports_inventory_summary() into v_inv;
+  v_shape := pg_temp.report_shape(v_inv, array[
+    'products','tracked','units','atCost','atRetail','potentialMargin','lowStock','outOfStock']);
+  if v_shape <> '|' then
+    raise exception 'the inventory summary changed shape (unexpected|missing): %', v_shape;
+  end if;
+
+  select public.reports_expense_summary(null, null, 'UTC') into v_exp;
+  v_shape := pg_temp.report_shape(v_exp, array[
+    'count','total','cash','instapay','visa','activeDays','byCategory','byMethod',
+    'byEmployee','byBranch','byDay','largest']);
+  if v_shape <> '|' then
+    raise exception 'the expense summary changed shape (unexpected|missing): %', v_shape;
+  end if;
+
+  select public.reports_product_performance(null, null) into v_prod;
+  if jsonb_typeof(v_prod) <> 'array' then
+    raise exception 'product performance must return an array, got %', jsonb_typeof(v_prod);
+  end if;
+  if jsonb_array_length(v_prod) > 0 then
+    v_shape := pg_temp.report_shape(v_prod -> 0, array[
+      'productId','sku','nameEn','nameAr','sold','invoices','units','revenue',
+      'sellingPrice','cost','stockValue','stock']);
+    if v_shape <> '|' then
+      raise exception 'a product row changed shape (unexpected|missing): %', v_shape;
+    end if;
+  end if;
+
+  -- ── a viewer may read them too, or the gate is a lockout ─────────────────
+  -- Every system role holds view_reports, viewer included: "may see the
+  -- numbers" is exactly what that role is for. Refusing here would mean 0032
+  -- narrowed who can read a report, which is not what it was for.
+  perform pg_temp.become(v_viewer);
+  perform public.reports_financial_summary(null, null);
+  perform public.reports_sales_summary(null, null, 'UTC');
+  perform public.reports_product_performance(null, null);
+  perform public.reports_inventory_summary();
+  perform public.reports_expense_summary(null, null, 'UTC');
+
+  -- ── a signed-in identity with no profile is refused ──────────────────────
+  perform pg_temp.become(v_stranger);
+  begin
+    perform public.reports_financial_summary(null, null);
+    raise exception 'a profile-less identity read the financial summary';
+  exception when insufficient_privilege then
+    null;
+  end;
+
+  -- ── and so is anon, which has no EXECUTE grant at all ────────────────────
+  perform pg_temp.become(null, 'anon');
+  begin
+    perform public.reports_financial_summary(null, null);
+    raise exception 'anon read the financial summary';
+  exception when insufficient_privilege then
+    null;
+  end;
+
+  -- ── the case that matters: a user NARROWED by a custom role ──────────────
+  -- A cashier holds view_reports through the system matrix, so without an
+  -- overlay they read every report. An admin narrows them with a custom role
+  -- that omits it, and can() lets an ACTIVE custom role decide absolutely — so
+  -- all five RPCs must now refuse a user whose system role still says yes. A
+  -- gate that read profiles.role instead of can() would pass every assertion
+  -- above and leak the whole report book here.
+  --
+  -- The narrowing is done through the admin RPCs, not by writing the tables:
+  -- custom_roles has no INSERT grant for authenticated, because a role list is
+  -- exactly the thing a browser must not be able to edit directly. And it is
+  -- the CASHIER who is narrowed, not the caller — admin_set_custom_role refuses
+  -- to let an admin change their own role, which is what stops an installation
+  -- locking itself out.
+  perform pg_temp.become(v_admin, 'authenticated');
+  -- Read as a row source, not assigned as a composite: `select f() into v` with
+  -- v declared as the function's row type makes plpgsql coerce the whole record
+  -- into v's FIRST field, which is a uuid here and not a row.
+  select r.id into v_role_id
+    from public.admin_create_custom_role(
+           'scn_no_reports', 'No Reports', 'بدون تقارير', null, null,
+           'cashier'::public.app_role,
+           (select coalesce(array_agg(capability), '{}')
+              from public.role_capabilities
+             where role = 'cashier' and capability <> 'view_reports')) as r;
+
+  perform public.admin_set_custom_role(v_cashier, v_role_id);
+
+  perform pg_temp.become(v_cashier);
+  begin
+    perform public.reports_financial_summary(null, null);
+    raise exception 'a cashier narrowed without view_reports was served the financial summary';
+  exception when insufficient_privilege then
+    null;
+  end;
+  begin
+    perform public.reports_sales_summary(null, null, 'UTC');
+    raise exception 'a cashier narrowed without view_reports was served the sales summary';
+  exception when insufficient_privilege then
+    null;
+  end;
+  begin
+    perform public.reports_product_performance(null, null);
+    raise exception 'a cashier narrowed without view_reports was served product performance';
+  exception when insufficient_privilege then
+    null;
+  end;
+  begin
+    perform public.reports_inventory_summary();
+    raise exception 'a cashier narrowed without view_reports was served the inventory summary';
+  exception when insufficient_privilege then
+    null;
+  end;
+  begin
+    perform public.reports_expense_summary(null, null, 'UTC');
+    raise exception 'a cashier narrowed without view_reports was served the expense summary';
+  exception when insufficient_privilege then
+    null;
+  end;
+
+  -- put the cashier back the way the rest of the file expects to find them:
+  -- clearing the assignment returns them to the system matrix, and deactivating
+  -- the role leaves nothing behind that a later scenario could pick up.
+  perform pg_temp.become(v_admin, 'authenticated');
+  perform public.admin_set_custom_role(v_cashier, null);
+  perform public.admin_set_custom_role_active(v_role_id, false);
+  perform pg_temp.become(v_admin);
+
+  raise notice 'report aggregates — all five answer an admin and a viewer with exactly their promised keys, and refuse a profile-less identity, anon, and a cashier an admin narrowed without view_reports';
+end
+$$;
+
 -- ── leave no session claim behind ─────────────────────────────────────────
 do $$
 begin

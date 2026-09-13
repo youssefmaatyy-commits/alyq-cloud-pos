@@ -42,7 +42,9 @@ import {
   buildPaymentsSheets,
   computeFinancialTotals,
   paymentCountOf,
+  type FinancialTotals,
 } from "../services/financialExport";
+import { fetchFinancialSummary } from "../services/reportAggregates";
 import { buildSuppliersSheets } from "../services/suppliersExport";
 import { toTimestampBounds } from "../services/dateRanges";
 import { assertCanViewReports } from "../services/reportAccess";
@@ -102,22 +104,41 @@ export function ReportsPage() {
   const bounds = useMemo(() => toTimestampBounds(exportRange), [exportRange]);
   const [rangedRead, setRangedRead] = useState<{ sales: Sale[]; total: number | null } | null>(null);
   const [rangedLoading, setRangedLoading] = useState(false);
+  /**
+   * The period's totals as the DATABASE added them up, or null when it could
+   * not — demo mode, a project whose migrations predate 0032, a caller without
+   * `view_reports`. Null is the signal to fall back, never a zero.
+   */
+  const [dbTotals, setDbTotals] = useState<FinancialTotals | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setRangedLoading(true);
     void (async () => {
       try {
-        const [list, total] = await Promise.all([
+        const [list, total, aggregated] = await Promise.all([
           repository.listSales({ from: bounds.from, to: bounds.to, limit: SALES_ROW_CAP }),
           repository.countSales({ from: bounds.from, to: bounds.to }),
+          // The totals no longer depend on `list`. The row cap limits what this
+          // page can LIST; it no longer limits what it can COUNT, because the
+          // database sums every invoice in the window where the rows already
+          // are. `fetchFinancialSummary` never throws — it reports why it has
+          // nothing, and the fallback below is the arithmetic this page has
+          // always used.
+          fetchFinancialSummary({ from: exportRange.from || null, to: exportRange.to || null }),
         ]);
-        if (!cancelled) setRangedRead({ sales: list, total });
+        if (!cancelled) {
+          setRangedRead({ sales: list, total });
+          setDbTotals(aggregated.ok ? aggregated.value : null);
+        }
       } catch {
         // A failed ranged read must not blank the page. Falling back to the
         // till's window keeps the screen usable, and the coverage line below
         // still says how much of the period is missing.
-        if (!cancelled) setRangedRead(null);
+        if (!cancelled) {
+          setRangedRead(null);
+          setDbTotals(null);
+        }
       } finally {
         if (!cancelled) setRangedLoading(false);
       }
@@ -125,7 +146,9 @@ export function ReportsPage() {
     return () => {
       cancelled = true;
     };
-  }, [repository, bounds.from, bounds.to]);
+    // The range is passed as its two strings, not as the object: a new object
+    // identity on every render would re-run the read, and with it three queries.
+  }, [repository, bounds.from, bounds.to, exportRange.from, exportRange.to]);
 
   /**
    * What the exports are built from. The builders apply their own range filter,
@@ -170,7 +193,8 @@ export function ReportsPage() {
     [refundsList, exportRange],
   );
 
-  const totals = useMemo(
+  /** The totals this browser can compute from the rows it holds. */
+  const clientTotals = useMemo(
     () =>
       computeFinancialTotals({
         sales: rangedSales,
@@ -181,6 +205,16 @@ export function ReportsPage() {
       }),
     [rangedSales, catalogProducts, rangedExpenses, rangedReturns, rangedRefunds],
   );
+
+  /**
+   * The numbers the page shows. The database's answer wins whenever there is
+   * one, because it covers every invoice in the period; `clientTotals` covers
+   * the rows this browser holds, which is at most SALES_ROW_CAP of them. Both
+   * are the same shape and the differential suite holds them to the same
+   * values, so nothing downstream has to know which one arrived.
+   */
+  const totals = dbTotals ?? clientTotals;
+  const totalsFromDatabase = dbTotals !== null;
 
   // Stock rows exactly as the Inventory screen computes them (tracked products).
   const stockRows = useMemo(
@@ -278,7 +312,13 @@ export function ReportsPage() {
                       total: rangedRead?.total ?? rangedSales.length,
                     })}
                   </p>
-                  <p className="mt-0.5 text-xs text-slate-600">{t("reports.salesCoverageHint")}</p>
+                  <p className="mt-0.5 text-xs text-slate-600">
+                    {t(
+                      totalsFromDatabase
+                        ? "reports.salesCoverageHintAggregated"
+                        : "reports.salesCoverageHint",
+                    )}
+                  </p>
                 </div>
               </div>
             </Card>

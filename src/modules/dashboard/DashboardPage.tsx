@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { PageHeader } from "@/components/layout/AppShell";
 import {
@@ -43,12 +43,16 @@ import {
   DASHBOARD_TREND_DAYS,
   buildDashboardSnapshot,
   computeMonthlyKpis,
+  monthlyKpisFromTotals,
+  monthRangeOf,
   monthExpensesTotal,
   paymentMix,
   revenueVsExpensesSeries,
   salesTrendSeries,
   topProducts,
 } from "./dashboardQuery";
+import { fetchFinancialSummary } from "@/modules/reports/services/reportAggregates";
+import type { FinancialTotals } from "@/modules/reports/services/financialExport";
 
 /**
  * Operations dashboard — read-only view over live module data.
@@ -110,7 +114,8 @@ export function DashboardPage() {
      Computed for everybody but rendered only behind `maySeePerformance`, so the
      gate is a rendering decision, not a data decision — the numbers on screen
      are the numbers the reports would show. */
-  const monthly = useMemo(
+  /** The month as this browser can sum it from the sales it holds. */
+  const clientMonthly = useMemo(
     () =>
       computeMonthlyKpis({
         sales,
@@ -120,6 +125,32 @@ export function DashboardPage() {
         refundsList,
       }),
     [sales, products, expenses, returnsList, refundsList],
+  );
+
+  /**
+   * The month as the DATABASE sums it — every invoice in the month to date,
+   * where the provider's list holds at most SALES_ROW_CAP of them. `sales` is
+   * the dependency because a new invoice is what makes the answer stale; the
+   * range itself is "this month", which the effect re-reads when it runs.
+   */
+  const [dbMonthly, setDbMonthly] = useState<FinancialTotals | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const result = await fetchFinancialSummary(monthRangeOf());
+      // A refused or unavailable aggregate is not an error to surface here: the
+      // tile falls back to the numbers the browser can compute, which is what
+      // it showed before this existed.
+      if (!cancelled) setDbMonthly(result.ok ? result.value : null);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [sales]);
+
+  const monthly = useMemo(
+    () => (dbMonthly ? monthlyKpisFromTotals(dbMonthly) : clientMonthly),
+    [dbMonthly, clientMonthly],
   );
   const trend = useMemo(() => salesTrendSeries({ sales }), [sales]);
   const revenueVsExpenses = useMemo(
