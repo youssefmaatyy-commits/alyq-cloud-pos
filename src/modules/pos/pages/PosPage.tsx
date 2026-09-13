@@ -1,7 +1,9 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
+import { Link } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { PageHeader } from "@/components/layout/AppShell";
-import { LoadingBlock, ErrorState } from "@/components/ui";
+import { LoadingBlock, ErrorState, useToast } from "@/components/ui";
+import { resolveStorefrontTarget } from "@/lib/storefront/storefrontLink";
 import { usePos } from "../hooks/PosProvider";
 import { useBarcodeScanner } from "../hooks/useBarcodeScanner";
 import { ProductGrid } from "../components/ProductGrid";
@@ -22,6 +24,12 @@ import { SaleCompletedModal } from "../components/SaleCompletedModal";
 export function PosPage() {
   const { t } = useI18n();
   const { addBySku, loading, error, isEmpty, reloadCatalog } = usePos();
+  const toast = useToast();
+
+  // Where "Open website" goes: the shop built into this bundle by default, or
+  // the origin named by VITE_STOREFRONT_URL when the shop is hosted separately.
+  const storefront = useMemo(() => resolveStorefrontTarget(), []);
+  const configWarningShown = useRef(false);
 
   // Re-read the catalog every time the till is opened so stock numbers are
   // fresh (a reset, inventory adjustment or new product is reflected).
@@ -46,14 +54,49 @@ export function PosPage() {
   };
   useBarcodeScanner(onScan);
 
+  // A storefront URL that was configured but cannot be used is reported once,
+  // not swallowed: the control still opens the built-in shop, and the operator
+  // learns the deployment setting is wrong instead of wondering why a link they
+  // pointed at their own domain keeps landing on the bundled one.
+  useEffect(() => {
+    if (storefront.warning === "invalid_url" && !configWarningShown.current) {
+      configWarningShown.current = true;
+      toast.error(t("pos.openWebsiteConfigInvalid"));
+    }
+  }, [storefront.warning, toast, t]);
+
   const headerActions = useMemo(
     () => (
-      <span className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-600">
-        <span aria-hidden>📷</span>
-        {t("pos.scanHint")}
+      <span className="inline-flex items-center gap-2">
+        <span className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-600">
+          <span aria-hidden>📷</span>
+          {t("pos.scanHint")}
+        </span>
+        {/* The shop, from the till. Internal navigation on purpose: same bundle,
+            no popup for a blocker to swallow, and identical behaviour in demo
+            and live mode. Same control style as the website settings screen. */}
+        {storefront.href ? (
+          <a
+            href={storefront.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex h-10 items-center rounded-xl bg-white px-4 text-sm font-semibold text-slate-800 ring-1 ring-slate-300 hover:bg-slate-50"
+          >
+            {t("nav.viewStore")}
+            <span aria-hidden className="ms-1.5">↗</span>
+          </a>
+        ) : (
+          <Link
+            to={storefront.to}
+            data-testid="pos-open-website"
+            className="inline-flex h-10 items-center rounded-xl bg-white px-4 text-sm font-semibold text-slate-800 ring-1 ring-slate-300 hover:bg-slate-50"
+          >
+            {t("nav.viewStore")}
+          </Link>
+        )}
       </span>
     ),
-    [t],
+    [t, storefront],
   );
 
   if (loading) {

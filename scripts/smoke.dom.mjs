@@ -2443,6 +2443,91 @@ async function main() {
   assert.equal(document.documentElement.getAttribute("dir"), "ltr", "back to LTR");
   console.log("  ✓ language toggle switches RTL/LTR");
 
+  /* ── POS → website (regression) ────────────────────────────────────────────
+   * Found in the final A-to-Z audit: the storefront existed, #/store was
+   * routed, and both the app shell and the website settings screen linked to
+   * it — but the POS register had no way to open the shop. No button, no
+   * handler, no URL generation anywhere in src/modules/pos/.
+   *
+   * /store is a public top-level route rendered outside the authenticated
+   * shell, so this must be plain internal navigation: nothing to configure, no
+   * popup for a till browser's blocker to swallow, and it must not bounce to
+   * the dashboard or the login screen. Deleting the control, gating it behind a
+   * capability, or turning it into window.open fails the assertions below.
+   *
+   * The control is selected by test id on purpose: the sidebar also renders a
+   * "View website" entry (nav.viewStore) that opens in a new tab, so a
+   * label-based click here would prove nothing about the POS screen.
+   */
+  await signInAs("admin");
+  await navigate("#/pos");
+  assert.ok(bodyText().includes("Register"), "POS screen renders");
+  const openWebsite = document.querySelector('a[data-testid="pos-open-website"]');
+  assert.ok(openWebsite, "the POS header exposes an Open website control");
+  assert.equal(
+    openWebsite.getAttribute("href"),
+    "#/store",
+    "the POS control navigates internally to #/store",
+  );
+  assert.equal(
+    openWebsite.getAttribute("target"),
+    null,
+    "the POS control must not open a new tab — a popup blocker turns that into a dead button",
+  );
+  assert.ok(
+    (openWebsite.textContent ?? "").trim().length > 0,
+    "the POS control has a visible label",
+  );
+  assert.ok(
+    !bodyText().includes("not valid, so the built-in website"),
+    "no storefront configuration warning when VITE_STOREFRONT_URL is unset",
+  );
+  console.log("  ✓ POS register offers an internal Open website control");
+
+  openWebsite.dispatchEvent(
+    new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }),
+  );
+  await sleep(800);
+  assert.equal(dom.window.location.hash, "#/store", "clicking it lands on the storefront");
+  assert.ok(!bodyText().includes("Register"), "the shop renders outside the POS shell");
+  assert.ok(!denied(), "the storefront is not permission-gated for an employee");
+  assert.ok(!usernameField(), "opening the shop does not throw the employee to the login screen");
+  assert.ok(isSignedIn() || !usernameField(), "the session survives the trip to the shop");
+  assert.ok(
+    document.querySelector('a[href="#/store/products"]'),
+    "the storefront homepage rendered its product listing links",
+  );
+  console.log("  ✓ storefront homepage renders from the POS control");
+
+  // The customer journey the till just handed off to.
+  await navigate("#/store/products");
+  await sleep(600);
+  const productLinks = [...document.querySelectorAll('a[href^="#/store/products/"]')];
+  assert.ok(productLinks.length > 0, "the storefront listing links to product detail pages");
+  productLinks[0].dispatchEvent(
+    new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }),
+  );
+  await sleep(600);
+  assert.match(
+    dom.window.location.hash,
+    /^#\/store\/products\/.+/,
+    "a product card opens its detail page",
+  );
+  assert.ok(!denied(), "product detail is public");
+  await navigate("#/store/cart");
+  await sleep(500);
+  assert.ok(!denied(), "the cart is reachable");
+  assert.ok(!usernameField(), "the cart does not demand a sign-in");
+  console.log("  ✓ storefront listing → product → cart all reachable");
+
+  // And the cashier can get back to the till, still signed in.
+  await navigate("#/pos");
+  await sleep(600);
+  assert.ok(isSignedIn(), "returning from the shop keeps the employee signed in");
+  assert.ok(bodyText().includes("Register"), "the register renders again after the round trip");
+  assert.ok(bodyText().includes("ALYQ-1001"), "the catalog is still loaded after the round trip");
+  console.log("  ✓ POS → website → POS round trip, no dashboard redirect, no sign-out");
+
   if (errors.length > 0) {
     console.error(`\n✗ ${errors.length} console error(s):`);
     for (const e of errors) console.error("  " + e.split("\n")[0]);

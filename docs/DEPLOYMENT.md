@@ -30,6 +30,8 @@ cp .env.example .env
 VITE_SUPABASE_URL=https://<ref>.supabase.co
 VITE_SUPABASE_ANON_KEY=<anon-key>
 VITE_CURRENCY=EGP
+# Optional — only if the shop is served from its own origin.
+VITE_STOREFRONT_URL=
 ```
 
 Vite inlines `VITE_*` at **build** time. Two consequences that catch people out:
@@ -41,6 +43,41 @@ Vite inlines `VITE_*` at **build** time. Two consequences that catch people out:
 Leaving both Supabase values empty is a supported, deliberate state: the app
 falls back to demo mode. That is useful for a smoke test of a build, but it is
 not a production configuration — demo data lives in the visitor's browser.
+
+### The storefront URL (`VITE_STOREFRONT_URL`)
+
+The customer-facing shop is a **public route inside this same bundle**: `#/store`,
+rendered outside the authenticated shell, so it needs no sign-in and no
+capability. That is why the variable is optional and empty by default.
+
+With it empty, "View website" on the POS register (and in the app shell, and on
+the website settings screen) navigates internally to `#/store`. Internal
+navigation is the default on purpose:
+
+- it behaves identically in demo mode and live mode — there is no second origin
+  to host, no CORS, no separate deployment;
+- there is no popup, so no popup blocker can swallow the click. A till browser is
+  frequently locked down, and `window.open` failing there produces a button that
+  appears to do nothing;
+- the cashier cannot lose the shop's window behind the register.
+
+Set it **only** when the shop really is served from its own origin, for example a
+separate marketing site backed by the same database:
+
+```ini
+VITE_STOREFRONT_URL=https://shop.example.com
+```
+
+The same control then becomes an anchor to that origin, opened in a new tab with
+`rel="noopener noreferrer"`. Because the value is rendered into an `href`, it is
+validated rather than trusted: only `http:` and `https:` are accepted. A
+`javascript:` or `data:` value — or anything unparseable — is refused, the
+built-in shop at `#/store` is opened instead, and the operator is told on screen
+that the configured URL is invalid. The failure is never silent, and the button
+is never dead.
+
+This value is **not a secret**; like every `VITE_*` variable it is inlined into
+the build and readable by any visitor. Never put a key here.
 
 ---
 
