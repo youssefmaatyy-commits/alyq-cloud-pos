@@ -17,6 +17,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { canActAs } from "@/lib/permissions/enforce";
+import { openStorefrontRoute } from "@/lib/storefront/storefrontLink";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { useAuth } from "@/lib/auth";
 import { getCurrentUser } from "@/modules/inventory/permissions";
@@ -235,10 +236,17 @@ export function WebsiteSettingsPage() {
         subtitle={t("online.settings.subtitle")}
         actions={
           <>
+            {/* Same dead-click class as the shell entry: a new tab is refused
+                without feedback in an embedded host, so fall back to this one. */}
             <a
               href="#/store"
               target="_blank"
               rel="noopener noreferrer"
+              data-testid="settings-open-store"
+              onClick={(event) => {
+                event.preventDefault();
+                openStorefrontRoute();
+              }}
               className="inline-flex h-10 items-center rounded-xl bg-white px-4 text-sm font-semibold text-slate-800 ring-1 ring-slate-300 hover:bg-slate-50"
             >
               {t("online.settings.openStore")}

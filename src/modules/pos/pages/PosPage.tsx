@@ -3,7 +3,10 @@ import { Link } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { PageHeader } from "@/components/layout/AppShell";
 import { LoadingBlock, ErrorState, useToast } from "@/components/ui";
-import { resolveStorefrontTarget } from "@/lib/storefront/storefrontLink";
+import {
+  openExternalStorefront,
+  resolveStorefrontTarget,
+} from "@/lib/storefront/storefrontLink";
 import { usePos } from "../hooks/PosProvider";
 import { useBarcodeScanner } from "../hooks/useBarcodeScanner";
 import { ProductGrid } from "../components/ProductGrid";
@@ -80,6 +83,13 @@ export function PosPage() {
             href={storefront.href}
             target="_blank"
             rel="noopener noreferrer"
+            data-testid="pos-open-website-external"
+            onClick={(event) => {
+              // A deployment that hosts the shop elsewhere still has to open it
+              // from a till browser that may refuse the new tab.
+              event.preventDefault();
+              openExternalStorefront(storefront.href as string);
+            }}
             className="inline-flex h-10 items-center rounded-xl bg-white px-4 text-sm font-semibold text-slate-800 ring-1 ring-slate-300 hover:bg-slate-50"
           >
             {t("nav.viewStore")}

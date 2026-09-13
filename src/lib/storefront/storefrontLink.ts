@@ -87,3 +87,74 @@ export function resolveStorefrontTarget(
   // asked — so the caller must say so.
   return { href: null, to: STOREFRONT_ROUTE, warning: "invalid_url" };
 }
+
+/* ── opening the shop beside the current screen ──────────────────────────────
+ *
+ * `target="_blank"` on an anchor reports nothing when it is refused. This app
+ * runs inside an iframe in the hosted preview — `printHtmlDocument` already
+ * computes `window.self !== window.top` for exactly that reason — and an
+ * embedded host, like a popup blocker, swallows the new tab silently. The
+ * control then looks dead: the click lands, the browser declines, and the user
+ * is left staring at the register. That is the bug behind "Open website does
+ * nothing".
+ *
+ * `window.open` is the same request in a form that reports failure, returning
+ * null when refused. So the anchors keep `target="_blank"` — middle-click,
+ * ctrl-click and "open in new tab" all still work — and take over the plain
+ * click to fall back to this tab when a new one is not on offer.
+ */
+
+/** True only in a Vite dev build, so field diagnostics never ship to production. */
+const isDev =
+  (import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV === true;
+
+function debug(detail: Record<string, unknown>): void {
+  if (isDev) console.log("[storefront]", detail);
+}
+
+/**
+ * Ask the browser for a new tab and report honestly whether it obliged.
+ * Never throws: a refused popup is an expected condition, not an error.
+ */
+export function tryOpenBeside(href: string): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    const opened = window.open(href, "_blank", "noopener,noreferrer");
+    // Refused popups return null; jsdom's unimplemented stub returns undefined.
+    const allowed = opened != null && !opened.closed;
+    debug({ click: true, requested: href, newTab: allowed });
+    return allowed;
+  } catch (error) {
+    debug({ click: true, requested: href, newTab: false, threw: String(error).slice(0, 120) });
+    return false;
+  }
+}
+
+/**
+ * Open the shop bundled in this app: new tab if the browser allows one, this
+ * tab if it does not. Returns which happened so a caller can say so.
+ */
+export function openStorefrontRoute(): "new-tab" | "same-tab" {
+  const href = `#${STOREFRONT_ROUTE}`;
+  if (tryOpenBeside(href)) return "new-tab";
+  if (typeof window !== "undefined") {
+    // Assigning the hash raises a hashchange, which HashRouter turns into an
+    // in-app navigation: no reload, and the register keeps its cart.
+    window.location.hash = STOREFRONT_ROUTE;
+    debug({ click: true, requested: href, navigationTarget: STOREFRONT_ROUTE, fellBackTo: "same-tab" });
+  }
+  return "same-tab";
+}
+
+/**
+ * Open an externally hosted shop the same way. When a new tab is refused the
+ * only option left is to navigate this frame, so that is what happens.
+ */
+export function openExternalStorefront(href: string): "new-tab" | "same-tab" {
+  if (tryOpenBeside(href)) return "new-tab";
+  if (typeof window !== "undefined") {
+    window.location.assign(href);
+    debug({ click: true, requested: href, fellBackTo: "same-tab" });
+  }
+  return "same-tab";
+}

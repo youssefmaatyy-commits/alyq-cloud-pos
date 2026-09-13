@@ -19,7 +19,13 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
-import { STOREFRONT_ROUTE, resolveStorefrontTarget } from "../storefrontLink";
+import {
+  STOREFRONT_ROUTE,
+  openExternalStorefront,
+  openStorefrontRoute,
+  resolveStorefrontTarget,
+  tryOpenBeside,
+} from "../storefrontLink";
 
 type TestCase = { name: string; fn: () => void };
 const tests: TestCase[] = [];
@@ -237,6 +243,148 @@ test("the environment variable is declared and documented, and is not a secret",
   assert.ok(
     read("docs/DEPLOYMENT.md").includes("VITE_STOREFRONT_URL"),
     "VITE_STOREFRONT_URL is not documented in docs/DEPLOYMENT.md",
+  );
+});
+
+
+/* ── opening the shop when the browser refuses a new tab ─────────────────────
+ *
+ * The reported bug: "clicking Open website does nothing". The control that was
+ * clicked is the shell's `target="_blank"` entry, and an anchor reports nothing
+ * when the new tab is refused — which an embedded host does silently. These
+ * cases pin the fallback that makes the click always land somewhere.
+ */
+type FakeWindow = {
+  open: (href: string, target: string, features: string) => unknown;
+  location: { hash: string; assign: (href: string) => void };
+};
+
+/** Swap in a fake window, run `fn`, restore. Returns what the fake recorded. */
+function withWindow(
+  openBehaviour: "allowed" | "refused" | "undefined" | "throws",
+  fn: (calls: string[]) => void,
+): string[] {
+  const calls: string[] = [];
+  const fake: FakeWindow = {
+    open: (href) => {
+      calls.push(`open:${href}`);
+      if (openBehaviour === "throws") throw new Error("blocked");
+      if (openBehaviour === "refused") return null;
+      if (openBehaviour === "undefined") return undefined;
+      return { closed: false };
+    },
+    location: {
+      hash: "#/pos",
+      assign: (href) => calls.push(`assign:${href}`),
+    },
+  };
+  const previous = (globalThis as { window?: unknown }).window;
+  (globalThis as { window?: unknown }).window = fake;
+  try {
+    fn(calls);
+  } finally {
+    (globalThis as { window?: unknown }).window = previous;
+  }
+  return calls;
+}
+
+test("a permitted new tab is used and this tab is left alone", () => {
+  const calls = withWindow("allowed", (recorded) => {
+    assert.equal(openStorefrontRoute(), "new-tab");
+    assert.deepEqual(recorded, [`open:#${STOREFRONT_ROUTE}`], "only the new tab is used");
+  });
+  assert.ok(calls.every((c) => !c.startsWith("assign")), "no same-tab fallback when the popup was allowed");
+});
+
+test("a refused new tab falls back to navigating this tab", () => {
+  // This is the bug: refused means the click previously did nothing at all.
+  for (const behaviour of ["refused", "undefined", "throws"] as const) {
+    withWindow(behaviour, () => {
+      assert.equal(openStorefrontRoute(), "same-tab", behaviour);
+    });
+  }
+});
+
+test("the fallback navigates to the storefront route by hash, not by reload", () => {
+  const fake = {
+    open: () => null,
+    location: { hash: "#/pos", assign: () => assert.fail("must not reload the frame for an internal route") },
+  };
+  const previous = (globalThis as { window?: unknown }).window;
+  (globalThis as { window?: unknown }).window = fake;
+  try {
+    openStorefrontRoute();
+    // Assigning the hash raises a hashchange, which HashRouter turns into an
+    // in-app navigation: the register keeps its cart, no document reload.
+    assert.equal(fake.location.hash, STOREFRONT_ROUTE, "the hash was pointed at the shop");
+  } finally {
+    (globalThis as { window?: unknown }).window = previous;
+  }
+});
+
+test("an external shop falls back to navigating this frame", () => {
+  const calls = withWindow("refused", () => {
+    assert.equal(openExternalStorefront("https://shop.example.com"), "same-tab");
+  });
+  assert.deepEqual(calls, ["open:https://shop.example.com", "assign:https://shop.example.com"]);
+});
+
+test("an external shop in a permitted new tab does not also navigate this frame", () => {
+  const calls = withWindow("allowed", () => {
+    assert.equal(openExternalStorefront("https://shop.example.com"), "new-tab");
+  });
+  assert.deepEqual(calls, ["open:https://shop.example.com"]);
+});
+
+test("no window at all is survived, not thrown", () => {
+  const previous = (globalThis as { window?: unknown }).window;
+  delete (globalThis as { window?: unknown }).window;
+  try {
+    assert.equal(tryOpenBeside("#/store"), false);
+    assert.equal(openStorefrontRoute(), "same-tab");
+    assert.equal(openExternalStorefront("https://shop.example.com"), "same-tab");
+  } finally {
+    (globalThis as { window?: unknown }).window = previous;
+  }
+});
+
+test("every 'view the shop' anchor takes over its click instead of trusting target", () => {
+  // Structural: an anchor to #/store that leaves the click to target="_blank"
+  // is a dead button in an embedded host. Each one must call the fallback.
+  const targets: Array<[string, string]> = [
+    ["src/components/layout/AppShell.tsx", "nav-open-website"],
+    ["src/modules/online/pages/WebsiteSettingsPage.tsx", "settings-open-store"],
+  ];
+  for (const [file, testId] of targets) {
+    const source = read(file);
+    assert.ok(source.includes(`data-testid="${testId}"`), `${file} lost ${testId}`);
+    assert.ok(
+      source.includes("openStorefrontRoute()"),
+      `${file} no longer falls back when the new tab is refused`,
+    );
+    assert.ok(
+      source.includes("event.preventDefault()"),
+      `${file} must take over the click, or the browser opens a second tab`,
+    );
+    assert.ok(
+      source.includes('from "@/lib/storefront/storefrontLink"'),
+      `${file} does not import the storefront helper`,
+    );
+    // The href stays, so middle-click and "open in new tab" keep working.
+    assert.ok(source.includes('href="#/store"'), `${file} lost its #/store href`);
+    assert.ok(source.includes('target="_blank"'), `${file} lost target=_blank for middle-click`);
+  }
+});
+
+test("the POS external branch is popup-safe too", () => {
+  const pos = read("src/modules/pos/pages/PosPage.tsx");
+  assert.ok(
+    pos.includes("openExternalStorefront(storefront.href as string)"),
+    "the externally hosted shop would be a dead button when the new tab is refused",
+  );
+  assert.ok(
+    pos.includes('data-testid="pos-open-website-external"'),
+    "the external POS control lost its test id",
   );
 });
 

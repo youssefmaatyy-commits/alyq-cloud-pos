@@ -2528,6 +2528,96 @@ async function main() {
   assert.ok(bodyText().includes("ALYQ-1001"), "the catalog is still loaded after the round trip");
   console.log("  ✓ POS → website → POS round trip, no dashboard redirect, no sign-out");
 
+  /* ── the reported bug: the shell's "View website" was a dead click ─────────
+   * Two controls on the POS screen carry the same label (nav.viewStore). The
+   * header one navigates internally; the shell entry asked for a new tab with
+   * target="_blank", and an embedded host or a popup blocker refuses that
+   * WITHOUT FEEDBACK — the click landed, nothing happened, the register stayed
+   * put. That is what "clicking Open website still does nothing" was: the fix
+   * that added the header control left this one, the entry people actually
+   * click, exactly as broken as it had been.
+   *
+   * Both outcomes are pinned. This suite stubs window.open for its print
+   * assertions, so the stub is swapped per case rather than assumed.
+   */
+  await navigate("#/pos");
+  const shellShopLink = document.querySelector('a[data-testid="nav-open-website"]');
+  assert.ok(shellShopLink, "the shell still offers a View website entry");
+  assert.equal(
+    shellShopLink.getAttribute("href"),
+    "#/store",
+    "its href is the internal shop route, so middle-click and open-in-new-tab still work",
+  );
+  assert.equal(
+    shellShopLink.getAttribute("target"),
+    "_blank",
+    "target must stay for middle-click; only the plain click is taken over",
+  );
+  const clickLink = (el) =>
+    el.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  const printStub = dom.window.open;
+
+  // Case A — the browser PERMITS the new tab: the shop opens beside the
+  // register and this tab is left alone. That is the side-by-side behaviour the
+  // entry was designed for, and the fallback must not interfere with it.
+  let requestedTab = null;
+  dom.window.open = (href) => {
+    requestedTab = href;
+    return printStub();
+  };
+  let hashBefore = dom.window.location.hash;
+  clickLink(shellShopLink);
+  await sleep(600);
+  assert.equal(requestedTab, "#/store", "the new tab is asked for the internal shop route");
+  assert.equal(
+    dom.window.location.hash,
+    hashBefore,
+    "a permitted new tab must leave the register where it was",
+  );
+
+  // Case B — the new tab is REFUSED (embedded host, popup blocker). Before the
+  // fix this was a no-op: the anchor's default action reports nothing.
+  dom.window.open = () => null;
+  hashBefore = dom.window.location.hash;
+  clickLink(shellShopLink);
+  await sleep(900);
+  assert.notEqual(
+    dom.window.location.hash,
+    hashBefore,
+    "clicking the shell entry must not be a no-op when the new tab is refused",
+  );
+  assert.equal(dom.window.location.hash, "#/store", "the shop opens in this tab as a fallback");
+  assert.ok(
+    !bodyText().includes("Register"),
+    "the shop replaced the register instead of the click being swallowed",
+  );
+  assert.ok(!denied(), "the shop is not permission-gated");
+  assert.ok(
+    document.querySelector('a[href="#/store/products"]'),
+    "the storefront homepage rendered after the fallback navigation",
+  );
+  console.log("  ✓ shell View website opens the shop when a new tab is refused");
+
+  // The website settings screen had the same dead-click class. Still the same
+  // admin session — the shop is public, it does not sign anyone out — so
+  // navigate back inside the shell rather than re-authenticating: `signInAs`
+  // starts by signing out, and the storefront has no sign-out control.
+  await navigate("#/online/website");
+  await sleep(900);
+  const settingsShopLink = document.querySelector('a[data-testid="settings-open-store"]');
+  assert.ok(settingsShopLink, "the website settings screen offers Open store");
+  settingsShopLink && clickLink(settingsShopLink);
+  await sleep(900);
+  assert.equal(
+    dom.window.location.hash,
+    "#/store",
+    "the website settings Open store link falls back when the new tab is refused",
+  );
+  assert.ok(!denied(), "the shop is reachable from the website settings screen");
+  console.log("  ✓ website settings Open store opens the shop when a new tab is refused");
+
+  dom.window.open = printStub;
+
   if (errors.length > 0) {
     console.error(`\n✗ ${errors.length} console error(s):`);
     for (const e of errors) console.error("  " + e.split("\n")[0]);

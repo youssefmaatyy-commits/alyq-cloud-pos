@@ -6,6 +6,7 @@ import { useInventory } from "@/modules/inventory/hooks/InventoryProvider";
 import { useAuth } from "@/lib/auth";
 import { ROLE_LABELS } from "@/lib/permissions/roles";
 import { canAct } from "@/lib/permissions/enforce";
+import { openStorefrontRoute } from "@/lib/storefront/storefrontLink";
 import { capabilityForPath } from "@/lib/permissions/routes";
 import { useOnlineNotificationState } from "@/modules/online/hooks/OnlineNotificationsProvider";
 import { useOptionalApprovals } from "@/modules/approvals";
@@ -250,12 +251,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               label={t("nav.websiteContent")}
               visible={canOpen("/online/content")}
             />
-            {/* Not a screen: the shop itself, in a new tab, so configuring it and
-                looking at it can happen side by side. */}
+            {/* Not a screen: the shop itself, offered in a new tab so configuring
+                it and looking at it can happen side by side. The new tab is a
+                preference, not a requirement: an embedded host or a popup
+                blocker swallows target="_blank" without a word, which made this
+                a dead button — the one labelled "View website" that the POS
+                screen inherits from the shell. The click is taken over and falls
+                back to this tab; target stays for middle-click and ctrl-click. */}
             <a
               href="#/store"
               target="_blank"
               rel="noopener noreferrer"
+              data-testid="nav-open-website"
+              onClick={(event) => {
+                event.preventDefault();
+                openStorefrontRoute();
+              }}
               className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 hover:text-slate-900"
             >
               <span aria-hidden className="shrink-0">
