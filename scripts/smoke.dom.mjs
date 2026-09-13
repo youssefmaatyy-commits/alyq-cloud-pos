@@ -1007,7 +1007,7 @@ async function main() {
   assert.equal(printedDocs.length, beforeReceiptPrints + 1, "receipt document opened");
   const receipt = printedDocs[printedDocs.length - 1];
   assert.ok(receipt.includes('src="/alyq-logo.png"'), "receipt embeds official logo");
-  assert.ok(receipt.includes("ALYQ | أَلِيق"), "receipt has boutique wordmark");
+  assert.ok(receipt.includes("ALYQ | أَلِــيْـــق"), "receipt has boutique wordmark");
   assert.ok(receipt.includes("Inspired by you"), "receipt has tagline");
   assert.ok(/INV-\d{6}/.test(receipt), "receipt has sale number");
   assert.ok(receipt.includes("<svg"), "receipt embeds barcode");
@@ -1449,7 +1449,7 @@ async function main() {
     "return receipt shows the customer phone (inherited from the invoice)",
   );
   assert.ok(returnReceipt.includes('src="/alyq-logo.png"'), "return receipt embeds the official logo");
-  assert.ok(returnReceipt.includes("ALYQ | أَلِيق"), "return receipt has the boutique wordmark");
+  assert.ok(returnReceipt.includes("ALYQ | أَلِــيْـــق"), "return receipt has the boutique wordmark");
   assert.ok(returnReceipt.includes("<svg"), "return receipt embeds the return barcode");
   assert.ok(/ALYQ-\d{4}/.test(returnReceipt), "return receipt lists the returned item SKU");
   assert.ok(returnReceipt.includes("Total refund"), "return receipt has the refund summary");

@@ -296,7 +296,7 @@ function makeReservation(overrides: Partial<StockReservation> = {}): StockReserv
 function makeContent(overrides: Partial<ProductContent> = {}): ProductContent {
   return {
     product_id: "prd-1",
-    brand_ar: "أليك",
+    brand_ar: "أَلِــيْـــق",
     brand_en: "ALYQ",
     slug: "coffee",
     seo_title: null,

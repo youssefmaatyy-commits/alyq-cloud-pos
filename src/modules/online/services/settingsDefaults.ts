@@ -21,7 +21,7 @@ import type {
 import { HOMEPAGE_SECTIONS } from "../types";
 
 /** The shop's name before the admin sets one. Both languages, like everything. */
-const DEFAULT_STORE_NAME_AR = "متجر عليق";
+const DEFAULT_STORE_NAME_AR = "متجر أَلِــيْـــق";
 const DEFAULT_STORE_NAME_EN = "ALYQ Store";
 
 export const DEFAULT_HERO_SLIDES: HeroSlide[] = [

@@ -309,7 +309,7 @@ export const en = {
   "pos.paidByLabel": "Confirmed by",
   "pos.paidAtLabel": "Confirmed at",
   "pos.paymentAwaiting": "Awaiting InstaPay confirmation",
-  "receipt.businessName": "ALYQ | أَلِيق",
+  "receipt.businessName": "ALYQ | أَلِــيْـــق",
   "receipt.businessTagline": "Inspired by you",
   "receipt.saleLabel": "Sale #",
   "receipt.dateLabel": "Date",
@@ -2919,7 +2919,7 @@ export type TranslationKey = keyof typeof en;
 
 export const ar: Record<TranslationKey, string> = {
   // ── App shell ────────────────────────────────────────────────────────────
-  "app.name": "أليك كلاود POS",
+  "app.name": "أَلِــيْـــق كلاود POS",
   "app.tagline": "منظومة إدارة التجزئة",
   "auth.login.title": "تسجيل الدخول",
   "auth.login.subtitle": "أدخل بيانات حسابك لفتح نقطة البيع.",
@@ -3219,7 +3219,7 @@ export const ar: Record<TranslationKey, string> = {
   "pos.paidByLabel": "أكّده",
   "pos.paidAtLabel": "وقت التأكيد",
   "pos.paymentAwaiting": "بانتظار تأكيد إنستا باي",
-  "receipt.businessName": "ALYQ | أَلِيق",
+  "receipt.businessName": "ALYQ | أَلِــيْـــق",
   "receipt.businessTagline": "Inspired by you",
   "receipt.saleLabel": "رقم البيع",
   "receipt.dateLabel": "التاريخ",

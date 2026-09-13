@@ -659,7 +659,7 @@ test("receipt branding: logo, boutique header, paid/remaining/change, contacts",
   });
 
   const strings = {
-    businessName: "ALYQ | أَلِيق",
+    businessName: "ALYQ | أَلِــيْـــق",
     businessTagline: "Inspired by you",
     saleLabel: "Sale #",
     dateLabel: "Date",
@@ -686,7 +686,7 @@ test("receipt branding: logo, boutique header, paid/remaining/change, contacts",
   // brand block: official logo file (centered, fixed print size) + wordmark + tagline
   assert.ok(html.includes(RECEIPT_LOGO_SRC), "official logo referenced");
   assert.ok(html.includes('class="logo"'), "logo has print sizing class");
-  assert.ok(html.includes("ALYQ | أَلِيق"), "bilingual wordmark shown");
+  assert.ok(html.includes("ALYQ | أَلِــيْـــق"), "bilingual wordmark shown");
   assert.ok(html.includes("Inspired by you"), "tagline shown");
   // payment summary: total, paid, remaining, change
   assert.ok(html.includes("Paid"), "paid row shown");
@@ -707,7 +707,7 @@ test("receipt branding: logo, boutique header, paid/remaining/change, contacts",
   // RTL receipt keeps Arabic + brand, barcode never mirrored
   const rtl = buildReceiptHtml({ sale, direction: "rtl", strings });
   assert.ok(rtl.includes('lang="ar"'), "arabic lang");
-  assert.ok(rtl.includes("ALYQ | أَلِيق"), "wordmark in RTL too");
+  assert.ok(rtl.includes("ALYQ | أَلِــيْـــق"), "wordmark in RTL too");
   assert.ok(!rtl.includes("scaleX(-1)"), "symbol never mirrored");
 });
 
@@ -924,7 +924,7 @@ test("sales receipt renders customer name + phone only when linked", () => {
     paid_by_name: null,
   };
   const strings = {
-    businessName: "ALYQ | أَلِيق",
+    businessName: "ALYQ | أَلِــيْـــق",
     businessTagline: "Inspired by you",
     saleLabel: "Sale #",
     dateLabel: "Date",
@@ -987,7 +987,7 @@ test("return receipt reuses the shared design and carries return + invoice data"
     ],
   };
   const strings = {
-    businessName: "ALYQ | أَلِيق",
+    businessName: "ALYQ | أَلِــيْـــق",
     businessTagline: "Inspired by you",
     returnTitle: "Return Receipt",
     returnLabel: "Return #",
@@ -1019,7 +1019,7 @@ test("return receipt reuses the shared design and carries return + invoice data"
 
   // same shared shell/design as the sales receipt
   assert.ok(html.includes(RECEIPT_LOGO_SRC), "official logo referenced");
-  assert.ok(html.includes("ALYQ | أَلِيق"), "boutique wordmark shown");
+  assert.ok(html.includes("ALYQ | أَلِــيْـــق"), "boutique wordmark shown");
   assert.ok(html.includes("Inspired by you"), "tagline shown");
   assert.ok(html.includes("max-width: 76mm"), "same thermal layout");
   for (const label of ["WhatsApp", "Facebook", "Instagram", "TikTok", "0150 0221712", "ALYQ.eg", "@alyq.eg"]) {
@@ -1068,7 +1068,7 @@ test("receipt payment labels cover cash, visa and instapay", () => {
 
 test("receipt shows customer section only when a customer is linked", async () => {
   const customerStrings = {
-    businessName: "ALYQ | أَلِيق",
+    businessName: "ALYQ | أَلِــيْـــق",
     businessTagline: "Inspired by you",
     saleLabel: "Sale #",
     dateLabel: "Date",

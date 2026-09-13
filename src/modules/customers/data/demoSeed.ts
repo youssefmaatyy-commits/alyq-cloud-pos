@@ -8,7 +8,7 @@ export const DEMO_CUSTOMERS: Customer[] = [
     name: "أحمد الشريف",
     phone: "0501234567",
     address: "الرياض، حي السليمانية",
-    notes: "عميل دائم لمقهى أليك، يفضل الحبوب الإثيوبية.",
+    notes: "عميل دائم لمقهى أَلِــيْـــق، يفضل الحبوب الإثيوبية.",
     created_at: SEED_TIME,
     updated_at: SEED_TIME,
   },
