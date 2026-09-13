@@ -7,9 +7,12 @@
  *   node scripts/test.e2e.mjs smoke         # only scripts/smoke.dom.mjs
  *   node scripts/test.e2e.mjs auth          # only scripts/auth.flow.mjs
  *   node scripts/test.e2e.mjs store         # only scripts/store.flow.mjs
+ *   node scripts/test.e2e.mjs crash         # only scripts/crash.flow.mjs
  *
  * Each suite imports the bundle from `/tmp/alyq-app.mjs`, so the build step here
- * is what the header comments of those files describe by hand. Exit code 1 if a
+ * is what the header comments of those files describe by hand. The exception is
+ * `crash`, which bundles `scripts/lib/crash-entry.ts` to `/tmp/alyq-crash.mjs`
+ * because it needs a component that throws on demand and the app has none. Exit code 1 if a
  * suite fails. Exits 2 without a bundle when esbuild is unavailable.
  */
 import { spawnSync } from "node:child_process";
@@ -28,6 +31,7 @@ const SUITES = [
   { id: "auth", file: "scripts/auth.flow.mjs", title: "Authentication acceptance flow" },
   { id: "store", file: "scripts/store.flow.mjs", title: "Storefront → POS flow (browse, checkout, approve, verify, cancel)" },
   { id: "backup", file: "scripts/backup.flow.mjs", title: "Backup & recovery flow (snapshot, download, health, schedule, restore, permissions)" },
+  { id: "crash", file: "scripts/crash.flow.mjs", title: "Crash recovery (ErrorBoundary: the screen, no leaked detail, the sibling survives)" },
 ];
 
 const c = {
@@ -46,7 +50,7 @@ try {
 
 const selected = SUITES.filter((s) => FILTERS.length === 0 || FILTERS.includes(s.id));
 if (selected.length === 0) {
-  console.error(c.red(`✗ no suite matched ${FILTERS.join(", ")} (try: smoke, auth, store, backup)`));
+  console.error(c.red(`✗ no suite matched ${FILTERS.join(", ")} (try: smoke, auth, store, backup, crash)`));
   process.exit(1);
 }
 

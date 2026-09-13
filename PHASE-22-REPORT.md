@@ -269,3 +269,123 @@ wider than the 1,000-row cap displays its most recent 1,000 sales and says so.
 Closing it properly means a database-side aggregation RPC computing totals in
 SQL, which is a change to the reports data path that this phase's "no
 architecture churn" constraint excluded.
+
+---
+
+## 15. Second verification pass — the missing crash test, and two harness findings
+
+Re-checked against the phase brief section by section rather than against the
+previous report. Twelve of the thirteen sections were already satisfied and are
+unchanged. Two real gaps were found and closed, and one harness weakness was
+measured and is recorded rather than silently altered.
+
+### 15.1 §12 gap: there was no React crash-recovery test
+
+The brief requires new tests for anonymous storefront, signup escalation, direct
+write attacks, large reports, **React crash recovery** and Excel size validation.
+Five existed. The sixth did not: `ErrorBoundary` was referenced only by
+`App.tsx` and its own file, so nothing proved any of its three mount points
+worked. A boundary that is never rendered past a crash is indistinguishable from
+one that is missing.
+
+**Added — `scripts/crash.flow.mjs` + `scripts/lib/crash-entry.ts`**, registered
+as the `crash` suite in `scripts/test.e2e.mjs` (so it runs under
+`npm run test:e2e` and in CI). It bundles the entry to its own outfile because a
+crash has to be forced deterministically and the application has no component
+that throws on purpose. Eight steps:
+
+| # | Asserts |
+|---|---|
+| 1 | A healthy tree renders straight through the boundary, logging nothing |
+| 2 | A render crash shows a recovery screen (EN **and** AR) instead of a blank page |
+| 3 | The screen says nothing was lost and offers a reload |
+| 4 | No secret, raw message or stack frame reaches the DOM |
+| 5 | The detail **does** reach the console — the one place it may go |
+| 6 | The reload button actually asks the browser to reload |
+| 7 | A boundary given a `fallback` shows that instead of the generic screen (the storefront/till path) |
+| 8 | A crash in one subtree leaves its sibling still rendering |
+
+Step 8 is the one that justifies mounting three boundaries instead of one: it is
+the difference between "this screen broke" and "the application died".
+
+The thrown error deliberately carries `sk-live-51HsuperSECRETtoken` and
+`src/lib/supabase/client.ts:42`, so steps 4 and 5 are assertions about real
+strings rather than about the absence of a pattern nobody would print.
+
+**Negative controls — the suite was broken on purpose to prove it can fail:**
+
+* `if (this.state.hasError)` → `if (false)` (boundary never engages): **5 steps
+  fail** (2, 3, 6, 7, 8).
+* The error message and stack rendered into a `<pre>` — exactly what the
+  pre-Phase-22 boundary did: **step 4 fails** on the leaked token.
+
+Both were reverted; `ErrorBoundary.tsx` is byte-identical to `HEAD`.
+
+### 15.2 Harness finding: the window console stub does not observe the bundle
+
+Step 5 initially reported **0 console errors** while React and the boundary were
+visibly logging. The cause: the suites stub `dom.window.console.error`, but the
+bundle executes in Node's module scope, where a bare `console.error` is **Node's**
+console. Only an explicit `window.console.error` call would reach the stub.
+Measured directly: for the same crash, the window stub captured 0 and the Node
+stub captured 6.
+
+`crash.flow.mjs` therefore captures both. **The other four suites were left
+exactly as they are**, per the standing instruction not to change their console
+capture. It is recorded here because it means their `console errors: 0` line is
+weaker evidence than it reads: it would not observe a React error, a warning, or
+anything the app logs through the bare global. Making those suites capture
+Node's console too is a one-line change per suite and is recommended, but it is
+a test-harness decision that belongs to whoever owns that instruction, not to
+this phase.
+
+Also worth recording: `window.location.reload()` **cannot be stubbed** under
+jsdom. It is an own, non-configurable property of the location instance
+(`[LegacyUnforgeable]`), so a prototype stub is shadowed and an instance
+redefine throws `Cannot redefine property: reload`. Step 6 observes the call
+through a `VirtualConsole` `jsdomError` (`Not implemented: navigation to another
+Document`) instead, which proves the handler fired and asked for a reload.
+
+### 15.3 Repository recovery — the local clone was reset, the remote was not
+
+Mid-session the sandbox recycled: `.git` was re-cloned fresh, landing the branch
+at `90ba299` (its original branch point, around migration 0016), while the
+workspace **files** were restored from the persisted snapshot at their latest
+state. The result was a tree containing all of Phase 22 on top of a HEAD that
+pre-dated it — hundreds of files showing as modified or untracked, and
+`git show HEAD:src/components/ErrorBoundary.tsx` returning the old screen that
+printed `error.stack` into a `<pre>`.
+
+Nothing was lost and nothing was force-pushed. `git ls-remote` confirmed the
+remote still held `3f7a2e998f0bc725a351aead5570d18db70ea02c`; recovery was
+`git fetch origin arena/01a09298-alyq-cloud-pos` followed by
+`git reset --mixed FETCH_HEAD`, which moves the branch pointer and the index
+**without touching a single working file**. Afterwards the tree differed from
+the pushed commit by exactly the three files this pass added. `node_modules` had
+also been wiped by the recycle (0 entries) and was restored with `npm ci` from
+the committed lockfile — 251 packages, 5 s.
+
+This is worth knowing for any future session: after a recycle, verify
+`git rev-parse HEAD` against `git ls-remote` **before** trusting `git status`.
+A dirty tree that large is a reset clone, not uncommitted work.
+
+### 15.4 Gates after this pass
+
+| Check | Result |
+|---|---|
+| `npm run typecheck` | ✅ 0 errors |
+| `npm run lint` | ✅ 0 errors, 23 warnings (unchanged — the new files added none) |
+| `npm test` | ✅ exit 0 — 27/27 suites |
+| `npm run db:check` | ✅ 31 migrations, idempotent, all scenarios green |
+| `npm run build` | ✅ 6.66 s — 2,446.71 kB (gzip 656.23 kB), unchanged |
+| `npm run test:e2e` | ✅ **5/5 suites** (smoke, auth, store, backup, crash), 0 network calls |
+| `scripts/crash.flow.mjs` | ✅ 8/8, both negative controls fail as intended |
+
+### 15.5 E2E, through the runner
+
+`npm run test:e2e` → **5/5 suites passed**, exit 0: smoke, auth, store, backup,
+crash. The runner builds the app bundle once and spawns each suite; `crash`
+builds its own entry bundle and so is independent of that step. Network calls: 0.
+
+The §14.5 figure of 4/4 was correct when written and is superseded by this one.
+The flake noted in §10.3 did not recur in this run either.
