@@ -31,7 +31,7 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
-import { SENSITIVE_ACTIONS } from "../actions";
+import { SENSITIVE_ACTIONS, sensitiveAction } from "../actions";
 import {
   CAPABILITY_ACTIONS,
   CAPABILITY_GROUPS,
@@ -66,10 +66,12 @@ import {
   APP_ROLES,
   CAPABILITIES,
   capabilitiesOf,
+  hasCapability,
   type AppRole,
   type Capability,
 } from "../roles";
 import { ROUTE_CAPABILITIES, capabilityForPath } from "../routes";
+import { assertCanViewReports, mayViewReports } from "@/modules/reports/services/reportAccess";
 
 import { resetDemoUserRepository } from "@/lib/auth/data/demoRepository";
 import { readStaffDirectory, resetStaffDirectory } from "@/lib/auth/data/staffDirectory";
@@ -705,6 +707,224 @@ test("catalogue: no unused permissions — each is held by a role and read by a 
 });
 
 // ── runner ────────────────────────────────────────────────────────────────
+// ── Phase 23: one screen, one capability ───────────────────────────────────
+// `/reports` was gated by `view_shifts` in this table while the page asserted
+// `report.view` (which is `view_reports`) and migration 0032 guarded all five
+// report RPCs with `public.can('view_reports')`. Every shipped role holds both
+// capabilities, so nothing was visibly broken — the mismatch only appeared for a
+// custom role, and it misbehaved in both directions. These tests pin the
+// agreement down from three sides: the table, the session, and the page's own
+// assertion, so the next divergence fails here instead of in front of somebody
+// holding a role an administrator built.
+
+/** A signed-in seat wearing an active custom role with exactly these capabilities. */
+function signInWithCustomRole(base: AppRole, capabilities: readonly Capability[]): string[] {
+  const overlay = {
+    name_en: "Reports probe",
+    name_ar: "دور التقارير",
+    capabilities,
+    active: true,
+  };
+  const previewed = previewAccess({ role: base, customRole: overlay });
+  signInAs(base, previewed.capabilities);
+  // The preview and the session must agree, or the assertions below are testing
+  // a list nobody actually holds.
+  assert.deepEqual(
+    actingUser().capabilities.slice().sort(),
+    previewed.capabilities.slice().sort(),
+    "the session carries exactly the custom role's capabilities",
+  );
+  const visible = previewed.screens.visible.map((screen) => screen.path);
+  return visible;
+}
+
+test("reports: the route table, the page's assertion and the RPCs name one capability", () => {
+  assert.equal(capabilityForPath("/reports"), "view_reports", "/reports asks for view_reports");
+  assert.equal(
+    capabilityForPath("/reports/advanced"),
+    "view_reports",
+    "/reports/advanced asks for the same capability",
+  );
+  // Sub-paths inherit by longest prefix, so a future /reports/anything is gated
+  // by the same capability rather than falling through to "session only".
+  assert.equal(capabilityForPath("/reports/something-new"), "view_reports");
+
+  // The invariant that was broken. `report.view` is what ReportsPage and
+  // AdvancedReportsPage assert through assertCanViewReports(), and `view_reports`
+  // is what all five RPCs in 0032 guard with. If the route table ever names a
+  // different capability again, this is the line that fails.
+  assert.equal(
+    sensitiveAction("report.view").capability,
+    capabilityForPath("/reports"),
+    "the route gate and the page's own assertion are the same capability",
+  );
+
+  // Nothing else moved. `/expenses` and the shift book are gated by the
+  // capability their own tables' RLS uses (0012), and they are not reports.
+  assert.equal(capabilityForPath("/expenses"), "view_shifts");
+  assert.equal(capabilityForPath("/shifts"), "view_shifts");
+  assert.equal(capabilityForPath("/shifts/history"), "view_shifts");
+  const entries = Object.fromEntries(ROUTE_CAPABILITIES);
+  assert.equal(entries["/reports"], "view_reports");
+  assert.equal(entries["/reports/advanced"], "view_reports");
+});
+
+test("reports: no shipped role's access changes, because both capabilities are held by the same five", () => {
+  // This is the whole reason the fix is safe to ship. The two capabilities are
+  // held by exactly the same set of system roles, so swapping one for the other
+  // cannot change what any shipped role may open — it can only make a CUSTOM
+  // role behave the way its grant says it should.
+  for (const role of APP_ROLES) {
+    assert.equal(
+      hasCapability(role, "view_reports"),
+      hasCapability(role, "view_shifts"),
+      `${role} holds view_reports exactly when it holds view_shifts`,
+    );
+    assert.equal(hasCapability(role, "view_reports"), true, `${role} keeps the reports screen`);
+  }
+
+  // And stated the other way, at the level an administrator would notice: both
+  // report screens stay visible for all five roles, and the visible set is the
+  // same size it was before the change.
+  for (const role of APP_ROLES) {
+    const { visible } = previewAccess({ role }).screens;
+    const paths = visible.map((screen) => screen.path);
+    assert.ok(paths.includes("/reports"), `${role} still sees /reports`);
+    assert.ok(paths.includes("/reports/advanced"), `${role} still sees /reports/advanced`);
+    assert.equal(
+      visible.filter((screen) => screen.capability === "view_reports").length,
+      2,
+      `${role}: exactly the two report screens are decided by view_reports`,
+    );
+  }
+});
+
+test("reports: a seat holding view_reports can open both report screens", () => {
+  // Only view_reports — no view_shifts, nothing else. Before the fix this seat
+  // could not reach the screen at all, because the route table asked for a
+  // capability it did not hold and the sidebar hid the link.
+  const visible = signInWithCustomRole("cashier", ["view_reports"]);
+  try {
+    assert.ok(visible.includes("/reports"), "the sidebar offers /reports");
+    assert.ok(visible.includes("/reports/advanced"), "the sidebar offers /reports/advanced");
+
+    const required = capabilityForPath("/reports");
+    assert.ok(required, "/reports is a guarded screen");
+    assert.equal(canAct(required), true, "the route guard admits this seat");
+    assert.equal(mayViewReports(), true, "and the page's own gate agrees");
+    assertCanViewReports(); // must not throw
+
+    // What it does NOT get: the shift book and expenses stay behind view_shifts.
+    assert.equal(canAct("view_shifts"), false);
+    assert.ok(!visible.includes("/expenses"), "no /expenses without view_shifts");
+    assert.ok(!visible.includes("/shifts"), "no /shifts without view_shifts");
+  } finally {
+    signOut();
+  }
+});
+
+test("reports: a seat without view_reports is refused, and holding view_shifts no longer substitutes", () => {
+  // Only view_shifts. This is the seat that used to be admitted by the route
+  // guard and then met the page's own denial screen — a link that led nowhere.
+  const visible = signInWithCustomRole("cashier", ["view_shifts"]);
+  try {
+    const required = capabilityForPath("/reports");
+    assert.ok(required, "/reports is a guarded screen");
+    assert.equal(canAct(required), false, "the route guard refuses this seat");
+    assert.equal(mayViewReports(), false, "and the page's gate gives the same answer");
+
+    let refused = false;
+    try {
+      assertCanViewReports();
+    } catch {
+      refused = true;
+    }
+    assert.equal(refused, true, "assertCanViewReports() throws for this seat");
+
+    // The route and the page must never disagree again: same verdict, both ways.
+    assert.equal(canAct(required), mayViewReports(), "route gate and page gate agree");
+
+    assert.ok(!visible.includes("/reports"), "the sidebar hides /reports");
+    assert.ok(!visible.includes("/reports/advanced"), "and /reports/advanced");
+
+    // While the screens that genuinely belong to view_shifts still open.
+    assert.equal(canAct("view_shifts"), true);
+    assert.ok(visible.includes("/expenses"), "/expenses still opens on view_shifts");
+    assert.ok(visible.includes("/shifts"), "/shifts still opens on view_shifts");
+  } finally {
+    signOut();
+  }
+});
+
+test("reports: the two capabilities are independent in both directions", () => {
+  // view_reports without view_shifts — reports open, the shift book does not.
+  let visible = signInWithCustomRole("cashier", ["view_reports"]);
+  try {
+    assert.ok(visible.includes("/reports"));
+    assert.ok(!visible.includes("/expenses"));
+  } finally {
+    signOut();
+  }
+
+  // view_shifts without view_reports — the mirror image. Neither capability
+  // implies the other, which is what makes a custom role buildable at all.
+  visible = signInWithCustomRole("cashier", ["view_shifts"]);
+  try {
+    assert.ok(!visible.includes("/reports"));
+    assert.ok(visible.includes("/expenses"));
+  } finally {
+    signOut();
+  }
+});
+
+test("the sensitive-action register names database objects that actually exist", () => {
+  // The register is the map an auditor reads to answer the only question that
+  // matters about a sensitive action: is it enforced anywhere but the browser?
+  // Phase 23.5 found six notes pointing at functions this schema has never had —
+  // public.expense_decide, public.inventory_adjust_stock, public.open_shift,
+  // public.close_shift, public.approve_shift_adjustment. Each one promised a
+  // server-side gate and hid the RLS policy and trigger that really provide it,
+  // so the honest reading of the register was "frontend-only" for stock
+  // adjustments, shift opens, shift closes and shift approvals. They are not;
+  // they never were. But a note that names nothing real is worse than no note,
+  // because it stops the next reader looking.
+  const dir = path.join(repoRoot(), "supabase/migrations");
+  const schema = new Set<string>();
+  for (const file of fs.readdirSync(dir).filter((name) => name.endsWith(".sql")).sort()) {
+    const sql = fs.readFileSync(path.join(dir, file), "utf8");
+    for (const m of sql.matchAll(
+      /create\s+(?:or\s+replace\s+)?(?:function|trigger|view|table|policy)\s+(?:if\s+(?:not\s+)?exists\s+)?(?:public\.)?"?([a-z0-9_ ]+)"?/gi,
+    ))
+      schema.add(m[1].trim().toLowerCase().replace(/\s+/g, "_"));
+  }
+  assert.ok(schema.size > 60, `the migrations were parsed (${schema.size} objects)`);
+  for (const expected of ["can", "enforce_shift_invariants", "enforce_expense_invariants", "decide_approval_request"])
+    assert.ok(schema.has(expected), `the scanner sees public.${expected}`);
+
+  const missing: string[] = [];
+  for (const action of SENSITIVE_ACTIONS) {
+    for (const m of action.db.matchAll(/public\.([a-z0-9_]+)/g)) {
+      if (!schema.has(m[1].toLowerCase())) missing.push(`${action.key} → public.${m[1]}`);
+    }
+  }
+  assert.deepEqual(missing, [], "every public.* object the register names exists in the schema");
+
+  // Every capability it names is a real capability, so granting or revoking it in
+  // the role editor means what the note says it means — and the guard it names is
+  // a function that exists in the file it points at.
+  for (const action of SENSITIVE_ACTIONS) {
+    assert.ok(
+      (CAPABILITIES as readonly string[]).includes(action.capability),
+      `${action.key} names a real capability (${action.capability})`,
+    );
+    const body = fs.readFileSync(path.join(repoRoot(), action.file), "utf8");
+    assert.ok(
+      body.includes(`function ${action.guard}`),
+      `${action.key}: ${action.guard} is defined in ${action.file}`,
+    );
+  }
+});
+
 (async () => {
   let passed = 0;
   let failed = 0;

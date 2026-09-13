@@ -36,17 +36,34 @@ export const ROUTE_CAPABILITIES: ReadonlyArray<readonly [string, Capability]> = 
   ["/shifts/history", "view_shifts"],
   ["/shifts", "view_shifts"],
   ["/expenses", "view_shifts"],
-  // Reports is read-only: it re-reads data the other screens already expose and
-  // never writes, so it reuses the existing `view_shifts` read capability that
-  // gates `/expenses` and `/shifts/history`. Adding a dedicated capability here
-  // would desynchronise `roles.ts` from `public.role_capabilities`, which
-  // `npm run db:check` asserts row-for-row.
-  ["/reports", "view_shifts"],
-  // Advanced reports (Phase 14) is the same screen family — read-only analysis
-  // over data the other screens already expose — so it carries the same read
-  // capability. Listed explicitly even though `/reports` would match it by
-  // prefix, because somebody grepping this table for the path should find it.
-  ["/reports/advanced", "view_shifts"],
+  // Reports is read-only, but it is not the same read as the shift book. Phase 23
+  // found this entry pointing at `view_shifts` while the screen itself asserts
+  // `report.view` — which is `view_reports` (`actions.ts:307`) — and while all
+  // five report RPCs in migration 0032 are guarded by `public.can('view_reports')`.
+  // Three gates over one screen, two different capabilities.
+  //
+  // Every shipped role holds both, so nothing was visibly broken. The mismatch
+  // only appeared for a CUSTOM role, and it misbehaved in both directions:
+  // granting `view_reports` without `view_shifts` produced a capability that
+  // could never be exercised, because the guard refused the path and the sidebar
+  // hid the link; granting `view_shifts` without `view_reports` showed the link,
+  // admitted the user, and then landed them on the page's own denial screen. The
+  // route table now says what the page and the database already enforced.
+  //
+  // The objection recorded here previously — that a dedicated capability would
+  // desynchronise `roles.ts` from `public.role_capabilities`, which `npm run
+  // db:check` asserts row-for-row — does not apply to `view_reports`. It is
+  // already declared in both, granted to all five system roles, and covered by
+  // that same parity check, so this changes no capability, no role and no grant:
+  // only which of two existing capabilities this path asks for. `/expenses` and
+  // `/shifts` keep `view_shifts`, which is what their own tables' RLS uses
+  // (0012).
+  ["/reports", "view_reports"],
+  // Advanced reports (Phase 14) is the same screen family and the same read, so
+  // it carries the same capability. Listed explicitly even though `/reports`
+  // would match it by prefix, because somebody grepping this table for the path
+  // should find it.
+  ["/reports/advanced", "view_reports"],
   // The website is two screens' worth of authority. Working an order —
   // approving, cancelling, verifying an InstaPay proof — is a till-side job, so
   // it uses `manage_online_orders`, which cashiers hold. Editing the shop itself

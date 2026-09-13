@@ -62,9 +62,13 @@ import {
  *
  * Everything here is **read-only**: the page renders numbers the providers
  * already hold and hands the export builders the same rows, so a report can
- * never disagree with the screen it came from. No repository is called, nothing
- * is written, and no new capability is required — the screen sits behind the
- * existing `view_shifts` read capability that `/expenses` and `/shifts` use.
+ * never disagree with the screen it came from. No repository is called and
+ * nothing is written. The screen sits behind `view_reports` — the same
+ * capability this page asserts through `assertCanViewReports()` and the same one
+ * migration 0032 guards all five report RPCs with. Until Phase 23 the route
+ * table asked for `view_shifts` instead, so a custom role could be given one
+ * without the other and get either a link that led to a denial or a capability
+ * it could never exercise.
  *
  * The date range applies to the time-series data (sales, payments, the financial
  * report, cash movements, supplier activity). Master data — products, inventory, customers — is

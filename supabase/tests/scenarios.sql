@@ -2100,6 +2100,28 @@ begin
     null;
   end;
 
+  -- ── the same seat still reads the shift book ──────────────────────────────
+  -- The database half of the Phase 23 route fix. `/reports` used to be gated by
+  -- `view_shifts`, so this narrowed cashier — who kept view_shifts and lost
+  -- view_reports — was admitted by the route guard and then refused by the page
+  -- and by all five RPCs above: a link that led to a denial screen. The route
+  -- table now names `view_reports`, which only holds if the two capabilities are
+  -- genuinely independent, so both directions are asserted on the one seat that
+  -- sits exactly between them: losing the reports must not cost the shift book,
+  -- and holding the shift book must not buy the reports.
+  if public.can('view_reports') then
+    raise exception 'the narrowed cashier still holds view_reports';
+  end if;
+  if not public.can('view_shifts') then
+    raise exception 'narrowing away view_reports also took view_shifts with it';
+  end if;
+  begin
+    perform 1 from public.expenses limit 1;
+    perform 1 from public.shifts limit 1;
+  exception when insufficient_privilege then
+    raise exception 'narrowing away view_reports also closed the expenses and shift book';
+  end;
+
   -- put the cashier back the way the rest of the file expects to find them:
   -- clearing the assignment returns them to the system matrix, and deactivating
   -- the role leaves nothing behind that a later scenario could pick up.

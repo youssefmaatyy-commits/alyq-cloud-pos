@@ -207,7 +207,8 @@ test("read-only role can read but never mutate", () => {
   // Phase 10 added three capabilities here — `view_reports`, `export_reports`
   // and `export_data` — and every one is a read (or an export) of data the
   // viewer could already open: `/reports` was reachable through `view_shifts`
-  // and the export buttons were not gated at all. Phase 17 added two more reads,
+  // (Phase 23 re-gated it on `view_reports`, which the viewer also holds, so
+  // this list did not move) and the export buttons were not gated at all. Phase 17 added two more reads,
   // `view_customers` and `view_cost`, both of which any signed-in seat could
   // already do because nothing gated the customer book or the cost column. The
   // write list below is the real assertion: the viewer holds none of it.

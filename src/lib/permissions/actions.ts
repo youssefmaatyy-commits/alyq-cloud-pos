@@ -156,7 +156,12 @@ export const SENSITIVE_ACTIONS: readonly SensitiveAction[] = [
     capability: "approve_expense",
     guard: "assertCanApproveExpense",
     file: "src/modules/expenses/services/expenseService.ts",
-    db: "public.expense_decide — requires approve_expense, decides once, writes audit",
+    db: "no write path of its own. An over-limit expense is decided by "
+      + "public.decide_approval_request under approve_limit_request; the row is written "
+      + "under the expenses RLS policies (0012) and the public.enforce_expense_invariants "
+      + "trigger, which re-checks the role. No production code calls this guard — the "
+      + "capability an administrator grants here is approve_expense, and nothing reads it. "
+      + "See the Phase 23.5 audit.",
   },
 
   // ── inventory ────────────────────────────────────────────────────────────
@@ -165,21 +170,24 @@ export const SENSITIVE_ACTIONS: readonly SensitiveAction[] = [
     capability: "adjust_stock",
     guard: "assertCanAdjustStock",
     file: "src/modules/inventory/services/inventoryService.ts",
-    db: "public.inventory_adjust_stock — writes the movement and the product in one call",
+    db: "RLS insert on stock_movements — with check (public.can('adjust_stock')), 0030. "
+      + "There is no RPC: the movement row is the write, and it is refused without the capability.",
   },
   {
     key: "stock.correct",
     capability: "adjust_stock",
     guard: "assertCanCorrectStock",
     file: "src/modules/inventory/services/inventoryService.ts",
-    db: "public.inventory_adjust_stock with reason 'correction' — same path, same refusal",
+    db: "the same RLS insert on stock_movements — with check (public.can('adjust_stock')) — "
+      + "carrying reason 'correction'. Same path, same refusal.",
   },
   {
     key: "stock.import",
     capability: "import_data",
     guard: "assertCanImportStock",
     file: "src/modules/inventory/services/inventoryService.ts",
-    db: "each imported row is an inventory_adjust_stock call, so the RLS check applies per row",
+    db: "each imported row is a stock_movements insert, so the RLS check "
+      + "(public.can('adjust_stock')) applies per row and a refused row fails the import",
   },
 
   // A website order's hold on stock (Phase 15). Settling a hold changes what the
@@ -277,21 +285,27 @@ export const SENSITIVE_ACTIONS: readonly SensitiveAction[] = [
     capability: "open_shift",
     guard: "assertCanOpenShift",
     file: "src/modules/shifts/services/shiftService.ts",
-    db: "public.open_shift — one open shift installation-wide",
+    db: "RLS insert on shifts — with check (public.can('open_shift')) — plus the "
+      + "public.enforce_shift_invariants trigger, which re-checks the capability, requires "
+      + "status 'open' and refuses a second open shift installation-wide",
   },
   {
     key: "shift.close",
     capability: "close_shift",
     guard: "assertCanCloseShift",
     file: "src/modules/shifts/services/shiftService.ts",
-    db: "public.close_shift — freezes the shift and stamps the summary",
+    db: "RLS update on shifts — using (public.can('close_shift')) — plus "
+      + "public.enforce_shift_invariants, which freezes a closed shift against every "
+      + "further edit and stamps the summary once",
   },
   {
     key: "shift.approve_adjustment",
     capability: "approve_shift_adjustment",
     guard: "assertCanApproveShiftAdjustment",
     file: "src/modules/shifts/services/shiftService.ts",
-    db: "public.approve_shift_adjustment — once only, manager rights",
+    db: "RLS update on shifts — using (public.can('approve_shift_adjustment')) — plus "
+      + "public.enforce_shift_invariants, which refuses the stamp without the capability "
+      + "and refuses to re-write an approval already signed",
   },
   {
     key: "shift.view_differences",
