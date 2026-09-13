@@ -22,6 +22,32 @@ import type { CSSProperties } from "react";
 import type { ButtonStyle, StoreFontKey, WebsiteSettings } from "../types";
 import { readableOn, safeColor } from "./settingsDefaults";
 
+/**
+ * The display face, for headings only.
+ *
+ * A Latin serif paired with an Arabic serif that already ships with the
+ * platform, so nothing is downloaded and the Arabic heading is not synthesised
+ * from a Latin font's fallback. Curated for the same reason FONT_STACKS is: an
+ * arbitrary family is an arbitrary network request, it may fail, and it may have
+ * no Arabic face at all.
+ *
+ * Body copy deliberately keeps the admin's chosen stack. A serif at 13px on a
+ * phone is harder to read, and the pairing that reads as luxury is a serif
+ * heading over a sans body — not serif everywhere.
+ */
+const DISPLAY_FONT_STACK =
+  '"Source Serif 4", "Iowan Old Style", "Palatino Linotype", Georgia, "Times New Roman", "Amiri", "Noto Naskh Arabic", serif';
+
+/**
+ * Shadows, in the page's own warm ink rather than pure black.
+ *
+ * Restraint is the point: these exist to lift a card off the cream, not to
+ * decorate it. A heavy drop shadow is the fastest way to make a shop look like a
+ * marketplace.
+ */
+const SHADOW_SOFT = "0 1px 2px rgb(28 25 23 / 0.04), 0 10px 28px -16px rgb(28 25 23 / 0.16)";
+const SHADOW_LIFT = "0 2px 6px rgb(28 25 23 / 0.05), 0 22px 44px -22px rgb(28 25 23 / 0.26)";
+
 const FONT_STACKS: Record<StoreFontKey, string> = {
   // Nothing to download: the fastest possible first paint.
   system:
@@ -86,10 +112,12 @@ export function shade(hex: string, amount: number, fallback = "#4338ca"): string
 
 /** Dark surfaces for a storefront the admin switched to dark mode. */
 const DARK_FALLBACKS = {
-  background: "#0b1220",
-  surface: "#131c2e",
-  text: "#f1f5f9",
-  muted: "#94a3b8",
+  // Warm, to match the light palette: an espresso dark rather than a blue one,
+  // so switching modes changes the light and not the brand.
+  background: "#14100e",
+  surface: "#1e1917",
+  text: "#f7f3ee",
+  muted: "#a8a29e",
 } as const;
 
 /** The whole token set the storefront reads, as CSS custom properties. */
@@ -102,18 +130,18 @@ export function themeVariables(settings: WebsiteSettings): Record<string, string
 
   const background = safeColor(
     theme.background_color,
-    dark ? DARK_FALLBACKS.background : "#f8fafc",
+    dark ? DARK_FALLBACKS.background : "#faf7f2",
   );
-  const surface = safeColor(theme.surface_color, dark ? DARK_FALLBACKS.surface : "#ffffff");
-  const text = safeColor(theme.text_color, dark ? DARK_FALLBACKS.text : "#0f172a");
-  const muted = safeColor(theme.muted_text_color, dark ? DARK_FALLBACKS.muted : "#64748b");
+  const surface = safeColor(theme.surface_color, dark ? DARK_FALLBACKS.surface : "#fffdfb");
+  const text = safeColor(theme.text_color, dark ? DARK_FALLBACKS.text : "#1c1917");
+  const muted = safeColor(theme.muted_text_color, dark ? DARK_FALLBACKS.muted : "#78716c");
 
   return {
     "--store-primary": primary,
     "--store-primary-hover": shade(primary, -0.12, primary),
     "--store-primary-active": shade(primary, -0.24, primary),
     // A tint of the primary for chips, soft buttons and the free-delivery bar.
-    "--store-primary-soft": dark ? shade(primary, -0.62, primary) : shade(primary, 0.88, "#eef2ff"),
+    "--store-primary-soft": dark ? shade(primary, -0.62, primary) : shade(primary, 0.88, "#f5efe6"),
     "--store-on-primary": readableOn(primary),
     "--store-secondary": secondary,
     "--store-on-secondary": readableOn(secondary),
@@ -129,6 +157,19 @@ export function themeVariables(settings: WebsiteSettings): Record<string, string
     "--store-radius": `${Math.max(0, theme.corner_radius)}px`,
     "--store-radius-button": `${buttonRadiusOf(theme.button_style, theme.corner_radius)}px`,
     "--store-font": fontStackOf(theme.font_stack),
+    // Headings only. See DISPLAY_FONT_STACK for why body copy is left alone.
+    "--store-font-display": DISPLAY_FONT_STACK,
+    "--store-shadow": SHADOW_SOFT,
+    "--store-shadow-lift": SHADOW_LIFT,
+    // A hairline in the page's own ink, for dividers that should not read as
+    // borders — the gold rule under a section title, the line above a footer.
+    "--store-hairline": "rgb(28 25 23 / 0.10)",
+    "--store-hairline-gold": "rgb(176 141 87 / 0.38)",
+    // Generous section rhythm. Whitespace is what separates a brand from a
+    // catalogue, so the spacing is a token rather than something each section
+    // invents for itself.
+    "--store-space-section": "clamp(3.5rem, 8vw, 6.5rem)",
+    "--store-max-width": "76rem",
   };
 }
 

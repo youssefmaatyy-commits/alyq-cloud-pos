@@ -1108,6 +1108,47 @@ test("colours are validated and text is put on a readable one", () => {
   assert.equal(readableOn("#111827"), "#ffffff");
 });
 
+test("the shop does not wear the back office's colours", () => {
+  // The storefront used to default to the POS's indigo and violet so that the two
+  // looked like one product. For a brand shop that is the wrong instinct: it is
+  // exactly what makes a storefront read as an admin screen. These remain
+  // defaults an admin can change — the point is that they start as a shop.
+  const theme = resolveSettings({}).theme;
+  assert.equal(theme.primary_color, "#1c1917", "espresso, not indigo");
+  assert.equal(theme.background_color, "#faf7f2", "warm cream, not cool slate");
+  assert.equal(theme.surface_color, "#fffdfb", "soft white, not pure white");
+  assert.equal(theme.accent_color, "#b08d57", "antique gold for details");
+  assert.equal(theme.muted_text_color, "#78716c", "warm grey, not blue grey");
+  assert.notEqual(theme.primary_color, "#4f46e5", "the POS primary must not be the shop's");
+  assert.ok(theme.corner_radius <= 6, "tight corners; a 16px radius reads as an app");
+});
+
+test("the tokens a premium layout needs exist, and stay namespaced", () => {
+  const variables = themeVariables(resolveSettings({}));
+  for (const token of [
+    "--store-font-display",
+    "--store-shadow",
+    "--store-shadow-lift",
+    "--store-hairline",
+    "--store-hairline-gold",
+    "--store-space-section",
+    "--store-max-width",
+  ]) {
+    assert.ok(variables[token], `${token} is missing from the token set`);
+  }
+  // Namespacing is what keeps a shop rebrand from touching the till: the tokens
+  // are written on <html>, so anything outside --store- could reach the POS.
+  const stray = Object.keys(variables).filter((key) => !key.startsWith("--store-"));
+  assert.deepEqual(stray, [], "a token outside the --store- namespace could leak into the POS");
+  // A serif for headings; the admin's own stack left alone for body copy.
+  assert.ok(variables["--store-font-display"].includes("serif"), "headings get a display serif");
+  assert.ok(variables["--store-font"].includes("sans-serif"), "body copy stays a sans stack");
+  assert.ok(
+    variables["--store-shadow"].includes("28 25 23"),
+    "shadows use the page's warm ink, not pure black",
+  );
+});
+
 test("the theme document becomes CSS variables, and shades stay valid hex", () => {
   const variables = themeVariables(settings());
   assert.ok(variables["--store-primary"]);

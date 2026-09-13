@@ -6,7 +6,7 @@
 export const en = {
   // ── App shell ────────────────────────────────────────────────────────────
   "app.name": "ALYQ Cloud POS",
-  "app.tagline": "Women's Accessories Store",
+  "app.tagline": "ALYQ Accessories Store",
   "auth.login.title": "Sign in",
   "auth.login.subtitle": "Enter your account to open the register.",
   "auth.username": "Username",
@@ -2919,7 +2919,7 @@ export type TranslationKey = keyof typeof en;
 export const ar: Record<TranslationKey, string> = {
   // ── App shell ────────────────────────────────────────────────────────────
   "app.name": "أَلِــيْـــق كلاود POS",
-  "app.tagline": "إكسسوارات حريمي",
+  "app.tagline": "إكسسوارات أَلِــيْـــق",
   "auth.login.title": "تسجيل الدخول",
   "auth.login.subtitle": "أدخل بيانات حسابك لفتح نقطة البيع.",
   "auth.username": "اسم المستخدم",

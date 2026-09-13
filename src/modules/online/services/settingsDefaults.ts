@@ -30,8 +30,8 @@ export const DEFAULT_HERO_SLIDES: HeroSlide[] = [
     image_url: null,
     title_ar: "أَلِــيْـــق",
     title_en: "ALYQ",
-    subtitle_ar: "إكسسوارات حريمي",
-    subtitle_en: "Women's Accessories Store",
+    subtitle_ar: "إكسسوارات أَلِــيْـــق",
+    subtitle_en: "ALYQ Accessories Store",
     cta_label_ar: "تسوق الآن",
     cta_label_en: "Shop now",
     cta_href: "#/store/products",
@@ -83,8 +83,8 @@ export const DEFAULT_WEBSITE_SETTINGS: WebsiteSettings = {
   contact: {
     store_name_ar: DEFAULT_STORE_NAME_AR,
     store_name_en: DEFAULT_STORE_NAME_EN,
-    tagline_ar: "إكسسوارات حريمي",
-    tagline_en: "Women's Accessories Store",
+    tagline_ar: "إكسسوارات أَلِــيْـــق",
+    tagline_en: "ALYQ Accessories Store",
     phone: "01000000000",
     email: "hello@alyq.example",
     address_ar: "شارع السلطان حسين، الإسماعيلية، مصر",
@@ -94,19 +94,26 @@ export const DEFAULT_WEBSITE_SETTINGS: WebsiteSettings = {
     map_url: "",
   },
   theme: {
-    // The same indigo/violet the POS brand uses, so the shop and the back office
-    // look like one business until the owner picks their own colours.
-    primary_color: "#4f46e5",
-    secondary_color: "#7c3aed",
-    accent_color: "#f59e0b",
-    background_color: "#f8fafc",
-    surface_color: "#ffffff",
-    text_color: "#0f172a",
-    muted_text_color: "#64748b",
+    // An accessories-house palette: warm cream paper, soft white surfaces,
+    // espresso ink, and a muted antique gold used for details rather than
+    // surfaces. The previous defaults were the POS's own indigo and violet,
+    // chosen so the shop and the till looked like one product — which is
+    // precisely what makes a shop read as a back office instead of a brand.
+    // These tokens are namespaced `--store-*` and removed when the storefront
+    // unmounts, so the till does not change by one pixel either way.
+    primary_color: "#1c1917", // espresso: dark buttons, cream type on top
+    secondary_color: "#44403c", // warm stone, for the announcement bar
+    accent_color: "#b08d57", // antique gold: badges, rules, small details
+    background_color: "#faf7f2", // warm cream paper
+    surface_color: "#fffdfb", // soft white cards
+    text_color: "#1c1917",
+    muted_text_color: "#78716c",
     font_stack: "system",
     button_style: "rounded",
     header_style: "solid",
-    corner_radius: 16,
+    // Tight corners. A 16px radius reads as an app; a fashion house keeps its
+    // edges close to square and lets whitespace do the work.
+    corner_radius: 4,
     dark_mode: false,
   },
   images: {
@@ -153,10 +160,10 @@ export const DEFAULT_WEBSITE_SETTINGS: WebsiteSettings = {
     instapay_enabled: true,
   },
   seo: {
-    meta_title: "ALYQ | Women's Accessories Store",
+    meta_title: "ALYQ Accessories Store | أَلِــيْـــق",
     meta_description:
-      "ALYQ | Women's Accessories Store — إكسسوارات حريمي. Order online with delivery across Ismailia, or collect from the branch. Pay with InstaPay or cash on delivery.",
-    keywords: "alyq, أَلِــيْـــق, women's accessories, إكسسوارات حريمي, ismailia, online order, instapay, delivery",
+      "ALYQ Accessories Store — إكسسوارات أَلِــيْـــق. Order online with delivery across Ismailia, or collect from the branch. Pay with InstaPay or cash on delivery.",
+    keywords: "alyq, أَلِــيْـــق, accessories, إكسسوارات أَلِــيْـــق, ismailia, online order, instapay, delivery",
     og_image_url: null,
   },
   announcement: {

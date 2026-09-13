@@ -64,8 +64,8 @@ const BRAND_AR = cp(
 const BRAND_EN = "ALYQ";
 
 /** What the business is. Plain letters, so it is safe to write literally. */
-const BUSINESS_AR = "إكسسوارات حريمي";
-const BUSINESS_EN = "Women's Accessories Store";
+const BUSINESS_AR = "إكسسوارات أَلِــيْـــق";
+const BUSINESS_EN = "ALYQ Accessories Store";
 
 /**
  * Spellings that have shipped by mistake and must not ship again. Each is
@@ -92,6 +92,8 @@ const FORBIDDEN: ReadonlyArray<readonly [string, string]> = [
   [[BRAND_EN, "Store"].join(" "), "the retired shop name, which prefixed the wordmark"],
   [[cp(0x0645, 0x062a, 0x062c, 0x0631), BRAND_AR].join(" "), "the retired Arabic shop name, which prefixed the wordmark"],
   [["Speciality", "coffee"].join(" "), "the retired coffee-shop tagline"],
+  [["Women's", "Accessories", "Store"].join(" "), "the retired business description"],
+  [["إكسسوارات", "حريمي"].join(" "), "the retired Arabic business description"],
   [["Retail", "operations", "suite"].join(" "), "the retired application tagline"],
 ];
 
@@ -172,7 +174,7 @@ test("the shop name stays configurable — the brand is a default, not a hardcod
 
 test("the business type is stated in both languages, in the app and in the shop", () => {
   // The identity is the wordmark plus what the shop sells: أَلِــيْـــق /
-  // إكسسوارات حريمي and ALYQ / Women's Accessories Store.
+  // إكسسوارات أَلِــيْـــق and ALYQ Accessories Store.
   assert.equal(en["app.tagline"], BUSINESS_EN);
   assert.equal(ar["app.tagline"], BUSINESS_AR);
   for (const stored of [{}, null]) {
@@ -235,8 +237,8 @@ test("the static document title and meta description carry the identity", () => 
   // index.html is what a crawler and a browser tab see before React runs.
   const html = read("index.html");
   assert.ok(
-    html.includes(`<title>${BRAND_EN} | ${BUSINESS_EN}</title>`),
-    "index.html title must be the brand and the business type",
+    html.includes(`<title>${BUSINESS_EN} | ${BRAND_AR}</title>`),
+    "index.html title must be the official description and the Arabic wordmark",
   );
   const meta = /name="description"\s+content="([^"]*)"/.exec(html.replace(/\s+/g, " "))
     ?? /content="([^"]*)"\s+name="description"/.exec(html.replace(/\s+/g, " "));
@@ -248,7 +250,7 @@ test("the static document title and meta description carry the identity", () => 
 
 test("the SEO defaults lead with the approved identity", () => {
   const settings = resolveSettings({});
-  assert.equal(settings.seo.meta_title, `${BRAND_EN} | ${BUSINESS_EN}`);
+  assert.equal(settings.seo.meta_title, `${BUSINESS_EN} | ${BRAND_AR}`);
   assert.ok(settings.seo.meta_description.includes(BRAND_EN), "meta description lost the brand");
   assert.ok(settings.seo.meta_description.includes(BUSINESS_AR), "meta description lost the Arabic business type");
   assert.ok(!settings.seo.keywords.includes("coffee"), "the retired coffee keywords are still there");
