@@ -2626,7 +2626,7 @@ async function main() {
   await sleep(900);
   const settingsShopLink = document.querySelector('a[data-testid="settings-open-store"]');
   assert.ok(settingsShopLink, "the website settings screen offers Open store");
-  settingsShopLink && clickLink(settingsShopLink);
+  if (settingsShopLink) clickLink(settingsShopLink);
   await sleep(900);
   assert.equal(
     dom.window.location.hash,

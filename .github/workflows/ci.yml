@@ -1,8 +1,8 @@
 name: CI
 
 # Four jobs, each independent. Anything red blocks a merge:
-#   static    types (which also guarantee the EN/AR dictionary is complete),
-#             production build
+#   static    lint, types (which also guarantee the EN/AR dictionary is
+#             complete), production build
 #   logic     every *.selftest.ts — money math, validation, permissions, repos
 #   database  applies supabase/migrations to a real PostgreSQL engine and checks
 #             the result satisfies the code (no Docker: @electric-sql/pglite)
@@ -10,6 +10,10 @@ name: CI
 #
 # `live` is opt-in: set the repository variable ALYQ_LIVE_CI=true and the
 # SUPABASE_TEST_* secrets to run the same E2E suites against a real project.
+# It is the only job that can see the live-mode surface — the RLS policies and
+# the anonymous storefront reads that migration 0030 hardened — and until it is
+# switched on, `npm run db:check` is what proves those, by running the real
+# policies against a real engine as each role (see supabase/tests/scenarios.sql).
 
 on:
   push:
@@ -33,6 +37,12 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # ESLint, added with migration 0030's hardening pass. It is the cheapest of
+      # the four gates and the only one that reads the code rather than running
+      # it: the hooks rules catch a conditional hook, which every other job here
+      # would sail through because the suites that exist do not render that
+      # component. Warnings are reported and do not block; errors do.
+      - run: npm run lint
       # `ar` is typed Record<TranslationKey, string>, so this also fails on a
       # missing or extra Arabic translation — no separate i18n check needed.
       - run: npm run typecheck

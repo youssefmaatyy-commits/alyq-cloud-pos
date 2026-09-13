@@ -8,7 +8,8 @@ import type {
   SalePayment,
   VoidSaleInput,
 } from "../types";
-import type { SalesRepository } from "./repository";
+import type { SaleListQuery, SalesRepository } from "./repository";
+import { SALES_ROW_CAP } from "./repository";
 
 interface SaleRow {
   id: string;
@@ -170,32 +171,68 @@ export class SupabaseSalesRepository implements SalesRepository {
     }
   }
 
-  async listSales(): Promise<Sale[]> {
+  async listSales(query: SaleListQuery = {}): Promise<Sale[]> {
     try {
       const client = this.require();
-      const { data, error } = await client
+      let salesQuery = client
         .from("sales")
         .select("*")
         .order("created_at", { ascending: false });
+
+      // Push the bounds into SQL rather than fetching history and filtering it
+      // in the browser. An unbounded select stops at the project's row cap and
+      // reports nothing about what it dropped.
+      if (query.from) salesQuery = salesQuery.gte("created_at", query.from);
+      if (query.to) salesQuery = salesQuery.lte("created_at", query.to);
+      if (query.limit !== undefined || query.offset !== undefined) {
+        const offset = Math.max(0, query.offset ?? 0);
+        const limit = Math.max(1, query.limit ?? SALES_ROW_CAP);
+        salesQuery = salesQuery.range(offset, offset + limit - 1);
+      }
+
+      const { data, error } = await salesQuery;
       if (error) throw toAppError(error);
       const sales = (data as SaleRow[] | null) ?? [];
 
-      const { data: payments, error: payError } = await client
-        .from("sale_payments")
-        .select("*")
-        .order("created_at", { ascending: true });
-      if (payError) throw toAppError(payError);
       const paymentsBySale = new Map<string, SalePaymentRow[]>();
-      for (const p of (payments as SalePaymentRow[] | null) ?? []) {
-        const list = paymentsBySale.get(p.sale_id) ?? [];
-        list.push(p);
-        paymentsBySale.set(p.sale_id, list);
+      if (sales.length > 0) {
+        // Scoped to the page's sales. This used to select every payment row
+        // ever written, on every refresh, no matter how few sales were shown.
+        const { data: payments, error: payError } = await client
+          .from("sale_payments")
+          .select("*")
+          .in("sale_id", sales.map((row) => row.id))
+          .order("created_at", { ascending: true });
+        if (payError) throw toAppError(payError);
+        for (const p of (payments as SalePaymentRow[] | null) ?? []) {
+          const list = paymentsBySale.get(p.sale_id) ?? [];
+          list.push(p);
+          paymentsBySale.set(p.sale_id, list);
+        }
       }
 
       return sales.map((row) => mapSale(row, [], paymentsBySale.get(row.id) ?? []));
     } catch (error) {
       if (error instanceof AppError) throw error;
       throw toAppError(error);
+    }
+  }
+
+  async countSales(query: SaleListQuery = {}): Promise<number | null> {
+    try {
+      const client = this.require();
+      let countQuery = client
+        .from("sales")
+        .select("id", { count: "exact", head: true });
+      if (query.from) countQuery = countQuery.gte("created_at", query.from);
+      if (query.to) countQuery = countQuery.lte("created_at", query.to);
+      const { count, error } = await countQuery;
+      if (error || typeof count !== "number") return null;
+      return count;
+    } catch {
+      // A count refines the answer; it must never be able to fail the refresh.
+      // null means "unknown", and callers report unknown as unknown.
+      return null;
     }
   }
 

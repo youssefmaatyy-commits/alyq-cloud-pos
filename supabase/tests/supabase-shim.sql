@@ -68,16 +68,28 @@ create table if not exists auth.identities (
   updated_at    timestamptz not null default now()
 );
 
--- Supabase reads the caller from the request JWT. Real Supabase stores the
--- claims in `request.jwt.claims` and reads `sub` from it; this stand-in reads a
--- simpler claim key so tests can impersonate a user with
--- `select set_config('request.jwt.claim.sub', '<uuid>', false)`.
+-- Supabase reads the caller from the request JWT, and that has had two
+-- spellings: PostgREST used to publish every claim as its own GUC
+-- (`request.jwt.claim.sub`), and now publishes the whole verified token as one
+-- JSON GUC (`request.jwt.claims`). A hosted project reads the JSON form.
+--
+-- This stand-in reads BOTH and prefers the JSON one, which is a fidelity fix and
+-- not a tidiness one. The harness impersonates a user with
+-- `set_config('request.jwt.claim.sub', '<uuid>', true)`, so the legacy key has to
+-- keep working — but while it was the ONLY key, a function written the way
+-- production writes it (`auth.jwt() ->> 'sub'`, or reading `request.jwt.claims`
+-- directly) saw an empty token here and a full one live: it would pass in CI and
+-- then deny every real caller, or the reverse. Reading both means the two
+-- spellings cannot disagree about who is asking.
 create or replace function auth.uid()
 returns uuid
 language sql
 stable
 as $$
-  select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid
+  select coalesce(
+    nullif(nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub', ''),
+    nullif(current_setting('request.jwt.claim.sub', true), '')
+  )::uuid
 $$;
 
 create or replace function auth.role()
@@ -85,7 +97,11 @@ returns text
 language sql
 stable
 as $$
-  select coalesce(nullif(current_setting('request.jwt.claim.role', true), ''), 'anon')
+  select coalesce(
+    nullif(nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'role', ''),
+    nullif(current_setting('request.jwt.claim.role', true), ''),
+    'anon'
+  )
 $$;
 
 create or replace function auth.email()
@@ -93,7 +109,28 @@ returns text
 language sql
 stable
 as $$
-  select nullif(current_setting('request.jwt.claim.email', true), '')
+  select coalesce(
+    nullif(nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'email', ''),
+    nullif(current_setting('request.jwt.claim.email', true), '')
+  )
+$$;
+
+-- Present in real Supabase and absent here until now, which meant a policy or
+-- function using it could not be tested at all. Built from whichever spelling
+-- the caller set, so it agrees with the three functions above.
+create or replace function auth.jwt()
+returns jsonb
+language sql
+stable
+as $$
+  select coalesce(
+    nullif(current_setting('request.jwt.claims', true), '')::jsonb,
+    jsonb_build_object(
+      'sub',   nullif(current_setting('request.jwt.claim.sub', true), ''),
+      'role',  nullif(current_setting('request.jwt.claim.role', true), ''),
+      'email', nullif(current_setting('request.jwt.claim.email', true), '')
+    )
+  )
 $$;
 
 grant usage on schema auth to anon, authenticated, service_role;

@@ -1,3 +1,4 @@
+import { applySaleListQuery } from "./saleListQuery";
 import type {
   CompleteSaleInput,
   ConfirmPaymentInput,
@@ -10,7 +11,7 @@ import { getDemoRepository } from "@/modules/products/data/demoRepository";
 import { applyDemoAdjustment } from "@/modules/inventory/data/demoRepository";
 import { safeStorage } from "@/modules/products/data/demoSeed";
 import { cartTotals, lineTotal, round2, validateDiscount } from "../services/posMath";
-import type { SalesRepository } from "./repository";
+import type { SaleListQuery, SalesRepository } from "./repository";
 
 const SALES_KEY = "alyq.demo.sales.v1";
 const COUNTER_KEY = "alyq.demo.sale_counter.v1";
@@ -318,9 +319,15 @@ export class DemoSalesRepository implements SalesRepository {
     return delay(confirmed);
   }
 
-  async listSales(): Promise<Sale[]> {
+  async listSales(query: SaleListQuery = {}): Promise<Sale[]> {
+    return delay(applySaleListQuery(this.sales, query));
+  }
+
+  async countSales(query: SaleListQuery = {}): Promise<number | null> {
+    // The offline backend holds the whole set in memory, so its total is exact
+    // and free. Paging is ignored, exactly as the live count ignores it.
     return delay(
-      [...this.sales].sort((a, b) => b.created_at.localeCompare(a.created_at)),
+      applySaleListQuery(this.sales, query, { ignorePaging: true }).length,
     );
   }
 

@@ -342,7 +342,6 @@ await step(5, "Verify cashier permissions", async () => {
   await app.signIn("cashier");
   if (!app.isSignedIn()) throw new Error("the cashier account could not sign in");
   const out = [];
-  const nav = app.navHrefs();
   out.push(`cashier session role: ${app.readSession()?.session.user.role}`);
 
   // The till: the cashier must be able to sell.

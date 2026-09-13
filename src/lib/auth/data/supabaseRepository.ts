@@ -165,7 +165,9 @@ export class SupabaseUserRepository implements UserRepository {
     // The provider is asked once; everything below is our own bookkeeping. A
     // thrown network error becomes a coded failure so no caller has to catch on
     // our behalf to render a login form.
-    let authId = "";
+    // No initialiser: the try assigns it or returns a coded failure, and the
+    // catch returns too, so nothing below can read an unwritten binding.
+    let authId: string;
     try {
       const response = await client.auth.signInWithPassword({ email, password });
       const user = response.error ? null : response.data?.user ?? null;

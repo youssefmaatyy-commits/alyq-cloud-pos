@@ -66,7 +66,7 @@ globalThis.cancelAnimationFrame = (id) => clearTimeout(id);
 globalThis.File = dom.window.File;
 globalThis.Blob = dom.window.Blob;
 globalThis.FileReader = dom.window.FileReader;
-URL.createObjectURL = (blob) => `blob:mock-${Math.random().toString(36).slice(2)}`;
+URL.createObjectURL = (_blob) => `blob:mock-${Math.random().toString(36).slice(2)}`;
 URL.revokeObjectURL = () => {};
 
 // Demo mode is entirely local — every repository writes to localStorage. Record
@@ -244,7 +244,10 @@ const attachProofImage = (name = "instapay-proof.png") => {
  * live without a rebuild.
  */
 const themeCss = () => document.getElementById("alyq-store-theme")?.textContent ?? "";
-const themeVar = (name) => (themeCss().match(new RegExp(`${name}:\\s*([^;]+);`)) ?? [, ""])[1].trim();
+const themeVar = (name) => {
+  const match = themeCss().match(new RegExp(`${name}:\\s*([^;]+);`));
+  return (match?.[1] ?? "").trim();
+};
 
 // ── the demo repositories' own storage, read the way the app writes it ──────
 const readJson = (key) => {
@@ -654,7 +657,9 @@ async function main() {
   const thirdStockBefore = stockOf(thirdSku);
   click("Add to cart", third);
   await sleep(400);
-  const { number: cancelledNumber, order: cancelledOrder } = await placeOrderThroughTheStore({ payment: "cod" });
+  // The call is the point — it places the order — so only what the assertions
+  // read is taken out of it.
+  const { number: cancelledNumber } = await placeOrderThroughTheStore({ payment: "cod" });
   assert.equal(stockOf(thirdSku), thirdStockBefore, "a pending order holds, it does not deduct");
 
   await navigate("#/online/orders", 900);

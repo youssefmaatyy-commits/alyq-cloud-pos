@@ -353,12 +353,22 @@ async function authorize(req: Request): Promise<Context> {
  * Create the credentials, then finish the profile.
  *
  * `auth.admin.createUser` fires `public.handle_new_user()`, which builds a
- * profile from the metadata — username, name, role, and `active` only when a
- * role was given. It cannot know the email or phone, so the profile is completed
- * with `admin_upsert_staff_profile` **called as the admin**, not with the service
- * key: the RPC re-checks `manage_users`, validates the name, and refuses to let
- * an admin deactivate their own account. Borrowing its guardrails beats
- * restating them here.
+ * profile from the metadata — username and name — and nothing else. Since
+ * migration 0030 the trigger deliberately ignores a declared `role`: GoTrue runs
+ * it in its own session for a browser sign-up and for `auth.admin.createUser()`
+ * alike, so no claim inside it can say which of the two is asking, and metadata
+ * belongs to the caller. Every new account therefore starts as an inactive
+ * viewer, and a role in the metadata is written to the audit log as a refused
+ * escalation rather than granted. That is why `role` is no longer sent below:
+ * sending it would not change the outcome, it would only make an account an
+ * admin created look like an account that tried to create itself.
+ *
+ * The role, the active flag, the email and the phone are all set by
+ * `admin_upsert_staff_profile` **called as the admin**, not with the service key:
+ * the RPC re-checks `manage_users`, validates the name, and refuses to let an
+ * admin deactivate their own account. Borrowing its guardrails beats restating
+ * them here — and it means the authority for "who this person is" is an RPC that
+ * already knew who was asking.
  */
 async function createUser(
   context: Context,
@@ -391,11 +401,15 @@ async function createUser(
     // click a link in an email they may not have access to yet would just strand
     // it. Supabase's own invitation flow is the alternative if that is wanted.
     email_confirm: true,
+    // Username, name and phone only. `role` is deliberately not sent: the
+    // trigger ignores it (see the note on this function), the role is set
+    // authoritatively by `admin_upsert_staff_profile` below, and declaring one
+    // here would put a row in the audit log saying this account asked to be
+    // something — which is the signal reserved for a real forgery attempt.
     user_metadata: {
       username: request.username,
       name: request.name,
       phone: request.phone,
-      role: request.role,
     },
   });
 

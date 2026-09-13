@@ -25,6 +25,7 @@ import {
 } from "../constants";
 import type { NewProduct, ProductType } from "../types";
 import { PRODUCT_TYPES } from "../types";
+import { AppError } from "../data/repository";
 
 // ── CSV Parser ──────────────────────────────────────────────────────────────
 
@@ -644,6 +645,80 @@ export const TEMPLATE_COLUMNS = [
 ] as const;
 
 /**
+ * Hard limits on what the import accepts — and the reason for each, because a
+ * limit nobody can explain is a limit somebody raises at 6pm on a Saturday.
+ *
+ * The threat here is not a stranger: uploading needs `import_data`, so the file
+ * comes from a member of staff. What that still has to survive is a file that is
+ * bigger than the tab's memory, or smaller on disk than it is parsed — an .xlsx
+ * is a ZIP, and a ZIP is a compression ratio waiting to be aimed at something.
+ */
+export const IMPORT_LIMITS = {
+  /**
+   * 8 MB, checked BEFORE the file is read. That ordering is the whole point: the
+   * shipped template with every column filled for 5,000 products is well under
+   * 1 MB, so this is headroom rather than a constraint, but without it the first
+   * thing the app does with a 2 GB "products.xlsx" is allocate 2 GB for it.
+   */
+  maxBytes: 8 * 1024 * 1024,
+  /**
+   * 10,000 rows, enforced inside the reader through `sheetRows` rather than by
+   * counting afterwards — a workbook that decompresses to a million rows is
+   * refused having parsed 10,001 of them. A row over the cap is read on purpose
+   * so the overflow is observed and reported instead of silently truncated: a
+   * partial import that looks complete is worse than an error.
+   */
+  maxRows: 10_000,
+  /**
+   * 200 columns. The template has about 30, and every column of every row is
+   * turned into a string, so a sheet wider than this is not a product list.
+   */
+  maxColumns: 200,
+} as const;
+
+/** Refuse the file before spending anything on it: size first, then emptiness. */
+export function assertImportableFile(file: File): void {
+  if (file.size > IMPORT_LIMITS.maxBytes) {
+    throw new AppError(
+      "IMPORT_FILE_TOO_LARGE",
+      `${file.name} is ${(file.size / (1024 * 1024)).toFixed(1)} MB; the limit is ` +
+        `${IMPORT_LIMITS.maxBytes / (1024 * 1024)} MB`,
+    );
+  }
+  if (file.size === 0) {
+    throw new AppError("IMPORT_FILE_UNSUPPORTED", `${file.name} is empty`);
+  }
+}
+
+/**
+ * The third case the format sniffing has to answer. A workbook is recognised by
+ * its magic bytes; anything else is treated as text. This is bytes that are
+ * neither — a PDF, an executable, a renamed photo. Fed to the CSV parser that
+ * becomes a wall of mojibake and the misleading "could not detect SKU or product
+ * name columns", so it is refused with a message that says what to upload
+ * instead. A NUL in the first 8 kB is the test: text exports do not contain one,
+ * and every binary format that matters here does.
+ */
+function assertLooksLikeText(bytes: Uint8Array): void {
+  if (bytes.subarray(0, 8192).includes(0)) {
+    throw new AppError(
+      "IMPORT_FILE_UNSUPPORTED",
+      "the file is binary but not an Excel workbook (no ZIP or OLE2 header)",
+    );
+  }
+}
+
+/** Refuse an oversized sheet rather than importing the first part of it. */
+function assertRowCount(rows: ReadonlyArray<unknown>): void {
+  if (rows.length > IMPORT_LIMITS.maxRows) {
+    throw new AppError(
+      "IMPORT_TOO_MANY_ROWS",
+      `${rows.length} rows; the limit is ${IMPORT_LIMITS.maxRows}`,
+    );
+  }
+}
+
+/**
  * Import products from a File object — a real Excel workbook (.xlsx/.xls) or a
  * CSV/TSV text export.
  *
@@ -656,12 +731,22 @@ export const TEMPLATE_COLUMNS = [
  * has neither magic number.
  */
 export async function importProductsFromFile(file: File): Promise<ImportResult> {
+  // Size before bytes: reading the file is the expensive step, so a refusal has
+  // to come first or the limit only applies to files that were already affordable.
+  assertImportableFile(file);
+
   const bytes = new Uint8Array(await file.arrayBuffer());
   if (looksLikeWorkbook(bytes)) {
     return importProductsFromRows(await readWorkbookRows(bytes));
   }
-  // Plain text: `parseCsv` strips the BOM Excel writes on UTF-8 exports.
-  return importProductsFromCsv(new TextDecoder("utf-8").decode(bytes));
+
+  assertLooksLikeText(bytes);
+  // Plain text: `parseCsv` strips the BOM Excel writes on UTF-8 exports. The row
+  // cap is checked here rather than inside `importProductsFromCsv` so the CSV
+  // path and the workbook path answer with the same refusal.
+  const rows = parseCsv(new TextDecoder("utf-8").decode(bytes));
+  assertRowCount(rows);
+  return importProductsFromRows(rows);
 }
 
 /** ZIP (`PK\x03\x04`) → .xlsx, OLE2 (`\xD0\xCF\x11\xE0…`) → .xls. */
@@ -701,7 +786,13 @@ export async function readWorkbookRows(data: Uint8Array): Promise<string[][]> {
   // Same dynamic import the template generator uses: `xlsx` is ~900 kB and must
   // not land in the startup bundle.
   const XLSX = await import("xlsx");
-  const workbook = XLSX.read(data, { type: "array", cellDates: true });
+  const workbook = XLSX.read(data, {
+    type: "array",
+    cellDates: true,
+    // One row past the cap, so exceeding it is something the reader reports
+    // rather than something that has to be inferred from a truncated sheet.
+    sheetRows: IMPORT_LIMITS.maxRows + 1,
+  });
 
   const sheets = workbook.SheetNames.map((name) => ({
     name,
@@ -712,12 +803,14 @@ export async function readWorkbookRows(data: Uint8Array): Promise<string[][]> {
         defval: "",
         blankrows: false,
       })
-      .map((row) => row.map(cellToText)),
+      .map((row) => row.slice(0, IMPORT_LIMITS.maxColumns).map(cellToText)),
   })).filter((sheet) => sheet.rows.length > 0);
 
   if (sheets.length === 0) return [];
   const products = sheets.find((sheet) => Object.keys(buildColumnMap(sheet.rows[0])).length > 0);
-  return (products ?? sheets[0]).rows;
+  const rows = (products ?? sheets[0]).rows;
+  assertRowCount(rows);
+  return rows;
 }
 
 /**

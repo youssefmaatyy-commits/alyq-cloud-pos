@@ -1016,6 +1016,9 @@ export const en = {
   "import.downloadTemplate": "Download Excel Template",
   "import.templateDownloaded": "Template downloaded",
   "import.parseError": "Could not read the file. Please check the format.",
+  "import.fileTooLarge": "That file is too large. The limit is 8 MB — split it and import it in parts.",
+  "import.fileUnsupported": "That file is not a spreadsheet. Upload an Excel (.xlsx, .xls) or CSV export.",
+  "import.tooManyRows": "That file has too many rows. The limit is 10,000 — split it and import it in parts.",
   "import.fileSummary": "File Summary",
   "import.fileName": "File",
   "import.totalRows": "Total rows",
@@ -1057,6 +1060,10 @@ export const en = {
   "reports.rangeTitle": "Date range",
   "reports.rangeHint":
     "Applies to the financial report, sales, the cash ledger and supplier activity.",
+    "reports.salesCoverage":
+      "Showing the {shown} most recent sales in this period — {total} exist.",
+    "reports.salesCoverageHint":
+      "Narrow the date range to see the rest. Every total on this page covers the sales shown, not the whole period.",
   "reports.financialTitle": "Financial report",
   "reports.financialHint":
     "Revenue, cost of goods sold, profit, payments, refunds, shift summaries and cash movements.",
@@ -3922,6 +3929,9 @@ export const ar: Record<TranslationKey, string> = {
   "import.downloadTemplate": "تحميل قالب إكسل",
   "import.templateDownloaded": "تم تحميل القالب",
   "import.parseError": "تعذّر قراءة الملف. يرجى التحقق من التنسيق.",
+  "import.fileTooLarge": "هذا الملف كبير جدًا. الحد الأقصى 8 ميجابايت — قسّمه واستورده على أجزاء.",
+  "import.fileUnsupported": "هذا الملف ليس جدول بيانات. ارفع ملف Excel (‎.xlsx، .xls) أو CSV.",
+  "import.tooManyRows": "هذا الملف يحتوي على صفوف أكثر من الحد الأقصى 10,000 — قسّمه واستورده على أجزاء.",
   "import.fileSummary": "ملخص الملف",
   "import.fileName": "الملف",
   "import.totalRows": "إجمالي الصفوف",
@@ -3963,6 +3973,10 @@ export const ar: Record<TranslationKey, string> = {
   "reports.rangeTitle": "الفترة الزمنية",
   "reports.rangeHint":
     "تنطبق على التقرير المالي والمبيعات والحركات النقدية ونشاط الموردين.",
+    "reports.salesCoverage":
+      "يتم عرض أحدث {shown} عملية بيع في هذه الفترة — وإجماليها {total} عملية.",
+    "reports.salesCoverageHint":
+      "لتظهر باقي العمليات يمكن تضييق نطاق التاريخ. الأرقام في هذه الصفحة تغطي العمليات الظاهرة فقط وليس الفترة كاملة.",
   "reports.financialTitle": "التقرير المالي",
   "reports.financialHint":
     "الإيرادات وتكلفة البضاعة المباعة والأرباح والمدفوعات والاستردادات وملخصات الورديات والحركات النقدية.",

@@ -74,6 +74,24 @@ begin
 end
 $$;
 
+-- ── modelling production's grant set ──────────────────────────────────────
+-- A live Supabase project runs its migrations as `postgres`, and that role
+-- carries `ALTER DEFAULT PRIVILEGES … GRANT ALL ON TABLES TO anon,
+-- authenticated, service_role`. So in production a browser CAN attempt any
+-- write to any public table, and row level security is the only thing standing
+-- between it and the row. That is the model Supabase documents, and it is why
+-- "enable RLS" is the first instruction in every guide.
+--
+-- This harness applies only the grants the migrations state by hand, which for
+-- the catalogue is SELECT (0015) — stricter than production, and the reason the
+-- old `with check (true)` policies on products and categories went unchallenged
+-- for thirty migrations: nothing here could attempt the write they allowed.
+-- Granting it back for the run makes the POLICY the thing under test, which is
+-- the only part this file can speak for. No other scenario in this file writes
+-- to these three tables, so nothing else changes shape.
+grant insert, update, delete on public.products         to authenticated;
+grant insert, update, delete on public.categories       to authenticated;
+grant insert, update, delete on public.stock_movements  to authenticated;
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Phase A — the capability resolver (as owner; identity comes from the claim)
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -273,22 +291,50 @@ begin
     raise exception 'the username was not derived from the email';
   end if;
 
-  -- role metadata (through an alias) → active with that role
+  -- METADATA IS A REQUEST, NOT A FACT (0030). The register endpoint used to
+  -- hand out whatever role it was asked for, and to activate the account that
+  -- asked; it now hands out an inactive viewer and records what was asked for.
   insert into auth.users (id, email, raw_user_meta_data) values
     ('00000000-0000-4000-8000-0000000000f2', 'nadia@alyq.local', '{"role":"clerk","name":"Nadia Clerk","username":"nadia"}'::jsonb);
-  if (select role::text from public.profiles where id = '00000000-0000-4000-8000-0000000000f2') <> 'inventory_clerk' then
-    raise exception 'the role alias "clerk" was not mapped to inventory_clerk';
+  if (select role::text from public.profiles where id = '00000000-0000-4000-8000-0000000000f2') <> 'viewer' then
+    raise exception 'a sign-up that declared a role was granted it';
   end if;
-  if (select active from public.profiles where id = '00000000-0000-4000-8000-0000000000f2') is not true then
-    raise exception 'an account with role metadata should be active';
+  if (select active from public.profiles where id = '00000000-0000-4000-8000-0000000000f2') is not false then
+    raise exception 'a sign-up that declared a role was activated';
+  end if;
+  if (select username from public.profiles where id = '00000000-0000-4000-8000-0000000000f2') <> 'nadia'
+     or (select name from public.profiles where id = '00000000-0000-4000-8000-0000000000f2') <> 'Nadia Clerk' then
+    raise exception 'the declared username / name were not kept';
+  end if;
+  if not exists (
+    select 1 from public.audit_log
+     where entity_id = '00000000-0000-4000-8000-0000000000f2'
+       and action = 'user.created'
+       and details->>'declared_role' = 'clerk'
+       and (details->>'declared_refused')::boolean
+  ) then
+    raise exception 'the refused escalation was not recorded in the audit log';
   end if;
 
+  -- the loudest version of the same attempt
   insert into auth.users (id, email, raw_user_meta_data) values
     ('00000000-0000-4000-8000-0000000000f3', 'boss@alyq.local', '{"role":"superadmin"}'::jsonb);
-  if (select role::text from public.profiles where id = '00000000-0000-4000-8000-0000000000f3') <> 'admin' then
-    raise exception 'the role alias "superadmin" was not mapped to admin';
+  if (select role::text from public.profiles where id = '00000000-0000-4000-8000-0000000000f3') <> 'viewer'
+     or (select active from public.profiles where id = '00000000-0000-4000-8000-0000000000f3') is not false then
+    raise exception 'a sign-up that declared "superadmin" became an active admin';
   end if;
 
+  -- The alias vocabulary is untouched: `clerk` and `superadmin` still resolve,
+  -- for the callers that ARE allowed to state a role — `admin_upsert_staff_
+  -- profile` as the admin who asked (covered by the "only an admin changes
+  -- roles" scenario below) and `seed_demo_staff` (covered by the maintenance
+  -- scenario, which asserts all five demo accounts are active with their role).
+  if public.normalize_app_role('clerk') is distinct from 'inventory_clerk' then
+    raise exception 'the role alias "clerk" was not mapped to inventory_clerk';
+  end if;
+  if public.normalize_app_role('superadmin') is distinct from 'admin' then
+    raise exception 'the role alias "superadmin" was not mapped to admin';
+  end if;
   -- an account that predates the trigger (no profile) → backfilled later
   insert into auth.users (id, email, raw_user_meta_data) values
     ('00000000-0000-4000-8000-0000000000f4', 'orphan@alyq.local', '{"role":"cashier"}'::jsonb);
@@ -300,7 +346,7 @@ begin
 
   raise notice 'invariant triggers hold without RLS (viewer refused, constraints enforced)';
   raise notice 'audit log is append-only and takes its entity from the action';
-  raise notice 'staff onboarding — role metadata decides the role, absence means inactive viewer';
+  raise notice 'staff onboarding — metadata is a request: every new account is an inactive viewer, and a declared role is recorded, not granted';
 end
 $$;
 
@@ -543,6 +589,164 @@ begin
 end
 $$;
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Phase 30a — the anonymous storefront (0030).
+--
+-- This runs BEFORE the switch to `authenticated`, because the owner can step
+-- into `anon` and step back out again, while a non-superuser cannot: for the
+-- roles a browser actually gets, SET ROLE is one-way.
+--
+-- This is the phase that would have caught C1. Everything else in this file ran
+-- as the owner (who bypasses RLS) or as `authenticated` (who satisfies every
+-- products policy), so a shop window that is empty for a visitor looked like a
+-- database that was fine.
+-- ═══════════════════════════════════════════════════════════════════════════
+do $$
+declare
+  v_owner   text := current_user;
+  v_rows    integer;
+  v_price   numeric;
+  v_visible uuid := '00000000-0000-4000-8000-000000000b30';
+  v_hidden  uuid := '00000000-0000-4000-8000-0000000000f2';
+  v_cat     uuid := '00000000-0000-4000-8000-0000000000f1';
+begin
+  -- One product on the website, and the POS fixture deliberately taken off it,
+  -- so that "published" and "filtered out" are both observable from outside.
+  insert into public.products (
+    id, sku, name_ar, name_en, category_id, selling_price, cost_price,
+    stock_quantity, low_stock_level, show_on_website, is_featured, active
+  ) values (
+    v_visible, 'SCN-PUB', 'قلادة ذهبية', 'Gold Necklace', v_cat,
+    250.00, 90.00, 12, 3, true, true, true
+  )
+  on conflict (id) do update
+    set selling_price   = excluded.selling_price,
+        cost_price      = excluded.cost_price,
+        stock_quantity  = excluded.stock_quantity,
+        show_on_website = true,
+        active          = true;
+
+  update public.products set show_on_website = false where id = v_hidden;
+
+  -- Production's default privileges reach `anon` too, so the visitor is granted
+  -- what a live project would grant them: the point of the assertions below is
+  -- that RLS still says no. Revoked again before this block ends.
+  grant select, insert, update, delete on public.products   to anon;
+  grant select, insert, update, delete on public.categories to anon;
+
+  -- ── step into the visitor's shoes ────────────────────────────────────────
+  perform set_config('request.jwt.claim.sub', '', true);
+  perform set_config('role', 'anon', true);
+
+  -- 1. the published read answers at all
+  select count(*) into v_rows from public.storefront_catalogue();
+  if v_rows < 1 then
+    raise exception 'anon saw % row(s) from storefront_catalogue()', v_rows;
+  end if;
+  select count(*) into v_rows from public.storefront_categories();
+  if v_rows < 1 then
+    raise exception 'anon saw % row(s) from storefront_categories()', v_rows;
+  end if;
+
+  -- 2. it publishes what is on the website and not what is off it: the filter
+  --    lives in the function, so a visitor has nothing to argue with
+  if not exists (select 1 from public.storefront_catalogue() c where c.id = v_visible) then
+    raise exception 'the published product is missing from storefront_catalogue()';
+  end if;
+  if exists (select 1 from public.storefront_catalogue() c where c.id = v_hidden) then
+    raise exception 'a product that is off the website was published to anon';
+  end if;
+  select c.selling_price into v_price from public.storefront_catalogue() c where c.id = v_visible;
+  if v_price <> 250.00 then
+    raise exception 'the published price is % rather than 250.00', v_price;
+  end if;
+  if not exists (select 1 from public.storefront_categories() c where c.id = v_cat) then
+    raise exception 'the storefront category is missing from storefront_categories()';
+  end if;
+
+  -- 3. margin, reorder policy and staff identity are not in the answer at all.
+  --    `jsonb_exists_any` is the function form of `?|`, which some drivers read
+  --    as a placeholder rather than as an operator.
+  if exists (
+    select 1 from public.storefront_catalogue() c
+     where jsonb_exists_any(to_jsonb(c),
+             array['cost_price', 'low_stock_level', 'created_by', 'updated_by'])
+  ) then
+    raise exception 'storefront_catalogue() published an internal column';
+  end if;
+  if not exists (
+    select 1 from public.storefront_catalogue() c
+     where jsonb_exists(to_jsonb(c), 'selling_price')
+       and jsonb_exists(to_jsonb(c), 'stock_quantity')
+       and jsonb_exists(to_jsonb(c), 'images')
+  ) then
+    raise exception 'storefront_catalogue() dropped a column the shop window needs';
+  end if;
+
+  -- 4. the table itself stays closed even with the privilege in hand: RLS has no
+  --    policy for `anon`, so a read is empty and a write is refused.
+  select count(*) into v_rows from public.products;
+  if v_rows <> 0 then
+    raise exception 'anon read % row(s) of public.products directly', v_rows;
+  end if;
+  select count(*) into v_rows from public.categories;
+  if v_rows <> 0 then
+    raise exception 'anon read % row(s) of public.categories directly', v_rows;
+  end if;
+
+  begin
+    insert into public.products (id, sku, name_ar, name_en, category_id, selling_price, stock_quantity)
+    values ('00000000-0000-4000-8000-000000000b31', 'SCN-HACK', 'منتج', 'Injected', v_cat, 1.00, 1);
+    raise exception 'anon inserted a product';
+  exception when insufficient_privilege then
+    null;
+  end;
+
+  -- An UPDATE or DELETE that RLS filters out is not an error, it is zero rows,
+  -- so these assert the effect and accept a hard refusal as well.
+  begin
+    update public.products set selling_price = 0.01 where id = v_visible;
+    get diagnostics v_rows = row_count;
+    if v_rows <> 0 then
+      raise exception 'anon rewrote a price (% row(s))', v_rows;
+    end if;
+  exception when insufficient_privilege then
+    null;
+  end;
+
+  begin
+    delete from public.categories where id = v_cat;
+    get diagnostics v_rows = row_count;
+    if v_rows <> 0 then
+      raise exception 'anon deleted a category (% row(s))', v_rows;
+    end if;
+  exception when insufficient_privilege then
+    null;
+  end;
+
+  -- ── step back out, which only the owner can do ───────────────────────────
+  perform set_config('role', v_owner, true);
+
+  select selling_price into v_price from public.products where id = v_visible;
+  if v_price <> 250.00 then
+    raise exception 'the anonymous visit changed the price to %', v_price;
+  end if;
+  if exists (select 1 from public.products where sku = 'SCN-HACK') then
+    raise exception 'the anonymous insert landed';
+  end if;
+  if not exists (select 1 from public.categories where id = v_cat) then
+    raise exception 'the anonymous delete removed the storefront category';
+  end if;
+
+  revoke select, insert, update, delete on public.products   from anon;
+  revoke select, insert, update, delete on public.categories from anon;
+
+  -- and the POS fixture goes back on the website, as the fixtures left it
+  update public.products set show_on_website = true where id = v_hidden;
+
+  raise notice 'anonymous storefront — the catalogue is published, the tables are not, and no visitor write lands';
+end
+$$;
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Phase C onwards — as `authenticated`, the role the browser gets.
 -- The role is switched once here and never switched back.
@@ -1391,6 +1595,260 @@ begin
 end
 $$;
 
+-- ── Phase 30b: catalogue authority, and who owns a counter ────────────────
+-- Before 0030 the products and categories write policies read `with check
+-- (true)`, so any signed-in identity — a viewer included — could rewrite a
+-- price, rename a shelf or empty the shop. The UI hid the buttons; a forged
+-- request never had to look at the UI. The policies now ask `public.can()` for
+-- the same capability the UI hides behind.
+--
+-- What the shipped matrix actually says, and therefore what these assertions
+-- expect: add_product, edit_product, delete_product, change_price, change_cost
+-- and adjust_stock are held by admin, manager, cashier and inventory_clerk, and
+-- by no viewer. So the new gates stop viewers and anonymous callers and leave
+-- every working tier exactly as productive as it was — which is asserted here
+-- rather than assumed, because "the till still works" is the part that would
+-- break silently if a capability name were misspelled.
+--
+-- The price trigger is the layer that bites where an OVERLAY says it should: a
+-- custom role that may edit but not reprice, or a denial on one person. It is
+-- tested through the exception RPC, not by pretending a cashier lacks a
+-- capability they hold.
+do $$
+declare
+  v_admin   uuid := '00000000-0000-4000-8000-0000000000a1';
+  v_cashier uuid := '00000000-0000-4000-8000-0000000000c1';
+  v_viewer  uuid := '00000000-0000-4000-8000-0000000000e1';
+  v_product uuid := '00000000-0000-4000-8000-000000000b30';
+  v_cat     uuid := '00000000-0000-4000-8000-0000000000f1';
+  v_clerk   uuid;
+  v_rows    integer;
+  v_price   numeric;
+  v_cost    numeric;
+  v_sale    jsonb;
+begin
+  -- ── a viewer writes nothing ─────────────────────────────────────────────
+  perform pg_temp.become(v_viewer);
+
+  -- reading the shop window is not a privilege: the app previews it from inside
+  select count(*) into v_rows from public.storefront_catalogue();
+  if v_rows < 1 then
+    raise exception 'a signed-in viewer lost the storefront catalogue';
+  end if;
+
+  -- RLS does not raise on these: the USING clause filters every row out, so the
+  -- statement succeeds having changed nothing. The assertion is the effect.
+  update public.products set selling_price = 0.01 where id = v_product;
+  get diagnostics v_rows = row_count;
+  if v_rows <> 0 then
+    raise exception 'RLS let a viewer rewrite a price (% row(s))', v_rows;
+  end if;
+
+  delete from public.products where id = v_product;
+  get diagnostics v_rows = row_count;
+  if v_rows <> 0 then
+    raise exception 'RLS let a viewer delete a product (% row(s))', v_rows;
+  end if;
+
+  begin
+    insert into public.products (id, sku, name_ar, name_en, category_id, selling_price, stock_quantity)
+    values ('00000000-0000-4000-8000-000000000b32', 'SCN-VWR', 'منتج', 'Viewer Product', v_cat, 5.00, 1);
+    raise exception 'RLS let a viewer add a product';
+  exception when insufficient_privilege then
+    null;
+  end;
+
+  update public.categories set name_en = 'Renamed by a viewer' where id = v_cat;
+  get diagnostics v_rows = row_count;
+  if v_rows <> 0 then
+    raise exception 'RLS let a viewer rename a category (% row(s))', v_rows;
+  end if;
+
+  update public.stock_movements set notes = 'injected' where product_id = v_product;
+  get diagnostics v_rows = row_count;
+  if v_rows <> 0 then
+    raise exception 'RLS let a viewer write the stock ledger (% row(s))', v_rows;
+  end if;
+
+  begin
+    insert into public.stock_movements (
+      product_id, delta, quantity_before, quantity_after, type, reason, user_id, user_name
+    ) values (v_product, 100, 12, 112, 'receive', 'purchase', 'forged', 'Forged');
+    raise exception 'RLS let a viewer add to the stock ledger';
+  exception when insufficient_privilege then
+    null;
+  end;
+
+  select selling_price into v_price from public.products where id = v_product;
+  if v_price <> 250.00 then
+    raise exception 'the viewer''s price change landed (%)', v_price;
+  end if;
+  if (select name_en from public.categories where id = v_cat) <> 'Beverages' then
+    raise exception 'the viewer''s category rename landed';
+  end if;
+  if exists (select 1 from public.products where sku = 'SCN-VWR') then
+    raise exception 'the viewer''s product landed';
+  end if;
+
+  -- ── the till tier keeps working ─────────────────────────────────────────
+  perform pg_temp.become(v_cashier);
+
+  update public.products set selling_price = 275.00 where id = v_product;
+  get diagnostics v_rows = row_count;
+  if v_rows <> 1 then
+    raise exception 'a cashier could not edit a product any more (% row(s))', v_rows;
+  end if;
+  select selling_price into v_price from public.products where id = v_product;
+  if v_price <> 275.00 then
+    raise exception 'the cashier''s price edit did not land (%)', v_price;
+  end if;
+
+  -- `change_cost` IS a cashier capability in the shipped matrix, so the margin
+  -- is theirs to move; asserting otherwise would be asserting a fiction
+  update public.products set cost_price = 95.00 where id = v_product;
+  get diagnostics v_rows = row_count;
+  if v_rows <> 1 then
+    raise exception 'a cashier could not move the cost price (% row(s))', v_rows;
+  end if;
+  select cost_price into v_cost from public.products where id = v_product;
+  if v_cost <> 95.00 then
+    raise exception 'the cashier''s cost change did not land (%)', v_cost;
+  end if;
+
+  -- an edit that touches no price passes: the trigger reads two columns
+  update public.products set name_en = 'Gold Necklace (polished)' where id = v_product;
+  get diagnostics v_rows = row_count;
+  if v_rows <> 1 then
+    raise exception 'the price trigger blocked an edit that touched no price';
+  end if;
+
+  -- The ledger is NOT the cashier's: `adjust_stock` is held by admin, manager
+  -- and inventory_clerk, so a cashier is refused here exactly as the matrix
+  -- says, and the tier that does hold it still writes.
+  begin
+    insert into public.stock_movements (
+      product_id, delta, quantity_before, quantity_after, type, reason, user_id, user_name
+    ) values (v_product, 8, 12, 20, 'receive', 'purchase', 'forged', 'Forged');
+    raise exception 'a cashier wrote the stock ledger without holding adjust_stock';
+  exception when insufficient_privilege then
+    null;
+  end;
+
+  -- The lookup needs oversight: `profiles` is readable as yourself, your own
+  -- row, or with `view_audit_log`, so the staff list is asked for as the admin.
+  perform pg_temp.become(v_admin);
+  select p.id into v_clerk
+    from public.profiles p
+   where p.role::text = 'inventory_clerk' and p.active
+   limit 1;
+  if v_clerk is null then
+    raise exception 'no active inventory_clerk profile to test the ledger with';
+  end if;
+
+  perform pg_temp.become(v_clerk);
+  insert into public.stock_movements (
+    product_id, delta, quantity_before, quantity_after, type, reason, user_id, user_name
+  ) values (v_product, 8, 12, 20, 'receive', 'purchase', 'forged', 'Forged');
+  select count(*) into v_rows from public.stock_movements where product_id = v_product;
+  if v_rows < 1 then
+    raise exception 'an inventory clerk could not write the stock ledger any more';
+  end if;
+
+  -- ── the price trigger, where it is supposed to bite ─────────────────────
+  -- A per-user denial is how an admin narrows one person below their role, and
+  -- `public.can()` is what both the UI and the new trigger ask. Deny the price
+  -- capability and the database refuses what the UI would only have hidden.
+  perform pg_temp.become(v_admin);
+  perform public.admin_set_user_exceptions(v_cashier, null, array['change_price']);
+
+  perform pg_temp.become(v_cashier);
+  if public.can('change_price') then
+    raise exception 'the denial did not remove change_price';
+  end if;
+  begin
+    update public.products set selling_price = 199.00 where id = v_product;
+    raise exception 'a denied change_price did not stop the price change';
+  exception when insufficient_privilege then
+    null;
+  end;
+  select selling_price into v_price from public.products where id = v_product;
+  if v_price <> 275.00 then
+    raise exception 'the denied price change landed (%)', v_price;
+  end if;
+
+  -- still able to edit everything that is not a price
+  update public.products set name_en = 'Gold Necklace' where id = v_product;
+  get diagnostics v_rows = row_count;
+  if v_rows <> 1 then
+    raise exception 'the denial blocked an edit that touched no price';
+  end if;
+
+  -- clearing the denial restores the capability, and the edit with it
+  perform pg_temp.become(v_admin);
+  perform public.admin_set_user_exceptions(v_cashier, null, null);
+  perform pg_temp.become(v_cashier);
+  if not public.can('change_price') then
+    raise exception 'clearing the denial did not restore change_price';
+  end if;
+  update public.products set selling_price = 280.00 where id = v_product;
+  get diagnostics v_rows = row_count;
+  if v_rows <> 1 then
+    raise exception 'the restored price capability did not take effect';
+  end if;
+
+  -- ── the counters are internal state: no session owns the next number ─────
+  perform pg_temp.become(v_cashier);
+  -- 0030 took the privileges away, which is a hard refusal rather than a
+  -- filtered statement — so these are caught, not counted.
+  begin
+    update public.sale_counters set next_value = 999999 where id = 1;
+    raise exception 'a session rewrote the sale counter';
+  exception when insufficient_privilege then
+    null;
+  end;
+  begin
+    delete from public.sale_counters where id = 1;
+    raise exception 'a session deleted the sale counter';
+  exception when insufficient_privilege then
+    null;
+  end;
+  begin
+    insert into public.sale_counters (id, next_value) values (1, 42)
+    on conflict (id) do update set next_value = 42;
+    raise exception 'a session rewrote the sale counter through an upsert';
+  exception when insufficient_privilege then
+    null;
+  end;
+  begin
+    select count(*) into v_rows from public.sale_counters;
+    if v_rows <> 0 then
+      raise exception 'a session read % counter row(s)', v_rows;
+    end if;
+  exception when insufficient_privilege then
+    null;
+  end;
+
+  -- …and the till still numbers its sales, which is the point of taking the
+  -- privileges away rather than writing a policy: the definer function is the
+  -- only writer left, and it is the one that always produced the number.
+  select selling_price into v_price from public.products where id = v_product;
+  v_sale := public.pos_complete_sale(jsonb_build_object(
+    'client_ref', 'scn-counter-check',
+    'user_id',    v_cashier::text,
+    'user_name',  'Karim Cashier',
+    'payments',   jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', v_price, 'tendered', v_price)),
+    'lines',      jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 1))
+  ));
+  if (v_sale->>'sale_id') is null then
+    raise exception 'a sale could not be completed after the counter revoke';
+  end if;
+  if (select sale_number from public.sales where id = (v_sale->>'sale_id')::uuid) !~ '^INV-[0-9]{6}$' then
+    raise exception 'the sale counter stopped producing sale numbers';
+  end if;
+
+  raise notice 'catalogue authority — a viewer writes nothing, the till tier writes what it could before, a denial stops a price, and no session owns a counter';
+end
+$$;
 -- ── leave no session claim behind ─────────────────────────────────────────
 do $$
 begin

@@ -241,6 +241,9 @@ function makeHarness(dom, consoleErrors, downloads, reloads, navigations) {
       // router ended up and what the screen was showing instead.
       throw new Error(
         `${err.message}\n      hash=${dom.window.location.hash}\n      body=${bodyText().replace(/\s+/g, " ").slice(0, 700)}`,
+        // The symptom is the useful part, but the original error still has the
+        // stack that says where the wait was started.
+        { cause: err },
       );
     }
     await sleep(300);

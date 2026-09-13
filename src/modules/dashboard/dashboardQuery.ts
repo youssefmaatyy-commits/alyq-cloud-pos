@@ -149,7 +149,7 @@ export function computeReturnsKpis(
 ): ReturnsKpis {
   let todayCount = 0;
   let todayTotal = 0;
-  let totalCount = returns.length;
+  const totalCount = returns.length;
   let totalRefunded = 0;
   let pendingRefunds = 0;
 

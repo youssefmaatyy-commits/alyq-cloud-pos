@@ -1,8 +1,9 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { PageHeader } from "@/components/layout/AppShell";
 import {
+  AlertIcon,
   BoxIcon,
   Button,
   Card,
@@ -26,6 +27,8 @@ import { useInventory } from "@/modules/inventory/hooks/InventoryProvider";
 import { EMPTY_INVENTORY_FILTERS, queryInventory } from "@/modules/inventory/services/inventoryQuery";
 import { buildInventorySheets } from "@/modules/inventory/services/inventoryExport";
 import { usePos } from "@/modules/pos/hooks/PosProvider";
+import { SALES_ROW_CAP } from "@/modules/pos/data";
+import type { Sale } from "@/modules/pos/types";
 import { buildSalesSheets } from "@/modules/pos/services/salesExport";
 import { useCustomers } from "@/modules/customers/hooks/CustomerProvider";
 import { buildCustomersSheets } from "@/modules/customers/services/customersExport";
@@ -41,6 +44,7 @@ import {
   paymentCountOf,
 } from "../services/financialExport";
 import { buildSuppliersSheets } from "../services/suppliersExport";
+import { toTimestampBounds } from "../services/dateRanges";
 import { assertCanViewReports } from "../services/reportAccess";
 import { deniedMessageKey } from "@/lib/permissions/enforce";
 import {
@@ -70,7 +74,7 @@ export function ReportsPage() {
   const navigate = useNavigate();
   const { products: catalogProducts, categories } = useCatalog();
   const { products: inventoryProducts, movements, loading: inventoryLoading } = useInventory();
-  const { sales, salesLoading } = usePos();
+  const { sales, salesLoading, repository } = usePos();
   const { customers, loading: customersLoading } = useCustomers();
   const { returnsList, refundsList, loading: returnsLoading } = useReturns();
   const { expenses } = useExpenses();
@@ -87,10 +91,63 @@ export function ReportsPage() {
   );
 
   // ── range-filtered sets ─────────────────────────────────────────────────
+  // ── ranged sales read ────────────────────────────────────────────────────
+  // The provider's list is a window sized for the till. A report can be asked
+  // for a period far wider than that window, and filtering a capped list in the
+  // browser under-reports without saying so: the number on screen reads as a
+  // quiet month instead of a truncated read. So the range is pushed down to the
+  // database through the same repository the till uses — no second data path, no
+  // fork of the sales contract — and the exact count comes back beside it so the
+  // page can state its own coverage.
+  const bounds = useMemo(() => toTimestampBounds(exportRange), [exportRange]);
+  const [rangedRead, setRangedRead] = useState<{ sales: Sale[]; total: number | null } | null>(null);
+  const [rangedLoading, setRangedLoading] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setRangedLoading(true);
+    void (async () => {
+      try {
+        const [list, total] = await Promise.all([
+          repository.listSales({ from: bounds.from, to: bounds.to, limit: SALES_ROW_CAP }),
+          repository.countSales({ from: bounds.from, to: bounds.to }),
+        ]);
+        if (!cancelled) setRangedRead({ sales: list, total });
+      } catch {
+        // A failed ranged read must not blank the page. Falling back to the
+        // till's window keeps the screen usable, and the coverage line below
+        // still says how much of the period is missing.
+        if (!cancelled) setRangedRead(null);
+      } finally {
+        if (!cancelled) setRangedLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [repository, bounds.from, bounds.to]);
+
+  /**
+   * What the exports are built from. The builders apply their own range filter,
+   * so this only widens what they can see — it never decides the edges for them.
+   */
+  const reportSales = useMemo(() => rangedRead?.sales ?? sales, [rangedRead, sales]);
+
   const rangedSales = useMemo(
-    () => sales.filter((sale) => withinDateRange(sale.created_at, exportRange.from, exportRange.to)),
-    [sales, exportRange],
+    () =>
+      reportSales.filter((sale) =>
+        withinDateRange(sale.created_at, exportRange.from, exportRange.to),
+      ),
+    [reportSales, exportRange],
   );
+
+  /**
+   * True when the period holds more sales than this read returned. The count is
+   * exact and comes from the database; the comparison is the only honest way to
+   * tell a small period from a capped one.
+   */
+  const coverageTruncated =
+    rangedRead !== null && rangedRead.total !== null && rangedRead.total > rangedSales.length;
   const rangedExpenses = useMemo(
     () =>
       expenses.filter((expense) =>
@@ -150,7 +207,8 @@ export function ReportsPage() {
     t,
   });
 
-  const loading = salesLoading || inventoryLoading || customersLoading || returnsLoading;
+  const loading =
+    salesLoading || rangedLoading || inventoryLoading || customersLoading || returnsLoading;
 
   const financialRows =
     rangedSales.length +
@@ -204,6 +262,27 @@ export function ReportsPage() {
         </Card>
       ) : (
         <div className="space-y-4">
+          {/* ── Coverage ────────────────────────────────────────────────────
+              A read has a ceiling, and the page says so when the period on
+              screen exceeds it. Every number below is computed from the sales
+              actually fetched, so without this line a truncated range would
+              simply look like a slow month. */}
+          {coverageTruncated && (
+            <Card>
+              <div className="flex items-start gap-2">
+                <AlertIcon className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                <div>
+                  <p className="text-sm font-semibold text-slate-800">
+                    {t("reports.salesCoverage", {
+                      shown: rangedSales.length,
+                      total: rangedRead?.total ?? rangedSales.length,
+                    })}
+                  </p>
+                  <p className="mt-0.5 text-xs text-slate-600">{t("reports.salesCoverageHint")}</p>
+                </div>
+              </div>
+            </Card>
+          )}
           {/* ── Date range ─────────────────────────────────────────────── */}
           <Card>
             <SectionTitle>{t("reports.rangeTitle")}</SectionTitle>
@@ -270,7 +349,7 @@ export function ReportsPage() {
                 variant="primary"
                 build={() =>
                   buildFinancialSheets({
-                    sales,
+                    sales: reportSales,
                     products: catalogProducts,
                     expenses,
                     returnsList,

@@ -532,7 +532,9 @@ export function printHtmlDocument(html: string, reference: string): PrintOutcome
   const isEmbedded = typeof window !== "undefined" && window.self !== window.top;
 
   // Primary path: a top-level print popup (works in a normal browser tab).
-  let w: Window | null = null;
+  // No initialiser: the try assigns it and the catch assigns null, so every
+  // path that reaches the code below has written it.
+  let w: Window | null;
   try {
     w = window.open("", "_blank", "width=420,height=640");
   } catch (err) {

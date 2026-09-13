@@ -45,6 +45,9 @@ import { resolveSettings } from "./settingsDefaults";
 export function slugifyAscii(input: string, fallback = ""): string {
   const ascii = String(input ?? "")
     .normalize("NFKD")
+    // The range starts at \x00 on purpose: "not ASCII" includes the control
+    // characters, and every one of them should become a separator too.
+    // eslint-disable-next-line no-control-regex
     .replace(/[^\x00-\x7F]/g, " ") // Arabic and accents become separators
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")

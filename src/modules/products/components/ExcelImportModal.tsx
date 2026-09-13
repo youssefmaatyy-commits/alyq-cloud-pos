@@ -32,6 +32,27 @@ interface ExcelImportModalProps {
 
 type ImportStep = "upload" | "preview" | "importing" | "complete";
 
+/**
+ * Which sentence a failed file read deserves. The limits in
+ * `services/excelImport` throw coded errors so this can answer without
+ * string-matching a message, and an uncoded failure stays a parse error.
+ */
+function importFileErrorKey(error: unknown): TranslationKey {
+  if (error instanceof AppError) {
+    switch (error.code) {
+      case "IMPORT_FILE_TOO_LARGE":
+        return "import.fileTooLarge";
+      case "IMPORT_FILE_UNSUPPORTED":
+        return "import.fileUnsupported";
+      case "IMPORT_TOO_MANY_ROWS":
+        return "import.tooManyRows";
+      default:
+        return "import.parseError";
+    }
+  }
+  return "import.parseError";
+}
+
 export function ExcelImportModal({
   open,
   onClose,
@@ -102,7 +123,10 @@ export function ExcelImportModal({
         setImportResult(result);
         setStep("preview");
       } catch (err) {
-        toast.error(t("import.parseError"));
+        // A refused file says why: too large, not a spreadsheet, too many rows.
+        // Anything else is a genuine parse failure and keeps the old message,
+        // and the detail goes to the console rather than to the screen.
+        toast.error(t(importFileErrorKey(err)));
         console.error("Import parse error:", err);
       } finally {
         setImporting(false);

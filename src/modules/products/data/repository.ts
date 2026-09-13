@@ -18,7 +18,13 @@ export type AppErrorCode =
   | "CATEGORY_CYCLE"
   | "VALIDATION"
   | "NETWORK"
-  | "DB";
+  | "DB"
+  /** Import: the file is over `IMPORT_LIMITS.maxBytes`. Refused before reading. */
+  | "IMPORT_FILE_TOO_LARGE"
+  /** Import: not a workbook and not text — a binary of some other kind. */
+  | "IMPORT_FILE_UNSUPPORTED"
+  /** Import: more rows than `IMPORT_LIMITS.maxRows`. Never silently truncated. */
+  | "IMPORT_TOO_MANY_ROWS";
 
 export class AppError extends Error {
   readonly code: AppErrorCode;

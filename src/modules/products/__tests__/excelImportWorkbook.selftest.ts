@@ -27,6 +27,7 @@ import * as XLSX from "xlsx";
 import {
   buildColumnMap,
   generateExcelTemplate,
+  IMPORT_LIMITS,
   importProductsFromCsv,
   importProductsFromFile,
   importProductsFromRows,
@@ -36,6 +37,7 @@ import {
   TEMPLATE_EXAMPLE,
   type ImportResult,
 } from "../services/excelImport";
+import { AppError, type AppErrorCode } from "../data/repository";
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -76,6 +78,36 @@ const GOOD_ROWS: unknown[][] = [
   ["ALYQ-9001", "أقراط ذهبية", "Ethiopian Earrings", 68.5, 40, 25, "Earrings"],
   ["ALYQ-9002", "شاي أخضر", "Green Tea", 30, 18.75, 12, "Tea"],
 ];
+
+
+/**
+ * Assert that a file is refused, and refused for the stated reason.
+ *
+ * The reason matters as much as the refusal: every one of these files would
+ * "fail" anyway if it were handed to the parser — as a wall of mojibake, a
+ * tab that runs out of memory, or an import that quietly stops at row 10,000
+ * and reports itself complete. A coded refusal is the difference between a
+ * limit and a crash.
+ */
+async function expectRefusal(file: File, code: AppErrorCode, what: string): Promise<void> {
+  try {
+    await importProductsFromFile(file);
+  } catch (error) {
+    assert.ok(error instanceof AppError, `${what}: threw something that is not an AppError`);
+    assert.equal(error.code, code, `${what}: refused for the wrong reason`);
+    return;
+  }
+  assert.fail(`${what}: the file was accepted`);
+}
+
+/** A CSV of `dataRows` rows under the real header, as text bytes. */
+function csvBytes(dataRows: number): Uint8Array {
+  const lines = [HEADERS.join(",")];
+  for (let i = 0; i < dataRows; i += 1) {
+    lines.push(`ALYQ-${String(100000 + i).slice(-6)},Limit row ${i + 1},5.5`);
+  }
+  return new TextEncoder().encode(lines.join("\n"));
+}
 
 // ── tests ───────────────────────────────────────────────────────────────────
 const tests: { name: string; fn: () => void | Promise<void> }[] = [
@@ -398,6 +430,95 @@ const tests: { name: string; fn: () => void | Promise<void> }[] = [
       ]);
       assert.equal(result.validRows.length, 1);
       assert.equal(result.validRows[0].data.selling_price, 12.5, "a text price still parses");
+    },
+  },
+  // ── the limits (migration 0030's companion: what a file may cost) ────────
+  {
+    name: "a file over the size limit is refused before it is read",
+    async fn() {
+      // The refusal has to come first: `file.arrayBuffer()` on a 2 GB upload is
+      // the failure this prevents, so the test allocates one byte over the cap
+      // and asserts nothing was parsed.
+      const oversize = new Uint8Array(IMPORT_LIMITS.maxBytes + 1);
+      await expectRefusal(
+        fileFrom(oversize, "huge.xlsx", XLSX_MIME),
+        "IMPORT_FILE_TOO_LARGE",
+        "an oversized workbook",
+      );
+    },
+  },
+  {
+    name: "an empty file is refused rather than parsed as an empty sheet",
+    async fn() {
+      await expectRefusal(
+        fileFrom(new Uint8Array(0), "empty.csv", "text/csv"),
+        "IMPORT_FILE_UNSUPPORTED",
+        "an empty file",
+      );
+    },
+  },
+  {
+    name: "a binary that is not a workbook is refused, not fed to the CSV parser",
+    async fn() {
+      // PNG magic, then a NUL: not a ZIP and not an OLE2 stream, so the format
+      // sniffing falls through to "text" unless something stops it. What it used
+      // to produce was mojibake and "could not detect SKU or product name
+      // columns" — a true sentence about the wrong problem.
+      const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00]);
+      await expectRefusal(
+        fileFrom(png, "photo.xlsx", XLSX_MIME),
+        "IMPORT_FILE_UNSUPPORTED",
+        "a renamed image",
+      );
+      assert.equal(looksLikeWorkbook(png), false, "a PNG is not a workbook");
+    },
+  },
+  {
+    name: "a CSV over the row cap is refused instead of silently truncated",
+    async fn() {
+      await expectRefusal(
+        fileFrom(csvBytes(IMPORT_LIMITS.maxRows + 1), "too-many.csv", "text/csv"),
+        "IMPORT_TOO_MANY_ROWS",
+        "a CSV with one row too many",
+      );
+    },
+  },
+  {
+    name: "a CSV exactly at the row cap imports every row",
+    async fn() {
+      // The other side of the same boundary: the cap must not be off by one and
+      // refuse a file it is allowed to take. `totalRows` counts data rows, so a
+      // file at the cap is one header plus maxRows - 1 products.
+      const result = await importProductsFromFile(
+        fileFrom(csvBytes(IMPORT_LIMITS.maxRows - 1), "at-the-cap.csv", "text/csv"),
+      );
+      assert.equal(
+        result.totalRows,
+        IMPORT_LIMITS.maxRows - 1,
+        "a file at the cap kept every row",
+      );
+      assert.equal(
+        result.validRows.length + result.invalidRows.length,
+        result.totalRows,
+        "every row was accounted for, so nothing was dropped on the way",
+      );
+    },
+  },
+  {
+    name: "a workbook over the row cap is stopped inside the reader",
+    async fn() {
+      // `sheetRows` is what makes this cheap: the reader is told to stop one row
+      // past the cap, so an .xlsx that decompresses to a million rows is refused
+      // having parsed 10,001 of them rather than after building the array.
+      const rows: unknown[][] = [HEADERS];
+      for (let i = 0; i <= IMPORT_LIMITS.maxRows; i += 1) {
+        rows.push([`ALYQ-${String(200000 + i).slice(-6)}`, `Bomb row ${i + 1}`, "5.5"]);
+      }
+      await expectRefusal(
+        fileFrom(workbookBytes(rows), "bomb.xlsx", XLSX_MIME),
+        "IMPORT_TOO_MANY_ROWS",
+        "a workbook with one row too many",
+      );
     },
   },
 ];

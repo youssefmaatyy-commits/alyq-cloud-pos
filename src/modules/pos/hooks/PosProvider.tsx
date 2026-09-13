@@ -16,7 +16,7 @@ import { isSupabaseConfigured, getSupabaseClient } from "@/lib/supabase/client";
 import { useRealtimeWatch } from "@/lib/supabase/useRealtimeWatch";
 import { useInventory } from "@/modules/inventory/hooks/InventoryProvider";
 import { canCompleteSale, canApplyDiscount } from "../permissions";
-import { getSalesRepository, type SalesRepository } from "../data";
+import { SALES_ROW_CAP, getSalesRepository, type SalesRepository } from "../data";
 // Money moves through the service, not the repository: `completeSale` asserts
 // `sell` (and `apply_discount` when the input carries one) before anything is
 // written, which the provider's own `canSell` flag cannot do for a caller that
@@ -72,11 +72,24 @@ export interface PosContextValue {
   sales: SaleModel[];
   salesLoading: boolean;
   /**
+   * Exact number of sales matching the last refresh's date bounds, or null when
+   * the backend could not supply one. Never read null as "all of them".
+   */
+  salesTotal: number | null;
+  /**
+   * True when salesTotal is known and larger than the window actually fetched:
+   * what is on screen is the most recent slice, not the whole history. Screens
+   * are expected to say so rather than present the slice as complete.
+   */
+  salesTruncated: boolean;
+  /**
    * Re-read the sales list. `silent` is for a background refresh — a sale written
    * at another till, arriving over the channel — which must not flash a spinner
-   * over a screen somebody is reading.
+   * over a screen somebody is reading. `from`/`to` bound the read to a date
+   * range so a report can ask for the period it is actually rendering instead
+   * of whatever the last refresh happened to load.
    */
-  refreshSales: (options?: { silent?: boolean }) => Promise<void>;
+  refreshSales: (options?: { silent?: boolean; from?: string; to?: string }) => Promise<void>;
   // permissions
   canSell: boolean;
   canDiscount: boolean;
@@ -104,6 +117,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
   } | null>(null);
   const [sales, setSales] = useState<SaleModel[]>([]);
   const [salesLoading, setSalesLoading] = useState(true);
+  const [salesTotal, setSalesTotal] = useState<number | null>(null);
+  const [salesTruncated, setSalesTruncated] = useState(false);
   const repositoryRef = useRef<SalesRepository | null>(null);
   const repository = useMemo(() => {
     if (!repositoryRef.current) repositoryRef.current = getSalesRepository();
@@ -146,11 +161,23 @@ export function PosProvider({ children }: { children: ReactNode }) {
   }, [loadCatalog]);
 
   const refreshSales = useCallback(
-    async (options: { silent?: boolean } = {}) => {
+    async (options: { silent?: boolean; from?: string; to?: string } = {}) => {
       if (!options.silent) setSalesLoading(true);
       try {
-        const list = await repository.listSales();
+        // Window and total are fetched together. The window is what the screen
+        // shows; the total is what exists. Only the pair can distinguish "that
+        // is all of it" from "that is the most recent thousand".
+        const [list, total] = await Promise.all([
+          repository.listSales({
+            from: options.from,
+            to: options.to,
+            limit: SALES_ROW_CAP,
+          }),
+          repository.countSales({ from: options.from, to: options.to }),
+        ]);
         setSales(list);
+        setSalesTotal(total);
+        setSalesTruncated(total !== null && total > list.length);
       } catch (err) {
         // history failure should not block the till
         setError(err instanceof AppError ? err : new AppError("DB", String(err)));
@@ -335,6 +362,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
       dismissApprovalAsk,
       sales,
       salesLoading,
+      salesTotal,
+      salesTruncated,
       refreshSales,
       canSell,
       canDiscount,
@@ -366,6 +395,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
       dismissApprovalAsk,
       sales,
       salesLoading,
+      salesTotal,
+      salesTruncated,
       refreshSales,
       canSell,
       canDiscount,
