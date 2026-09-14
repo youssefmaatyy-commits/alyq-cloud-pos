@@ -297,6 +297,37 @@ second row here would put every creation in the trail twice. It also ignores a
 Rotate the service key (Dashboard → Settings → API) if it ever leaks, then
 re-run both commands above.
 
+### The `alyq-auth` edge function (required in live mode)
+
+Staff sign in with a **username**, but Supabase Auth is email-shaped and this
+project's accounts carry their **real email** — the one Forgot Password mails.
+Resolving "admin" → the real address cannot happen in the browser (`profiles`
+is RLS'd to self-or-oversight, and a public username → email lookup would be an
+enumeration oracle), so
+[`supabase/functions/alyq-auth`](../supabase/functions/alyq-auth/index.ts) does
+it per request: `login {identifier, password}` resolves server-side, lets
+Supabase Auth verify the password, enforces the active-account gate and returns
+**session tokens only**; `recover {identifier, redirect_to}` resolves and hands
+the real address to Supabase's own recovery mailer, answering identically
+whether or not the identifier exists. Without it deployed, username sign-in and
+username recovery fail in live mode (email login and email recovery are direct
+provider calls and keep working).
+
+```bash
+supabase functions deploy alyq-auth --no-verify-jwt
+```
+
+`--no-verify-jwt` is required — the function is pre-authentication by nature.
+What keeps that safe: it holds no admin power (the service role only resolves a
+username to the Auth email and revokes sessions that must never leave it), the
+password is transient and never logged or returned, every refusal is the same
+generic `invalid_credentials` (unknown usernames are checked against a
+deterministic `@alyq.invalid` sinkhole so timing cannot enumerate either), and
+a best-effort per-IP limiter (12 logins / 5 recoveries per 10 minutes) runs
+before any provider call. It uses the same project-wide
+`SUPABASE_SERVICE_ROLE_KEY` secret as `alyq-admin`; no migration accompanies
+it.
+
 ### Password recovery in production (Site URL, Redirect URLs, SMTP)
 
 The recovery feature is built — `/#/forgot-password`, `/#/reset-password`,

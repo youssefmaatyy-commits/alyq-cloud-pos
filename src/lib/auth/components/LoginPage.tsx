@@ -205,6 +205,9 @@ function errorMessage(
   if (code === "missing_username") return t("auth.error.usernameRequired");
   if (code === "missing_password") return t("auth.error.passwordRequired");
   if (code === "network") return t("auth.error.network");
+  // Abuse resistance, not a credential verdict: it names no account and gives
+  // the one instruction that helps — wait, then try again.
+  if (code === "rate_limited") return t("auth.error.rate_limited");
   // A deactivated account is told the truth: "incorrect password" would send the
   // person back to a form that can never succeed, and to a manager who cannot
   // work out why. It reveals only that the account exists and is switched off,

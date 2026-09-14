@@ -85,7 +85,22 @@ export function buildAuthUser(input: IdentityInput): AuthUser {
   };
 }
 
-/** The synthetic email a username maps to when Supabase is the identity provider. */
+/**
+ * The synthetic email convention: `<username>@alyq.local`.
+ *
+ * Historical note that matters for reading old code: sign-in and recovery used
+ * to resolve EVERY bare username through this address, which silently broke
+ * both for any account whose Supabase Auth identity is a real email. They no
+ * longer — a bare username is resolved server-side by the `alyq-auth` edge
+ * function to whatever address `auth.users` actually holds (real or
+ * synthetic), and the browser never sees it.
+ *
+ * This helper's one remaining job is account CREATION without an email
+ * (`settings` → Users, live mode requires one, so this is the fallback path):
+ * such an account still needs an address to sign in with, and the resolver
+ * signs it in by username like any other. It is not a login rule and must not
+ * become one again.
+ */
 export function usernameToEmail(username: string, domain = "alyq.local"): string {
   const handle = username.trim();
   return handle.includes("@") ? handle.toLowerCase() : `${handle.toLowerCase()}@${domain}`;

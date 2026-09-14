@@ -127,10 +127,20 @@ interface UserRepository {
 
 `getUserRepository()` picks the implementation the same way every other module
 does — Supabase when `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` are set,
-demo otherwise. `SupabaseUserRepository` signs in with
-`auth.signInWithPassword()` against a synthetic email (`<username>@alyq.local`)
-and reads the role from the `profiles` table (`id`, `name`, `username`, `role`).
-No component, guard or permission helper knows which one is active.
+demo otherwise. `SupabaseUserRepository` takes two roads to the same provider
+verdict: an identifier containing `@` goes to `auth.signInWithPassword()`
+directly (unchanged email login), and a bare username is resolved by the
+`alyq-auth` edge function, which finds the account's REAL Auth email
+server-side (username → `profiles.id` → `auth.users`), verifies the password
+through Supabase Auth's own grant, enforces the active-account gate and answers
+with session tokens only — the browser never learns the email behind a
+username, and recovery by username mails the real address the same way.
+(An older revision signed usernames in against a synthetic
+`<username>@alyq.local`, which silently failed for any account whose Auth
+identity is a real email; `usernameToEmail` survives only as the
+account-creation fallback for a user made without an email.) Identity is then
+read from the `profiles` table (`id`, `name`, `username`, `role`) exactly as
+before. No component, guard or permission helper knows which one is active.
 
 ## 5. Tests
 

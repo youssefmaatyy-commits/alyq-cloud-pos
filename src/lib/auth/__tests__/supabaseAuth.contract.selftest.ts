@@ -12,6 +12,10 @@
  *
  *   · credentials go to the provider and nothing else; no password, hash or
  *     reset token is ever returned to the app,
+ *   · a bare username is resolved by the `alyq-auth` edge function — the
+ *     browser neither sends nor receives the real Auth email — while an email
+ *     address still goes to the provider directly, and both roads end in the
+ *     same profile-checked identity,
  *   · identity is profile + custom role, and a custom role *replaces* the system
  *     capability list (the same rule `public.can()` applies),
  *   · a deactivated profile ends the provider session instead of inheriting it,
@@ -42,6 +46,16 @@ interface StubOptions {
   updateError?: { message: string } | null;
   rpcError?: { message: string } | null;
   throwOn?: string[];
+  /** The edge function answers this coded body with a non-2xx (context.json). */
+  functionError?: { status: number; body: unknown } | null;
+  /** The edge function call itself fails (undeployed, relay error): no body. */
+  functionThrows?: boolean;
+  /**
+   * Emulate a BUGGY function that skips the active-account gate, to prove the
+   * repository's own tail still refuses a deactivated profile (defense in
+   * depth: a direct call cannot bypass the active-user check).
+   */
+  functionIgnoresActive?: boolean;
 }
 
 function makeStub(options: StubOptions = {}) {
@@ -50,7 +64,12 @@ function makeStub(options: StubOptions = {}) {
   const resetCalls: Array<{ email: string; redirectTo?: string }> = [];
   const updateCalls: Array<{ password: string }> = [];
   const rpcCalls: string[] = [];
+  const functionCalls: Array<{ name: string; body: Record<string, unknown> }> = [];
+  const recoverCalls: Array<{ identifier: string; redirectTo?: string }> = [];
   let authListener: ((event: string, session: unknown) => void) | null = null;
+  // The session the edge-function login emulator "issued"; the setSession stub
+  // adopts it so the repository's tail resolves the RIGHT user, not a fixed one.
+  let functionSession: Record<string, unknown> | null = null;
 
   const profileRows = options.profiles ?? [
     {
@@ -59,7 +78,10 @@ function makeStub(options: StubOptions = {}) {
       name: "Store Admin",
       role: "admin",
       active: true,
-      email: "admin@alyq.local",
+      // Production truth: the Auth identity is a REAL email, and the username
+      // is how staff sign in. The old synthetic `admin@alyq.local` convention
+      // is exactly what broke username login for accounts like this one.
+      email: "admin@alyq.example",
       phone: "+201000000001",
       custom_role_id: null,
       last_login_at: null,
@@ -71,7 +93,7 @@ function makeStub(options: StubOptions = {}) {
       name: "Sales Lead",
       role: "manager",
       active: true,
-      email: "sales@alyq.local",
+      email: "sales@alyq.example",
       phone: null,
       custom_role_id: "cr-sales-manager",
       last_login_at: null,
@@ -83,11 +105,23 @@ function makeStub(options: StubOptions = {}) {
       name: "Deactivated",
       role: "cashier",
       active: false,
-      email: "gone@alyq.local",
+      email: "gone@alyq.example",
       phone: null,
       custom_role_id: null,
       last_login_at: null,
       created_at: "2026-01-03T00:00:00.000Z",
+    },
+    {
+      id: "u-view",
+      username: "vera",
+      name: "Vera Viewer",
+      role: "viewer",
+      active: true,
+      email: "vera@alyq.example",
+      phone: null,
+      custom_role_id: null,
+      last_login_at: null,
+      created_at: "2026-01-04T00:00:00.000Z",
     },
   ];
   const customRoleRows = options.customRoles ?? [
@@ -134,7 +168,7 @@ function makeStub(options: StubOptions = {}) {
     ? {
         access_token: "provider-access-token",
         expires_at: Math.floor(Date.parse("2026-09-09T12:00:00.000Z") / 1000),
-        user: { id: "u-admin", email: "admin@alyq.local" },
+        user: { id: "u-admin", email: "admin@alyq.example" },
       }
     : options.session;
 
@@ -198,7 +232,14 @@ function makeStub(options: StubOptions = {}) {
         calls.push(`setSession:${access_token}`);
         maybeThrow("setSession");
         if (options.exchangeError) return { data: null, error: options.exchangeError };
-        return { data: { session }, error: null };
+        // The real provider answers `{ data: { user, session } }`; a session the
+        // edge-function login "issued" is adopted here so the repository's tail
+        // resolves the right identity.
+        const adopted = (functionSession ?? session) as Record<string, unknown> | null;
+        return {
+          data: adopted ? { session: adopted, user: adopted.user ?? null } : null,
+          error: null,
+        };
       },
       resetPasswordForEmail: async (email: string, opts?: { redirectTo?: string }) => {
         resetCalls.push({ email, redirectTo: opts?.redirectTo });
@@ -220,6 +261,85 @@ function makeStub(options: StubOptions = {}) {
     },
     from: (name: string) =>
       name === "profiles" ? table("profiles", profileRows) : table("custom_roles", customRoleRows),
+    /**
+     * The `alyq-auth` edge function, emulated against the same stub rows:
+     * a bare username resolves to its profile, the password rule is the stub's
+     * ("CorrectHorse1"), and — exactly like the real function — an unknown
+     * username and a wrong password produce the SAME generic coded refusal,
+     * while a known-but-deactivated account produces `user_inactive` only
+     * after the password proved correct. Success carries tokens, never an
+     * email.
+     */
+    functions: {
+      invoke: async (name: string, opts?: { body?: unknown }) => {
+        const body = (opts?.body ?? {}) as Record<string, unknown>;
+        calls.push(`functions:${name}:${String(body.action ?? "?")}`);
+        functionCalls.push({ name, body });
+        maybeThrow("functions.invoke");
+
+        const codedRefusal = (status: number, codedBody: unknown) => {
+          const httpError = new Error(`edge function returned ${status}`) as Error & {
+            context?: { json?: () => Promise<unknown> };
+          };
+          httpError.context = { json: async () => codedBody };
+          return { data: null, error: httpError };
+        };
+
+        if (options.functionThrows) {
+          // Relay failure / undeployed function: an error with no parseable body.
+          return { data: null, error: new Error("FunctionsHttpError") };
+        }
+        if (options.functionError) {
+          return codedRefusal(options.functionError.status, options.functionError.body);
+        }
+        if (name !== "alyq-auth") {
+          return { data: null, error: new Error("Function not found") };
+        }
+
+        const payload = (body.payload ?? {}) as Record<string, unknown>;
+        if (body.action === "login") {
+          const identifier = String(payload.identifier ?? "").trim().toLowerCase();
+          const password = String(payload.password ?? "");
+          const row = profileRows.find(
+            (p) => String(p.username ?? "").toLowerCase() === identifier,
+          );
+          if (!row || password !== "CorrectHorse1") {
+            return codedRefusal(400, { ok: false, code: "invalid_credentials" });
+          }
+          if (row.active === false && !options.functionIgnoresActive) {
+            return codedRefusal(403, { ok: false, code: "user_inactive" });
+          }
+          const accessToken = `function-token-${String(row.id)}`;
+          functionSession = {
+            access_token: accessToken,
+            expires_at: Math.floor(Date.parse("2026-09-09T12:00:00.000Z") / 1000),
+            user: { id: row.id, email: row.email },
+          };
+          return {
+            data: {
+              ok: true,
+              session: {
+                access_token: accessToken,
+                refresh_token: "function-refresh-token",
+                expires_in: 3600,
+                token_type: "bearer",
+              },
+            },
+            error: null,
+          };
+        }
+        if (body.action === "recover") {
+          recoverCalls.push({
+            identifier: String(payload.identifier ?? ""),
+            redirectTo: typeof payload.redirect_to === "string" ? payload.redirect_to : undefined,
+          });
+          // Enumeration-resistant: the same answer whether or not anybody owns
+          // the identifier.
+          return { data: { ok: true, channel: "email" }, error: null };
+        }
+        return codedRefusal(400, { ok: false, code: "unknown_action" });
+      },
+    },
     rpc: async (fn: string) => {
       rpcCalls.push(fn);
       maybeThrow(`rpc:${fn}`);
@@ -235,13 +355,15 @@ function makeStub(options: StubOptions = {}) {
     resetCalls,
     updateCalls,
     rpcCalls,
+    functionCalls,
+    recoverCalls,
     emit: (event: string, payload: unknown) => authListener?.(event, payload),
   };
 }
 
 // ── tests ────────────────────────────────────────────────────────────────────
 
-test("a correct password authenticates through the provider, and the identity comes from profiles", async () => {
+test("a username and a correct password authenticate through the provider, and the identity comes from profiles", async () => {
   const stub = makeStub();
   const repository = new SupabaseUserRepository(stub.client);
 
@@ -251,20 +373,61 @@ test("a correct password authenticates through the provider, and the identity co
 
   assert.equal(result.user.id, "u-admin");
   assert.equal(result.user.role, "admin");
-  assert.equal(result.user.email, "admin@alyq.local");
+  assert.equal(result.user.email, "admin@alyq.example");
   assert.equal(result.user.auth_id, "u-admin");
-  // No system role: the full matrix.
+  // No system role: the full matrix — unchanged by the server-side resolution.
   assert.deepEqual(result.user.capabilities, capabilitiesOf("admin"));
-  assert.ok(stub.calls.some((call) => call.startsWith("signInWithPassword:")));
+  // The username path goes through the edge function and adopts its session;
+  // the browser never calls the provider's password grant with a guessed email.
+  assert.ok(stub.calls.includes("functions:alyq-auth:login"));
+  assert.ok(stub.calls.includes("setSession:function-token-u-admin"));
+  assert.equal(stub.calls.some((call) => call.startsWith("signInWithPassword:")), false);
 });
 
-test("a username is mapped to the provider's email convention", async () => {
+test("a bare username is resolved server-side: the browser neither sends nor learns the real email", async () => {
   const stub = makeStub();
   const repository = new SupabaseUserRepository(stub.client);
-  assert.equal(usernameToEmail("Sales.Lead"), "sales.lead@alyq.local");
 
-  await repository.authenticate("sales.lead", "CorrectHorse1");
-  assert.ok(stub.calls.includes("signInWithPassword:sales.lead@alyq.local"));
+  const result = await repository.authenticate("sales.lead", "CorrectHorse1");
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.user.id, "u-sales");
+
+  const loginCall = stub.functionCalls.find((call) => call.body.action === "login");
+  assert.ok(loginCall, "the resolver was called");
+  // The request carries the username exactly as typed — no email was resolved
+  // in the browser first.
+  assert.deepEqual(loginCall.body.payload, { identifier: "sales.lead", password: "CorrectHorse1" });
+  // And the success the repository builds carries no credential material.
+  assert.equal(JSON.stringify(result).includes("CorrectHorse1"), false);
+  assert.equal(JSON.stringify(result).includes("refresh_token"), false);
+
+  // The synthetic convention still exists for ONE purpose: creating an account
+  // with no email of its own (settings → Users fallback). It is not a login rule.
+  assert.equal(usernameToEmail("Sales.Lead"), "sales.lead@alyq.local");
+});
+
+test("an email address still signs in directly through the provider, unchanged", async () => {
+  const stub = makeStub();
+  const repository = new SupabaseUserRepository(stub.client);
+
+  const result = await repository.authenticate("admin@alyq.example", "CorrectHorse1");
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.user.id, "u-admin");
+  assert.ok(stub.calls.includes("signInWithPassword:admin@alyq.example"));
+  assert.equal(stub.calls.some((call) => call.startsWith("functions:")), false);
+});
+
+test("a viewer signing in by username keeps exactly the viewer's permissions", async () => {
+  const stub = makeStub();
+  const repository = new SupabaseUserRepository(stub.client);
+
+  const result = await repository.authenticate("vera", "CorrectHorse1");
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.user.role, "viewer");
+  assert.deepEqual(result.user.capabilities, capabilitiesOf("viewer"));
 });
 
 test("an assigned custom role REPLACES the system capability list", async () => {
@@ -290,7 +453,12 @@ test("a wrong password and an unknown account fail with the same code", async ()
   const wrong = await repository.authenticate("admin", "nope");
   assert.deepEqual(wrong, { ok: false, code: "invalid_credentials" });
 
-  const unknown = await repository.authenticate("who@alyq.local", "CorrectHorse1");
+  // Unknown on both roads — a username nobody owns and an address nobody owns —
+  // and the wrong-password refusal above: one code, one message, no oracle.
+  const unknownUsername = await repository.authenticate("nosuch", "CorrectHorse1");
+  assert.deepEqual(unknownUsername, { ok: false, code: "invalid_credentials" });
+
+  const unknown = await repository.authenticate("who@alyq.example", "CorrectHorse1");
   assert.equal(unknown.ok, false);
   if (!unknown.ok) assert.equal(unknown.code, "invalid_credentials");
 });
@@ -301,30 +469,87 @@ test("an empty username or password is refused before the provider is called", a
   assert.deepEqual(await repository.authenticate("  ", "x"), { ok: false, code: "missing_username" });
   assert.deepEqual(await repository.authenticate("admin", ""), { ok: false, code: "missing_password" });
   assert.equal(stub.calls.some((call) => call.startsWith("signInWithPassword:")), false);
+  assert.equal(stub.functionCalls.length, 0, "and before the resolver function is called");
 });
 
 test("a deactivated profile ends the provider session instead of inheriting it", async () => {
   const stub = makeStub();
   const repository = new SupabaseUserRepository(stub.client);
 
-  const result = await repository.authenticate("gone@alyq.local", "CorrectHorse1");
+  const result = await repository.authenticate("gone@alyq.example", "CorrectHorse1");
   assert.equal(result.ok, false);
   if (!result.ok) assert.equal(result.code, "user_inactive");
   assert.ok(stub.signOutScopes.includes("local"), "the just-created session must be revoked");
 });
 
+test("a deactivated account is refused by username too — the function enforces the gate itself", async () => {
+  const stub = makeStub();
+  const repository = new SupabaseUserRepository(stub.client);
+
+  const result = await repository.authenticate("gone", "CorrectHorse1");
+  assert.deepEqual(result, { ok: false, code: "user_inactive" });
+  // The function refused BEFORE issuing tokens, so there was nothing to adopt.
+  assert.equal(stub.calls.some((call) => call.startsWith("setSession:")), false);
+});
+
+test("even a function that skips the active gate cannot sign a deactivated account in", async () => {
+  // Defense in depth: the repository re-checks `profiles.active` after adopting
+  // ANY session, so a buggy or bypassed server-side gate still ends here — with
+  // the just-adopted session revoked locally.
+  const stub = makeStub({ functionIgnoresActive: true });
+  const repository = new SupabaseUserRepository(stub.client);
+
+  const result = await repository.authenticate("gone", "CorrectHorse1");
+  assert.deepEqual(result, { ok: false, code: "user_inactive" });
+  assert.ok(stub.calls.includes("setSession:function-token-u-off"), "the tokens were adopted first");
+  assert.ok(stub.signOutScopes.includes("local"), "and revoked the moment the profile said inactive");
+});
+
 test("a signed-in user with no profile row is refused", async () => {
   const stub = makeStub({ profiles: [] });
   const repository = new SupabaseUserRepository(stub.client);
-  const result = await repository.authenticate("admin@alyq.local", "CorrectHorse1");
+  const result = await repository.authenticate("admin@alyq.example", "CorrectHorse1");
   assert.equal(result.ok, false);
   if (!result.ok) assert.equal(result.code, "invalid_credentials");
 });
 
 test("a network failure during sign-in surfaces as a coded failure, not an exception", async () => {
-  const stub = makeStub({ throwOn: ["signInWithPassword"] });
-  const repository = new SupabaseUserRepository(stub.client);
-  assert.deepEqual(await repository.authenticate("admin", "CorrectHorse1"), { ok: false, code: "network" });
+  const thrown = makeStub({ throwOn: ["signInWithPassword"] });
+  assert.deepEqual(await new SupabaseUserRepository(thrown.client).authenticate("admin@alyq.example", "CorrectHorse1"), {
+    ok: false,
+    code: "network",
+  });
+
+  // The username road: a relay failure (function undeployed, network down) is a
+  // network problem — never a credential verdict.
+  const functionDown = makeStub({ functionThrows: true });
+  assert.deepEqual(await new SupabaseUserRepository(functionDown.client).authenticate("admin", "CorrectHorse1"), {
+    ok: false,
+    code: "network",
+  });
+});
+
+test("the server-side rate limit is named, and it is not a credential verdict", async () => {
+  const throttled = makeStub({ functionError: { status: 429, body: { ok: false, code: "rate_limited" } } });
+  assert.deepEqual(await new SupabaseUserRepository(throttled.client).authenticate("admin", "CorrectHorse1"), {
+    ok: false,
+    code: "rate_limited",
+  });
+
+  // The function's generic refusal is passed through with the same code the
+  // direct path has always used.
+  const refused = makeStub({ functionError: { status: 400, body: { ok: false, code: "invalid_credentials" } } });
+  assert.deepEqual(await new SupabaseUserRepository(refused.client).authenticate("admin", "CorrectHorse1"), {
+    ok: false,
+    code: "invalid_credentials",
+  });
+
+  // An unexpected body shape degrades to a network failure, not a verdict.
+  const garbage = makeStub({ functionError: { status: 500, body: { weird: true } } });
+  assert.deepEqual(await new SupabaseUserRepository(garbage.client).authenticate("admin", "CorrectHorse1"), {
+    ok: false,
+    code: "network",
+  });
 });
 
 test("the session's expiry is the provider's", async () => {
@@ -370,42 +595,85 @@ test("signing out everywhere asks the provider for a global scope", async () => 
   assert.deepEqual(stub.signOutScopes, ["local", "global"]);
 });
 
-test("a reset request hands the address to the provider with a redirect back to this app", async () => {
+test("a username recovery goes through the resolver; the browser never hands over an email", async () => {
   const stub = makeStub();
   const repository = new SupabaseUserRepository(stub.client);
 
   const outcome = await repository.requestPasswordReset("sales.lead", "https://till.example/#/reset-password");
   assert.deepEqual(outcome, { ok: true, channel: "email" });
-  assert.deepEqual(stub.resetCalls, [
-    { email: "sales.lead@alyq.local", redirectTo: "https://till.example/#/reset-password" },
+  // The function was asked with the username as typed, and the provider's
+  // public recovery endpoint was NOT called from the browser with a synthetic
+  // address — the real email stays server-side.
+  assert.deepEqual(stub.recoverCalls, [
+    { identifier: "sales.lead", redirectTo: "https://till.example/#/reset-password" },
   ]);
+  assert.deepEqual(stub.resetCalls, []);
+});
+
+test("an email recovery still goes straight to the provider, unchanged", async () => {
+  const stub = makeStub();
+  const repository = new SupabaseUserRepository(stub.client);
+
+  const outcome = await repository.requestPasswordReset("sales@alyq.example", "https://till.example/#/reset-password");
+  assert.deepEqual(outcome, { ok: true, channel: "email" });
+  assert.deepEqual(stub.resetCalls, [
+    { email: "sales@alyq.example", redirectTo: "https://till.example/#/reset-password" },
+  ]);
+  assert.deepEqual(stub.recoverCalls, []);
 });
 
 test("an unknown address answers exactly like a known one (no enumeration oracle)", async () => {
   const stub = makeStub();
   const repository = new SupabaseUserRepository(stub.client);
-  assert.deepEqual(await repository.requestPasswordReset("nobody@alyq.local"), { ok: true, channel: "email" });
+  assert.deepEqual(await repository.requestPasswordReset("nobody@alyq.example"), { ok: true, channel: "email" });
   assert.deepEqual(await repository.requestPasswordReset(""), { ok: false, code: "missing_identifier" });
   assert.deepEqual(await repository.requestPasswordReset("not an address!"), { ok: false, code: "invalid_email" });
+});
+
+test("an unknown username answers exactly like a known one (no enumeration oracle)", async () => {
+  const stub = makeStub();
+  const repository = new SupabaseUserRepository(stub.client);
+  const known = await repository.requestPasswordReset("sales.lead");
+  const unknown = await repository.requestPasswordReset("nosuch");
+  assert.deepEqual(known, { ok: true, channel: "email" });
+  assert.deepEqual(unknown, known, "the public response must not distinguish the two");
+  assert.deepEqual(
+    stub.recoverCalls.map((call) => call.identifier),
+    ["sales.lead", "nosuch"],
+    "both were handed to the resolver, which answers generically for both",
+  );
 });
 
 test("throttling is named, and anything else is a network failure", async () => {
   // "Try again in a minute" and "we cannot reach the server" are different
   // instructions, so they are different codes.
   const throttled = makeStub({ resetError: { message: "For security purposes, you can only request this after 60 seconds." } });
-  assert.deepEqual(await new SupabaseUserRepository(throttled.client).requestPasswordReset("admin"), {
+  assert.deepEqual(await new SupabaseUserRepository(throttled.client).requestPasswordReset("admin@alyq.example"), {
     ok: false,
     code: "rate_limited",
   });
 
   const errored = makeStub({ resetError: { message: "unexpected failure" } });
-  assert.deepEqual(await new SupabaseUserRepository(errored.client).requestPasswordReset("admin"), {
+  assert.deepEqual(await new SupabaseUserRepository(errored.client).requestPasswordReset("admin@alyq.example"), {
     ok: false,
     code: "network",
   });
 
   const thrown = makeStub({ throwOn: ["resetPasswordForEmail"] });
-  assert.deepEqual(await new SupabaseUserRepository(thrown.client).requestPasswordReset("admin"), {
+  assert.deepEqual(await new SupabaseUserRepository(thrown.client).requestPasswordReset("admin@alyq.example"), {
+    ok: false,
+    code: "network",
+  });
+
+  // The username road carries the same two instructions from the function.
+  const functionThrottled = makeStub({ functionError: { status: 429, body: { ok: false, code: "rate_limited" } } });
+  assert.deepEqual(await new SupabaseUserRepository(functionThrottled.client).requestPasswordReset("admin"), {
+    ok: false,
+    code: "rate_limited",
+  });
+
+  const functionDown = makeStub({ functionThrows: true });
+  assert.deepEqual(await new SupabaseUserRepository(functionDown.client).requestPasswordReset("admin"), {
     ok: false,
     code: "network",
   });
@@ -534,7 +802,7 @@ test("the user list exposes no credential material", async () => {
   const repository = new SupabaseUserRepository(stub.client);
   const users = await repository.listUsers();
 
-  assert.equal(users.length, 3);
+  assert.equal(users.length, 4);
   for (const user of users) {
     assert.deepEqual(
       Object.keys(user).sort(),

@@ -24,7 +24,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseClient } from "@/lib/supabase/client";
-import { buildAuthUser, usernameToEmail } from "../services/identity";
+import { buildAuthUser } from "../services/identity";
 import { recoveryParams } from "../services/recoveryUrl";
 import { getCachedSession, readStoredSession } from "../services/sessionStore";
 import type { AuthUser, PasswordResetOutcome } from "../types";
@@ -66,6 +66,28 @@ interface CustomRoleRow {
 
 const PROFILE_COLUMNS =
   "id, username, name, role, active, email, phone, custom_role_id, extra_capabilities, denied_capabilities, last_login_at, created_at";
+
+/**
+ * The edge function that turns a bare username into an authenticated session
+ * without ever telling the browser which email sits behind it. It verifies the
+ * password through Supabase Auth's own password grant and returns tokens only;
+ * `authenticate()` and `requestPasswordReset()` below are its sole callers.
+ */
+const AUTH_FUNCTION = "alyq-auth";
+
+interface AuthFunctionSession {
+  access_token: string;
+  refresh_token: string;
+}
+
+type AuthFunctionOutcome =
+  | { ok: true; session?: AuthFunctionSession | null }
+  | { ok: false; code?: string };
+
+const asRecord = (value: unknown): Record<string, unknown> | null =>
+  value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
 
 export class SupabaseUserRepository implements UserRepository {
   readonly kind = "supabase" as const;
@@ -155,33 +177,118 @@ export class SupabaseUserRepository implements UserRepository {
 
   // ── sessions ──────────────────────────────────────────────────────────────
 
+  /**
+   * Call `alyq-auth` and reduce every shape it can answer with — 200 body,
+   * coded non-2xx body, relay failure — onto one discriminated result. The
+   * browser neither sends nor receives a real email on this path: the request
+   * carries the username as typed, and a successful answer carries tokens.
+   */
+  private async invokeAuthFunction(
+    action: "login" | "recover",
+    payload: Record<string, unknown>,
+  ): Promise<AuthFunctionOutcome> {
+    const { data, error } = await this.client().functions.invoke(AUTH_FUNCTION, {
+      body: { action, payload },
+    });
+    let body = asRecord(data);
+    if (!body && error) {
+      // supabase-js wraps a non-2xx response in a FunctionsHttpError whose
+      // `context` is the Response itself; the coded body is in it.
+      const context = (error as { context?: { json?: () => Promise<unknown> } }).context;
+      try {
+        body = asRecord(await context?.json?.());
+      } catch {
+        body = null;
+      }
+    }
+    if (!body) return { ok: false, code: "network" };
+    if (body.ok === true) {
+      const session = asRecord(body.session);
+      return {
+        ok: true,
+        session:
+          session && typeof session.access_token === "string" && typeof session.refresh_token === "string"
+            ? { access_token: session.access_token, refresh_token: session.refresh_token }
+            : action === "login"
+              ? null
+              : undefined,
+      };
+    }
+    const nested = asRecord(body.error);
+    const code =
+      typeof body.code === "string" ? body.code : typeof nested?.code === "string" ? nested.code : undefined;
+    return { ok: false, code };
+  }
+
   async authenticate(username: string, password: string): Promise<AuthenticateResult> {
     const client = this.client();
     const handle = username.trim();
     if (!handle) return { ok: false, code: "missing_username" };
     if (!password) return { ok: false, code: "missing_password" };
 
-    const email = usernameToEmail(handle);
-    // The provider is asked once; everything below is our own bookkeeping. A
-    // thrown network error becomes a coded failure so no caller has to catch on
-    // our behalf to render a login form.
-    // No initialiser: the try assigns it or returns a coded failure, and the
-    // catch returns too, so nothing below can read an unwritten binding.
+    // Two roads to the same provider verdict.
+    //
+    // An email address goes to `signInWithPassword` directly — the pre-existing
+    // path, unchanged, so email login keeps working exactly as before.
+    //
+    // A bare username goes through the `alyq-auth` function, because the
+    // address behind it lives in `auth.users`, is shielded by the profiles RLS,
+    // and must never be revealed to an unauthenticated browser just to resolve
+    // a username. The function verifies the password with the provider itself
+    // and answers with session tokens — no email — which are adopted here with
+    // `setSession`. Accounts whose Auth email is the synthetic
+    // `<username>@alyq.local` resolve through the same door: the function reads
+    // whatever address the provider actually holds.
     let authId: string;
+    let fallbackName: string;
     try {
-      const response = await client.auth.signInWithPassword({ email, password });
-      const user = response.error ? null : response.data?.user ?? null;
-      const session = response.error ? null : response.data?.session ?? null;
-      if (!user || !session) {
-        // One code for every credential refusal the provider can make, so the
-        // form cannot be used to tell "no such account" from "wrong password".
-        return { ok: false, code: "invalid_credentials" };
+      if (handle.includes("@")) {
+        const email = handle.toLowerCase();
+        fallbackName = email;
+        const response = await client.auth.signInWithPassword({ email, password });
+        const user = response.error ? null : response.data?.user ?? null;
+        const session = response.error ? null : response.data?.session ?? null;
+        if (!user || !session) {
+          // One code for every credential refusal the provider can make, so the
+          // form cannot be used to tell "no such account" from "wrong password".
+          return { ok: false, code: "invalid_credentials" };
+        }
+        authId = user.id;
+      } else {
+        fallbackName = handle;
+        const outcome = await this.invokeAuthFunction("login", { identifier: handle, password });
+        if (!outcome.ok) {
+          // The function's refusals are already generic; they are mapped onto
+          // the same vocabulary the direct path uses, and anything unrecognized
+          // (undeployed function, relay failure) is a network problem, never a
+          // credential verdict.
+          if (outcome.code === "invalid_credentials") return { ok: false, code: "invalid_credentials" };
+          if (outcome.code === "user_inactive") return { ok: false, code: "user_inactive" };
+          if (outcome.code === "rate_limited") return { ok: false, code: "rate_limited" };
+          return { ok: false, code: "network" };
+        }
+        const tokens = outcome.session;
+        if (!tokens?.access_token || !tokens?.refresh_token) return { ok: false, code: "network" };
+        const { data: adopted, error: adoptError } = await client.auth.setSession({
+          access_token: tokens.access_token,
+          refresh_token: tokens.refresh_token,
+        });
+        const adoptedId = adopted?.user?.id ?? null;
+        if (adoptError || !adoptedId) {
+          // The provider refused to adopt its own tokens: a sign-in that did
+          // not happen, reported like any other failure.
+          return { ok: false, code: "network" };
+        }
+        authId = adoptedId;
       }
-      authId = user.id;
     } catch {
       return { ok: false, code: "network" };
     }
 
+    // The shared tail, identical for both roads: a token is not an identity.
+    // The profile still has to exist, be active and carry a mappable role —
+    // defense in depth over the function's own gate, and the whole of the gate
+    // on the direct email path.
     const profile = await this.loadProfile(authId);
     if (profile && profile.active === false) {
       // Deactivated: end the session the provider just created, then say why.
@@ -189,7 +296,7 @@ export class SupabaseUserRepository implements UserRepository {
       return { ok: false, code: "user_inactive" };
     }
 
-    const user = await this.identityFor(profile, authId, email);
+    const user = await this.identityFor(profile, authId, fallbackName);
     if (!user || !user.role) {
       // Signed in but with no usable role: that must not inherit anything.
       await client.auth.signOut({ scope: "local" }).catch(() => undefined);
@@ -300,7 +407,21 @@ export class SupabaseUserRepository implements UserRepository {
     }
 
     try {
-      const { error } = await this.client().auth.resetPasswordForEmail(usernameToEmail(handle), {
+      if (!handle.includes("@")) {
+        // A bare username: the address recovery must go to is the REAL Auth
+        // email, which no unauthenticated browser may learn. The `alyq-auth`
+        // function resolves it server-side and hands it to Supabase's own
+        // recovery mailer; the public answer is the same generic one either
+        // way, so this endpoint is no directory of who works here.
+        const outcome = await this.invokeAuthFunction("recover", {
+          identifier: handle,
+          redirect_to: redirectTo ?? "",
+        });
+        if (outcome.ok) return { ok: true, channel: "email" };
+        if (outcome.code === "rate_limited") return { ok: false, code: "rate_limited" };
+        return { ok: false, code: "network" };
+      }
+      const { error } = await this.client().auth.resetPasswordForEmail(handle.toLowerCase(), {
         redirectTo,
       });
       if (error) {

@@ -85,6 +85,12 @@ export type AuthErrorCode =
   | "not_configured"
   /** The account exists but an admin deactivated it. */
   | "user_inactive"
+  /**
+   * Too many attempts from this client: the server-side sign-in path rate
+   * limits before any provider call. A different instruction from "wrong
+   * credentials" — wait a moment — and it says nothing about any account.
+   */
+  | "rate_limited"
   | "unknown";
 
 /**
