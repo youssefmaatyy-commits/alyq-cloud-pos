@@ -1323,6 +1323,8 @@ declare
   v_refund_id uuid;
   v_row       public.refund_records%rowtype;
   v_count     integer;
+  v_appr      uuid;
+  v_appr_text text;
 begin
   -- the lookup needs oversight: `profiles` is readable as yourself, your own
   -- row, or with `view_audit_log` — a cashier cannot browse the staff list.
@@ -1333,6 +1335,28 @@ begin
   end if;
 
   -- a discounted cash sale: 2 × 10.00 less 8.00 = 12.00
+  --
+  -- 8.00 off a 20.00 basket is a 40% discount, which is above the shop's 10%
+  -- limit. Before 0035 this call went straight through, because the limit was
+  -- compared in saleService.ts and this scenario does not go through
+  -- saleService.ts — which is exactly how the bypass worked. It now needs a
+  -- decision behind it, so the scenario raises one the way the till does: the
+  -- cashier asks, the manager signs, and the sale carries the request's id.
+  -- Every number below is unchanged, so the return and refund assertions that
+  -- follow still test what they always tested.
+  perform pg_temp.become(v_cashier);
+  select (public.submit_approval_request(jsonb_build_object(
+           'kind',        'discount',
+           'entity_type', 'sale',
+           'entity_label','refn-sale-1',
+           'amount',      40.00,
+           'limit_value', 10.00,
+           'reason',      'Damaged packaging, clearing the two units'
+         )) ->> 'request_id')::uuid into v_appr;
+
+  perform pg_temp.become(v_manager);
+  perform public.decide_approval_request(v_appr, 'approved', 'Clear them out');
+
   perform pg_temp.become(v_cashier);
   v_sale := public.pos_complete_sale(jsonb_build_object(
     'client_ref',    'refn-sale-1',
@@ -1342,7 +1366,15 @@ begin
     'discount_value', 8.00,
     'payments',      jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', 12.00, 'tendered', 20.00)),
     'lines',         jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 2))
-  ));
+  ), v_appr);
+
+  -- the approval is spent, and spent on THIS sale: that is the link requirement
+  -- 6 asks about, checked where a real act consumed a real decision.
+  select result_entity_id into v_appr_text from public.approval_requests where id = v_appr;
+  if v_appr_text is distinct from (v_sale ->> 'sale_id') then
+    raise exception 'the discount approval was not spent on the sale it authorised (got %, sale %)',
+      coalesce(v_appr_text, '(unspent)'), v_sale ->> 'sale_id';
+  end if;
   v_sale_id := (v_sale->>'sale_id')::uuid;
   select id into v_line_id from public.sale_items where sale_id = v_sale_id;
 
@@ -2339,6 +2371,387 @@ end
 $$;
 
 -- ── leave no session claim behind ─────────────────────────────────────────
+-- ── Phase 24 · server-enforced approval controls ─────────────────────────────
+-- The six cases from the requirement, run against the real RPC as the seeded
+-- CASHIER — who holds `sell` and does NOT hold `approve_limit_request`, so the
+-- limits bind them. Every one of these was a working bypass before 0035: the
+-- thresholds were fetched by the browser and compared in TypeScript, so a call
+-- that did not go through the browser was not a call that had to ask.
+--
+-- Then requirement 6: the approval ledger itself. A request cannot be forged,
+-- an approved status cannot be injected, a decision cannot be spent twice, and
+-- what was spent is linked to the record it produced.
+do $$
+declare
+  v_cashier  uuid := '00000000-0000-4000-8000-0000000000c1';
+  v_admin    uuid := '00000000-0000-4000-8000-0000000000a1';
+  v_manager  uuid;
+  v_product  uuid := '00000000-0000-4000-8000-0000000000f2';
+  v_sale     jsonb;
+  v_sale_id  uuid;
+  v_appr     uuid;
+  v_other    uuid;
+  v_small    uuid;
+  v_pending  uuid;
+  v_stock    integer;
+  v_n        integer;
+  v_text     text;
+  v_amt      numeric(14,2);
+  v_total    numeric(14,2);
+  v_row      public.approval_requests%rowtype;
+begin
+  perform pg_temp.become(v_admin, 'authenticated');
+  select p.id into v_manager from public.profiles p where p.username = 'manager';
+  if v_manager is null then
+    raise exception 'the seeded manager profile is missing';
+  end if;
+
+  perform pg_temp.become(v_cashier, 'authenticated');
+  -- The two preconditions that make every case below mean what it says.
+  if public.can('approve_limit_request') then
+    raise exception 'the seeded cashier holds approve_limit_request, so the limits would not bind them';
+  end if;
+  if not public.can('sell') then
+    raise exception 'the seeded cashier cannot sell, so the sales below would fail for the wrong reason';
+  end if;
+  select stock_quantity into v_stock from public.products where id = v_product;
+  if v_stock < 10 then
+    raise exception 'the fixture product has only % left; the sales below need 10', v_stock;
+  end if;
+
+  -- ── the threshold oracle agrees with the four evaluators in the browser ────
+  -- Same conditions, same units, same boundaries: 10% is inside the limit, the
+  -- next cent is not. If these two sides ever drift, one of them is lying about
+  -- what the shop's policy is.
+  if public.approval_required_for('discount', 0) then
+    raise exception 'a discount of 0 was reported as needing approval';
+  end if;
+  if public.approval_required_for('discount', 10.00) then
+    raise exception 'a discount at the limit was reported as needing approval';
+  end if;
+  if not public.approval_required_for('discount', 10.01) then
+    raise exception 'a discount above the limit was not reported as needing approval';
+  end if;
+  if public.approval_required_for('refund', 1000.00) or not public.approval_required_for('refund', 1000.01) then
+    raise exception 'the refund threshold does not match evaluateRefundRule()';
+  end if;
+  if public.approval_required_for('expense', 500.00) or not public.approval_required_for('expense', 500.01) then
+    raise exception 'the expense threshold does not match evaluateExpenseRule()';
+  end if;
+  if public.approval_required_for('price_change', 999) then
+    raise exception 'price-change approval is off by default and must stay off';
+  end if;
+  begin
+    perform public.approval_required_for('nonsense', 1);
+    raise exception 'an unknown kind was accepted';
+  exception when check_violation then
+    null;
+  end;
+  -- …and the exemption is the acting identity's, not the caller's claim: an admin
+  -- holds approve_limit_request, so for them no value needs a request.
+  perform pg_temp.become(v_admin, 'authenticated');
+  if public.approval_required_for('discount', 99.9) then
+    raise exception 'a holder of approve_limit_request was told to file paperwork';
+  end if;
+  perform pg_temp.become(v_cashier, 'authenticated');
+
+  -- ── TEST 1 · 99.9% discount, no approval → FAIL ───────────────────────────
+  -- Before 0035 this wrote a completed sale for 0.01 of a 10.00 basket.
+  begin
+    v_sale := public.pos_complete_sale(jsonb_build_object(
+      'client_ref',     'p24-t1',
+      'user_id',        v_cashier::text,
+      'user_name',      'Karim Cashier',
+      'discount_type',  'percent',
+      'discount_value', 99.9,
+      'payments',       jsonb_build_array(jsonb_build_object('method','cash','amount',0.01,'tendered',0.01)),
+      'lines',          jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 1))
+    ));
+    raise exception 'TEST 1 FAILED: a cashier rang up a 99.9 percent discount with no approval behind it';
+  exception when insufficient_privilege then
+    null;
+  end;
+  select count(*) into v_n from public.sales where client_ref = 'p24-t1';
+  if v_n <> 0 then
+    raise exception 'TEST 1 FAILED: the refused discount still wrote % sale row(s)', v_n;
+  end if;
+
+  -- ── TEST 6 first, because it needs no approval: a normal sale → SUCCESS ───
+  -- Under the limit, so nothing is asked for. This is the case that proves the
+  -- gate did not simply start refusing discounts.
+  v_sale := public.pos_complete_sale(jsonb_build_object(
+    'client_ref',     'p24-t6',
+    'user_id',        v_cashier::text,
+    'user_name',      'Karim Cashier',
+    'discount_type',  'percent',
+    'discount_value', 5,
+    'payments',       jsonb_build_array(jsonb_build_object('method','cash','amount',9.50,'tendered',10.00)),
+    'lines',          jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 1))
+  ));
+  if (v_sale ->> 'sale_id') is null then
+    raise exception 'TEST 6 FAILED: a discount within the limit was refused';
+  end if;
+  select discount_amount, total into v_amt, v_total from public.sales where client_ref = 'p24-t6';
+  if v_amt <> 0.50 or v_total <> 9.50 then
+    raise exception 'TEST 6 FAILED: a discount inside the limit on a 10.00 basket was recorded as % off, total %', v_amt, v_total;
+  end if;
+
+  -- ── TEST 2 · the same 99.9% with a valid approved request → SUCCESS ───────
+  select (public.submit_approval_request(jsonb_build_object(
+           'kind',         'discount',
+           'entity_type',  'sale',
+           'entity_label', 'p24-t2',
+           'amount',       99.9,
+           'limit_value',  10.00,
+           'reason',       'Clearing water damaged in the delivery'
+         )) ->> 'request_id')::uuid into v_appr;
+  -- requirement 6: the ledger stamps who really asked, whatever the payload said
+  select requested_by into v_text from public.approval_requests where id = v_appr;
+  if v_text is distinct from v_cashier::text then
+    raise exception 'the request was attributed to % instead of the caller', coalesce(v_text, '(nobody)');
+  end if;
+
+  perform pg_temp.become(v_manager, 'authenticated');
+  perform public.decide_approval_request(v_appr, 'approved', 'Damaged stock, clear it');
+  perform pg_temp.become(v_cashier, 'authenticated');
+
+  v_sale := public.pos_complete_sale(jsonb_build_object(
+    'client_ref',     'p24-t2',
+    'user_id',        v_cashier::text,
+    'user_name',      'Karim Cashier',
+    'discount_type',  'percent',
+    'discount_value', 99.9,
+    'payments',       jsonb_build_array(jsonb_build_object('method','cash','amount',0.01,'tendered',0.01)),
+    'lines',          jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 1))
+  ), v_appr);
+  v_sale_id := (v_sale ->> 'sale_id')::uuid;
+  if v_sale_id is null then
+    raise exception 'TEST 2 FAILED: an approved over-limit discount was refused';
+  end if;
+  -- and the totals are the shop's, not the caller's
+  select discount_amount, total into v_amt, v_total from public.sales where id = v_sale_id;
+  if v_amt <> 9.99 or v_total <> 0.01 then
+    raise exception 'TEST 2 FAILED: the sale was recorded as % off, total %, instead of the catalogue-derived 9.99 and 0.01',
+      v_amt, v_total;
+  end if;
+  -- requirement 6: spent, and spent on the record it authorised
+  select result_entity_id into v_text from public.approval_requests where id = v_appr;
+  if v_text is distinct from v_sale_id::text then
+    raise exception 'TEST 2 FAILED: the approval was linked to % instead of sale %',
+      coalesce(v_text, '(nothing)'), v_sale_id;
+  end if;
+
+  -- ── TEST 4b · the same approval cannot be spent again → FAIL ──────────────
+  begin
+    perform public.pos_complete_sale(jsonb_build_object(
+      'client_ref',     'p24-t4b',
+      'user_id',        v_cashier::text,
+      'user_name',      'Karim Cashier',
+      'discount_type',  'percent',
+      'discount_value', 99.9,
+      'payments',       jsonb_build_array(jsonb_build_object('method','cash','amount',0.01,'tendered',0.01)),
+      'lines',          jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 1))
+    ), v_appr);
+    raise exception 'TEST 4 FAILED: an already-spent approval was accepted a second time';
+  exception when check_violation then
+    null;
+  end;
+  select count(*) into v_n from public.sales where client_ref = 'p24-t4b';
+  if v_n <> 0 then
+    raise exception 'TEST 4 FAILED: the replayed approval wrote % sale row(s)', v_n;
+  end if;
+
+  -- ── TEST 3 · a fabricated request id → FAIL ───────────────────────────────
+  begin
+    perform public.pos_complete_sale(jsonb_build_object(
+      'client_ref',     'p24-t3',
+      'user_id',        v_cashier::text,
+      'user_name',      'Karim Cashier',
+      'discount_type',  'percent',
+      'discount_value', 99.9,
+      'payments',       jsonb_build_array(jsonb_build_object('method','cash','amount',0.01,'tendered',0.01)),
+      'lines',          jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 1))
+    ), gen_random_uuid());
+    raise exception 'TEST 3 FAILED: a fabricated approval id was accepted';
+  exception when no_data_found then
+    null;
+  end;
+
+  -- ── TEST 4a · somebody else's approval → FAIL ─────────────────────────────
+  -- The manager raises and the admin signs a request that belongs to the
+  -- manager. It is approved, unspent, the right kind and large enough — every
+  -- property the cashier's own would have except who asked for it.
+  perform pg_temp.become(v_manager, 'authenticated');
+  select (public.submit_approval_request(jsonb_build_object(
+           'kind', 'discount', 'entity_type', 'sale', 'entity_label', 'p24-t4a',
+           'amount', 99.9, 'limit_value', 10.00, 'reason', 'Manager''s own clearing sale'
+         )) ->> 'request_id')::uuid into v_other;
+  perform pg_temp.become(v_admin, 'authenticated');
+  perform public.decide_approval_request(v_other, 'approved', 'Fine');
+  perform pg_temp.become(v_cashier, 'authenticated');
+  begin
+    perform public.pos_complete_sale(jsonb_build_object(
+      'client_ref',     'p24-t4a',
+      'user_id',        v_cashier::text,
+      'user_name',      'Karim Cashier',
+      'discount_type',  'percent',
+      'discount_value', 99.9,
+      'payments',       jsonb_build_array(jsonb_build_object('method','cash','amount',0.01,'tendered',0.01)),
+      'lines',          jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 1))
+    ), v_other);
+    raise exception 'TEST 4 FAILED: a cashier spent an approval that belongs to the manager';
+  exception when insufficient_privilege then
+    null;
+  end;
+  select count(*) into v_n from public.sales where client_ref = 'p24-t4a';
+  if v_n <> 0 then
+    raise exception 'TEST 4 FAILED: the borrowed approval wrote % sale row(s)', v_n;
+  end if;
+  -- and borrowing it did not spend it: the manager's request is still available
+  select result_entity_id into v_text from public.approval_requests where id = v_other;
+  if v_text is not null then
+    raise exception 'TEST 4 FAILED: the refused attempt still consumed the manager''s approval';
+  end if;
+
+  -- ── TEST 5 · an approval for a smaller discount → FAIL ────────────────────
+  select (public.submit_approval_request(jsonb_build_object(
+           'kind', 'discount', 'entity_type', 'sale', 'entity_label', 'p24-t5',
+           'amount', 20.00, 'limit_value', 10.00, 'reason', 'A 20% clearance, not a giveaway'
+         )) ->> 'request_id')::uuid into v_small;
+  perform pg_temp.become(v_manager, 'authenticated');
+  perform public.decide_approval_request(v_small, 'approved', '20% is the most I will sign');
+  perform pg_temp.become(v_cashier, 'authenticated');
+  begin
+    perform public.pos_complete_sale(jsonb_build_object(
+      'client_ref',     'p24-t5',
+      'user_id',        v_cashier::text,
+      'user_name',      'Karim Cashier',
+      'discount_type',  'percent',
+      'discount_value', 99.9,
+      'payments',       jsonb_build_array(jsonb_build_object('method','cash','amount',0.01,'tendered',0.01)),
+      'lines',          jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 1))
+    ), v_small);
+    raise exception 'TEST 5 FAILED: an approval for 20 percent was accepted for a 99.9 percent discount';
+  exception when check_violation then
+    null;
+  end;
+  -- the 20% it WAS signed for still works, which is the difference between a
+  -- gate and a wall
+  v_sale := public.pos_complete_sale(jsonb_build_object(
+    'client_ref',     'p24-t5-ok',
+    'user_id',        v_cashier::text,
+    'user_name',      'Karim Cashier',
+    'discount_type',  'percent',
+    'discount_value', 20,
+    'payments',       jsonb_build_array(jsonb_build_object('method','cash','amount',8.00,'tendered',10.00)),
+    'lines',          jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 1))
+  ), v_small);
+  if (v_sale ->> 'sale_id') is null then
+    raise exception 'TEST 5 FAILED: the 20 percent discount the approval covers was refused';
+  end if;
+
+  -- ── requirement 6 · the ledger cannot be written around ───────────────────
+  -- (a) a request cannot be forged: INSERT is refused for every browser role, so
+  --     submit_approval_request is the only way in and it stamps the caller.
+  select (public.submit_approval_request(jsonb_build_object(
+           'kind', 'discount', 'entity_type', 'sale', 'entity_label', 'p24-forgery',
+           'amount', 99.9, 'limit_value', 10.00, 'reason', 'A request left pending on purpose'
+         )) ->> 'request_id')::uuid into v_pending;
+  begin
+    insert into public.approval_requests (
+      request_number, kind, entity_type, amount, reason, status, requested_by, requested_by_name
+    ) values (
+      'APR-FORGED', 'discount', 'sale', 99.9, 'forged', 'approved', v_admin::text, 'Forged'
+    );
+    raise exception 'a cashier inserted an approval request directly';
+  exception when insufficient_privilege then
+    null;
+  end;
+
+  -- (b) an approved status cannot be injected: UPDATE and DELETE are refused for
+  --     every browser role, so the row stays exactly as the RPCs left it.
+  -- Either layer refusing is the right answer: a live Supabase project grants
+  -- every table to `authenticated` by default and leaves RLS as the only
+  -- control, while this harness applies only the grants the migrations state, so
+  -- here the denial arrives one layer earlier. What must hold in both is that
+  -- the row does not move, which is what the assertion below checks.
+  begin
+    update public.approval_requests set status = 'approved' where id = v_pending;
+    get diagnostics v_n = row_count;
+    if v_n <> 0 then
+      raise exception 'a cashier updated % approval row(s) directly', v_n;
+    end if;
+  exception when insufficient_privilege then
+    null;
+  end;
+  begin
+    delete from public.approval_requests where id = v_pending;
+    get diagnostics v_n = row_count;
+    if v_n <> 0 then
+      raise exception 'a cashier deleted % approval row(s) directly', v_n;
+    end if;
+  exception when insufficient_privilege then
+    null;
+  end;
+  select * into v_row from public.approval_requests where id = v_pending;
+  if v_row.status <> 'pending' then
+    raise exception 'the injected status landed: the request is now %', v_row.status;
+  end if;
+
+  -- (c) nor can the cashier sign their own request through the RPC
+  begin
+    perform public.decide_approval_request(v_pending, 'approved', 'signing my own');
+    raise exception 'a cashier decided their own approval request';
+  exception when insufficient_privilege then
+    null;
+  end;
+
+  -- (d) and an unspent request is not a licence: with the pending one sitting
+  --     there, the 99.9% discount is still refused, because pending is not
+  --     approved. This is the case that a gate reading only "a request exists"
+  --     would get wrong.
+  begin
+    perform public.pos_complete_sale(jsonb_build_object(
+      'client_ref',     'p24-pending',
+      'user_id',        v_cashier::text,
+      'user_name',      'Karim Cashier',
+      'discount_type',  'percent',
+      'discount_value', 99.9,
+      'payments',       jsonb_build_array(jsonb_build_object('method','cash','amount',0.01,'tendered',0.01)),
+      'lines',          jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 1))
+    ));
+    raise exception 'a PENDING approval was treated as an approved one';
+  exception when insufficient_privilege then
+    null;
+  end;
+
+  -- (e) and one caller cannot spend another's decision. mark_approval_applied is
+  --     SECURITY DEFINER, so it reads past row level security: without a check of
+  --     its own, any signed-in seat holding a request's id could mark a
+  --     colleague's approved request as applied to an entity of their choosing,
+  --     burning it so the real act could never use it and poisoning the link
+  --     between the decision and what it produced. The manager's request from
+  --     case 4a is still approved and still unspent, which makes it the target.
+  begin
+    perform public.mark_approval_applied(v_other, 'burned-by-somebody-else');
+    raise exception 'a cashier spent the manager''s approved request on an entity of their own choosing';
+  exception when insufficient_privilege then
+    null;
+  end;
+  select result_entity_id into v_text from public.approval_requests where id = v_other;
+  if v_text is not null then
+    raise exception 'the manager''s request was marked applied to % by somebody else', v_text;
+  end if;
+
+  perform pg_temp.become(v_admin, 'authenticated');
+
+  raise notice 'Phase 24 server-enforced approvals — a cashier''s 99.9 percent discount is refused with no request behind it, '
+               'accepted with an approved one, and refused with a fabricated, a borrowed, a smaller or an already-spent one; a '
+               'discount inside the limit needs nothing; and the ledger refuses a forged insert, an injected status and a '
+               'self-signed decision';
+end
+$$;
+
 do $$
 begin
   perform set_config('request.jwt.claim.sub', '', true);

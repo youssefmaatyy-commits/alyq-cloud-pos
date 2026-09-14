@@ -147,7 +147,10 @@ export async function completeSale(
     }
   }
 
-  const sale = await getSalesRepository().completeSale(input);
+  // The approval, when there is one, travels with the sale so the database can
+  // validate and spend it. Since 0035 the check above is a UX optimisation: the
+  // gate that cannot be walked around is inside pos_complete_sale.
+  const sale = await getSalesRepository().completeSale(input, approval?.requestId ?? null);
   if (discounted && approval) await markRequestApplied(approval.requestId, sale.id);
 
   if (discounted) {

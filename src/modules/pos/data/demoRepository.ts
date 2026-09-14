@@ -81,7 +81,10 @@ export class DemoSalesRepository implements SalesRepository {
     return formatSaleNumber(this.counter);
   }
 
-  async completeSale(input: CompleteSaleInput): Promise<Sale> {
+  async completeSale(input: CompleteSaleInput, _approvalRequestId?: string | null): Promise<Sale> {
+    // Demo mode has no database, so there is no server-side gate to satisfy: the
+    // limit is enforced by saleService before it gets here, exactly as it was.
+    // The parameter exists so both repositories answer to one interface.
     // Idempotency first: a retried submit (double-click, network retry) must
     // return the original sale rather than raising the in-flight error.
     const existing = this.sales.find((s) => s.client_ref === input.client_ref);

@@ -143,10 +143,14 @@ export class SupabaseSalesRepository implements SalesRepository {
     return client;
   }
 
-  async completeSale(input: CompleteSaleInput): Promise<Sale> {
+  async completeSale(input: CompleteSaleInput, approvalRequestId?: string | null): Promise<Sale> {
     try {
       const client = this.require();
       const { data, error } = await client.rpc("pos_complete_sale", {
+        // Migration 0035: an over-limit discount is refused unless a real,
+        // approved, unspent request stands behind it. Validated in the database,
+        // spent in the same transaction as the sale it produced.
+        p_approval_request_id: approvalRequestId ?? null,
         p_payload: {
           client_ref: input.client_ref,
           lines: input.lines,

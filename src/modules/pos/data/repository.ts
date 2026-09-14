@@ -48,7 +48,15 @@ export interface SaleListQuery {
 export interface SalesRepository {
   readonly kind: "supabase" | "demo";
 
-  completeSale(input: CompleteSaleInput): Promise<Sale>;
+  /**
+   * `approvalRequestId` is the decision that authorises an over-limit discount.
+   * It is optional because most sales need none, and because the database can
+   * find the caller's own approved request without it — but passing it names the
+   * exact decision the till was shown, which is what an auditor wants to see.
+   * Migration 0035 validates and spends it server-side; the check in
+   * `saleService.completeSale` is a faster, nicer error, not the gate.
+   */
+  completeSale(input: CompleteSaleInput, approvalRequestId?: string | null): Promise<Sale>;
   listSales(query?: SaleListQuery): Promise<Sale[]>;
   /**
    * Exact number of sales matching the query's date bounds, ignoring

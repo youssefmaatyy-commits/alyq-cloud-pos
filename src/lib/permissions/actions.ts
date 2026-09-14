@@ -54,14 +54,20 @@ export const SENSITIVE_ACTIONS: readonly SensitiveAction[] = [
     capability: "sell",
     guard: "assertCanCompleteSale",
     file: "src/modules/pos/services/saleService.ts",
-    db: "public.pos_complete_sale — reprices server-side; sales has no direct-write policy",
+    db: "public.pos_complete_sale — reprices server-side; sales has no direct-write "
+      + "policy. Since 0035 an over-limit discount is refused unless approval is enforced server-side through public.approval_required_for() and a validated approval request",
   },
   {
     key: "sale.discount",
     capability: "apply_discount",
     guard: "assertCanDiscountSale",
     file: "src/modules/pos/services/saleService.ts",
-    db: "pos_complete_sale accepts a discount only from a caller public.can('apply_discount') allows",
+    db: "pos_complete_sale accepts a discount only from a caller public.can('apply_discount') "
+      + "allows, and only within the shop's limit: the percentage is computed inside the "
+      + "function from the catalogue-priced subtotal, never from the caller's claim, and "
+      + "approval is enforced server-side through public.approval_required_for() "
+      + "and a validated approval request (0035) — the browser's own check is a faster "
+      + "error, not the gate",
   },
   {
     key: "sale.void",
@@ -98,7 +104,8 @@ export const SENSITIVE_ACTIONS: readonly SensitiveAction[] = [
     capability: "process_return",
     guard: "assertCanCreateReturn",
     file: "src/modules/returns/services/returnService.ts",
-    db: "public.pos_process_return — restocks, caps at the sale's refundable amount",
+    db: "public.pos_process_return — restocks, caps at the sale's refundable amount, and "
+      + "since 0035 refuses a refund above the cap unless approval is enforced server-side through public.approval_required_for() and a validated approval request",
   },
   {
     key: "return.approve",
@@ -126,7 +133,8 @@ export const SENSITIVE_ACTIONS: readonly SensitiveAction[] = [
     capability: "process_refund",
     guard: "assertCanRecordRefund",
     file: "src/modules/returns/services/returnService.ts",
-    db: "public.pos_process_return writes the refund row; refund_records has no direct write",
+    db: "public.pos_process_return writes the refund row; refund_records has no direct "
+      + "write; since 0035 an amount above the cap needs approval is enforced server-side through public.approval_required_for() and a validated approval request",
   },
 
   // ── expenses ─────────────────────────────────────────────────────────────
@@ -135,7 +143,9 @@ export const SENSITIVE_ACTIONS: readonly SensitiveAction[] = [
     capability: "add_expense",
     guard: "assertCanCreateExpense",
     file: "src/modules/expenses/services/expenseService.ts",
-    db: "RLS insert on expenses — attribution stamped to the caller, immutable",
+    db: "RLS insert on expenses — attribution stamped to the caller, immutable. Since 0035 "
+      + "the public.enforce_expense_invariants trigger also refuses an amount above the cap "
+      + "(and an edit that raises it over the cap) unless approval is enforced server-side through public.approval_required_for() and a validated approval request",
   },
   {
     key: "expense.edit",
@@ -222,7 +232,9 @@ export const SENSITIVE_ACTIONS: readonly SensitiveAction[] = [
     capability: "change_price",
     guard: "assertCanChangePrice",
     file: "src/modules/products/services/catalogService.ts",
-    db: "RLS update on products — change_price is checked separately from edit_product",
+    db: "RLS update on products — change_price is checked separately from edit_product, and "
+      + "since 0035 the public.enforce_price_authority trigger refuses a move that needs "
+      + "sign-off unless approval is enforced server-side through public.approval_required_for() and a validated approval request naming that product and that price",
   },
   {
     key: "product.cost_change",
@@ -234,7 +246,8 @@ export const SENSITIVE_ACTIONS: readonly SensitiveAction[] = [
     capability: "change_cost",
     guard: "assertCanChangeCost",
     file: "src/modules/products/services/catalogService.ts",
-    db: "RLS update on products — a purchase cost is a price, and it drives every profit figure",
+    db: "RLS update on products — a purchase cost is a price, and it drives every profit "
+      + "figure; the same 0035 approval gate covers it when the rule is on",
   },
   {
     key: "product.delete",
