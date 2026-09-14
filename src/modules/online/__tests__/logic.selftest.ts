@@ -89,8 +89,10 @@ import {
   visibleSections,
 } from "../services/sections";
 import {
+  configuredHref,
   DEFAULT_WEBSITE_SETTINGS,
-  instapayHref,
+  externalHref,
+  internalHref,
   mergeSettings,
   readableOn,
   repairSections,
@@ -1140,17 +1142,61 @@ test("the InstaPay knobs default to the shipped behaviour and backfill old docum
 });
 
 test("the InstaPay link only becomes an href when it is a safe absolute http(s) URL", () => {
-  assert.equal(instapayHref("https://instapay.eg/alyq"), "https://instapay.eg/alyq");
-  assert.equal(instapayHref("http://example.com/pay"), "http://example.com/pay");
-  assert.equal(instapayHref("  https://instapay.eg/x  "), "https://instapay.eg/x", "surrounding space is trimmed");
-  assert.equal(instapayHref(""), null, "an unset link renders no button at all");
-  assert.equal(instapayHref(null), null);
-  assert.equal(instapayHref("javascript:alert(1)"), null, "a script scheme never reaches an href");
-  assert.equal(instapayHref("JaVaScRiPt:alert(1)"), null, "the scheme check is case-insensitive");
-  assert.equal(instapayHref("data:text/html;base64,PHNjcmlwdD4="), null);
-  assert.equal(instapayHref("instapay://transfer"), null, "custom schemes are refused like any other");
-  assert.equal(instapayHref("/store/products"), null, "a relative path is not an external payment link");
-  assert.equal(instapayHref("ftp://files.example.com"), null);
+  assert.equal(externalHref("https://instapay.eg/alyq"), "https://instapay.eg/alyq");
+  assert.equal(externalHref("http://example.com/pay"), "http://example.com/pay");
+  assert.equal(externalHref("  https://instapay.eg/x  "), "https://instapay.eg/x", "surrounding space is trimmed");
+  assert.equal(externalHref(""), null, "an unset link renders no button at all");
+  assert.equal(externalHref(null), null);
+  assert.equal(externalHref("javascript:alert(1)"), null, "a script scheme never reaches an href");
+  assert.equal(externalHref("JaVaScRiPt:alert(1)"), null, "the scheme check is case-insensitive");
+  assert.equal(externalHref("data:text/html;base64,PHNjcmlwdD4="), null);
+  assert.equal(externalHref("instapay://transfer"), null, "custom schemes are refused like any other");
+  assert.equal(externalHref("/store/products"), null, "a relative path is not an external payment link");
+  assert.equal(externalHref("ftp://files.example.com"), null);
+});
+
+test("every configured storefront link passes the same safe-href policy", () => {
+  // The social profiles and the map are ordinary https links when they are real.
+  assert.equal(externalHref("https://facebook.com/alyq.shop"), "https://facebook.com/alyq.shop");
+  assert.equal(externalHref("https://instagram.com/alyq.shop"), "https://instagram.com/alyq.shop");
+  assert.equal(externalHref("https://tiktok.com/@alyq.shop"), "https://tiktok.com/@alyq.shop");
+  assert.equal(
+    externalHref("https://maps.google.com/?q=alyq"),
+    "https://maps.google.com/?q=alyq",
+    "a map link keeps its query",
+  );
+
+  // Mixed case and stray whitespace are normalized, not smuggled through.
+  assert.equal(externalHref("HTTPS://TikTok.com/@alyq"), "https://tiktok.com/@alyq");
+  assert.equal(externalHref("\n https://facebook.com/x \t"), "https://facebook.com/x");
+
+  // The bypass attempts a public href must refuse — every scheme that executes
+  // or renders content, in any casing, with or without obfuscation.
+  assert.equal(externalHref("vbscript:msgbox(1)"), null);
+  assert.equal(externalHref("DATA:text/html,<script>alert(1)</script>"), null);
+  assert.equal(externalHref("java\tscript:alert(1)"), null, "a tab inside the scheme does not sneak it past");
+  assert.equal(externalHref("jav\u0000ascript:alert(1)"), null, "nor does a NUL character");
+  assert.equal(externalHref(" javascript:alert(1)"), null, "leading whitespace is trimmed before the check");
+  assert.equal(externalHref("https://"), null, "a scheme with no host is nothing to link to");
+  assert.equal(externalHref(42), null, "a non-string value is not a link");
+
+  // Fields that hold routes inside the shop accept "#/…" and nothing else: a
+  // bare "#" must never become a link, and "#javascript:…" is the slice bypass
+  // the hero and promo banners used to be open to.
+  assert.equal(internalHref("#/store/products"), "#/store/products");
+  assert.equal(internalHref("  #/store/contact "), "#/store/contact", "trimmed");
+  assert.equal(internalHref("#"), null, "a bare hash is not a route");
+  assert.equal(internalHref("#javascript:alert(1)"), null, "a scheme behind a hash is not a route");
+  assert.equal(internalHref("https://facebook.com/x"), null, "external URLs are the other function's job");
+  assert.equal(internalHref(""), null);
+
+  // The combined policy for the announcement bar and CTAs: either kind passes,
+  // anything else renders text with no link at all.
+  assert.equal(configuredHref("#/store/products"), "#/store/products");
+  assert.equal(configuredHref("https://facebook.com/alyq.shop"), "https://facebook.com/alyq.shop");
+  assert.equal(configuredHref("javascript:alert(1)"), null);
+  assert.equal(configuredHref("#javascript:alert(1)"), null);
+  assert.equal(configuredHref(""), null);
 });
 
 test("the shop does not wear the back office's colours", () => {

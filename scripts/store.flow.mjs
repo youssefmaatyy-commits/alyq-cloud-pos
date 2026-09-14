@@ -1059,6 +1059,119 @@ async function main() {
     `  ✓ an unsafe InstaPay link renders nowhere, and ${noProofNumber} skipped the panel while staying verification_required`,
   );
 
+  // ── 10c · every other configured external link follows the same policy ────
+  // Real https profiles and the map link render exactly where they did before;
+  // values that would execute — javascript:, data:, vbscript:, in mixed case or
+  // padded with whitespace — render no link at all, while the valid WhatsApp
+  // link keeps working throughout.
+  await navigate("#/online/website", 900);
+  clickExact("Contact & social");
+  await sleep(500);
+  setInputValue(fieldByPlaceholder("https://instagram.com/…"), "https://instagram.com/alyq.shop");
+  setInputValue(fieldByPlaceholder("https://tiktok.com/@…"), "https://tiktok.com/@alyq.shop");
+  setFieldUnderLabel("Map link", "https://maps.google.com/?q=alyq");
+  await sleep(200);
+  await saveBuilder();
+  await waitFor(
+    () =>
+      (websiteSettings()?.social?.instagram ?? "") === "https://instagram.com/alyq.shop" &&
+      (websiteSettings()?.social?.tiktok ?? "") === "https://tiktok.com/@alyq.shop" &&
+      (websiteSettings()?.contact?.map_url ?? "") === "https://maps.google.com/?q=alyq",
+    { label: "the valid social and map links to be saved" },
+  );
+
+  const linkWithLabel = (label) =>
+    [...document.querySelectorAll("a")].find((a) => a.getAttribute("aria-label") === label) ?? null;
+  await navigate("#/store", 900);
+  await waitFor(() => productCards().length > 0, { label: "the storefront to reload" });
+  let hrefsNow = [...document.querySelectorAll("a")].map((a) => a.getAttribute("href") ?? "");
+  assert.ok(
+    hrefsNow.includes("https://facebook.com/alyq.shop"),
+    "the valid Facebook link still renders in the footer",
+  );
+  assert.equal(
+    linkWithLabel("Instagram")?.getAttribute("href"),
+    "https://instagram.com/alyq.shop",
+    "and so does Instagram",
+  );
+  assert.equal(
+    linkWithLabel("TikTok")?.getAttribute("href"),
+    "https://tiktok.com/@alyq.shop",
+    "and so does TikTok",
+  );
+  assert.ok(
+    hrefsNow.some((href) => href.includes("wa.me/201001234567")),
+    "the WhatsApp number is still a link",
+  );
+  assert.ok(
+    hrefsNow.some((href) => href.includes("maps.google.com/?q=alyq")),
+    "and the map link is in the footer too",
+  );
+  await navigate("#/store/contact", 800);
+  await waitFor(() => bodyText().includes("Contact us"), { label: "the contact page" });
+  const mapAnchor = [...document.querySelectorAll("a")].find(
+    (a) => (a.textContent ?? "").trim() === "Open the map",
+  );
+  assert.ok(
+    mapAnchor && mapAnchor.getAttribute("href") === "https://maps.google.com/?q=alyq",
+    "the map link renders beside the address on the contact page",
+  );
+  console.log("  ✓ valid Facebook, Instagram, TikTok and map links render on the storefront");
+
+  // Now the same fields, filled with values that must never become hrefs.
+  await navigate("#/online/website", 900);
+  clickExact("Contact & social");
+  await sleep(500);
+  setInputValue(fieldByPlaceholder("https://facebook.com/…"), "JaVaScRiPt:alert(1)");
+  setInputValue(fieldByPlaceholder("https://instagram.com/…"), "data:text/html,<script>alert(1)</script>");
+  setInputValue(fieldByPlaceholder("https://tiktok.com/@…"), " javascript:alert(1)");
+  setFieldUnderLabel("Map link", "vbscript:msgbox(1)");
+  await sleep(200);
+  await saveBuilder();
+  await waitFor(
+    () => (websiteSettings()?.social?.facebook ?? "") === "JaVaScRiPt:alert(1)",
+    { label: "the unsafe values to be saved as typed" },
+  );
+
+  await navigate("#/store", 900);
+  await waitFor(() => productCards().length > 0, { label: "the storefront to reload" });
+  hrefsNow = [...document.querySelectorAll("a")].map((a) =>
+    (a.getAttribute("href") ?? "").trim().toLowerCase(),
+  );
+  assert.ok(
+    !hrefsNow.some(
+      (href) =>
+        href.startsWith("javascript:") || href.startsWith("data:") || href.startsWith("vbscript:"),
+    ),
+    "no executable scheme reaches any href on the storefront",
+  );
+  assert.equal(linkWithLabel("Facebook"), null, "the mixed-case javascript: value renders no icon");
+  assert.equal(linkWithLabel("Instagram"), null, "nor does the data: value");
+  assert.equal(linkWithLabel("TikTok"), null, "nor does the whitespace-padded javascript: value");
+  assert.ok(
+    !hrefsNow.some((href) => href.includes("maps.google")),
+    "and the vbscript: map value replaced the map link with nothing",
+  );
+  assert.ok(
+    hrefsNow.some((href) => href.includes("wa.me/201001234567")),
+    "while the valid WhatsApp link keeps working",
+  );
+  await navigate("#/store/contact", 800);
+  await waitFor(() => bodyText().includes("Contact us"), { label: "the contact page" });
+  assert.ok(
+    ![...document.querySelectorAll("a")].some((a) => {
+      const href = (a.getAttribute("href") ?? "").trim().toLowerCase();
+      return (
+        href.startsWith("javascript:") ||
+        href.startsWith("data:") ||
+        href.startsWith("vbscript:") ||
+        href === "#"
+      );
+    }),
+    "the contact page renders no executable link and no dead '#'",
+  );
+  console.log("  ✓ javascript:/data:/vbscript: values — any casing, any padding — render no link at all");
+
   // Hand the next section the same starting point it has always had: the
   // storefront home, in English, with the catalogue on screen.
   await navigate("#/store", 900);

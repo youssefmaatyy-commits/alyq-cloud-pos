@@ -41,6 +41,11 @@ export function StoreConfirmationPage() {
 
   const order = lastOrder;
   const number = order.order_number;
+  // Computed once, and only rendered when safe — no `#` placeholder fallback.
+  const waHref = whatsappHref(
+    settings.social.whatsapp,
+    t("store.confirmation.whatsappMessage", { number }),
+  );
 
   const copy = async () => {
     try {
@@ -197,14 +202,9 @@ export function StoreConfirmationPage() {
         >
           {t("store.cart.continueShopping")}
         </button>
-        {whatsappHref(settings.social.whatsapp) ? (
+        {waHref ? (
           <a
-            href={
-              whatsappHref(
-                settings.social.whatsapp,
-                t("store.confirmation.whatsappMessage", { number }),
-              ) ?? "#"
-            }
+            href={waHref}
             target="_blank"
             rel="noopener noreferrer"
             className="border border-[var(--store-border)] px-5 py-3 text-sm font-black text-[var(--store-primary)]"

@@ -16,7 +16,7 @@ import { useI18n } from "@/lib/i18n/I18nProvider";
 import { useStorefront } from "../hooks/StorefrontProvider";
 import { whatsappHref } from "../components/storefront/StoreLayout";
 import { applyDocumentMeta, applyJsonLd, clearDocumentMeta, storeJsonLd } from "../services/seo";
-import { instapayHref } from "../services/settingsDefaults";
+import { externalHref } from "../services/settingsDefaults";
 
 export function StoreContactPage() {
   const { t, pick } = useI18n();
@@ -29,7 +29,13 @@ export function StoreContactPage() {
   const address = pick(contact.address_ar, contact.address_en);
   const hours = pick(contact.hours_ar, contact.hours_en);
   const wa = whatsappHref(social.whatsapp, message.trim() || t("store.contact.whatsappMessage"));
-  const instapayLink = instapayHref(social.instapay_link);
+  // Admin-typed URLs bound for public `href`s: only safe absolute http(s)
+  // values render; anything else shows no link at all.
+  const instapayLink = externalHref(social.instapay_link);
+  const facebookLink = externalHref(social.facebook);
+  const instagramLink = externalHref(social.instagram);
+  const tiktokLink = externalHref(social.tiktok);
+  const mapLink = externalHref(contact.map_url);
 
   useEffect(() => {
     applyDocumentMeta({
@@ -48,9 +54,9 @@ export function StoreContactPage() {
   }, [address, contact.tagline_ar, contact.tagline_en, pick, settings, storeName, t]);
 
   const channels = [
-    social.facebook ? { key: "facebook", href: social.facebook, label: t("store.contact.facebook") } : null,
-    social.instagram ? { key: "instagram", href: social.instagram, label: t("store.contact.instagram") } : null,
-    social.tiktok ? { key: "tiktok", href: social.tiktok, label: t("store.contact.tiktok") } : null,
+    facebookLink ? { key: "facebook", href: facebookLink, label: t("store.contact.facebook") } : null,
+    instagramLink ? { key: "instagram", href: instagramLink, label: t("store.contact.instagram") } : null,
+    tiktokLink ? { key: "tiktok", href: tiktokLink, label: t("store.contact.tiktok") } : null,
     wa ? { key: "whatsapp", href: wa, label: t("store.contact.whatsapp") } : null,
     instapayLink
       ? { key: "instapay", href: instapayLink, label: t("store.checkout.instapay") }
@@ -105,9 +111,9 @@ export function StoreContactPage() {
                 </dt>
                 <dd className="text-[var(--store-text)]">
                   {address}
-                  {contact.map_url ? (
+                  {mapLink ? (
                     <a
-                      href={contact.map_url}
+                      href={mapLink}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="ms-2 text-xs font-bold text-[var(--store-primary)] hover:underline"

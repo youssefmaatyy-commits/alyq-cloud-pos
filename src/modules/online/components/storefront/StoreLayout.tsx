@@ -22,7 +22,7 @@ import { useStorefront } from "../../hooks/StorefrontProvider";
 import { useStoreCart } from "../../hooks/StoreCartProvider";
 import { useStoreAccount } from "../../hooks/StoreAccountProvider";
 import { storefrontSurfaceStyle } from "../../services/theme";
-import { instapayHref } from "../../services/settingsDefaults";
+import { configuredHref, externalHref } from "../../services/settingsDefaults";
 import { StoreImage } from "./StorePrimitives";
 
 /** `wa.me/<number>?text=…` from whatever the admin typed. */
@@ -30,7 +30,11 @@ export function whatsappHref(raw: string, message?: string): string | null {
   const value = String(raw ?? "").trim();
   if (!value) return null;
   if (/^https?:\/\//i.test(value)) {
-    return message ? `${value}${value.includes("?") ? "&" : "?"}text=${encodeURIComponent(message)}` : value;
+    // A typed wa.me link goes through the same policy as every other
+    // configured URL: normalized, http(s)-only, or no link at all.
+    const safe = externalHref(value);
+    if (!safe) return null;
+    return message ? `${safe}${safe.includes("?") ? "&" : "?"}text=${encodeURIComponent(message)}` : safe;
   }
   const digits = value.replace(/\D/g, "");
   if (digits.length < 8) return null;
@@ -97,9 +101,16 @@ export function StoreLayout({ children }: { children: ReactNode }) {
   const tagline = pick(settings.contact.tagline_ar, settings.contact.tagline_en);
   const social = settings.social;
   const whatsapp = whatsappHref(social.whatsapp, t("store.contact.whatsappMessage"));
-  // Same rule as the WhatsApp number: a configured link is only rendered when
-  // it is a safe absolute http(s) URL.
-  const instapayLink = instapayHref(social.instapay_link);
+  // Every configured link is admin-typed text bound for a public `href`, so all
+  // of them pass the one policy: a safe absolute http(s) URL renders, anything
+  // else — blank, relative, `javascript:` — renders no link at all.
+  const instapayLink = externalHref(social.instapay_link);
+  const facebookLink = externalHref(social.facebook);
+  const instagramLink = externalHref(social.instagram);
+  const tiktokLink = externalHref(social.tiktok);
+  const mapLink = externalHref(settings.contact.map_url);
+  // The announcement bar also accepts a route inside the shop ("#/store/…").
+  const announcementLink = configuredHref(settings.announcement.href);
 
   const submitSearch = (event: React.FormEvent) => {
     event.preventDefault();
@@ -128,9 +139,9 @@ export function StoreLayout({ children }: { children: ReactNode }) {
     >
       {settings.announcement.enabled ? (
         <div className="bg-[var(--store-secondary)] px-4 py-2 text-center text-xs font-semibold text-[var(--store-on-secondary)]">
-          {settings.announcement.href ? (
+          {announcementLink ? (
             <a
-              href={settings.announcement.href}
+              href={announcementLink}
               className="underline-offset-2 hover:underline"
               target="_blank"
               rel="noopener noreferrer"
@@ -316,9 +327,9 @@ export function StoreLayout({ children }: { children: ReactNode }) {
               <p className="mt-1 text-xs leading-relaxed text-[var(--store-muted)]">{tagline}</p>
             ) : null}
             <div className="mt-3 flex flex-wrap gap-2">
-              {social.facebook ? (
+              {facebookLink ? (
                 <a
-                  href={social.facebook}
+                  href={facebookLink}
                   target="_blank"
                   rel="noopener noreferrer"
                   aria-label="Facebook"
@@ -327,9 +338,9 @@ export function StoreLayout({ children }: { children: ReactNode }) {
                   <SocialIcon kind="facebook" />
                 </a>
               ) : null}
-              {social.instagram ? (
+              {instagramLink ? (
                 <a
-                  href={social.instagram}
+                  href={instagramLink}
                   target="_blank"
                   rel="noopener noreferrer"
                   aria-label="Instagram"
@@ -338,9 +349,9 @@ export function StoreLayout({ children }: { children: ReactNode }) {
                   <SocialIcon kind="instagram" />
                 </a>
               ) : null}
-              {social.tiktok ? (
+              {tiktokLink ? (
                 <a
-                  href={social.tiktok}
+                  href={tiktokLink}
                   target="_blank"
                   rel="noopener noreferrer"
                   aria-label="TikTok"
@@ -423,10 +434,10 @@ export function StoreLayout({ children }: { children: ReactNode }) {
                   {pick(settings.contact.hours_ar, settings.contact.hours_en)}
                 </li>
               ) : null}
-              {settings.contact.map_url ? (
+              {mapLink ? (
                 <li>
                   <a
-                    href={settings.contact.map_url}
+                    href={mapLink}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="font-bold text-[var(--store-primary)]"

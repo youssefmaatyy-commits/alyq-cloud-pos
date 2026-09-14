@@ -271,19 +271,21 @@ export function safeColor(value: unknown, fallback: string): string {
 }
 
 /**
- * The configured InstaPay link as an `href`, or `null` when there is nothing
- * safe to render.
+ * The one safe-href policy for every link a shopper can click whose value comes
+ * out of the settings document: social profiles, the map, InstaPay, the
+ * announcement bar, hero CTAs and promo banners.
  *
- * Same policy as `storefrontLink.ts` applies to `VITE_STOREFRONT_URL` and as
- * `whatsappHref` applies to the WhatsApp number: a URL that comes from a
- * settings document is configuration an admin typed, and an `href` is an
- * injection point — `javascript:` and `data:` both execute in that position,
- * and the storefront is public. Only absolute http(s) URLs pass; everything
- * else (blank, relative, custom schemes) yields `null`, and the callers simply
- * render no link — an unset or unusable link must never become a broken or
- * dangerous button.
+ * Same rule as `storefrontLink.ts` applies to `VITE_STOREFRONT_URL`: a URL that
+ * comes from settings is configuration an admin typed, and an `href` is an
+ * injection point — `javascript:`, `data:` and `vbscript:` all execute or render
+ * in that position, and the storefront is public. Only absolute http(s) URLs
+ * pass, normalized through `new URL` (which also collapses case and strips the
+ * tab/newline characters browsers ignore inside URLs); everything else — blank,
+ * relative, custom schemes, control-character obfuscation — yields `null`, and
+ * callers render no link at all. An unset or unusable URL must never become a
+ * broken or dangerous button, and never a bare `#`.
  */
-export function instapayHref(raw: unknown): string | null {
+export function externalHref(raw: unknown): string | null {
   if (typeof raw !== "string") return null;
   const value = raw.trim();
   if (!value) return null;
@@ -294,6 +296,25 @@ export function instapayHref(raw: unknown): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * An in-app hash route (`#/store/products`), or `null`.
+ *
+ * Hero CTAs, promo banners and the announcement bar historically hold routes
+ * inside the shop itself. Only `#/…` qualifies: a bare `#` must never become a
+ * link, and `#javascript:alert(1)` is not a route — it is the bypass this
+ * check exists to refuse.
+ */
+export function internalHref(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const value = raw.trim();
+  return value.startsWith("#/") ? value : null;
+}
+
+/** What an admin meant for a field that takes either kind: the app route or a safe external URL. */
+export function configuredHref(raw: unknown): string | null {
+  return internalHref(raw) ?? externalHref(raw);
 }
 
 /**

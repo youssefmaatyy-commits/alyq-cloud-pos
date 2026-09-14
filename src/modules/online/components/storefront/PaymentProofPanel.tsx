@@ -15,7 +15,7 @@ import { useI18n } from "@/lib/i18n/I18nProvider";
 import { cn } from "@/utils/cn";
 import { useStorefront } from "../../hooks/StorefrontProvider";
 import { toOnlineError } from "../../data/repository";
-import { instapayHref } from "../../services/settingsDefaults";
+import { externalHref } from "../../services/settingsDefaults";
 import { FieldNote, Money } from "./StorePrimitives";
 
 /** A customer should not be able to upload a 40 MB camera photo by accident. */
@@ -59,7 +59,7 @@ export function PaymentProofPanel({
   const instapay = settings.delivery.instapay_enabled;
   // Same policy as the checkout: a configured link is admin-typed text bound
   // for a public `href` — only an absolute http(s) URL is rendered.
-  const instapayPayHref = instapayHref(settings.social.instapay_link);
+  const instapayPayHref = externalHref(settings.social.instapay_link);
   const instapayInstructions = pick(
     settings.delivery.instapay_instructions_ar,
     settings.delivery.instapay_instructions_en,

@@ -23,7 +23,7 @@ import type { CustomerAddress, DeliveryType, OnlinePaymentMethod } from "../type
 import { whatsappHref } from "../components/storefront/StoreLayout";
 import { FieldNote, Money } from "../components/storefront/StorePrimitives";
 import { applyDocumentMeta, clearDocumentMeta } from "../services/seo";
-import { instapayHref } from "../services/settingsDefaults";
+import { externalHref } from "../services/settingsDefaults";
 
 /** Egyptian mobile numbers: 11 digits, starting 01. */
 const EGYPT_PHONE = /^01[0-25]\d{8}$/;
@@ -57,7 +57,10 @@ export function StoreCheckoutPage() {
   // The InstaPay link is admin-typed text bound for a public `href`: only an
   // absolute http(s) URL is rendered, and an unset or unsafe value shows no
   // button at all rather than a broken or dangerous one.
-  const instapayPayHref = instapayHref(settings.social.instapay_link);
+  const instapayPayHref = externalHref(settings.social.instapay_link);
+  // The "need help" WhatsApp link is computed once: either it is safe, or no
+  // link renders — never a `#` placeholder.
+  const waHelpHref = whatsappHref(settings.social.whatsapp, t("store.contact.whatsappMessage"));
   // The shop's own instructions replace the built-in step list when set.
   const instapayInstructions = pick(
     settings.delivery.instapay_instructions_ar,
@@ -573,9 +576,9 @@ export function StoreCheckoutPage() {
             </p>
           </div>
 
-          {whatsappHref(settings.social.whatsapp) ? (
+          {waHelpHref ? (
             <a
-              href={whatsappHref(settings.social.whatsapp, t("store.contact.whatsappMessage")) ?? "#"}
+              href={waHelpHref}
               target="_blank"
               rel="noopener noreferrer"
               className="rounded-xl border border-[var(--store-border)] bg-[var(--store-surface)] p-3 text-center text-xs font-bold text-[var(--store-primary)]"

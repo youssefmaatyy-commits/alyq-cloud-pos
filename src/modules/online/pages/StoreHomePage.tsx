@@ -39,6 +39,7 @@ import {
   keywordList,
   storeJsonLd,
 } from "../services/seo";
+import { externalHref, internalHref } from "../services/settingsDefaults";
 
 /** How long a hero slide stays up before the next one. */
 const SLIDE_MS = 6000;
@@ -178,7 +179,15 @@ export function StoreHomePage() {
                   ) : null}
                   {slide.ctaLabel ? (
                     <Link
-                      to={slide.ctaHref.startsWith("#") ? slide.ctaHref.slice(1) : slide.ctaHref || "/store/products"}
+                      // The CTA target is admin-typed: an in-app "#/…" route or a
+                      // safe absolute http(s) URL. Anything else — including the
+                      // "#javascript:…" slice bypass — falls back to the shop's
+                      // own products route rather than rendering an unsafe href.
+                      to={
+                        internalHref(slide.ctaHref)?.slice(1) ??
+                        externalHref(slide.ctaHref) ??
+                        "/store/products"
+                      }
                       className="mt-6 inline-block bg-[var(--store-primary)] px-6 py-3 text-sm font-black text-[var(--store-on-primary)] shadow-lg transition hover:bg-[var(--store-primary-hover)]"
                       style={{ borderRadius: "var(--store-radius-button)" }}
                     >
@@ -300,7 +309,14 @@ export function StoreHomePage() {
               {banners.map((banner) => (
                 <a
                   key={banner.id}
-                  href={banner.href ? (banner.href.startsWith("#") ? banner.href.slice(1) : banner.href) : "#/store/products"}
+                  // Same policy as the hero CTA: an in-app "#/…" route, a safe
+                  // absolute http(s) URL, or the default products route — never
+                  // a raw value, never a bare "#".
+                  href={
+                    internalHref(banner.href)?.slice(1) ??
+                    externalHref(banner.href) ??
+                    "#/store/products"
+                  }
                   className="group relative flex min-h-40 items-end overflow-hidden border border-[var(--store-border)] bg-[var(--store-secondary)] p-5"
                   style={{ borderRadius: "var(--store-radius)" }}
                 >
