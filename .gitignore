@@ -35,3 +35,4 @@ vite.preview.config.ts
 coverage/
 .nyc_output/
 *.tsbuildinfo
+supabase/.temp/
