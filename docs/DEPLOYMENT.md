@@ -297,6 +297,89 @@ second row here would put every creation in the trail twice. It also ignores a
 Rotate the service key (Dashboard → Settings → API) if it ever leaks, then
 re-run both commands above.
 
+### Password recovery in production (Site URL, Redirect URLs, SMTP)
+
+The recovery feature is built — `/#/forgot-password`, `/#/reset-password`,
+[`recoveryUrl.ts`](../src/lib/auth/services/recoveryUrl.ts) and the
+`requestPasswordReset` / `consumeRecoveryLink` / `updatePassword` seam in
+[`supabaseRepository.ts`](../src/lib/auth/data/supabaseRepository.ts) — but
+whether a reset email actually reaches a person is a **project configuration**
+question, answered in the Supabase Dashboard, not in this repository. Three
+settings decide it.
+
+**1. Site URL** (Dashboard → Authentication → URL Configuration). Must be the
+deployed ALYQ website, e.g. `https://<ALYQ-HOST>/`. It is the fallback
+destination for every auth email whose redirect target is not explicitly
+allowlisted, so a wrong Site URL sends staff to a host that is not the app.
+
+**2. Redirect URLs** (same screen). Add the recovery route:
+
+```text
+https://<ALYQ-HOST>/#/reset-password
+```
+
+The app routes on the URL *fragment* (`HashRouter`), which is why the route is
+a `#/…` path — and Supabase's implicit flow also delivers its tokens in the
+fragment. The app resolves that collision at boot (`normalizeRecoveryUrl()`
+rewrites `#access_token=…&type=recovery` into `#/reset-password?…` before the
+router reads it), so the link lands on the reset page under either flow. If
+the deployment is reachable under more than one origin (staging host, preview
+host), allowlist each one; the reset request always carries the origin it was
+made from.
+
+**3. Email / SMTP** (Dashboard → Authentication → SMTP / Emails). Real
+recovery emails require a working Supabase email sender. The **built-in sender
+has delivery and rate limitations and is not meant for production** — configure
+a proper SMTP provider for a live shop. SMTP credentials belong in the
+Dashboard (and, for anything server-side, in `supabase secrets` / CI secrets):
+**never in this repository, never in a `VITE_*` variable.**
+
+**The flow, end to end.** Login screen → "Forgot password" (`/#/forgot-password`)
+→ the app calls `auth.resetPasswordForEmail(email, { redirectTo })` with the
+current origin's `/#/reset-password` → Supabase emails a single-use recovery
+link (it expires shortly after) → the person opens it → the app exchanges the
+PKCE `?code=` (or the implicit-flow tokens) for one recovery session →
+`/#/reset-password` shows the new-password form, held to the same policy an
+admin meets when creating an account (`passwordPolicy.ts`, with Supabase Auth's
+own server-side verdict on top) → `auth.updateUser({ password })` → the person
+signs in with the new password. In **demo mode** there is no mail server and
+the screen says so instead of pretending: the offline recovery path is an admin
+reset from Settings → Users.
+
+**Security notes.**
+
+- **No admin can view an existing password.** Supabase stores only a hash; the
+  administrative path (`alyq-admin` → `reset_password`) *sets a new* password
+  and never retrieves the old one.
+- **Passwords, recovery tokens and reset-destination addresses are never
+  logged.** The audit vocabulary (`user.password_reset_requested`,
+  `user.password_reset`, `user.password_changed`) records that the event
+  happened and who asked — nothing that would let a reader of the trail finish
+  what the link started.
+- **Recovery responses do not reveal whether an account exists.** Supabase
+  answers identically either way and `/#/forgot-password` deliberately mirrors
+  that. Do not "improve" the message into a directory of who works here.
+- **Redirect URLs must be allowlisted.** The allowlist is what stops a forged
+  `redirectTo` from mailing somebody's recovery link to an attacker's host; a
+  target that is not on the list falls back to the Site URL.
+- **SMTP and service credentials stay server-side / Dashboard-only** — see the
+  secrets rule in §8.
+
+**Production verification checklist** (run once per environment, after any
+Auth configuration change):
+
+- [ ] Request recovery for a test account from `/#/forgot-password` on the
+      deployed build.
+- [ ] The email arrives (check spam first; Supabase's Auth logs second).
+- [ ] The link opens `/#/reset-password` showing the new-password form — not
+      the dashboard, not a failure message.
+- [ ] Set a new password; the page confirms it.
+- [ ] The **old** password no longer signs in.
+- [ ] The **new** password signs in.
+- [ ] Re-opening the same link — or opening it after expiry — fails with the
+      "request a new link" message: recovery material is single-use, and the
+      page reports expired, used and tampered links identically on purpose.
+
 ## 6. Build and release
 
 ```bash
