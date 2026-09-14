@@ -870,6 +870,200 @@ async function main() {
   assert.ok(document.querySelector('a[aria-label="WhatsApp"]'), "with a name a screen reader can say");
   console.log("  ✓ social links saved in the builder appear on the storefront");
 
+  // ── 10b · InstaPay is configured where its toggle lives, and the storefront
+  // obeys every field: holder, the shop's own instructions, the QR, and a link
+  // that only becomes a button when it is a safe absolute http(s) URL. Telling
+  // shoppers a proof is not required hides the panel — but never marks an order
+  // paid; confirming stays an employee's action.
+  const setInputValue = (el, value) => {
+    const proto =
+      el.tagName === "TEXTAREA"
+        ? dom.window.HTMLTextAreaElement.prototype
+        : dom.window.HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(proto, "value").set.call(el, value);
+    el.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+  };
+  const fieldByPlaceholder = (placeholder) => {
+    const el = [...document.querySelectorAll("input")].find(
+      (input) => (input.getAttribute("placeholder") ?? "") === placeholder,
+    );
+    assert.ok(el, `the builder asks for the field with placeholder "${placeholder}"`);
+    return el;
+  };
+  // The settings builder's Field puts the label above the control, not around it.
+  const setFieldUnderLabel = (label, value) => {
+    const span = [...document.querySelectorAll("label span")].find((n) =>
+      (n.textContent ?? "").trim().startsWith(label),
+    );
+    assert.ok(span, `field label not found: ${label}`);
+    const control = span.closest("label")?.parentElement?.querySelector("input, textarea");
+    assert.ok(control, `field control not found under label: ${label}`);
+    setInputValue(control, value);
+  };
+  const switchByLabel = (label) => {
+    const lab = [...document.querySelectorAll("label")].find(
+      (n) => (n.textContent ?? "").trim() === label,
+    );
+    assert.ok(lab, `switch label not found: ${label}`);
+    const btn = document.getElementById(lab.getAttribute("for"));
+    assert.ok(btn && btn.getAttribute("role") === "switch", `switch not found for: ${label}`);
+    return btn;
+  };
+  const saveBuilder = async () => {
+    const save = [...document.querySelectorAll("button")].find((n) =>
+      (n.textContent ?? "").trim().toLowerCase().includes("save"),
+    );
+    assert.ok(save, "the builder can be saved");
+    save.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  };
+
+  const QR_URL = "https://cdn.example.test/alyq-qr.png";
+  await navigate("#/online/website", 900);
+  clickExact("Delivery & payment");
+  await waitFor(() => bodyText().includes("Payment methods"), { label: "the payment methods section" });
+  assert.ok(bodyText().includes("Cash on delivery"), "the COD toggle is in the payment methods section");
+  assert.ok(bodyText().includes("InstaPay transfer"), "and so is the InstaPay toggle");
+  setInputValue(fieldByPlaceholder("ALYQ for Accessories"), "ALYQ for Accessories");
+  setInputValue(fieldByPlaceholder("alyq@instapay"), "alyq@instapay");
+  setInputValue(fieldByPlaceholder("https://instapay.eg/…"), "https://instapay.eg/alyq");
+  setFieldUnderLabel("Instructions (English)", "Send the transfer, then call the branch.");
+  setFieldUnderLabel("Instructions (Arabic)", "أرسل التحويل ثم اتصل بالفرع.");
+  const qrUrlInput = document.querySelector('input[aria-label="Image URL"]');
+  assert.ok(qrUrlInput, "the QR slot takes a URL as well as an upload");
+  setInputValue(qrUrlInput, QR_URL);
+  await sleep(200);
+  clickExact("Use URL");
+  await sleep(200);
+  await saveBuilder();
+  await waitFor(
+    () =>
+      (websiteSettings()?.social?.instapay_holder ?? "") === "ALYQ for Accessories" &&
+      (websiteSettings()?.social?.instapay_link ?? "") === "https://instapay.eg/alyq" &&
+      (websiteSettings()?.social?.instapay_qr_url ?? "") === QR_URL &&
+      (websiteSettings()?.delivery?.instapay_instructions_en ?? "") ===
+        "Send the transfer, then call the branch." &&
+      (websiteSettings()?.delivery?.instapay_instructions_ar ?? "") === "أرسل التحويل ثم اتصل بالفرع.",
+    { label: "the InstaPay configuration to be saved" },
+  );
+
+  // The storefront checkout reads every field back.
+  await navigate("#/store/products", 900);
+  await waitFor(() => productCards().length > 0, { label: "the product list" });
+  const payCard = firstInStockCard();
+  assert.ok(payCard, "an in-stock product to order");
+  const payAdd = [...payCard.querySelectorAll("button")].find(
+    (n) => (n.textContent ?? "").trim() === "Add to cart",
+  );
+  payAdd.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  await sleep(400);
+  await navigate("#/store/checkout", 700);
+  await waitFor(() => bodyText().includes("Checkout"), { label: "the checkout page" });
+  document
+    .querySelector('input[name="payment"][value="instapay"]')
+    ?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  await sleep(300);
+  assert.ok(
+    bodyText().includes("Send the transfer, then call the branch."),
+    "the shop's own instructions are what the shopper reads",
+  );
+  assert.equal(
+    bodyText().includes("Keep the transfer reference"),
+    false,
+    "and they replace the built-in steps rather than stacking on them",
+  );
+  assert.ok(
+    bodyText().includes("Account holder: ALYQ for Accessories"),
+    "the holder the shop saved is named at checkout",
+  );
+  const payLink = [...document.querySelectorAll("a")].find(
+    (a) => (a.textContent ?? "").trim() === "Open InstaPay",
+  );
+  assert.ok(
+    payLink && payLink.getAttribute("href") === "https://instapay.eg/alyq",
+    "the configured link became the pay button",
+  );
+  const qrImg = document.querySelector('img[alt="InstaPay QR code"]');
+  assert.ok(qrImg && qrImg.getAttribute("src") === QR_URL, "and the QR the shop set is shown");
+
+  // Ordering with proof required still lands on the proof panel — and the order
+  // still waits for an employee.
+  const { number: proofNumber, order: proofOrder } = await placeOrderThroughTheStore({
+    payment: "instapay",
+  });
+  assert.ok(proofOrder, `${proofNumber} was written`);
+  assert.equal(proofOrder.payment_status, "verification_required", "InstaPay never auto-confirms");
+  await waitFor(() => bodyText().includes("Send your payment proof"), {
+    label: "the proof panel on the confirmation page",
+  });
+  console.log(`  ✓ InstaPay configured in the builder drives checkout, and ${proofNumber} still asks for proof`);
+
+  // An unsafe link renders nowhere, and "no proof required" hides the panel
+  // without touching the verification workflow.
+  await navigate("#/online/website", 900);
+  clickExact("Delivery & payment");
+  await waitFor(() => bodyText().includes("Payment methods"), { label: "the payment methods section" });
+  setInputValue(fieldByPlaceholder("https://instapay.eg/…"), "javascript:alert(1)");
+  const proofSwitch = switchByLabel("Require payment proof");
+  assert.equal(proofSwitch.getAttribute("aria-checked"), "true", "the proof toggle starts on");
+  proofSwitch.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  await sleep(200);
+  await saveBuilder();
+  await waitFor(
+    () =>
+      (websiteSettings()?.social?.instapay_link ?? "") === "javascript:alert(1)" &&
+      websiteSettings()?.delivery?.instapay_proof_required === false,
+    { label: "the unsafe link and the proof toggle to be saved" },
+  );
+
+  await navigate("#/store/contact", 800);
+  await waitFor(() => bodyText().includes("Contact us"), { label: "the contact page" });
+  assert.ok(
+    ![...document.querySelectorAll("a")].some((a) =>
+      (a.getAttribute("href") ?? "").toLowerCase().startsWith("javascript:"),
+    ),
+    "a javascript: link never reaches an href anywhere on the storefront",
+  );
+  assert.equal(
+    document.querySelector('a[aria-label="InstaPay"]'),
+    null,
+    "and the footer drops the InstaPay icon rather than linking it unsafely",
+  );
+
+  await navigate("#/store/products", 900);
+  await waitFor(() => productCards().length > 0, { label: "the product list" });
+  const noProofCard = firstInStockCard();
+  const noProofAdd = [...noProofCard.querySelectorAll("button")].find(
+    (n) => (n.textContent ?? "").trim() === "Add to cart",
+  );
+  noProofAdd.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  await sleep(400);
+  const { number: noProofNumber, order: noProofOrder } = await placeOrderThroughTheStore({
+    payment: "instapay",
+  });
+  assert.ok(noProofOrder, `${noProofNumber} was written`);
+  assert.equal(
+    bodyText().includes("Send your payment proof"),
+    false,
+    "with proof not required, the confirmation page asks for none",
+  );
+  assert.ok(
+    bodyText().includes("stays open until an employee confirms"),
+    "and the shopper is told an employee still confirms the payment",
+  );
+  assert.equal(
+    noProofOrder.payment_status,
+    "verification_required",
+    `${noProofNumber} is untouched by the display setting: still verification_required`,
+  );
+  console.log(
+    `  ✓ an unsafe InstaPay link renders nowhere, and ${noProofNumber} skipped the panel while staying verification_required`,
+  );
+
+  // Hand the next section the same starting point it has always had: the
+  // storefront home, in English, with the catalogue on screen.
+  await navigate("#/store", 900);
+  await waitFor(() => productCards().length > 0, { label: "the storefront to reload" });
+
   // ── 11 · the shop is Arabic as well as English, and still sells in EGP ────
   clickAria("Change language");
   await waitFor(() => document.documentElement.getAttribute("dir") === "rtl", {

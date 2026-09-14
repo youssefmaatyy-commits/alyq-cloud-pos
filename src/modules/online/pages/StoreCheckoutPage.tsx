@@ -23,6 +23,7 @@ import type { CustomerAddress, DeliveryType, OnlinePaymentMethod } from "../type
 import { whatsappHref } from "../components/storefront/StoreLayout";
 import { FieldNote, Money } from "../components/storefront/StorePrimitives";
 import { applyDocumentMeta, clearDocumentMeta } from "../services/seo";
+import { instapayHref } from "../services/settingsDefaults";
 
 /** Egyptian mobile numbers: 11 digits, starting 01. */
 const EGYPT_PHONE = /^01[0-25]\d{8}$/;
@@ -53,6 +54,15 @@ export function StoreCheckoutPage() {
   }, [t]);
   const navigate = useNavigate();
   const { settings } = useStorefront();
+  // The InstaPay link is admin-typed text bound for a public `href`: only an
+  // absolute http(s) URL is rendered, and an unset or unsafe value shows no
+  // button at all rather than a broken or dangerous one.
+  const instapayPayHref = instapayHref(settings.social.instapay_link);
+  // The shop's own instructions replace the built-in step list when set.
+  const instapayInstructions = pick(
+    settings.delivery.instapay_instructions_ar,
+    settings.delivery.instapay_instructions_en,
+  ).trim();
   const { customer, addresses } = useStoreAccount();
   const {
     entries,
@@ -426,19 +436,30 @@ export function StoreCheckoutPage() {
                         <span className="block text-xs font-bold text-[var(--store-text)]">
                           {t("store.checkout.instapaySteps")}
                         </span>
-                        <ol className="mt-2 list-decimal space-y-1 ps-4 text-xs text-[var(--store-muted)]">
-                          <li>{t("store.checkout.instapayStep1", { amount: money(totals.total) })}</li>
-                          <li>{t("store.checkout.instapayStep2")}</li>
-                          <li>{t("store.checkout.instapayStep3")}</li>
-                        </ol>
+                        {instapayInstructions ? (
+                          <p className="mt-2 whitespace-pre-line text-xs leading-relaxed text-[var(--store-muted)]">
+                            {instapayInstructions}
+                          </p>
+                        ) : (
+                          <ol className="mt-2 list-decimal space-y-1 ps-4 text-xs text-[var(--store-muted)]">
+                            <li>{t("store.checkout.instapayStep1", { amount: money(totals.total) })}</li>
+                            <li>{t("store.checkout.instapayStep2")}</li>
+                            <li>{t("store.checkout.instapayStep3")}</li>
+                          </ol>
+                        )}
+                        {settings.social.instapay_holder ? (
+                          <span className="mt-2 block text-xs font-semibold text-[var(--store-muted)]">
+                            {t("store.checkout.instapayHolder")}: {settings.social.instapay_holder}
+                          </span>
+                        ) : null}
                         {settings.social.instapay_account ? (
                           <span className="mt-2 block text-xs font-black text-[var(--store-primary)]">
                             {settings.social.instapay_account}
                           </span>
                         ) : null}
-                        {settings.social.instapay_link ? (
+                        {instapayPayHref ? (
                           <a
-                            href={settings.social.instapay_link}
+                            href={instapayPayHref}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="mt-2 inline-block rounded-lg bg-[var(--store-primary)] px-3 py-1.5 text-xs font-black text-[var(--store-on-primary)]"

@@ -16,6 +16,7 @@ import { useI18n } from "@/lib/i18n/I18nProvider";
 import { useStorefront } from "../hooks/StorefrontProvider";
 import { whatsappHref } from "../components/storefront/StoreLayout";
 import { applyDocumentMeta, applyJsonLd, clearDocumentMeta, storeJsonLd } from "../services/seo";
+import { instapayHref } from "../services/settingsDefaults";
 
 export function StoreContactPage() {
   const { t, pick } = useI18n();
@@ -28,6 +29,7 @@ export function StoreContactPage() {
   const address = pick(contact.address_ar, contact.address_en);
   const hours = pick(contact.hours_ar, contact.hours_en);
   const wa = whatsappHref(social.whatsapp, message.trim() || t("store.contact.whatsappMessage"));
+  const instapayLink = instapayHref(social.instapay_link);
 
   useEffect(() => {
     applyDocumentMeta({
@@ -50,8 +52,8 @@ export function StoreContactPage() {
     social.instagram ? { key: "instagram", href: social.instagram, label: t("store.contact.instagram") } : null,
     social.tiktok ? { key: "tiktok", href: social.tiktok, label: t("store.contact.tiktok") } : null,
     wa ? { key: "whatsapp", href: wa, label: t("store.contact.whatsapp") } : null,
-    social.instapay_link
-      ? { key: "instapay", href: social.instapay_link, label: t("store.checkout.instapay") }
+    instapayLink
+      ? { key: "instapay", href: instapayLink, label: t("store.checkout.instapay") }
       : null,
   ].filter((entry): entry is { key: string; href: string; label: string } => entry !== null);
 
@@ -226,8 +228,13 @@ export function StoreContactPage() {
             <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-muted)]">
               {t("store.checkout.instapay")}
             </h2>
+            {social.instapay_holder ? (
+              <p className="mt-3 text-xs font-semibold text-[var(--store-muted)]">
+                {t("store.checkout.instapayHolder")}: {social.instapay_holder}
+              </p>
+            ) : null}
             {social.instapay_account ? (
-              <p className="mt-3 text-sm font-black text-[var(--store-text)]">{social.instapay_account}</p>
+              <p className="mt-1 text-sm font-black text-[var(--store-text)]">{social.instapay_account}</p>
             ) : null}
             {social.instapay_qr_url ? (
               <img

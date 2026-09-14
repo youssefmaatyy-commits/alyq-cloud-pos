@@ -845,41 +845,10 @@ export function WebsiteSettingsPage() {
                 </div>
               </Card>
 
-              <Card className="space-y-3">
-                <h2 className="text-sm font-bold text-slate-900">{t("online.settings.instapay")}</h2>
-                <p className="text-[11px] leading-relaxed text-slate-500">{t("online.settings.instapayHint")}</p>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <Field label={t("online.settings.instapayLink")}>
-                    <TextInput
-                      value={draft.social.instapay_link}
-                      dir="ltr"
-                      placeholder="https://instapay.eg/…"
-                      onChange={(event) =>
-                        patch((current) => ({ ...current, social: { ...current.social, instapay_link: event.target.value } }))
-                      }
-                    />
-                  </Field>
-                  <Field label={t("online.settings.instapayAccount")}>
-                    <TextInput
-                      value={draft.social.instapay_account}
-                      dir="ltr"
-                      placeholder="alyq@instapay"
-                      onChange={(event) =>
-                        patch((current) => ({ ...current, social: { ...current.social, instapay_account: event.target.value } }))
-                      }
-                    />
-                  </Field>
-                </div>
-                <SettingsImageField
-                  label={t("online.settings.instapayQr")}
-                  hint={t("online.settings.instapayQrHint")}
-                  previewClass="h-32 w-32"
-                  value={draft.social.instapay_qr_url}
-                  onChange={(url) =>
-                    patch((current) => ({ ...current, social: { ...current.social, instapay_qr_url: url } }))
-                  }
-                />
-              </Card>
+              {/* The InstaPay configuration moved to Delivery & pickup → Payment
+                  methods, next to the toggles that turn the method on: one place
+                  to configure a payment method, instead of its details living in
+                  a different tab from its switch. */}
             </>
           ) : null}
 
@@ -990,6 +959,83 @@ export function WebsiteSettingsPage() {
                 <p className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-800">
                   {t("online.settings.noPaymentMethod")}
                 </p>
+              ) : null}
+
+              {draft.delivery.instapay_enabled ? (
+                <div className="space-y-3 border-t border-slate-200 pt-3">
+                  <h3 className="text-sm font-bold text-slate-900">{t("online.settings.instapay")}</h3>
+                  <p className="text-[11px] leading-relaxed text-slate-500">{t("online.settings.instapayHint")}</p>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <Field label={t("online.settings.instapayHolder")}>
+                      <TextInput
+                        value={draft.social.instapay_holder}
+                        placeholder="ALYQ for Accessories"
+                        onChange={(event) =>
+                          patch((current) => ({ ...current, social: { ...current.social, instapay_holder: event.target.value } }))
+                        }
+                      />
+                    </Field>
+                    <Field label={t("online.settings.instapayAccount")}>
+                      <TextInput
+                        value={draft.social.instapay_account}
+                        dir="ltr"
+                        placeholder="alyq@instapay"
+                        onChange={(event) =>
+                          patch((current) => ({ ...current, social: { ...current.social, instapay_account: event.target.value } }))
+                        }
+                      />
+                    </Field>
+                    <Field label={t("online.settings.instapayLink")}>
+                      <TextInput
+                        value={draft.social.instapay_link}
+                        dir="ltr"
+                        placeholder="https://instapay.eg/…"
+                        onChange={(event) =>
+                          patch((current) => ({ ...current, social: { ...current.social, instapay_link: event.target.value } }))
+                        }
+                      />
+                    </Field>
+                  </div>
+                  <SettingsImageField
+                    label={t("online.settings.instapayQr")}
+                    hint={t("online.settings.instapayQrHint")}
+                    previewClass="h-32 w-32"
+                    value={draft.social.instapay_qr_url}
+                    onChange={(url) =>
+                      patch((current) => ({ ...current, social: { ...current.social, instapay_qr_url: url } }))
+                    }
+                  />
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <Field label={t("online.settings.instapayInstructionsAr")} hint={t("online.settings.instapayInstructionsHint")}>
+                      <TextArea
+                        rows={3}
+                        dir="rtl"
+                        value={draft.delivery.instapay_instructions_ar}
+                        onChange={(event) =>
+                          patch((current) => ({ ...current, delivery: { ...current.delivery, instapay_instructions_ar: event.target.value } }))
+                        }
+                      />
+                    </Field>
+                    <Field label={t("online.settings.instapayInstructionsEn")}>
+                      <TextArea
+                        rows={3}
+                        dir="ltr"
+                        value={draft.delivery.instapay_instructions_en}
+                        onChange={(event) =>
+                          patch((current) => ({ ...current, delivery: { ...current.delivery, instapay_instructions_en: event.target.value } }))
+                        }
+                      />
+                    </Field>
+                  </div>
+                  <ToggleSwitch
+                    checked={draft.delivery.instapay_proof_required}
+                    onChange={(checked) =>
+                      patch((current) => ({ ...current, delivery: { ...current.delivery, instapay_proof_required: checked } }))
+                    }
+                    label={t("online.settings.instapayProofRequired")}
+                    hint={t("online.settings.instapayProofRequiredHint")}
+                  />
+                </div>
               ) : null}
             </Card>
           ) : null}

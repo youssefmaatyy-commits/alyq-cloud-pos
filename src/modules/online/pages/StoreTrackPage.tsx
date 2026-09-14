@@ -185,7 +185,9 @@ export function StoreTrackPage() {
             ) : null}
           </section>
 
-          {order.payment_method === "instapay" && order.payment_status !== "paid" ? (
+          {order.payment_method === "instapay" &&
+          order.payment_status !== "paid" &&
+          settings.delivery.instapay_proof_required ? (
             <PaymentProofPanel
               orderNumber={order.order_number}
               phone={order.customer_phone}

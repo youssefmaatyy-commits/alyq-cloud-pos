@@ -90,6 +90,7 @@ import {
 } from "../services/sections";
 import {
   DEFAULT_WEBSITE_SETTINGS,
+  instapayHref,
   mergeSettings,
   readableOn,
   repairSections,
@@ -151,6 +152,9 @@ const DELIVERY: DeliverySettings = {
   pickup_address_en: "",
   cod_enabled: true,
   instapay_enabled: true,
+  instapay_instructions_ar: "",
+  instapay_instructions_en: "",
+  instapay_proof_required: true,
 };
 
 function makeProduct(overrides: Partial<Product> = {}): Product {
@@ -1106,6 +1110,47 @@ test("colours are validated and text is put on a readable one", () => {
   assert.equal(safeColor(null, "#000000"), "#000000");
   assert.equal(readableOn("#ffffff"), "#0f172a");
   assert.equal(readableOn("#111827"), "#ffffff");
+});
+
+test("the InstaPay knobs default to the shipped behaviour and backfill old documents", () => {
+  // The shop shipped asking every InstaPay customer for the proof and with no
+  // configured copy of its own: a stored document that predates the fields must
+  // resolve to exactly that, not to a surprise.
+  assert.equal(DEFAULT_WEBSITE_SETTINGS.delivery.instapay_proof_required, true);
+  assert.equal(DEFAULT_WEBSITE_SETTINGS.delivery.instapay_instructions_ar, "");
+  assert.equal(DEFAULT_WEBSITE_SETTINGS.delivery.instapay_instructions_en, "");
+  assert.equal(DEFAULT_WEBSITE_SETTINGS.social.instapay_holder, "");
+
+  const legacy = resolveSettings({
+    social: { instapay_link: "https://instapay.eg/alyq", instapay_account: "alyq@instapay" },
+    delivery: { instapay_enabled: true },
+  });
+  assert.equal(legacy.social.instapay_link, "https://instapay.eg/alyq", "stored values survive the merge");
+  assert.equal(legacy.social.instapay_holder, "", "a document without the holder gets the default");
+  assert.equal(legacy.delivery.instapay_proof_required, true, "proof stays required unless switched off");
+  assert.equal(legacy.delivery.instapay_instructions_en, "");
+
+  const configured = resolveSettings({
+    delivery: { instapay_proof_required: false, instapay_instructions_ar: "حوّل ثم اتصل بنا" },
+    social: { instapay_holder: "ALYQ for Accessories" },
+  });
+  assert.equal(configured.delivery.instapay_proof_required, false, "an explicit off is honoured");
+  assert.equal(configured.delivery.instapay_instructions_ar, "حوّل ثم اتصل بنا");
+  assert.equal(configured.social.instapay_holder, "ALYQ for Accessories");
+});
+
+test("the InstaPay link only becomes an href when it is a safe absolute http(s) URL", () => {
+  assert.equal(instapayHref("https://instapay.eg/alyq"), "https://instapay.eg/alyq");
+  assert.equal(instapayHref("http://example.com/pay"), "http://example.com/pay");
+  assert.equal(instapayHref("  https://instapay.eg/x  "), "https://instapay.eg/x", "surrounding space is trimmed");
+  assert.equal(instapayHref(""), null, "an unset link renders no button at all");
+  assert.equal(instapayHref(null), null);
+  assert.equal(instapayHref("javascript:alert(1)"), null, "a script scheme never reaches an href");
+  assert.equal(instapayHref("JaVaScRiPt:alert(1)"), null, "the scheme check is case-insensitive");
+  assert.equal(instapayHref("data:text/html;base64,PHNjcmlwdD4="), null);
+  assert.equal(instapayHref("instapay://transfer"), null, "custom schemes are refused like any other");
+  assert.equal(instapayHref("/store/products"), null, "a relative path is not an external payment link");
+  assert.equal(instapayHref("ftp://files.example.com"), null);
 });
 
 test("the shop does not wear the back office's colours", () => {

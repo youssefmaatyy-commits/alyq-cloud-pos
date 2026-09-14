@@ -15,6 +15,7 @@ import { useI18n } from "@/lib/i18n/I18nProvider";
 import { cn } from "@/utils/cn";
 import { useStorefront } from "../../hooks/StorefrontProvider";
 import { toOnlineError } from "../../data/repository";
+import { instapayHref } from "../../services/settingsDefaults";
 import { FieldNote, Money } from "./StorePrimitives";
 
 /** A customer should not be able to upload a 40 MB camera photo by accident. */
@@ -43,7 +44,7 @@ export function PaymentProofPanel({
   submitted = false,
   storedReference = null,
 }: Props) {
-  const { t } = useI18n();
+  const { t, pick } = useI18n();
   const { settings, uploadProofImage, submitPaymentProof } = useStorefront();
 
   const [reference, setReference] = useState(storedReference ?? "");
@@ -56,6 +57,13 @@ export function PaymentProofPanel({
   const inputRef = useRef<HTMLInputElement>(null);
 
   const instapay = settings.delivery.instapay_enabled;
+  // Same policy as the checkout: a configured link is admin-typed text bound
+  // for a public `href` — only an absolute http(s) URL is rendered.
+  const instapayPayHref = instapayHref(settings.social.instapay_link);
+  const instapayInstructions = pick(
+    settings.delivery.instapay_instructions_ar,
+    settings.delivery.instapay_instructions_en,
+  ).trim();
   const canSubmit = Boolean(reference.trim()) && (Boolean(file) || done);
 
   const choose = (picked: File | null) => {
@@ -150,17 +158,28 @@ export function PaymentProofPanel({
       {instapay ? (
         <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_auto]">
           <div className="text-xs">
+            {settings.social.instapay_holder ? (
+              <p className="font-semibold text-[var(--store-muted)]">
+                {t("store.checkout.instapayHolder")}: {settings.social.instapay_holder}
+              </p>
+            ) : null}
             {settings.social.instapay_account ? (
               <p className="font-black text-[var(--store-text)]">{settings.social.instapay_account}</p>
             ) : null}
-            <ol className="mt-2 list-decimal space-y-1 ps-4 text-[var(--store-muted)]">
-              <li>{t("store.proof.step1")}</li>
-              <li>{t("store.proof.step2")}</li>
-              <li>{t("store.proof.step3")}</li>
-            </ol>
-            {settings.social.instapay_link ? (
+            {instapayInstructions ? (
+              <p className="mt-2 whitespace-pre-line leading-relaxed text-[var(--store-muted)]">
+                {instapayInstructions}
+              </p>
+            ) : (
+              <ol className="mt-2 list-decimal space-y-1 ps-4 text-[var(--store-muted)]">
+                <li>{t("store.proof.step1")}</li>
+                <li>{t("store.proof.step2")}</li>
+                <li>{t("store.proof.step3")}</li>
+              </ol>
+            )}
+            {instapayPayHref ? (
               <a
-                href={settings.social.instapay_link}
+                href={instapayPayHref}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="mt-3 inline-block bg-[var(--store-primary)] px-3 py-1.5 text-xs font-black text-[var(--store-on-primary)]"

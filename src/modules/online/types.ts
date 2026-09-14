@@ -513,6 +513,8 @@ export interface StoreSocialLinks {
   instapay_link: string;
   /** The account name shown next to that link, e.g. "alyq@instapay". */
   instapay_account: string;
+  /** The legal holder name of the InstaPay account, shown with the account. */
+  instapay_holder: string;
   instapay_qr_url: string | null;
 }
 
@@ -547,6 +549,21 @@ export interface DeliverySettings {
   /** Which payment methods the storefront offers. */
   cod_enabled: boolean;
   instapay_enabled: boolean;
+  /**
+   * Optional customer instructions that replace the built-in step list at
+   * checkout and on the confirmation page when non-empty. Bilingual like
+   * every other storefront copy.
+   */
+  instapay_instructions_ar: string;
+  instapay_instructions_en: string;
+  /**
+   * Whether the storefront asks an InstaPay customer for the transfer proof
+   * (the panel on the confirmation and tracking pages). Default true — the
+   * behaviour the shop shipped with. Turning it off changes only what the
+   * customer is asked for: the order still starts at `verification_required`
+   * and still waits for an employee with `confirm_payment` to judge it.
+   */
+  instapay_proof_required: boolean;
 }
 
 export interface SeoSettings {

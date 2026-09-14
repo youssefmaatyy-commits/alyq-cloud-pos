@@ -22,6 +22,7 @@ import { useStorefront } from "../../hooks/StorefrontProvider";
 import { useStoreCart } from "../../hooks/StoreCartProvider";
 import { useStoreAccount } from "../../hooks/StoreAccountProvider";
 import { storefrontSurfaceStyle } from "../../services/theme";
+import { instapayHref } from "../../services/settingsDefaults";
 import { StoreImage } from "./StorePrimitives";
 
 /** `wa.me/<number>?text=…` from whatever the admin typed. */
@@ -96,6 +97,9 @@ export function StoreLayout({ children }: { children: ReactNode }) {
   const tagline = pick(settings.contact.tagline_ar, settings.contact.tagline_en);
   const social = settings.social;
   const whatsapp = whatsappHref(social.whatsapp, t("store.contact.whatsappMessage"));
+  // Same rule as the WhatsApp number: a configured link is only rendered when
+  // it is a safe absolute http(s) URL.
+  const instapayLink = instapayHref(social.instapay_link);
 
   const submitSearch = (event: React.FormEvent) => {
     event.preventDefault();
@@ -356,9 +360,9 @@ export function StoreLayout({ children }: { children: ReactNode }) {
                   <SocialIcon kind="whatsapp" />
                 </a>
               ) : null}
-              {social.instapay_link ? (
+              {instapayLink ? (
                 <a
-                  href={social.instapay_link}
+                  href={instapayLink}
                   target="_blank"
                   rel="noopener noreferrer"
                   aria-label="InstaPay"

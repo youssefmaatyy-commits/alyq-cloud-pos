@@ -145,6 +145,7 @@ export const DEFAULT_WEBSITE_SETTINGS: WebsiteSettings = {
     whatsapp: "",
     instapay_link: "",
     instapay_account: "",
+    instapay_holder: "",
     instapay_qr_url: null,
   },
   delivery: {
@@ -158,6 +159,13 @@ export const DEFAULT_WEBSITE_SETTINGS: WebsiteSettings = {
     pickup_address_en: "Ismailia branch — Sultan Hussein St",
     cod_enabled: true,
     instapay_enabled: true,
+    // Empty = the storefront keeps its built-in step list; filled = the shop's
+    // own words replace it at checkout and on the confirmation page.
+    instapay_instructions_ar: "",
+    instapay_instructions_en: "",
+    // The shop shipped asking every InstaPay customer for the transfer proof;
+    // the default must not silently change that behaviour.
+    instapay_proof_required: true,
   },
   seo: {
     meta_title: "ALYQ Accessories Store | أَلِــيْـــق",
@@ -260,6 +268,32 @@ export function safeColor(value: unknown, fallback: string): string {
   if (typeof value !== "string") return fallback;
   const trimmed = value.trim();
   return /^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(trimmed) ? trimmed : fallback;
+}
+
+/**
+ * The configured InstaPay link as an `href`, or `null` when there is nothing
+ * safe to render.
+ *
+ * Same policy as `storefrontLink.ts` applies to `VITE_STOREFRONT_URL` and as
+ * `whatsappHref` applies to the WhatsApp number: a URL that comes from a
+ * settings document is configuration an admin typed, and an `href` is an
+ * injection point — `javascript:` and `data:` both execute in that position,
+ * and the storefront is public. Only absolute http(s) URLs pass; everything
+ * else (blank, relative, custom schemes) yields `null`, and the callers simply
+ * render no link — an unset or unusable link must never become a broken or
+ * dangerous button.
+ */
+export function instapayHref(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const value = raw.trim();
+  if (!value) return null;
+  if (!/^https?:\/\//i.test(value)) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : null;
+  } catch {
+    return null;
+  }
 }
 
 /**

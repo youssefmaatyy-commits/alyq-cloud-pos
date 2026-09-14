@@ -155,15 +155,23 @@ export function StoreConfirmationPage() {
       </div>
 
       {order.payment_method === "instapay" ? (
-        <div className="mt-4">
-          <PaymentProofPanel
-            orderNumber={number}
-            phone={order.customer_phone}
-            total={order.total}
-            submitted={order.payment_submitted_at !== null || order.payment_status === "paid"}
-            storedReference={order.payment_reference}
-          />
-        </div>
+        settings.delivery.instapay_proof_required ? (
+          <div className="mt-4">
+            <PaymentProofPanel
+              orderNumber={number}
+              phone={order.customer_phone}
+              total={order.total}
+              submitted={order.payment_submitted_at !== null || order.payment_status === "paid"}
+              storedReference={order.payment_reference}
+            />
+          </div>
+        ) : (
+          // The shop does not ask for a screenshot — but the order still waits
+          // for an employee, and the customer should be told exactly that.
+          <p className="mt-4 border border-[var(--store-border)] bg-[var(--store-surface)] p-4 text-sm leading-relaxed text-[var(--store-muted)]" style={{ borderRadius: "var(--store-radius)" }}>
+            {t("store.checkout.instapayNeverAutomatic")}
+          </p>
+        )
       ) : (
         <p className="mt-4 border border-[var(--store-border)] bg-[var(--store-surface)] p-4 text-sm leading-relaxed text-[var(--store-muted)]" style={{ borderRadius: "var(--store-radius)" }}>
           {t("store.confirmation.codNote")}
