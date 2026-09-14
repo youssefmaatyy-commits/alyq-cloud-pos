@@ -164,6 +164,23 @@ create table if not exists storage.objects (
 -- this table either way, so it must exist and be RLS-enabled.
 alter table storage.objects enable row level security;
 
+-- Real Supabase ships `storage.foldername(text)`: the folder components of an
+-- object path (everything before the final '/'). Migration 0036 references it
+-- in the policy that scopes anonymous proof uploads to `proofs/`, so the shim
+-- mirrors the production implementation.
+create or replace function storage.foldername(name text)
+returns text[]
+language plpgsql
+immutable
+as $$
+declare
+  _parts text[];
+begin
+  select string_to_array(name, '/') into _parts;
+  return _parts[1 : array_length(_parts, 1) - 1];
+end
+$$;
+
 grant usage on schema storage to anon, authenticated, service_role;
 grant select on storage.buckets to authenticated, service_role;
 grant select, insert, update, delete on storage.objects to authenticated, service_role;

@@ -18,14 +18,20 @@ export const PRODUCT_IMAGES_BUCKET = "product-images";
 /** 5 MB per image — generous for storefront photos, blocks accidental video/PDF. */
 export const MAX_IMAGE_FILE_SIZE = 5 * 1024 * 1024;
 
-/** Whitelist of accepted image MIME types (rejects arbitrary non-image files). */
+/**
+ * Whitelist of accepted image MIME types (rejects arbitrary non-image files).
+ * SVG is deliberately absent: it is a script-carrying format, and these files
+ * land in a PUBLIC bucket — an uploaded SVG would run embedded scripts from
+ * the project's storage domain when opened directly. The bucket's server-side
+ * `allowed_mime_types` (migration 0036) carries the same list minus SVG, so a
+ * caller that skips this validation is still refused by Storage itself.
+ */
 export const ALLOWED_IMAGE_TYPES = [
   "image/jpeg",
   "image/png",
   "image/webp",
   "image/gif",
   "image/avif",
-  "image/svg+xml",
   "image/bmp",
 ] as const;
 
@@ -48,7 +54,6 @@ function extensionForMime(type: string): string {
     "image/webp": "webp",
     "image/gif": "gif",
     "image/avif": "avif",
-    "image/svg+xml": "svg",
     "image/bmp": "bmp",
   };
   return map[type] ?? "bin";

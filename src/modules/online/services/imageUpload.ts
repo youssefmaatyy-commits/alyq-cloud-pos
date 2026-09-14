@@ -9,8 +9,10 @@
  *     for the InstaPay screenshots customers upload. Keeping them apart means an
  *     admin can see what is what, and a cleanup script can treat customer
  *     uploads (which are financial evidence) differently from shop artwork.
- *   - proofs are uploaded by anonymous customers, which the existing bucket
- *     policy already permits; nothing about that is loosened here.
+ *     The split is also enforced server-side since migration 0036: an
+ *     anonymous caller may INSERT under `proofs/` only — never `website/`,
+ *     never an update, delete or listing — and SVG is off the bucket's MIME
+ *     whitelist because a public bucket must not serve script-carrying files.
  */
 import { getSupabaseClient } from "@/lib/supabase/client";
 import {
@@ -39,7 +41,6 @@ function extensionForMime(type: string): string {
     "image/webp": "webp",
     "image/avif": "avif",
     "image/gif": "gif",
-    "image/svg+xml": "svg",
     "image/bmp": "bmp",
   };
   return map[type] ?? "bin";

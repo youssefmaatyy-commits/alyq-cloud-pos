@@ -748,6 +748,116 @@ begin
 end
 $$;
 -- ═══════════════════════════════════════════════════════════════════════════
+-- Phase 30a-storage — the payment-proof upload namespace (0036).
+--
+-- The same shape as the storefront phase above: the owner steps into `anon`,
+-- and this time the target is the STORAGE bucket rather than the catalogue
+-- tables. These are the assertions that would have caught the open 0005
+-- policies: a guest may CREATE one proof under `proofs/` and nothing else —
+-- no other prefix, no overwrite, no delete, and no listing of the bucket to
+-- harvest other customers' proof URLs. Runs, like Phase 30a, before the
+-- one-way switch to `authenticated`.
+-- ═══════════════════════════════════════════════════════════════════════════
+do $$
+declare
+  v_owner text := current_user;
+  v_rows  integer;
+begin
+  -- What a live project grants the storage API's anon role; the point of the
+  -- assertions below is that RLS still scopes it. Revoked before this block
+  -- ends, the way Phase 30a does for the catalogue tables.
+  grant select, insert, update, delete on storage.objects to anon;
+
+  -- The bucket-level rails the Storage server itself enforces on every
+  -- upload, whatever the client claims to have validated: the 5 MB cap, the
+  -- raster-only MIME whitelist, and no SVG in it.
+  select count(*) into v_rows
+    from storage.buckets
+   where id = 'product-images'
+     and file_size_limit = 5242880
+     and not ('image/svg+xml' = any (allowed_mime_types))
+     and allowed_mime_types @> array['image/jpeg','image/png','image/webp','image/gif','image/avif','image/bmp'];
+  if v_rows <> 1 then
+    raise exception 'the product-images bucket lost its size cap, its MIME whitelist, or both';
+  end if;
+
+  -- A staff fixture proof: the target of the anonymous interference below.
+  insert into storage.objects (bucket_id, name) values ('product-images', 'proofs/scn-victim.jpg');
+
+  -- ── step into the guest's shoes ──────────────────────────────────────────
+  perform set_config('request.jwt.claim.sub', '', true);
+  perform set_config('role', 'anon', true);
+
+  -- 1. the one thing a guest may do: create their own proof under proofs/
+  insert into storage.objects (bucket_id, name) values ('product-images', 'proofs/scn-guest.jpg');
+
+  -- 2. nowhere else: not the shop-artwork prefix, and not a root-level object
+  --    cleverly NAMED `proofs` (its folder list is empty, so the policy's
+  --    first-folder check refuses it).
+  begin
+    insert into storage.objects (bucket_id, name) values ('product-images', 'website/scn-guest.jpg');
+    raise exception 'anon uploaded outside the proofs/ namespace';
+  exception when insufficient_privilege then
+    null;
+  end;
+
+  begin
+    insert into storage.objects (bucket_id, name) values ('product-images', 'proofs');
+    raise exception 'anon uploaded a root-level object named proofs';
+  exception when insufficient_privilege then
+    null;
+  end;
+
+  -- 3. no enumeration: SELECT is filtered to zero rows for anon, so the
+  --    unguessable proof paths stay unguessable — nobody can list the bucket
+  --    and collect every customer's proof URL.
+  select count(*) into v_rows from storage.objects where bucket_id = 'product-images';
+  if v_rows <> 0 then
+    raise exception 'anon listed % object(s) of the product-images bucket', v_rows;
+  end if;
+
+  -- 4. an UPDATE or DELETE that RLS filters out is zero rows rather than an
+  --    error, so these assert the effect and accept a hard refusal as well.
+  begin
+    update storage.objects set name = 'proofs/scn-stolen.jpg' where name = 'proofs/scn-victim.jpg';
+    get diagnostics v_rows = row_count;
+    if v_rows <> 0 then
+      raise exception 'anon rewrote a proof (% row(s))', v_rows;
+    end if;
+  exception when insufficient_privilege then
+    null;
+  end;
+
+  begin
+    delete from storage.objects where name = 'proofs/scn-victim.jpg';
+    get diagnostics v_rows = row_count;
+    if v_rows <> 0 then
+      raise exception 'anon deleted a proof (% row(s))', v_rows;
+    end if;
+  exception when insufficient_privilege then
+    null;
+  end;
+
+  -- ── step back out, which only the owner can do ───────────────────────────
+  perform set_config('role', v_owner, true);
+
+  -- The victim proof is still there under its own name — neither deleted nor
+  -- renamed — and the out-of-namespace upload never landed.
+  select count(*) into v_rows from storage.objects where name = 'proofs/scn-victim.jpg';
+  if v_rows <> 1 then
+    raise exception 'the anonymous visit lost or renamed the victim proof';
+  end if;
+  if exists (select 1 from storage.objects where name = 'website/scn-guest.jpg') then
+    raise exception 'the anonymous out-of-namespace upload landed';
+  end if;
+
+  delete from storage.objects where name in ('proofs/scn-victim.jpg', 'proofs/scn-guest.jpg');
+  revoke select, insert, update, delete on storage.objects from anon;
+
+  raise notice 'anonymous proof uploads — one file may be created under proofs/, and nothing else in the bucket may be touched, moved, deleted or listed';
+end
+$$;
+-- ═══════════════════════════════════════════════════════════════════════════
 -- Phase C onwards — as `authenticated`, the role the browser gets.
 -- The role is switched once here and never switched back.
 -- ═══════════════════════════════════════════════════════════════════════════

@@ -261,6 +261,9 @@ test("validateImageFile whitelists image types and size", () => {
   assert.equal(validateImageFile(new File(["a"], "a.jpg", { type: "image/jpeg" })), null);
   assert.equal(validateImageFile(new File(["a"], "a.txt", { type: "text/plain" })), "type");
   assert.equal(validateImageFile(new File(["a"], "a.exe", { type: "application/octet-stream" })), "type");
+  // SVG is a script-carrying format in a public bucket — refused (0036 removed
+  // it from this whitelist and from the bucket's server-side allowed list).
+  assert.equal(validateImageFile(new File(["a"], "a.svg", { type: "image/svg+xml" })), "type");
 });
 
 // ── category rules ───────────────────────────────────────────────────────
