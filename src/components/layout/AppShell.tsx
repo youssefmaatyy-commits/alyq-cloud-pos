@@ -171,7 +171,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </p>
         <NavItem to="/pos" icon={<ShoppingCartIcon />} label={t("nav.register")} visible={canOpen("/pos")} />
         <NavItem to="/pos/sales" icon={<ReceiptIcon />} label={t("nav.sales")} visible={canOpen("/pos/sales")} />
-        <NavItem to="/customers" icon={<UsersIcon />} label={t("nav.customers")} />
+        <NavItem to="/customers" icon={<UsersIcon />} label={t("nav.customers")} visible={canOpen("/customers")} />
         <NavItem to="/returns" icon={<RotateCcwIcon />} label={t("nav.returns")} visible={canOpen("/returns")} />
         <NavItem to="/refunds" icon={<RotateCcwIcon />} label={t("nav.refunds")} visible={canOpen("/refunds")} />
 
