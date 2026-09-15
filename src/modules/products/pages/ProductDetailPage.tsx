@@ -14,9 +14,11 @@ export function ProductDetailPage() {
   const toast = useToast();
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
-  const { products, categories, loading, error, refresh, setProductActive } = useCatalog();
+  const { products, categories, productReferences, loading, error, refresh, setProductActive, deleteProduct } =
+    useCatalog();
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState<Product | null>(null);
+  const [pendingDelete, setPendingDelete] = useState(false);
 
   const product = id ? products.find((p) => p.id === id) : undefined;
 
@@ -25,7 +27,7 @@ export function ProductDetailPage() {
     cid ? nameIndex.get(cid) ?? "—" : t("products.withoutCategory");
 
   const confirmToggle = async () => {
-    if (!pending) return;
+    if (!pending || busy) return;
     setBusy(true);
     try {
       await setProductActive(pending.id, !pending.active);
@@ -33,6 +35,23 @@ export function ProductDetailPage() {
       setPending(null);
     } catch (err) {
       toast.error(t(describeError(err).key as never));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!product || busy) return;
+    setBusy(true);
+    try {
+      await deleteProduct(product.id);
+      toast.success(t("products.deletedToast"));
+      setPendingDelete(false);
+      // The record is gone for good — there is nothing left to show.
+      navigate("/products");
+    } catch (err) {
+      toast.error(t(describeError(err).key as never));
+      setPendingDelete(false);
     } finally {
       setBusy(false);
     }
@@ -88,6 +107,10 @@ export function ProductDetailPage() {
         categoryName={categoryName}
         busy={busy}
         onToggleActive={() => setPending(product)}
+        onDelete={() => setPendingDelete(true)}
+        deleteBlockedReason={
+          (productReferences[product.id]?.total ?? 0) > 0 ? t("products.errorHasHistory") : null
+        }
       />
       <ConfirmDialog
         open={Boolean(pending)}
@@ -101,6 +124,16 @@ export function ProductDetailPage() {
         loading={busy}
         onCancel={() => setPending(null)}
         onConfirm={() => void confirmToggle()}
+      />
+      <ConfirmDialog
+        open={pendingDelete}
+        title={t("products.permanentDeleteTitle")}
+        body={t("products.permanentDeleteBody", { name: pick(product.name_ar, product.name_en) })}
+        confirmLabel={t("products.permanentDelete")}
+        tone="danger"
+        loading={busy}
+        onCancel={() => setPendingDelete(false)}
+        onConfirm={() => void confirmDelete()}
       />
     </div>
   );

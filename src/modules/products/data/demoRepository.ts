@@ -6,8 +6,9 @@ import type {
   Product,
   ProductPatch,
 } from "../types";
-import { AppError, type CatalogRepository } from "./repository";
+import { AppError, type CatalogRepository, type ProductReferenceMap } from "./repository";
 import { buildDemoCategories, buildDemoProducts, safeStorage } from "./demoSeed";
+import { demoProductReferences } from "./productReferences";
 
 const STORAGE_KEY = "alyq.demo.catalog.v1";
 const LATENCY = 140;
@@ -125,6 +126,34 @@ export class DemoRepository implements CatalogRepository {
 
   async setProductActive(id: string, active: boolean): Promise<Product> {
     return this.updateProduct(id, { active });
+  }
+
+  async listProductReferences(): Promise<ProductReferenceMap> {
+    return delay(demoProductReferences(), 20);
+  }
+
+  /**
+   * The demo-mode half of `public.delete_product` (0037). The guard lives here
+   * and not only in the service layer for the same reason the SQL check lives
+   * in the function and not only in the app: this repository is the demo
+   * "server", so the lifecycle rule holds no matter which caller skips the
+   * screen. A product referenced by any demo sale, return, stock movement,
+   * online order or reservation is refused; only a truly unused product is
+   * removed.
+   */
+  async deleteProduct(id: string): Promise<void> {
+    const exists = this.state.products.some((p) => p.id === id);
+    if (!exists) throw new AppError("NOT_FOUND", `Product ${id} not found`);
+    const references = demoProductReferences()[id];
+    if (references && references.total > 0) {
+      throw new AppError(
+        "PRODUCT_HAS_HISTORY",
+        `Product ${id} has historical transactions and cannot be permanently deleted`,
+      );
+    }
+    this.state.products = this.state.products.filter((p) => p.id !== id);
+    this.persist();
+    await delay(undefined, 60);
   }
 
   // ── categories ─────────────────────────────────────────────────────────

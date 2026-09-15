@@ -2862,6 +2862,316 @@ begin
 end
 $$;
 
+-- ════════════════════════════════════════════════════════════════════════════
+-- Phase 25: the product delete/archive lifecycle (0037), as the database alone
+--
+-- Every surface the app shows is a client-side rendering; what is asserted here
+-- is the backend on its own terms, impersonated with `pg_temp.become` exactly
+-- like the Phase 23 guards:
+--
+--   1. an admin permanently deletes a truly unused product — with product.deleted
+--      on the trail, storefront content cascading by design, and NOT ONE
+--      historical row anywhere moving;
+--   2. a viewer is refused both lifecycle RPCs directly (no UI involved);
+--   3. a referenced product cannot be permanently deleted — the RPC answers
+--      restrict_violation, and the table itself answers foreign_key_violation
+--      (the FK backstop that exists even around the function);
+--   4. that same product archives, disappears from the till, the storefront and
+--      the online checkout, keeps its invoice, its stock ledger and its place in
+--      the reports — and reactivates back into sellability, each transition with
+--      exactly one audit row.
+do $$
+declare
+  v_admin    uuid := '00000000-0000-4000-8000-0000000000a1';
+  v_cashier  uuid := '00000000-0000-4000-8000-0000000000c1';
+  v_viewer   uuid := '00000000-0000-4000-8000-0000000000e1';
+  v_cat      uuid := '00000000-0000-4000-8000-0000000000f1';
+  v_used     uuid := '00000000-0000-4000-8000-00000000d001';
+  v_gone     uuid := '00000000-0000-4000-8000-00000000d002';
+
+  v_sale       jsonb;
+  v_sale_id    uuid;
+  v_item_id    uuid;
+  v_order      jsonb;
+  v_order_id   uuid;
+  v_lifecycle  jsonb;
+  v_refs       record;
+  v_count      bigint;
+  v_si_sale_items bigint;
+  v_si_movements  bigint;
+  v_si_returns    bigint;
+  v_si_orders     bigint;
+  v_si_res        bigint;
+  v_fin_before    jsonb;
+  v_perf          jsonb;
+begin
+  -- ── fixtures (owner identity; no claim needed and none left over) ─────────
+  insert into public.products (id, sku, name_ar, name_en, category_id, selling_price, cost_price, stock_quantity)
+  values
+    (v_used, 'LCY-USED', 'منتج له سجل', 'Lifecycle Referenced', v_cat, 30.00, 15.00, 100),
+    (v_gone, 'LCY-GONE', 'منتج بدون سجل', 'Lifecycle Unused',    v_cat, 12.50,  6.00,  40)
+  on conflict (id) do nothing;
+
+  -- Storefront dressing for the unused product — the two tables that declare
+  -- `on delete cascade` are removed with it, which is exactly what that
+  -- cascade means; the five history tables are a different matter entirely.
+  insert into public.product_content (product_id, brand_en) values (v_gone, 'Lifecycle') on conflict (product_id) do nothing;
+  insert into public.store_reviews (product_id, author_name, rating, body) values (v_gone, 'Probe', 5, 'unused-product review');
+
+  -- ── A. make one product genuinely part of the shop's history ──────────────
+  -- A POS sale (sale_items + stock_movements), a website order
+  -- (online_order_items + stock_reservations) and a return (return_items) —
+  -- all five reference tables carry a row before the delete is attempted.
+  perform pg_temp.become(v_cashier, 'authenticated');
+  v_sale := public.pos_complete_sale(jsonb_build_object(
+    'client_ref', 'p25-used-' || gen_random_uuid()::text,
+    'user_id', v_cashier::text, 'user_name', 'Karim Cashier',
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_used::text, 'qty', 2)),
+    'payments', jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', 60.00))));
+  v_sale_id := (v_sale->>'sale_id')::uuid;
+  select id into v_item_id from public.sale_items where sale_id = v_sale_id and product_id = v_used;
+
+  perform pg_temp.become(null, 'anon');
+  v_order := public.place_online_order(jsonb_build_object(
+    'client_ref', 'p25-order-' || gen_random_uuid()::text,
+    'customer_name', 'Lifecycle Shopper', 'customer_phone', '01000000009',
+    'delivery_type', 'pickup', 'payment_method', 'cod',
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_used::text, 'qty', 1))));
+  v_order_id := (v_order->>'order_id')::uuid;
+
+  perform pg_temp.become(v_cashier, 'authenticated');
+  perform public.pos_process_return(jsonb_build_object(
+    'sale_id', v_sale_id::text, 'reason', 'lifecycle fixture',
+    'refund_method', 'cash', 'refund_status', 'completed',
+    'user_id', v_cashier::text, 'user_name', 'Karim Cashier',
+    'items', jsonb_build_array(jsonb_build_object('sale_item_id', v_item_id::text, 'quantity', 1))));
+
+  -- ── B. the reference counts the screens render from ────────────────────────
+  perform pg_temp.become(v_viewer, 'authenticated');
+  begin
+    perform public.product_reference_counts(v_used);
+    raise exception 'a viewer read product reference counts';
+  exception when insufficient_privilege then null;
+  end;
+
+  perform pg_temp.become(v_admin, 'authenticated');
+  select * into v_refs from public.product_reference_counts(v_used);
+  if v_refs.sale_items < 1 or v_refs.return_items < 1 or v_refs.stock_movements < 1
+     or v_refs.online_order_items < 1 or v_refs.stock_reservations < 1
+     or v_refs.total < 5 then
+    raise exception 'the reference count missed part of the product''s history: %', v_refs.total;
+  end if;
+
+  -- ── C. the lifecycle RPCs are not a polite suggestion — a viewer is refused ─
+  perform pg_temp.become(v_viewer, 'authenticated');
+  begin
+    perform public.delete_product(v_gone);
+    raise exception 'a viewer permanently deleted a product by calling the RPC directly';
+  exception when insufficient_privilege then null;
+  end;
+  begin
+    perform public.set_product_active(v_gone, false);
+    raise exception 'a viewer archived a product by calling the RPC directly';
+  exception when insufficient_privilege then null;
+  end;
+  if (select active from public.products where id = v_gone) is distinct from true then
+    raise exception 'the viewer''s archive attempt landed';
+  end if;
+
+  -- ── D. a referenced product cannot be permanently deleted ──────────────────
+  -- The reports snapshot BEFORE the archive, so the archive can be shown to
+  -- change nothing the shop reports.
+  perform pg_temp.become(v_admin, 'authenticated');
+  select public.reports_financial_summary(null, null) into v_fin_before;
+
+  begin
+    perform public.delete_product(v_used);
+    raise exception 'the RPC permanently deleted a product with historical transactions';
+  exception when restrict_violation then null;
+  end;
+
+  -- and the table itself says the same, without any function in the middle.
+  -- The FK layer is the backstop a raw DELETE would hit, so that guarantee is
+  -- asserted as schema state — which also pins "no ON DELETE CASCADE was ever
+  -- added pointing at history": every table that references products must be
+  -- restrict/no-action, with ONLY the two storefront tables allowed to cascade.
+  select count(*) into v_count
+    from pg_constraint c
+    join pg_class t on t.oid = c.conrelid
+   where c.contype = 'f'
+     and c.confrelid = 'public.products'::regclass
+     and t.relname = any (array[
+       'sale_items', 'return_items', 'stock_movements',
+       'online_order_items', 'stock_reservations'])
+     and c.confdeltype in ('r', 'a');
+  if v_count <> 5 then
+    raise exception 'the five history tables do not all RESTRICT product deletion (% found)', v_count;
+  end if;
+  if exists (
+    select 1
+      from pg_constraint c
+      join pg_class t on t.oid = c.conrelid
+     where c.contype = 'f'
+       and c.confrelid = 'public.products'::regclass
+       and c.confdeltype = 'c'
+       and t.relname <> all (array['product_content', 'store_reviews'])
+  ) then
+    raise exception 'an ON DELETE CASCADE points from products at history';
+  end if;
+  if not exists (select 1 from public.products where id = v_used) then
+    raise exception 'a referenced product disappeared';
+  end if;
+
+  -- ── E. archive: always available, audited once per real transition ─────────
+  v_lifecycle := public.set_product_active(v_used, false);
+  if (v_lifecycle->>'changed')::boolean is distinct from true
+     or (v_lifecycle->>'active')::boolean is distinct from false then
+    raise exception 'the archive did not land: %', v_lifecycle;
+  end if;
+  -- a double submit answers the no-op instead of erroring or double-auditing
+  v_lifecycle := public.set_product_active(v_used, false);
+  if (v_lifecycle->>'changed')::boolean is distinct from false then
+    raise exception 'a repeated archive was not idempotent: %', v_lifecycle;
+  end if;
+  select count(*) into v_count from public.audit_log
+   where action = 'product.archived' and entity_id = v_used::text;
+  if v_count <> 1 then
+    raise exception 'the archive wrote % audit rows, not exactly one', v_count;
+  end if;
+
+  -- every selling surface respects it:
+  --   the public storefront catalogue
+  perform pg_temp.become(null, 'anon');
+  if exists (select 1 from public.storefront_catalogue() where id = v_used) then
+    raise exception 'an archived product is still listed on the storefront';
+  end if;
+  if exists (select 1 from public.storefront_best_sellers(50) where product_id = v_used) then
+    raise exception 'an archived product still advertises itself through best sellers';
+  end if;
+  --   the online checkout
+  begin
+    perform public.place_online_order(jsonb_build_object(
+      'client_ref', 'p25-archived-' || gen_random_uuid()::text,
+      'customer_name', 'Late Shopper', 'customer_phone', '01000000010',
+      'delivery_type', 'pickup', 'payment_method', 'cod',
+      'lines', jsonb_build_array(jsonb_build_object('product_id', v_used::text, 'qty', 1))));
+    raise exception 'an archived product was added to a new online order';
+  exception when check_violation then null;
+  end;
+  --   and the till itself
+  perform pg_temp.become(v_cashier, 'authenticated');
+  begin
+    perform public.pos_complete_sale(jsonb_build_object(
+      'client_ref', 'p25-archived-pos-' || gen_random_uuid()::text,
+      'user_id', v_cashier::text, 'user_name', 'Karim Cashier',
+      'lines', jsonb_build_array(jsonb_build_object('product_id', v_used::text, 'qty', 1)),
+      'payments', jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', 30.00))));
+    raise exception 'the till sold an archived product';
+  exception when check_violation then null;
+  end;
+
+  -- ── F. the history the archive preserved ───────────────────────────────────
+  perform pg_temp.become(v_admin, 'authenticated');
+  -- the invoice still resolves the product…
+  if (select p.name_en from public.sale_items si
+        join public.products p on p.id = si.product_id
+       where si.id = v_item_id) <> 'Lifecycle Referenced' then
+    raise exception 'the historical invoice stopped resolving its product';
+  end if;
+  -- …and the reports answer EXACTLY what they answered before the archive:
+  -- archiving is not deleting, and the numbers must not notice.
+  if public.reports_financial_summary(null, null) <> v_fin_before then
+    raise exception 'the financial report changed because a product was archived';
+  end if;
+  select elem into v_perf
+    from (select jsonb_array_elements(public.reports_product_performance(null, null)) as elem) elems
+   where elem ->> 'productId' = v_used::text
+   limit 1;
+  if v_perf is null or (v_perf->>'sold')::boolean is distinct from true
+     or (v_perf->>'units')::numeric < 2 then
+    raise exception 'product performance lost the archived product''s history: %', v_perf;
+  end if;
+
+  -- ── G. reactivation: audited, and sellable everywhere again ────────────────
+  v_lifecycle := public.set_product_active(v_used, true);
+  if (v_lifecycle->>'changed')::boolean is distinct from true then
+    raise exception 'the reactivation did not land: %', v_lifecycle;
+  end if;
+  if not exists (
+    select 1 from public.audit_log
+     where action = 'product.reactivated' and entity_id = v_used::text
+       and user_id = v_admin::text
+  ) then
+    raise exception 'the reactivation left no audit row naming its actor';
+  end if;
+  perform pg_temp.become(null, 'anon');
+  if not exists (select 1 from public.storefront_catalogue() where id = v_used) then
+    raise exception 'a reactivated product did not return to the storefront';
+  end if;
+  v_order := public.place_online_order(jsonb_build_object(
+    'client_ref', 'p25-reactivated-' || gen_random_uuid()::text,
+    'customer_name', 'Returning Shopper', 'customer_phone', '01000000011',
+    'delivery_type', 'pickup', 'payment_method', 'cod',
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_used::text, 'qty', 1))));
+  if (v_order->>'order_id') is null then
+    raise exception 'a reactivated product could not be ordered online';
+  end if;
+  perform pg_temp.become(v_cashier, 'authenticated');
+  v_sale := public.pos_complete_sale(jsonb_build_object(
+    'client_ref', 'p25-reactivated-pos-' || gen_random_uuid()::text,
+    'user_id', v_cashier::text, 'user_name', 'Karim Cashier',
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_used::text, 'qty', 1)),
+    'payments', jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', 30.00))));
+  if (v_sale->>'sale_id') is null then
+    raise exception 'the till could not sell a reactivated product';
+  end if;
+
+  -- ── H. an unused product IS deletable — with a trail, and no splash damage ──
+  -- Snapshot every history table first: the delete that follows must not move
+  -- so much as one row in any of them.
+  perform pg_temp.become(v_admin, 'authenticated');
+  select count(*) into v_si_sale_items from public.sale_items;
+  select count(*) into v_si_movements  from public.stock_movements;
+  select count(*) into v_si_returns    from public.return_items;
+  select count(*) into v_si_orders     from public.online_order_items;
+  select count(*) into v_si_res        from public.stock_reservations;
+
+  v_lifecycle := public.delete_product(v_gone);
+  if (v_lifecycle->>'deleted')::boolean is distinct from true then
+    raise exception 'the unused product was not deleted: %', v_lifecycle;
+  end if;
+  if exists (select 1 from public.products where id = v_gone) then
+    raise exception 'the unused product is still there';
+  end if;
+  if exists (select 1 from public.product_content where product_id = v_gone)
+     or exists (select 1 from public.store_reviews where product_id = v_gone) then
+    raise exception 'the storefront content declared on delete cascade survived the delete';
+  end if;
+  if (select count(*) from public.sale_items) <> v_si_sale_items
+     or (select count(*) from public.stock_movements) <> v_si_movements
+     or (select count(*) from public.return_items) <> v_si_returns
+     or (select count(*) from public.online_order_items) <> v_si_orders
+     or (select count(*) from public.stock_reservations) <> v_si_res then
+    raise exception 'deleting an unused product cascaded into history';
+  end if;
+  if not exists (
+    select 1 from public.audit_log
+     where action = 'product.deleted' and entity_id = v_gone::text
+       and entity_label = 'LCY-GONE' and user_id = v_admin::text
+  ) then
+    raise exception 'the permanent delete left no audit row naming product and actor';
+  end if;
+  -- and a second attempt is a clean NOT FOUND, not a corruption:
+  begin
+    perform public.delete_product(v_gone);
+    raise exception 'deleting a ghost product succeeded';
+  exception when foreign_key_violation then null;
+  end;
+
+  raise notice 'product lifecycle — an unused product deletes with one audit row and zero historical casualties; a referenced one is refused by RPC and FK alike, archives out of every selling surface while its invoice, ledger and reports stand untouched, and reactivates cleanly';
+end
+$$;
+
 do $$
 begin
   perform set_config('request.jwt.claim.sub', '', true);

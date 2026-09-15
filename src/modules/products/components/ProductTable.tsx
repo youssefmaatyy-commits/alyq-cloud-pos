@@ -1,16 +1,21 @@
 import { Link } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { Badge } from "@/components/ui";
-import { ArchiveIcon, EditIcon, EyeIcon, RestoreIcon } from "@/components/ui";
+import { ArchiveIcon, EditIcon, EyeIcon, RestoreIcon, TrashIcon } from "@/components/ui";
 import { cn } from "@/utils/cn";
 import { marginPct, stockStatus, type Product, type StockStatus } from "../types";
 import { canAct } from "@/lib/permissions/enforce";
+import { mayPerform } from "@/lib/permissions/actions";
+import type { ProductReferenceMap } from "../data/repository";
 import { ActiveBadge, ProductTypeBadge } from "./ProductTypeBadge";
 
 export interface ProductTableProps {
   products: Product[];
   categoryName: (id: string | null) => string;
   onToggleActive: (product: Product) => void;
+  onDelete: (product: Product) => void;
+  /** product id → preserved-history counts; a hit disables permanent delete. */
+  references: ProductReferenceMap;
   busyId?: string | null;
   emptyState?: React.ReactNode;
 }
@@ -63,10 +68,15 @@ export function ProductTable({
   products,
   categoryName,
   onToggleActive,
+  onDelete,
+  references,
   busyId,
   emptyState,
 }: ProductTableProps) {
   const { t, pick, money, date, num } = useI18n();
+  // The destructive column only renders for a seat that could use it; the
+  // disabled-with-reason variant replaces the click for referenced products.
+  const mayDelete = mayPerform("product.delete");
 
   if (products.length === 0 && emptyState) return <>{emptyState}</>;
 
@@ -178,6 +188,14 @@ export function ProductTable({
                       >
                         {product.active ? <ArchiveIcon /> : <RestoreIcon />}
                       </button>
+                      {mayDelete ? (
+                        <DeleteAction
+                          product={product}
+                          referenced={references[product.id]}
+                          busy={busyId === product.id}
+                          onDelete={() => onDelete(product)}
+                        />
+                      ) : null}
                     </div>
                   </td>
                 </tr>
@@ -251,6 +269,15 @@ export function ProductTable({
                     {product.active ? <ArchiveIcon /> : <RestoreIcon />}
                     {product.active ? t("common.archive") : t("common.restore")}
                   </button>
+                  {mayDelete ? (
+                    <DeleteAction
+                      product={product}
+                      referenced={references[product.id]}
+                      busy={busyId === product.id}
+                      onDelete={() => onDelete(product)}
+                      withLabel
+                    />
+                  ) : null}
                 </div>
               </div>
             </div>
@@ -258,6 +285,66 @@ export function ProductTable({
         })}
       </div>
     </>
+  );
+}
+
+/**
+ * The permanent-delete affordance. Two honest states, no dead button:
+ *   referenced  → disabled, and its title/aria-label carries the reason;
+ *   unused      → armed, opening the page's explicit confirmation first.
+ * Whether a product is referenced is data (`references`), not guesswork, and
+ * the final word belongs to the repository either way.
+ */
+function DeleteAction({
+  product,
+  referenced,
+  busy,
+  onDelete,
+  withLabel = false,
+}: {
+  product: Product;
+  referenced: ProductReferenceMap[string] | undefined;
+  busy: boolean;
+  onDelete: () => void;
+  withLabel?: boolean;
+}) {
+  const { t } = useI18n();
+  const hasHistory = (referenced?.total ?? 0) > 0;
+  if (hasHistory) {
+    const reason = t("products.errorHasHistory");
+    return (
+      <button
+        type="button"
+        disabled
+        title={reason}
+        aria-label={reason}
+        className={cn(
+          "flex items-center rounded-lg text-slate-300 dark:text-slate-600",
+          withLabel
+            ? "cursor-not-allowed gap-1.5 px-2 py-1.5 text-xs font-medium"
+            : "h-8 w-8 cursor-not-allowed justify-center",
+        )}
+      >
+        <TrashIcon />
+        {withLabel ? t("products.permanentDelete") : null}
+      </button>
+    );
+  }
+  return (
+    <button
+      type="button"
+      disabled={busy}
+      onClick={onDelete}
+      title={t("products.permanentDelete")}
+      aria-label={`${t("products.permanentDelete")}: ${product.name_en}`}
+      className={cn(
+        "flex items-center rounded-lg text-rose-500 transition-colors hover:bg-rose-50 hover:text-rose-700 disabled:opacity-40",
+        withLabel ? "gap-1.5 px-2 py-1.5 text-xs font-medium" : "h-8 w-8 justify-center",
+      )}
+    >
+      <TrashIcon />
+      {withLabel ? t("products.permanentDelete") : null}
+    </button>
   );
 }
 

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, lazy, Suspense } from "react";
+import { useCallback, useEffect, useMemo, useState, lazy, Suspense } from "react";
 import { Link } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { PageHeader } from "@/components/layout/AppShell";
@@ -32,13 +32,33 @@ const ExcelImportModal = lazy(() =>
 export function ProductsPage() {
   const { t, pick, tPlural } = useI18n();
   const toast = useToast();
-  const { products, categories, loading, error, refresh, setProductActive, mode } = useCatalog();
+  const {
+    products,
+    categories,
+    productReferences,
+    loading,
+    error,
+    refresh,
+    refreshReferences,
+    setProductActive,
+    deleteProduct,
+    mode,
+  } = useCatalog();
+
+  // History can mint while this screen is away — a sale completed at the POS,
+  // an online order approved. The reference map is what keeps a referenced
+  // product's delete affordance disabled with its reason, so re-read it
+  // silently on mount without flickering the catalogue.
+  useEffect(() => {
+    void refreshReferences();
+  }, [refreshReferences]);
 
   const [filters, setFilters] = useState<ProductFiltersValue>(EMPTY_FILTERS);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [pending, setPending] = useState<Product | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<Product | null>(null);
   const [importOpen, setImportOpen] = useState(false);
 
   const nameIndex = useMemo(() => categoryNameIndex(categories, pick), [categories, pick]);
@@ -68,7 +88,7 @@ export function ProductsPage() {
   const handleToggle = (product: Product) => setPending(product);
 
   const confirmToggle = async () => {
-    if (!pending) return;
+    if (!pending || busyId) return;
     setBusyId(pending.id);
     try {
       await setProductActive(pending.id, !pending.active);
@@ -78,6 +98,25 @@ export function ProductsPage() {
     } finally {
       setBusyId(null);
       setPending(null);
+    }
+  };
+
+  const handleDelete = (product: Product) => setPendingDelete(product);
+
+  const confirmDelete = async () => {
+    // busyId doubles as the double-submit guard: a second confirm while the
+    // first is in flight does nothing.
+    if (!pendingDelete || busyId) return;
+    setBusyId(pendingDelete.id);
+    try {
+      await deleteProduct(pendingDelete.id);
+      toast.success(t("products.deletedToast"));
+      setPendingDelete(null);
+    } catch (err) {
+      toast.error(t(describeError(err).key as never));
+      setPendingDelete(null);
+    } finally {
+      setBusyId(null);
     }
   };
 
@@ -166,6 +205,8 @@ export function ProductsPage() {
             products={visible}
             categoryName={categoryName}
             onToggleActive={handleToggle}
+            onDelete={handleDelete}
+            references={productReferences}
             busyId={busyId}
             emptyState={
               <div className="alyq-card">
@@ -267,6 +308,18 @@ export function ProductsPage() {
         loading={Boolean(pending && busyId === pending.id)}
         onCancel={() => setPending(null)}
         onConfirm={() => void confirmToggle()}
+      />
+      <ConfirmDialog
+        open={Boolean(pendingDelete)}
+        title={t("products.permanentDeleteTitle")}
+        body={t("products.permanentDeleteBody", {
+          name: pendingDelete ? pick(pendingDelete.name_ar, pendingDelete.name_en) : "",
+        })}
+        confirmLabel={t("products.permanentDelete")}
+        tone="danger"
+        loading={Boolean(pendingDelete && busyId === pendingDelete.id)}
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={() => void confirmDelete()}
       />
       {importOpen && (
         <Suspense fallback={null}>

@@ -16,6 +16,12 @@ export type AppErrorCode =
   | "DUPLICATE_BARCODE"
   | "CATEGORY_IN_USE"
   | "CATEGORY_CYCLE"
+  /**
+   * Permanent delete refused: the product is referenced by business history
+   * (sales, returns, the stock ledger, online orders or reservations). Archive
+   * it instead — the record must outlive its selling life.
+   */
+  | "PRODUCT_HAS_HISTORY"
   | "VALIDATION"
   | "NETWORK"
   | "DB"
@@ -56,6 +62,36 @@ export function toAppError(error: unknown): AppError {
 }
 
 /**
+ * How much preserved history a product has, per table. `total > 0` means the
+ * product must never be permanently deleted — archive it instead.
+ *
+ * The tables are exactly the ones migration 0037 (`public.delete_product` /
+ * `public.product_reference_counts`) and the demo guard enforce:
+ *   sale_items, return_items, stock_movements, online_order_items,
+ *   stock_reservations.
+ */
+export interface ProductReferenceCounts {
+  sale_items: number;
+  return_items: number;
+  stock_movements: number;
+  online_order_items: number;
+  stock_reservations: number;
+  total: number;
+}
+
+export const EMPTY_PRODUCT_REFERENCES: ProductReferenceCounts = {
+  sale_items: 0,
+  return_items: 0,
+  stock_movements: 0,
+  online_order_items: 0,
+  stock_reservations: 0,
+  total: 0,
+};
+
+/** product id → its reference counts (only products with total > 0 appear). */
+export type ProductReferenceMap = Record<string, ProductReferenceCounts>;
+
+/**
  * Persistence contract for the catalog module.
  * Implemented twice: `supabaseRepository` (live) and `demoRepository` (offline).
  */
@@ -66,6 +102,18 @@ export interface CatalogRepository {
   createProduct(input: NewProduct): Promise<Product>;
   updateProduct(id: string, patch: ProductPatch): Promise<Product>;
   setProductActive(id: string, active: boolean): Promise<Product>;
+  /**
+   * Archive/delete support: every product id with preserved history and how
+   * much of it, so the UI can disable permanent delete with a reason before
+   * the click instead of failing after it.
+   */
+  listProductReferences(): Promise<ProductReferenceMap>;
+  /**
+   * Permanent delete. Throws `PRODUCT_HAS_HISTORY` when the product is
+   * referenced by business history, `NOT_FOUND` when it does not exist and
+   * `FORBIDDEN` without the capability. Never cascades into history.
+   */
+  deleteProduct(id: string): Promise<void>;
 
   listCategories(): Promise<Category[]>;
   createCategory(input: NewCategory): Promise<Category>;

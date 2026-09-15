@@ -1,10 +1,11 @@
 import { Link } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { Badge, Button, Card, SectionTitle, StatTile } from "@/components/ui";
-import { ArchiveIcon, EditIcon, RestoreIcon } from "@/components/ui";
+import { ArchiveIcon, EditIcon, RestoreIcon, TrashIcon } from "@/components/ui";
 import { PRODUCT_TYPE_META } from "../constants";
 import { marginPct, stockStatus, type Product } from "../types";
 import { canAct } from "@/lib/permissions/enforce";
+import { mayPerform } from "@/lib/permissions/actions";
 import { ActiveBadge, ProductTypeBadge } from "./ProductTypeBadge";
 import { StockBadge } from "./ProductTable";
 
@@ -24,11 +25,17 @@ export function ProductDetails({
   categoryName,
   onToggleActive,
   busy,
+  onDelete,
+  deleteBlockedReason,
 }: {
   product: Product;
   categoryName: (id: string | null) => string;
   onToggleActive: () => void;
   busy?: boolean;
+  /** Permanent delete. Only rendered when the user holds delete_product. */
+  onDelete?: () => void;
+  /** Why permanent delete is unavailable for this product (history), if it is. */
+  deleteBlockedReason?: string | null;
 }) {
   const { t, money, num, date } = useI18n();
   const margin = marginPct(product.selling_price, product.cost_price);
@@ -40,6 +47,7 @@ export function ProductDetails({
   const descAr = product.description_ar;
   const descEn = product.description_en;
   const gallery = product.images ?? [];
+  const mayDelete = mayPerform("product.delete");
 
   return (
     <div className="space-y-4">
@@ -92,6 +100,31 @@ export function ProductDetails({
               {product.active ? <ArchiveIcon /> : <RestoreIcon />}
               {product.active ? t("common.archive") : t("common.restore")}
             </Button>
+            {mayDelete && onDelete ? (
+              deleteBlockedReason ? (
+                // Referenced by history: the only sane action is archive. The
+                // disabled state names the reason instead of failing silently.
+                <span className="inline-flex flex-col items-stretch gap-1">
+                  <Button variant="danger" disabled title={deleteBlockedReason}>
+                    <TrashIcon />
+                    {t("products.permanentDelete")}
+                  </Button>
+                  <span className="max-w-52 text-[11px] font-medium leading-snug text-slate-500">
+                    {deleteBlockedReason}
+                  </span>
+                </span>
+              ) : (
+                <Button
+                  variant="danger"
+                  onClick={onDelete}
+                  disabled={busy}
+                  title={t("products.permanentDelete")}
+                >
+                  <TrashIcon />
+                  {t("products.permanentDelete")}
+                </Button>
+              )
+            ) : null}
           </div>
         </div>
       </Card>

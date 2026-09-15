@@ -448,7 +448,7 @@ test("a rejected refund without a reason is refused for the right reason", async
 });
 
 // ── 7. immutability is not a permission ───────────────────────────────────
-test("sales and product deletion refuse everyone, admins included", async () => {
+test("sales are immutable for everyone; product deletion follows the lifecycle", async () => {
   installStorageStub();
   signInAs("admin");
 
@@ -458,8 +458,12 @@ test("sales and product deletion refuse everyone, admins included", async () => 
   const del = await refusalCode(() => saleService.deleteSale("sale-x"));
   assert.equal(del, "VALIDATION", "deleting a sale is refused on immutability, not permission");
 
-  const product = await refusalCode(() => catalogService.deleteProduct("p-x"));
-  assert.equal(product, "VALIDATION", "a sold product is deactivated, never deleted");
+  // Product deletion is a lifecycle (Phase 25), not a dead end: an id that
+  // matches nothing is a NOT_FOUND for every privilege level, exactly the way
+  // a sold product being deactivated is a rule, not a privilege. The
+  // referenced/unused/cascade cases themselves are the lifecycle suite's.
+  const ghost = await refusalCode(() => catalogService.deleteProduct("p-x"));
+  assert.equal(ghost, "NOT_FOUND", "deleting a product id that does not exist is NOT_FOUND, not a permission question");
 
   // …while the same calls from a viewer are a permission refusal first.
   signInAs("viewer");

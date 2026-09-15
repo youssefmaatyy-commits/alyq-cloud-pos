@@ -254,7 +254,11 @@ export const SENSITIVE_ACTIONS: readonly SensitiveAction[] = [
     capability: "delete_product",
     guard: "assertCanDeleteProduct",
     file: "src/modules/products/services/catalogService.ts",
-    db: "no write path — a product that has been sold is referenced by sale_items and movements; deactivation is the supported answer",
+    db: "public.delete_product (0037) — re-checks delete_product, counts references in sale_items, "
+      + "return_items, stock_movements, online_order_items and stock_reservations and refuses "
+      + "(restrict_violation) any product with a history: only a truly unused row is removed, "
+      + "with product.deleted audited before the delete. RLS on products keeps the same "
+      + "capability as the direct-delete gate underneath it.",
   },
   {
     key: "product.import",
@@ -282,7 +286,9 @@ export const SENSITIVE_ACTIONS: readonly SensitiveAction[] = [
     capability: "edit_product",
     guard: "assertCanToggleProduct",
     file: "src/modules/products/services/catalogService.ts",
-    db: "RLS update on products — edit_product",
+    db: "public.set_product_active (0037) — re-checks edit_product, is idempotent against "
+      + "double submits, and writes product.archived / product.reactivated; RLS update on "
+      + "products asks the same capability of any direct write.",
   },
   {
     key: "category.delete",

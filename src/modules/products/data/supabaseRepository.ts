@@ -7,7 +7,13 @@ import type {
   Product,
   ProductPatch,
 } from "../types";
-import { AppError, toAppError, type CatalogRepository } from "./repository";
+import {
+  AppError,
+  toAppError,
+  type CatalogRepository,
+  type ProductReferenceCounts,
+  type ProductReferenceMap,
+} from "./repository";
 
 /** Row shape as returned by Supabase (defensive: numeric columns may arrive as strings). */
 interface ProductRow {
@@ -127,6 +133,29 @@ export class SupabaseRepository implements CatalogRepository {
     throw toAppError(error);
   }
 
+  /**
+   * Error mapping for the lifecycle RPCs (migration 0037). The functions raise
+   * named SQLSTATEs so each refusal maps to exactly one AppError code:
+   *   42501 insufficient_privilege  → FORBIDDEN (capability refused server-side)
+   *   23001 restrict_violation      → PRODUCT_HAS_HISTORY (archive, don't delete)
+   *   23503 foreign_key_violation   → NOT_FOUND when it is the RPC's own
+   *     "Product … not found", otherwise the FK's RESTRICT fired on a history
+   *     table no count saw — which still means the product has a history.
+   */
+  private rethrowLifecycle(error: unknown): never {
+    const err = error as { code?: string; message?: string } | null;
+    const pgCode = err?.code;
+    const message = err?.message ?? "Unknown database error";
+
+    if (pgCode === "42501") throw new AppError("FORBIDDEN", message, undefined, pgCode);
+    if (pgCode === "23001") throw new AppError("PRODUCT_HAS_HISTORY", message, undefined, pgCode);
+    if (pgCode === "23503") {
+      if (/not found/i.test(message)) throw new AppError("NOT_FOUND", message, undefined, pgCode);
+      throw new AppError("PRODUCT_HAS_HISTORY", message, undefined, pgCode);
+    }
+    throw toAppError(error);
+  }
+
   // ── products ───────────────────────────────────────────────────────────
 
   async listProducts(): Promise<Product[]> {
@@ -171,8 +200,70 @@ export class SupabaseRepository implements CatalogRepository {
     }
   }
 
+  /**
+   * Archive / reactivate through `public.set_product_active` (0037), so the
+   * capability check and the product.archived / product.reactivated audit row
+   * happen inside the database whichever client calls. The function answers
+   * the idempotent no-op case, so a double-submitted toggle is not an error.
+   */
   async setProductActive(id: string, active: boolean): Promise<Product> {
-    return this.updateProduct(id, { active });
+    try {
+      const { error } = await this.require().rpc("set_product_active", {
+        p_product_id: id,
+        p_active: active,
+      });
+      if (error) this.rethrowLifecycle(error);
+      // Re-read the row so callers get the full Product the contract promises.
+      const { data, error: readError } = await this.require()
+        .from("products")
+        .select(PRODUCTS_SELECT)
+        .eq("id", id)
+        .single();
+      if (readError) this.rethrow(readError);
+      return mapProduct(data as ProductRow);
+    } catch (error) {
+      this.rethrowLifecycle(error);
+    }
+  }
+
+  async listProductReferences(): Promise<ProductReferenceMap> {
+    try {
+      const { data, error } = await this.require()
+        .rpc("product_reference_counts", { p_product_id: null });
+      if (error) this.rethrowLifecycle(error);
+      const map: ProductReferenceMap = {};
+      for (const row of (data ?? []) as Record<string, number | string>[]) {
+        const id = String(row.product_id);
+        const counts: ProductReferenceCounts = {
+          sale_items: toNumber(row.sale_items),
+          return_items: toNumber(row.return_items),
+          stock_movements: toNumber(row.stock_movements),
+          online_order_items: toNumber(row.online_order_items),
+          stock_reservations: toNumber(row.stock_reservations),
+          total: toNumber(row.total),
+        };
+        if (counts.total > 0) map[id] = counts;
+      }
+      return map;
+    } catch (error) {
+      this.rethrowLifecycle(error);
+    }
+  }
+
+  /**
+   * Permanent delete through `public.delete_product` (0037): the capability,
+   * the history check and the audit row are all decided by the database, so a
+   * forged request is held to exactly the same lifecycle rules as the screen.
+   */
+  async deleteProduct(id: string): Promise<void> {
+    try {
+      const { error } = await this.require().rpc("delete_product", {
+        p_product_id: id,
+      });
+      if (error) this.rethrowLifecycle(error);
+    } catch (error) {
+      this.rethrowLifecycle(error);
+    }
   }
 
   // ── categories ─────────────────────────────────────────────────────────

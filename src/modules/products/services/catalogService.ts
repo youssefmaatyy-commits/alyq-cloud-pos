@@ -7,7 +7,7 @@ import {
   requirementForPriceChange,
 } from "@/modules/approvals/services/approvalService";
 import { getCatalogRepository } from "../data";
-import { AppError } from "../data/repository";
+import { AppError, type ProductReferenceCounts } from "../data/repository";
 import type { Category, NewCategory, Product } from "../types";
 import { categoryUsage, isDescendant, validateCategoryDraft, validateProductDraft, type CategoryFormValues, type ProductFormValues } from "../validation";
 import { resolveProductImages } from "./imageStorage";
@@ -20,6 +20,8 @@ const APP_ERROR_KEY: Record<string, string> = {
   DUPLICATE_BARCODE: "validation.barcodeTaken",
   CATEGORY_IN_USE: "categories.deleteBlockedTitle",
   CATEGORY_CYCLE: "categories.moveUnderSelf",
+  PRODUCT_HAS_HISTORY: "products.errorHasHistory",
+  FORBIDDEN: "common.forbidden",
   VALIDATION: "validation.fixErrors",
   NETWORK: "error.network",
   DB: "validation.serverError",
@@ -315,32 +317,74 @@ export async function deleteCategory(id: string, ctx: DeleteCategoryCheck): Prom
   await getCatalogRepository().deleteCategory(id);
 }
 
+/**
+ * Archive (`active = false`) or reactivate (`true`) a product. An archived
+ * product keeps every sale, movement, return, order and audit row that
+ * references it — it only stops being sellable: the POS grid, the storefront
+ * catalogue, the online checkout and the demo sale path all honour `active`.
+ *
+ * Live mode goes through `public.set_product_active` (0037), which re-checks
+ * `edit_product` and writes product.archived / product.reactivated inside the
+ * database, so the trail exists however the call was made. Demo mode records
+ * the same event from here, exactly as the price-change events are written —
+ * and fire-and-forget for the same reason: a failed audit row must not roll
+ * back a finished transition.
+ */
 export async function setProductActive(id: string, active: boolean): Promise<Product> {
   assertCanToggleProduct();
-  return getCatalogRepository().setProductActive(id, active);
+  const repository = getCatalogRepository();
+  const product = await repository.setProductActive(id, active);
+  if (repository.kind === "demo") {
+    void recordAudit({
+      action: active ? "product.reactivated" : "product.archived",
+      entity: "product",
+      entity_id: product.id,
+      entity_label: product.sku,
+      details: { product: product.name_en, sku: product.sku, previous: !active, next: active },
+    });
+  }
+  return product;
 }
 
 /**
- * Refused for everybody, at every privilege level — like `saleService.editSale`.
+ * Permanent delete — allowed only for a product with NO history.
  *
- * Neither repository implements a product delete, and that is not an oversight:
- * a product that has ever been sold is referenced by `sale_items`, by stock
- * movements and by returns, so deleting it would either fail on the foreign key
- * or erase the history the numbers on every report are built from. The supported
- * answer is `setProductActive(id, false)`, which keeps the record and stops the
- * till selling it.
- *
- * `delete_product` stays in the matrix, and the capability is asserted here
- * before the refusal, so the day a real delete path is built it is already gated
- * rather than gated by whoever remembers.
+ * The rule lives at the data layer in both modes, so a caller that skips this
+ * service gets the same answer: live mode through `public.delete_product`
+ * (0037: re-checks `delete_product`, counts the referencing rows in
+ * sale_items / return_items / stock_movements / online_order_items /
+ * stock_reservations and raises RESTRICT_VIOLATION on any, writes
+ * product.deleted before the delete, and cascades only to the two storefront
+ * tables that declared `on delete cascade`), demo mode through the same guard
+ * in the demo repository. Nothing in either path removes a historical row.
  */
-export async function deleteProduct(_id: string): Promise<never> {
+export async function deleteProduct(id: string): Promise<void> {
   assertCanDeleteProduct();
-  throw new AppError(
-    "VALIDATION",
-    "A product cannot be deleted once it has been sold. Deactivate it instead.",
-    "product",
-  );
+  const repository = getCatalogRepository();
+  // The label is read before the delete so the trail names what was removed;
+  // the price events above do the same for the same reason.
+  const product = (await repository.listProducts()).find((p) => p.id === id);
+  if (!product) throw new AppError("NOT_FOUND", `Product ${id} not found`);
+  await repository.deleteProduct(id);
+  if (repository.kind === "demo") {
+    void recordAudit({
+      action: "product.deleted",
+      entity: "product",
+      entity_id: product.id,
+      entity_label: product.sku,
+      details: { product: product.name_en, sku: product.sku, barcode: product.barcode },
+    });
+  }
+}
+
+/**
+ * Every product id that carries preserved history, with per-table counts —
+ * the input the products screen uses to offer Archive instead of a destructive
+ * action and to say why. Deleting still remains the repository's call: this
+ * map is for rendering, not for enforcement.
+ */
+export async function listProductReferences(): Promise<Record<string, ProductReferenceCounts>> {
+  return getCatalogRepository().listProductReferences();
 }
 
 export async function loadCatalog(): Promise<{ products: Product[]; categories: Category[] }> {

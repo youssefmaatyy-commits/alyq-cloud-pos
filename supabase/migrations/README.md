@@ -39,6 +39,7 @@ satisfies what the application code queries.
 | `0020_storefront_grants_and_coupon_check.sql` | explicit `grant select` on the new public tables (Supabase stopped granting by default) and the server-side coupon validity check |
 | `0021_identity_custom_roles.sql` | fourteen new capabilities, `profiles.email/phone/last_login_at/custom_role_id`, `custom_roles` (admin-defined overlays on a system role), `can()` consulting the custom role first, staff/role RPCs, session + user audit vocabulary |
 | `0022_business_controls.sql` | Phases 11–14 business control: `return.created` audit vocabulary for the enforced returns/refund service layer (further sections appended as each increment lands) |
+| `0037_product_lifecycle.sql` | safe product delete/archive lifecycle: `delete_product` (unused products only, reference-counted against the five history tables), `set_product_active` (idempotent archive/reactivate), `product_reference_counts`, and the `product.deleted` / `product.archived` / `product.reactivated` audit vocabulary |
 
 ## Column reference — `products`
 

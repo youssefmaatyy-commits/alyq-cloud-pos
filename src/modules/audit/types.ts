@@ -47,6 +47,14 @@ export const AUDIT_ACTIONS = [
   "sale.voided",
   "product.price_changed",
   "product.cost_changed",
+  // Phase 25 (0037): the safe delete/archive lifecycle. Written by the RPCs
+  // `public.set_product_active` / `public.delete_product` in live mode — so the
+  // event exists however the call was made — and by the catalog service in
+  // demo mode, exactly like `return.created`. A permanent delete is recorded
+  // BEFORE the row is removed: an entry written afterwards could never exist.
+  "product.deleted",
+  "product.archived",
+  "product.reactivated",
   "stock.adjusted",
   "stock.corrected",
   // Approval limits (Phase 12, requirement 2). Live mode writes these from

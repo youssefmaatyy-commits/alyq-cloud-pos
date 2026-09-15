@@ -34,6 +34,11 @@ const SUITES = [
   { id: "smoke", file: "scripts/smoke.dom.mjs", title: "DOM smoke (products, inventory, POS, returns, shifts)" },
   { id: "auth", file: "scripts/auth.flow.mjs", title: "Authentication acceptance flow" },
   { id: "store", file: "scripts/store.flow.mjs", title: "Storefront → POS flow (browse, checkout, approve, verify, cancel)" },
+  {
+    id: "lifecycle",
+    file: "scripts/lifecycle.flow.mjs",
+    title: "Product lifecycle (unused delete, referenced block, archive → hidden, reactivate, audit)",
+  },
   { id: "backup", file: "scripts/backup.flow.mjs", title: "Backup & recovery flow (snapshot, download, health, schedule, restore, permissions)" },
   { id: "crash", file: "scripts/crash.flow.mjs", title: "Crash recovery (ErrorBoundary: the screen, no leaked detail, the sibling survives)" },
   {
