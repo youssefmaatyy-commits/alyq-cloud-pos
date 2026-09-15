@@ -129,3 +129,14 @@ export function recoveryParams(parts: RecoveryLinkParts): URLSearchParams {
   }
   return params;
 }
+
+/**
+ * True when the location carries provider material a reset link would carry
+ * (`?code=…` or a token pair in the fragment). Used by bootstrapping code that
+ * must NOT purge an orphaned provider session while the very page it landed on
+ * is about to consume that material.
+ */
+export function carriesRecoveryMaterial(location: LocationLike = currentLocation()): boolean {
+  const params = recoveryParams(readRecoveryParts(location));
+  return params.has("code") || params.has("access_token");
+}

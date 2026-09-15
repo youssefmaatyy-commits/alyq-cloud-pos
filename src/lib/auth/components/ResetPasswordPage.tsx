@@ -28,8 +28,11 @@ type Phase = "checking" | "ready" | "failed" | "done";
  *      because the only action available is "request a new one" — and because
  *      distinguishing them would tell a stranger how close they got.
  *
- * Auditing happens in `AuthProvider.updatePassword` (`user.password_changed`),
- * not here: the screen reports, the service records.
+ * The consume gate fails closed: no recovery material in the URL means no
+ * form, and — unlike before — an already-signed-in session is NOT accepted as
+ * recovery authority, so this route can never be weaponised from a borrowed
+ * screen. Auditing happens in `authService` (`user.password_changed`, marked
+ * `via: "recovery_link"`), not here: the screen reports, the service records.
  */
 export function ResetPasswordPage() {
   const { t } = useI18n();

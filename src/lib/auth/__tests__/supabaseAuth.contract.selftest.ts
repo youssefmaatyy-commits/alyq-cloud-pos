@@ -714,12 +714,161 @@ test("a link the provider rejects is reported as expired, whatever the reason", 
   );
 });
 
-test("a reset page with no recovery material is unauthenticated, not expired", async () => {
-  const stub = makeStub({ session: null });
+test("a reset page with no recovery material is unauthenticated — even while signed in", async () => {
+  // A clean stranger …
+  const stranger = makeStub({ session: null });
   assert.deepEqual(
-    await new SupabaseUserRepository(stub.client).consumeRecoveryLink({ search: "", hash: "#/reset-password" }),
+    await new SupabaseUserRepository(stranger.client).consumeRecoveryLink({ search: "", hash: "#/reset-password" }),
     { ok: false, code: "not_authenticated" },
   );
+
+  // … and somebody holding a perfectly valid NORMAL session get the same
+  // answer. A session is not recovery authority — it cannot unlock a page
+  // that sets passwords without re-proving anything. (Regression pin: this
+  // used to succeed via a session fallback in consumeRecoveryLink.)
+  const signedIn = makeStub();
+  const repository = new SupabaseUserRepository(signedIn.client);
+  assert.deepEqual(await repository.consumeRecoveryLink({ search: "", hash: "#/reset-password" }), {
+    ok: false,
+    code: "not_authenticated",
+  });
+  assert.deepEqual(await repository.consumeRecoveryLink({ search: "", hash: "" }), {
+    ok: false,
+    code: "not_authenticated",
+  });
+  // Nothing was exchanged or adopted along the way.
+  assert.ok(
+    !signedIn.calls.some((c) => c.startsWith("exchangeCodeForSession") || c.startsWith("setSession")),
+    "no authority was conjured from the existing session",
+  );
+});
+
+test("a valid PKCE link works once, and only once, per browser", async () => {
+  const stub = makeStub();
+  const repository = new SupabaseUserRepository(stub.client);
+
+  const parts = { search: "?code=pkce-once-only", hash: "#/reset-password" };
+  assert.deepEqual(await repository.consumeRecoveryLink(parts), { ok: true });
+  // Refresh / back-button / re-paste of the SAME link: refused localy, before
+  // the provider is even asked. (Logout → retry must not re-create authority;
+  // the provider also makes PKCE codes single-use server-side.)
+  assert.deepEqual(await repository.consumeRecoveryLink(parts), { ok: false, code: "expired" });
+  assert.equal(
+    stub.calls.filter((c) => c === "exchangeCodeForSession:pkce-once-only").length,
+    1,
+    "the provider was asked exactly once",
+  );
+});
+
+test("implicit-flow tokens are recovery authority only when the URL says type=recovery", async () => {
+  const stub = makeStub();
+  const repository = new SupabaseUserRepository(stub.client);
+
+  // A bare token pair — e.g. a copied NORMAL session pasted into this shape —
+  // is not a recovery link and is refused without being adopted.
+  const masquerade = { search: "", hash: "#/reset-password?access_token=pasted-session&refresh_token=ref" };
+  assert.deepEqual(await repository.consumeRecoveryLink(masquerade), { ok: false, code: "expired" });
+  assert.ok(!stub.calls.includes("setSession:pasted-session"), "pasted session tokens were never adopted");
+
+  // The same pair carrying the marker the provider appends to recovery emails
+  // works — once.
+  const genuine = makeStub();
+  const genuineRepo = new SupabaseUserRepository(genuine.client);
+  const parts = { search: "", hash: "#/reset-password?access_token=implicit-once&refresh_token=ref&type=recovery" };
+  assert.deepEqual(await genuineRepo.consumeRecoveryLink(parts), { ok: true });
+  assert.deepEqual(await genuineRepo.consumeRecoveryLink(parts), { ok: false, code: "expired" });
+  assert.equal(
+    genuine.calls.filter((c) => c === "setSession:implicit-once").length,
+    1,
+    "the implicit pair was spent exactly once",
+  );
+});
+
+test("a signed-in change needs the CURRENT password — and a wrong one changes nothing", async () => {
+  // No session at all: there is nobody to re-prove.
+  const anonymous = makeStub({ session: null });
+  assert.deepEqual(await new SupabaseUserRepository(anonymous.client).changePassword("CorrectHorse1", "NewPassword1"), {
+    ok: false,
+    code: "not_authenticated",
+  });
+  assert.equal(anonymous.updateCalls.length, 0, "no credential write without a session");
+
+  // A real session, but the current password is wrong: refused, and the
+  // session/credential stay exactly as they were.
+  const wrong = makeStub();
+  const wrongRepo = new SupabaseUserRepository(wrong.client);
+  assert.deepEqual(await wrongRepo.changePassword("WrongHorse1", "NewPassword1"), {
+    ok: false,
+    code: "invalid_credentials",
+  });
+  assert.equal(wrong.updateCalls.length, 0, "the new password never reached the provider");
+  assert.deepEqual(wrong.signOutScopes, [], "and the session was not disturbed");
+
+  // Weak proposals are refused before any verification travel.
+  const weak = makeStub();
+  assert.deepEqual(await new SupabaseUserRepository(weak.client).changePassword("CorrectHorse1", "short"), {
+    ok: false,
+    code: "weak_password",
+  });
+  assert.equal(weak.updateCalls.length, 0);
+});
+
+test("a username account changes its password: re-proof goes through the same door login uses", async () => {
+  const stub = makeStub(); // u-admin session; profile username "admin" (no @)
+  const repository = new SupabaseUserRepository(stub.client);
+
+  const outcome = await repository.changePassword("CorrectHorse1", "NewPassword1");
+  assert.deepEqual(outcome, { ok: true });
+  assert.ok(
+    stub.calls.includes("functions:alyq-auth:login"),
+    "the current password was re-verified via the alyq-auth function, exactly like a username login",
+  );
+  assert.deepEqual(stub.updateCalls, [{ password: "NewPassword1" }]);
+});
+
+test("an email-address account re-proves directly with the provider", async () => {
+  const stub = makeStub({
+    profiles: [
+      {
+        id: "u-mail",
+        username: "mail@alyq.example",
+        name: "Mail Login",
+        role: "admin",
+        active: true,
+        email: "mail@alyq.example",
+        phone: null,
+        custom_role_id: null,
+        last_login_at: null,
+        created_at: "2026-01-05T00:00:00.000Z",
+      },
+    ],
+    session: { access_token: "t", expires_at: 1900000000, user: { id: "u-mail", email: "mail@alyq.example" } },
+  });
+  const repository = new SupabaseUserRepository(stub.client);
+
+  const outcome = await repository.changePassword("CorrectHorse1", "NewPassword1");
+  assert.deepEqual(outcome, { ok: true });
+  assert.ok(stub.calls.includes("signInWithPassword:mail@alyq.example"), "email accounts verify with the provider");
+  assert.ok(!stub.calls.includes("functions:alyq-auth:login"), "and do not detour through the edge function");
+  assert.deepEqual(stub.updateCalls, [{ password: "NewPassword1" }]);
+});
+
+test("a throttled re-proof is named, and a deactivated account cannot change its password", async () => {
+  const throttled = makeStub({ functionError: { status: 429, body: { ok: false, code: "rate_limited" } } });
+  assert.deepEqual(await new SupabaseUserRepository(throttled.client).changePassword("CorrectHorse1", "NewPassword1"), {
+    ok: false,
+    code: "rate_limited",
+  });
+  assert.equal(throttled.updateCalls.length, 0);
+
+  const inactive = makeStub({
+    session: { access_token: "t", expires_at: 1900000000, user: { id: "u-off", email: "gone@alyq.example" } },
+  });
+  assert.deepEqual(await new SupabaseUserRepository(inactive.client).changePassword("CorrectHorse1", "NewPassword1"), {
+    ok: false,
+    code: "not_authenticated",
+  });
+  assert.equal(inactive.updateCalls.length, 0, "no credential write for a deactivated account");
 });
 
 test("a recovery token does not resurrect a deactivated account", async () => {

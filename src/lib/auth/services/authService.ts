@@ -50,6 +50,7 @@ import {
   writeStoredSession,
 } from "./sessionStore";
 import { broadcastAuth } from "./authEvents";
+import { recordAudit } from "@/modules/audit/services/auditService";
 
 /** Idle lifetime of a session without "remember me" (demo model). */
 export const SESSION_IDLE_MS = 8 * 60 * 60 * 1000;
@@ -318,6 +319,23 @@ export function adoptProviderSession(live: LiveSessionInfo, remember = false): A
   return session;
 }
 
+/**
+ * May the app turn a provider session it *found* (on boot, from a refresh or
+ * focus event, or from the provider's own event channel) into its own
+ * session? Only when an app record already attests to it.
+ *
+ * `persistSession: true` on the Supabase client means a provider session can
+ * appear "for free" — most importantly, it would silently resurrect someone
+ * who signed in with remember-me OFF and closed the tab, undoing exactly the
+ * promise that checkbox makes. So adoption is app-record-authoritative: the
+ * record was written by an actual sign-in (or a consumed recovery link), and
+ * a provider session with no record behind it is an orphan to be signed out,
+ * not a session to be believed.
+ */
+export function shouldAdoptFoundProviderSession(appSessionHeld: boolean): boolean {
+  return appSessionHeld;
+}
+
 /** Drop the local record without asking the provider (a signed-out event). */
 export function forgetSession(): void {
   clearStoredSession();
@@ -426,6 +444,25 @@ export async function requestPasswordReset(identifier: string, redirectTo?: stri
 }
 
 /**
+ * Record that a password was *successfully* changed. Written here, once, so
+ * the recovery flow and the reauthenticated change-password flow each produce
+ * exactly one audit row carrying how the change was authorised. Never allowed
+ * to break the flow it describes.
+ */
+function auditPasswordChanged(via: "recovery_link" | "current_password"): void {
+  const actor = getCachedSession()?.user ?? null;
+  void recordAudit({
+    action: "user.password_changed",
+    entity: "user",
+    entity_id: actor?.id ?? "",
+    entity_label: actor?.name || actor?.username || "—",
+    details: { self_service: true, via },
+    user_id: actor?.id ?? "",
+    user_name: actor?.name ?? "",
+  });
+}
+
+/**
  * Set a new password on the current (or recovering) session.
  *
  * Live mode: `auth.updateUser({ password })` — the provider validates strength
@@ -434,7 +471,25 @@ export async function requestPasswordReset(identifier: string, redirectTo?: stri
  */
 export async function updatePassword(newPassword: string): Promise<PasswordUpdateResult> {
   try {
-    return await getUserRepository().updatePassword(newPassword);
+    const outcome = await getUserRepository().updatePassword(newPassword);
+    if (outcome.ok) auditPasswordChanged("recovery_link");
+    return outcome;
+  } catch {
+    return { ok: false, code: "network" };
+  }
+}
+
+/**
+ * Change the signed-in user's own password after re-proving the current one.
+ * This is deliberately a different door from recovery: no emailed link, no
+ * recovery state — the current password is the authority, checked by the same
+ * `authenticate` machinery a daily login uses (usernames included).
+ */
+export async function changePassword(currentPassword: string, newPassword: string): Promise<PasswordUpdateResult> {
+  try {
+    const outcome = await getUserRepository().changePassword(currentPassword, newPassword);
+    if (outcome.ok) auditPasswordChanged("current_password");
+    return outcome;
   } catch {
     return { ok: false, code: "network" };
   }

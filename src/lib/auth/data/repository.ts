@@ -113,13 +113,34 @@ export interface UserRepository {
 
   /**
    * Turn a reset link into a usable session, so `updatePassword` has something to
-   * act on. Demo mode has no links to consume: it succeeds only when a session
-   * already exists, which is the self-service change case.
+   * act on.
+   *
+   * The ONLY acceptable authority here is recovery material in the URL itself.
+   * A normal, already-signed-in session never counts: somebody who walks up to
+   * `/reset-password` with nothing (or with only another person's session on the
+   * browser) must get `not_authenticated`. Demo mode has no links at all, so it
+   * always refuses there.
    */
   consumeRecoveryLink(parts: RecoveryLinkParts): Promise<RecoveryLinkResult>;
 
-  /** Set a new password on the signed-in (or recovering) session. */
+  /**
+   * Set a new password on a session that was authorised by a recovery link
+   * (see `consumeRecoveryLink`). No current password is asked for: the emailed
+   * link IS the proof, and the accident case is handled by the session being
+   * short-lived and single-use.
+   */
   updatePassword(newPassword: string): Promise<PasswordUpdateResult>;
+
+  /**
+   * Change the signed-in user's own password from inside the app. This is the
+   * mirror image of the recovery flow: no email link, no recovery state —
+   * instead the CURRENT password must be re-verified (`invalid_credentials`
+   * when it is not), so a borrowed device or an unattended screen is not a
+   * password-change button. Username accounts re-verify through the same
+   * `alyq-auth` function their login uses; email accounts verify directly with
+   * the provider.
+   */
+  changePassword(currentPassword: string, newPassword: string): Promise<PasswordUpdateResult>;
 
   /** Stamp `last_login_at` for a successful sign-in. Best effort. */
   touchLogin(userId: string): Promise<void>;

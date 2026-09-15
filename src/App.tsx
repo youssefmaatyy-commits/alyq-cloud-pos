@@ -2,6 +2,7 @@ import { HashRouter, Navigate, Route, Routes } from "react-router-dom";
 import { I18nProvider } from "@/lib/i18n/I18nProvider";
 import {
   AuthProvider,
+  ChangePasswordPage,
   ForgotPasswordPage,
   LoginRoute,
   RequireAuth,
@@ -186,6 +187,10 @@ export default function App() {
                     module provider loads business data. */}
                 <Route path="/forgot-password" element={<ForgotPasswordPage />} />
                 <Route path="/reset-password" element={<ResetPasswordPage />} />
+                {/* Signed-in self-service password change. Public-routed like the
+                    other auth screens (no shell, no module data); inside it the
+                    page itself demands a session and the CURRENT password. */}
+                <Route path="/change-password" element={<ChangePasswordPage />} />
               {/* Its own boundary: a customer who meets a crash gets the shop's
                   screen, not the back office's, and the failure stays on the
                   storefront instead of blanking the app. The `path="/store"` literal

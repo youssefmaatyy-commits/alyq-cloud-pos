@@ -29,7 +29,10 @@ import {
   validateSession,
   requestPasswordReset as requestResetRequest,
   updatePassword as updatePasswordRequest,
+  changePassword as changePasswordRequest,
+  shouldAdoptFoundProviderSession,
 } from "../services/authService";
+import { carriesRecoveryMaterial } from "../services/recoveryUrl";
 import { resetSessionCache } from "../services/sessionStore";
 import { subscribeAuthEvents } from "../services/authEvents";
 import { getAuthMode, getUserRepository } from "../data";
@@ -58,6 +61,11 @@ export interface AuthContextValue {
   requestPasswordReset: (identifier: string, redirectTo?: string) => Promise<PasswordResetOutcome>;
   /** Set a new password on the current (or recovering) session. */
   updatePassword: (password: string) => Promise<PasswordUpdateResult>;
+  /**
+   * Signed-in self-service password change: the CURRENT password must be
+   * re-proven first, so a borrowed screen is not a password-change button.
+   */
+  changePassword: (current: string, next: string) => Promise<PasswordUpdateResult>;
   /** True while a provider session is being read back on boot. */
   syncing: boolean;
 }
@@ -102,6 +110,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<AuthErrorCode | null>(null);
   const [syncing, setSyncing] = useState(false);
   const booted = useRef(false);
+  /**
+   * The subscription below is mounted once (re-subscribing would drop provider
+   * events mid-flight), so it cannot close over `session` — it reads this ref
+   * instead, to decide whether an event may adopt a provider session.
+   */
+  const sessionRef = useRef<AuthSession | null>(null);
 
   // ── boot ────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -119,6 +133,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     // Live mode: the provider is the authority, so ask it and adopt what it
     // says — including "nothing", which clears a record the browser outlived.
+    //
+    // Adoption is app-record-authoritative. Because the Supabase client is
+    // configured with `persistSession: true`, a provider session can spring
+    // into existence for someone who signed in with remember-me OFF and merely
+    // closed the tab — and "remember me: off" is a promise, so a provider
+    // session with no app record behind it is ended here rather than believed.
+    // The one exception is a URL that carries recovery material: the sign-out
+    // must not race the reset page that's about to consume that exact link.
     let cancelled = false;
     setSyncing(true);
     void (async () => {
@@ -126,6 +148,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const live = await getUserRepository().currentSession();
         if (cancelled) return;
         if (!live || !live.user) {
+          forgetSession();
+          setSession(null);
+          setStatus("anonymous");
+          return;
+        }
+        if (!shouldAdoptFoundProviderSession(restored !== null)) {
+          if (carriesRecoveryMaterial()) return; // leave the link for the reset page
+          await getUserRepository().signOut().catch(() => undefined);
           forgetSession();
           setSession(null);
           setStatus("anonymous");
@@ -223,6 +253,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // ── provider events (live) + other tabs (both modes) ────────────────────
   useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
+
+  useEffect(() => {
     const unsubscribeProvider =
       getAuthMode() === "supabase"
         ? getUserRepository().onAuthChange((event) => {
@@ -233,6 +267,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               setEndReason("signed_out");
               return;
             }
+            // A provider event (SIGNED_IN, TOKEN_REFRESHED, USER_UPDATED) is
+            // corroboration, not authority by itself: without a session the
+            // app already holds, it must not create one. Conjuring a session
+            // here is precisely how remember-me-off logins would come back
+            // after reload, and how a recovery link's implicit SIGNED_IN would
+            // leak into the app without the reset page asking for it.
+            if (!shouldAdoptFoundProviderSession(sessionRef.current !== null)) return;
             const live = {
               token: "",
               issued_at: new Date().toISOString(),
@@ -244,7 +285,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             // expiry; if that fails, keep the user we were just handed.
             void (async () => {
               const current = await getUserRepository().currentSession().catch(() => null);
-              const adopted = adoptProviderSession(current ?? live, session?.remember ?? false);
+              const adopted = adoptProviderSession(current ?? live, sessionRef.current?.remember ?? false);
               if (!adopted) return;
               setSession(adopted);
               setStatus("authenticated");
@@ -289,10 +330,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       unsubscribeProvider();
       unsubscribeTabs();
     };
-    // `session?.remember` is read inside the callback; re-subscribing on every
-    // session change would drop provider events mid-flight, so the ref-less
-    // read is intentional and the subscription is mounted once.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // `sessionRef` is read inside the callbacks; re-subscribing on every
+    // session change would drop provider events mid-flight, so the read goes
+    // through the ref and the subscription is mounted once. An empty
+    // dependency array is intentional here.
   }, []);
 
   // ── actions ─────────────────────────────────────────────────────────────
@@ -362,22 +403,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return outcome;
   }, [session]);
 
+  // Auditing for both password flows happens once, in `authService`
+  // (`user.password_changed` with a `via` detail), not here: the screen
+  // reports, the service records.
   const updatePassword = useCallback(async (password: string) => {
-    const outcome = await updatePasswordRequest(password);
-    if (outcome.ok) {
-      auditSession("session.refreshed", session?.user ?? null, { reason: "password_changed" });
-      void recordAudit({
-        action: "user.password_changed",
-        entity: "user",
-        entity_id: session?.user?.id ?? "",
-        entity_label: session?.user?.name ?? "",
-        details: { self_service: true },
-        user_id: session?.user?.id ?? "",
-        user_name: session?.user?.name ?? "",
-      });
-    }
-    return outcome;
-  }, [session]);
+    return updatePasswordRequest(password);
+  }, []);
+
+  const changePassword = useCallback(async (current: string, next: string) => {
+    return changePasswordRequest(current, next);
+  }, []);
 
   const clearError = useCallback(() => setError(null), []);
 
@@ -397,6 +432,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       revalidate,
       requestPasswordReset,
       updatePassword,
+      changePassword,
       syncing,
     }),
     [
@@ -412,6 +448,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       revalidate,
       requestPasswordReset,
       updatePassword,
+      changePassword,
     ],
   );
 

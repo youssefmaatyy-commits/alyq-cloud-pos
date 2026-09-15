@@ -6,6 +6,7 @@ export { LoginRoute, RequireAuth, resolveNextTarget } from "./components/Require
 export { LoginPage } from "./components/LoginPage";
 export { ForgotPasswordPage } from "./components/ForgotPasswordPage";
 export { ResetPasswordPage } from "./components/ResetPasswordPage";
+export { ChangePasswordPage } from "./components/ChangePasswordPage";
 export { PasswordField } from "./components/PasswordField";
 
 export {

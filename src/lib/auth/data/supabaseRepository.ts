@@ -25,6 +25,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseClient } from "@/lib/supabase/client";
 import { buildAuthUser } from "../services/identity";
+import { recoveryMaterialConsumed, markRecoveryMaterialConsumed } from "../services/recoveryOnce";
 import { recoveryParams } from "../services/recoveryUrl";
 import { getCachedSession, readStoredSession } from "../services/sessionStore";
 import type { AuthUser, PasswordResetOutcome } from "../types";
@@ -464,12 +465,26 @@ export class SupabaseUserRepository implements UserRepository {
     const refreshToken = params.get("refresh_token");
 
     if (!code && !(accessToken && refreshToken)) {
-      // No recovery material in the URL: fall back to whatever session the
-      // provider already holds, which covers a link followed in a browser that
-      // was signed in all along.
-      const existing = await this.currentSession().catch(() => null);
-      return existing ? { ok: true } : { ok: false, code: "not_authenticated" };
+      // No recovery material in the URL, no authority — and that is the whole
+      // of it. A normal, already-signed-in provider session is explicitly NOT
+      // recovery authority, so this route refuses instead of borrowing it and
+      // quietly granting whoever holds the browser a password change.
+      return { ok: false, code: "not_authenticated" };
     }
+
+    if (!code) {
+      // The implicit flow delivers a token pair. That pair is only trusted as
+      // RECOVERY material when the URL says so (`type=recovery` is what the
+      // provider appends to recovery emails); otherwise any session tokens
+      // pasted into this URL shape would unlock the change form.
+      if (params.get("type") !== "recovery") return { ok: false, code: "expired" };
+    }
+
+    // And only once per browser: a LINK is an email effect. Reusing consumed
+    // material — from the back button, a refresh after a successful change, or
+    // a logout that leaves the URL behind — must fail, not re-authorise.
+    const material = code ?? `${accessToken}:${refreshToken}`;
+    if (recoveryMaterialConsumed(material)) return { ok: false, code: "expired" };
 
     try {
       if (code) {
@@ -489,7 +504,14 @@ export class SupabaseUserRepository implements UserRepository {
     // A token is not an identity: the profile still has to exist and be active,
     // or a deactivated account could reset its way back in.
     const session = await this.currentSession().catch(() => null);
-    return session?.user ? { ok: true } : { ok: false, code: "expired" };
+    if (!session?.user) return { ok: false, code: "expired" };
+
+    // The authority is real — burn it locally so this link cannot be spent
+    // twice from this browser (the provider enforces single-use server-side
+    // for PKCE codes and rotation for refresh tokens; this is the client-side
+    // belt to those suspenders).
+    markRecoveryMaterialConsumed(material);
+    return { ok: true };
   }
 
   async updatePassword(newPassword: string): Promise<PasswordUpdateResult> {
@@ -508,6 +530,40 @@ export class SupabaseUserRepository implements UserRepository {
     } catch {
       return { ok: false, code: "network" };
     }
+  }
+
+  /**
+   * Signed-in self-service change. The current password is re-proven by a
+   * fresh sign-in round-trip THROUGH `authenticate` — the same door an ordinary
+   * login walks through, so a username account re-verifies against the
+   * `alyq-auth` function and an email account against the provider directly —
+   * and only when that succeeds is the new password written. A wrong current
+   * password never touches the session or the credential.
+   */
+  async changePassword(currentPassword: string, newPassword: string): Promise<PasswordUpdateResult> {
+    if (newPassword.length < 8) return { ok: false, code: "weak_password" };
+
+    const live = await this.currentSession().catch(() => null);
+    if (!live?.user) return { ok: false, code: "not_authenticated" };
+
+    // The login handle for this session: a bare username goes via the edge
+    // function, a full email address straight to the provider — exactly the
+    // routing `authenticate` already implements.
+    const identifier = (live.user.username || live.user.email || "").trim();
+    if (!identifier) return { ok: false, code: "not_authenticated" };
+
+    const reauth = await this.authenticate(identifier, currentPassword);
+    if (!reauth.ok) {
+      if (reauth.code === "invalid_credentials") return { ok: false, code: "invalid_credentials" };
+      if (reauth.code === "rate_limited") return { ok: false, code: "rate_limited" };
+      // A deactivated account's current-session check above already clears the
+      // provider session; by the time authenticate reports it, "signed out" is
+      // the state this page is actually in.
+      if (reauth.code === "user_inactive") return { ok: false, code: "not_authenticated" };
+      return { ok: false, code: reauth.code === "network" ? "network" : "unknown" };
+    }
+
+    return this.updatePassword(newPassword);
   }
 
   async touchLogin(_userId: string): Promise<void> {

@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { Link, Navigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { Button, Field, TextInput } from "@/components/ui";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { resetPageUrl } from "../services/recoveryUrl";
@@ -22,7 +22,7 @@ import type { PasswordResetErrorCode } from "../types";
  */
 export function ForgotPasswordPage() {
   const { t } = useI18n();
-  const { requestPasswordReset, status, mode } = useAuth();
+  const { requestPasswordReset, status, mode, user } = useAuth();
   const [identifier, setIdentifier] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
@@ -30,9 +30,28 @@ export function ForgotPasswordPage() {
     { ok: true; channel: "email" | "demo" } | { ok: false; code: PasswordResetErrorCode } | null
   >(null);
 
-  // Somebody who is already signed in does not need a link: the reset page will
-  // take the session they have.
-  if (status === "authenticated") return <Navigate to="/reset-password" replace />;
+  // Somebody who is already signed in does not need a link — and the screen
+  // says exactly that instead of wandering off. The old behaviour redirected
+  // to /reset-password, which turned any live session into silent password-
+  // change authority; the honest route is the change-password screen, which
+  // asks for the current password first.
+  if (status === "authenticated") {
+    return (
+      <AuthScreen
+        title={t("auth.forgot.title")}
+        subtitle={user ? `${t("auth.signedInAs")} ${user.name}` : undefined}
+      >
+        <p role="status" className="rounded-xl bg-sky-50 px-3 py-2 text-xs font-semibold text-sky-900">
+          {t("auth.forgot.signedInNotice")}
+        </p>
+        <div className="mt-4">
+          <Link to="/change-password">
+            <Button className="w-full">{t("auth.forgot.changePasswordLink")}</Button>
+          </Link>
+        </div>
+      </AuthScreen>
+    );
+  }
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();

@@ -505,6 +505,106 @@ await step(9, "Verify session expiry ends the session", async () => {
   return out;
 });
 
+// ── STEP 10 · the forgot screen never silently turns a session into authority ─
+await step(10, "A signed-in user is notified, not silently redirected, on the forgot screen", async () => {
+  const out = [];
+  const reached = await boot({ seedSession: seededSession({ expiresInMs: 3_600_000 }) });
+  if (!reached.isSignedIn()) throw new Error("the seeded session was not restored for this step");
+  await reached.navigate("#/forgot-password");
+  await sleep(700);
+  if (reached.dom.window.location.hash !== "#/forgot-password") {
+    throw new Error(
+      `the page wandered off to ${reached.dom.window.location.hash} — a session is quietly unlocking the reset screen again`,
+    );
+  }
+  if (!reached.bodyText().includes("You are already signed in")) {
+    throw new Error("no explicit signed-in notice is shown");
+  }
+  if (reached.bodyText().includes("This reset link is no longer valid")) {
+    throw new Error("a misleading failure state mixed with the notice");
+  }
+  if (!reached.byText("Change your password")) {
+    throw new Error("the notice does not lead to the change-password screen");
+  }
+  out.push("no auto-redirect to /reset-password: the URL stayed #/forgot-password");
+  out.push("explicit notice shown instead, with a way to the change-password screen");
+  return out;
+});
+
+// ── STEP 11 · recovery fails closed; signed-in change re-proves the password ─
+await step(11, "Direct reset never opens from a session; change-password wants the current one", async () => {
+  const out = [];
+  const NEW_PASSWORD = "BrandNew1Password";
+
+  // (a) A perfectly valid NORMAL session cannot open the reset form. The
+  //     session comes from a REAL login — a seeded record alone carries no
+  //     directory identity for the re-proof below.
+  const holder = await boot();
+  await holder.signIn("admin");
+  await holder.navigate("#/reset-password");
+  await sleep(800);
+  if (!holder.bodyText().includes("This reset link is no longer valid")) {
+    throw new Error("the reset page did not fail closed for a signed-in visitor");
+  }
+  if (holder.document.querySelector("input[type='password']")) {
+    throw new Error("a password field rendered with no recovery authority");
+  }
+  out.push("signed-in visitor + direct #/reset-password → refused, no password form rendered");
+
+  // (b) A clean stranger gets the same closed door.
+  const stranger = await boot();
+  await stranger.navigate("#/reset-password");
+  await sleep(800);
+  if (!stranger.bodyText().includes("This reset link is no longer valid")) {
+    throw new Error("a clean stranger was not refused");
+  }
+  if (stranger.document.querySelector("input[type='password']")) {
+    throw new Error("a password field rendered for a stranger");
+  }
+  out.push("clean stranger → same refusal (fail-closed both ways)");
+
+  // (c) The honest change route re-proves: a wrong current password is refused
+  //     and changes nothing.
+  await holder.navigate("#/change-password");
+  await sleep(800);
+  const currentField = holder.document.querySelector("input[autocomplete='current-password']");
+  const newFields = [...holder.document.querySelectorAll("input[autocomplete='new-password']")];
+  if (!currentField || newFields.length < 2) throw new Error("the change form did not render its three fields");
+  holder.typeInto(currentField, "not-the-password");
+  holder.typeInto(newFields[0], NEW_PASSWORD);
+  holder.typeInto(newFields[1], NEW_PASSWORD);
+  holder.clickEl(holder.byText("Save new password"));
+  await sleep(2_500);
+  if (!holder.bodyText().includes("The current password is incorrect")) {
+    throw new Error("a wrong current password was not refused");
+  }
+  out.push("a wrong current password is refused without touching the credential");
+
+  // (d) The right one works — and the change is real at the login door.
+  holder.typeInto(currentField, DEMO_PASSWORD);
+  holder.clickEl(holder.byText("Save new password"));
+  await sleep(2_500);
+  if (!holder.bodyText().includes("Your password was changed")) {
+    throw new Error("a correct current password did not change the password");
+  }
+  holder.clickEl(holder.byText("Back to dashboard"));
+  await sleep(600);
+  await holder.signOut();
+
+  holder.typeInto(holder.usernameField(), "admin");
+  holder.typeInto(holder.passwordField(), DEMO_PASSWORD);
+  holder.clickEl(holder.byText("Sign in"));
+  await sleep(2_500);
+  if (holder.isSignedIn()) throw new Error("the OLD password still signs in after the change");
+  out.push("the old password no longer signs in");
+
+  await holder.signIn("admin", NEW_PASSWORD);
+  if (!holder.isSignedIn()) throw new Error("the new password did not sign in");
+  await holder.signOut();
+  out.push("the new password signs in — the change went through the real verifier, audit-trailed");
+  return out;
+});
+
 // ── summary ───────────────────────────────────────────────────────────────
 const count = (s) => results.filter((r) => r.status === s).length;
 console.log("\n──────── summary ────────");

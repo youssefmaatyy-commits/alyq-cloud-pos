@@ -18,6 +18,7 @@ import { normalizeRole } from "@/lib/permissions/roles";
 import { activeCustomRole } from "@/lib/permissions/customRoleStore";
 import { createVerifier, verifyPassword } from "../services/password";
 import { buildAuthUser } from "../services/identity";
+import { recoveryParams } from "../services/recoveryUrl";
 import { getCachedSession, readStoredSession } from "../services/sessionStore";
 import {
   findStaffById,
@@ -143,15 +144,18 @@ export class DemoUserRepository implements UserRepository {
   }
 
   /**
-   * Offline there is no email and therefore no link: the only recovery path is a
-   * person who is already signed in changing their own password (or an admin
-   * resetting it from Settings → Users). Anything else is reported as
-   * unauthenticated rather than pretending a link was consumed.
+   * Offline there is no email and therefore no link, so nothing can ever be
+   * recovered here. A session — any session — is not a link and is not
+   * accepted in its place: signed-in users change their own password through
+   * `changePassword` (which asks for the current one), or an admin resets it
+   * from Settings → Users. URL material is reported as expired rather than
+   * pretending a link was understood; no material is reported as
+   * unauthenticated.
    */
-  async consumeRecoveryLink(_parts: RecoveryLinkParts): Promise<RecoveryLinkResult> {
-    void _parts;
-    const session = getCachedSession() ?? readStoredSession()?.session ?? null;
-    return session ? { ok: true } : { ok: false, code: "not_authenticated" };
+  async consumeRecoveryLink(parts: RecoveryLinkParts): Promise<RecoveryLinkResult> {
+    const params = recoveryParams(parts);
+    const hasMaterial = Boolean(params.get("code")) || Boolean(params.get("access_token"));
+    return hasMaterial ? { ok: false, code: "expired" } : { ok: false, code: "not_authenticated" };
   }
 
   async updatePassword(newPassword: string): Promise<PasswordUpdateResult> {
@@ -167,6 +171,30 @@ export class DemoUserRepository implements UserRepository {
       password_updated_at: new Date().toISOString(),
     });
     return { ok: true };
+  }
+
+  /**
+   * Signed-in self-service change, offline. The current password is re-proven
+   * against the stored verifier through the very same `authenticate` the login
+   * screen uses — so a wrong one is simply `invalid_credentials` and nothing
+   * changes, and a deactivated account is refused as not authenticated.
+   */
+  async changePassword(currentPassword: string, newPassword: string): Promise<PasswordUpdateResult> {
+    if (newPassword.length < 8) return { ok: false, code: "weak_password" };
+
+    const session = getCachedSession() ?? readStoredSession()?.session ?? null;
+    const userId = session?.user?.id ?? "";
+    const entry = findStaffById(userId);
+    if (!entry) return { ok: false, code: "not_authenticated" };
+
+    const reauth = await this.authenticate(entry.username, currentPassword);
+    if (!reauth.ok) {
+      if (reauth.code === "invalid_credentials") return { ok: false, code: "invalid_credentials" };
+      if (reauth.code === "user_inactive") return { ok: false, code: "not_authenticated" };
+      return { ok: false, code: reauth.code === "network" ? "network" : "unknown" };
+    }
+
+    return this.updatePassword(newPassword);
   }
 
   async touchLogin(userId: string): Promise<void> {

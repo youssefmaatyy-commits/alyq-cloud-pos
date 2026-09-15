@@ -106,6 +106,13 @@ export type PasswordResetErrorCode =
   | "weak_password"
   | "not_authenticated"
   /**
+   * The signed-in flow re-proves the CURRENT password before changing it, and
+   * this is the verdict when that proof fails. Only produced by
+   * `changePassword`; never by the recovery flow, which deliberately cannot
+   * distinguish between its refusals.
+   */
+  | "invalid_credentials"
+  /**
    * A recovery link that expired, was already used, or does not parse. All three
    * report the same code on purpose: the only action anyone can take is "ask for
    * a new link", and distinguishing them would tell a stranger how close they got.

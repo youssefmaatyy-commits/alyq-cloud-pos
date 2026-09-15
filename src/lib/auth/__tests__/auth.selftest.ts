@@ -34,13 +34,20 @@ import {
   SESSION_ABSOLUTE_MS,
   SESSION_IDLE_MS,
   SESSION_REMEMBER_IDLE_MS,
+  changePassword,
   createSession,
   idleTtlFor,
   isSessionExpired,
   restoreSession,
+  shouldAdoptFoundProviderSession,
+  signIn,
   touchSession,
 } from "../services/authService";
 import { getDemoUserRepository } from "../data/demoRepository";
+import { findStaffByUsername, upsertStaffEntry } from "../data/staffDirectory";
+import { carriesRecoveryMaterial } from "../services/recoveryUrl";
+import { resetRecoveryMarksForTests } from "../services/recoveryOnce";
+import { getAuditRepository } from "@/modules/audit/data";
 import { APP_ROLES, hasCapability, normalizeRole } from "@/lib/permissions/roles";
 import { capabilityForPath } from "@/lib/permissions/routes";
 
@@ -57,8 +64,23 @@ function installStorageStub(): { local: Map<string, string>; session: Map<string
   });
   const local = new Map<string, string>();
   const session = new Map<string, string>();
-  Object.defineProperty(globalThis, "localStorage", { value: make(local), configurable: true });
-  Object.defineProperty(globalThis, "sessionStorage", { value: make(session), configurable: true });
+  const localStorageStub = make(local);
+  const sessionStorageStub = make(session);
+  Object.defineProperty(globalThis, "localStorage", { value: localStorageStub, configurable: true });
+  Object.defineProperty(globalThis, "sessionStorage", { value: sessionStorageStub, configurable: true });
+  // Modules under `modules/` reach storage through `window.localStorage`
+  // (their "never throw" wrapper) — without this, their writes are swallowed
+  // in Node and a password change would be verified against nothing.
+  Object.defineProperty(globalThis, "window", {
+    value: {
+      localStorage: localStorageStub,
+      sessionStorage: sessionStorageStub,
+      addEventListener() {},
+      removeEventListener() {},
+    },
+    configurable: true,
+    writable: true,
+  });
   return { local, session };
 }
 
@@ -314,6 +336,120 @@ test("the cashier role can sell and take returns, but not oversee", () => {
   assert.equal(hasCapability("cashier", "void_sale"), false);
   assert.equal(hasCapability("cashier", "adjust_stock"), false);
   assert.equal(hasCapability("cashier", "view_audit_log"), false);
+});
+
+// ── recovery & password-change security boundaries ─────────────────────────
+test("a reset page without recovery material refuses — signed in or not", async () => {
+  resetStores();
+  resetRecoveryMarksForTests();
+  const repository = getDemoUserRepository();
+
+  // A clean stranger is denied.
+  assert.deepEqual(await repository.consumeRecoveryLink({ search: "", hash: "#/reset-password" }), {
+    ok: false,
+    code: "not_authenticated",
+  });
+
+  // And so is somebody holding a valid, PERSISTED session — one that has even
+  // been refreshed: a session is not recovery authority and can never unlock a
+  // "choose new password" form that re-proves nothing. (Regression pin for the
+  // session fallback removed from consumeRecoveryLink.)
+  const signedIn = await signIn({ username: "admin", password: DEMO_PASSWORD, remember: false });
+  assert.equal(signedIn.ok, true, "an ordinary login works");
+  assert.deepEqual(await repository.consumeRecoveryLink({ search: "", hash: "#/reset-password" }), {
+    ok: false,
+    code: "not_authenticated",
+  });
+  assert.equal(
+    isSessionExpired(readStoredSession()!.session, new Date()),
+    false,
+    "the ordinary session itself is untouched by the probe",
+  );
+
+  // Link-shaped material offline is simply expired: demo has no mail server,
+  // so nothing it says can be genuine.
+  assert.deepEqual(await repository.consumeRecoveryLink({ search: "?code=anything", hash: "" }), {
+    ok: false,
+    code: "expired",
+  });
+});
+
+test("an account's normal password change re-proves the current password, end to end", async () => {
+  resetStores();
+  const repository = getDemoUserRepository();
+  const NEW_PASSWORD = "BrandNew1Password";
+
+  // Not signed in: there is nobody to re-prove.
+  assert.deepEqual(await repository.changePassword(DEMO_PASSWORD, NEW_PASSWORD), {
+    ok: false,
+    code: "not_authenticated",
+  });
+
+  const entry = await signIn({ username: "admin", password: DEMO_PASSWORD, remember: false });
+  assert.ok(entry.ok && entry.session, "an ordinary login works");
+
+  // A weak proposal is refused locally.
+  assert.deepEqual(await repository.changePassword(DEMO_PASSWORD, "short"), {
+    ok: false,
+    code: "weak_password",
+  });
+
+  // A wrong current password: refused, nothing changed at the login door.
+  assert.deepEqual(await repository.changePassword("not-the-password", NEW_PASSWORD), {
+    ok: false,
+    code: "invalid_credentials",
+  });
+  assert.equal((await repository.authenticate("admin", DEMO_PASSWORD)).ok, true, "the old password still works");
+  assert.equal(
+    (await repository.authenticate("admin", NEW_PASSWORD)).ok,
+    false,
+    "and a refused change never set the new one",
+  );
+
+  // The right one — on a USERNAME account, which is what the demo handles are:
+  // it works, the old credential dies, the new one signs in.
+  assert.deepEqual(await changePassword(DEMO_PASSWORD, NEW_PASSWORD), { ok: true });
+  assert.equal((await repository.authenticate("admin", DEMO_PASSWORD)).ok, false, "the old password died");
+  assert.equal((await repository.authenticate("admin", NEW_PASSWORD)).ok, true, "the new one signs in");
+
+  // And the change was audited, marked as re-authenticated rather than
+  // recovery-authorised. `recordAudit` returns the stored row even when a
+  // caller ignores it; give the fire-and-forget write a tick to land.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const entries = await getAuditRepository().listEntries();
+  const changed = entries.filter((e) => e.action === "user.password_changed");
+  assert.ok(changed.length >= 1, "the change produced an audit entry");
+  assert.equal(changed.at(-1)?.details?.via, "current_password");
+  assert.equal(changed.at(-1)?.entity_id, entry.ok && entry.session ? entry.session.user.id : "");
+});
+
+test("a deactivated account cannot change its password from a moment-old session", async () => {
+  resetStores();
+  const repository = getDemoUserRepository();
+  const entry = await signIn({ username: "cashier", password: DEMO_PASSWORD, remember: false });
+  assert.equal(entry.ok, true);
+  const staff = findStaffByUsername("cashier");
+  assert.ok(staff, "the cashier demo account exists");
+  upsertStaffEntry({ ...staff, active: false });
+
+  assert.deepEqual(await repository.changePassword(DEMO_PASSWORD, "BrandNew1Password"), {
+    ok: false,
+    code: "not_authenticated",
+  });
+});
+
+test("a provider session is adopted only when an app record attests, and recovery URLs are left alone", () => {
+  // The remember-me boot gate: without an app record, a conjured provider
+  // session is signed OUT, never believed — remember-me-off stays a promise.
+  assert.equal(shouldAdoptFoundProviderSession(true), true);
+  assert.equal(shouldAdoptFoundProviderSession(false), false);
+
+  // The companion rule: the boot purge must not touch a URL a recovery page
+  // is about to consume.
+  assert.equal(carriesRecoveryMaterial({ search: "?code=xyz", hash: "" }), true);
+  assert.equal(carriesRecoveryMaterial({ search: "", hash: "#access_token=t&refresh_token=r&type=recovery" }), true);
+  assert.equal(carriesRecoveryMaterial({ search: "", hash: "#/pos" }), false);
+  assert.equal(carriesRecoveryMaterial({ search: "", hash: "" }), false);
 });
 
 // ── runner ────────────────────────────────────────────────────────────────
