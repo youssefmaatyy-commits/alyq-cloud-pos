@@ -15,14 +15,14 @@ import { usePos } from "@/modules/pos";
 import { useReturns } from "../hooks/ReturnProvider";
 import { useCatalog } from "@/modules/products";
 import { getCurrentUser } from "@/modules/inventory/permissions";
-import {
-  getRemainingReturnableQuantities,
-  validateReturnDraft,
-  MAX_RETURN_REASON_LENGTH,
-} from "../validation";
+import { validateReturnDraft, MAX_RETURN_REASON_LENGTH } from "../validation";
+import { saleReturnability } from "../services/saleReturnability";
 import type { Sale } from "@/modules/pos/types";
 import type { ReturnItemInput } from "../types";
 import { normalizeText } from "@/modules/products/services/productQuery";
+
+/** One shared empty map, so `returnableMap` keeps a stable identity. */
+const EMPTY_RETURNABLE_MAP: Map<string, number> = new Map();
 
 export interface ReturnFormModalProps {
   open: boolean;
@@ -112,10 +112,21 @@ export function ReturnFormModal({
       .sort((a, b) => b.created_at.localeCompare(a.created_at));
   }, [sales, searchQuery, dateFrom, dateTo]);
 
-  const returnableMap = useMemo(() => {
-    if (!selectedSale) return new Map<string, number>();
-    return getRemainingReturnableQuantities(selectedSale, returnsList);
-  }, [selectedSale, returnsList]);
+  // One computation decides what this modal may offer — see saleReturnability
+  // for why "no lines loaded" and "all lines returned" must not be conflated.
+  const returnability = useMemo(
+    () => (selectedSale ? saleReturnability(selectedSale, returnsList) : null),
+    [selectedSale, returnsList],
+  );
+  const returnableMap = returnability?.returnableMap ?? EMPTY_RETURNABLE_MAP;
+  const hasAnyReturnable = returnability?.state === "returnable";
+  /**
+   * A sale whose lines have not arrived is NOT a sale with nothing left to
+   * return: saying "all items were already returned" about missing data accuses
+   * the customer of a return that never happened. Reported honestly instead, and
+   * the action fails closed rather than being offered.
+   */
+  const itemsUnavailable = returnability?.state === "unavailable";
 
   const itemsInput: ReturnItemInput[] = useMemo(() => {
     if (!selectedSale) return [];
@@ -146,20 +157,20 @@ export function ReturnFormModal({
     );
   }, [selectedSale, itemsInput, reason, refundMethod, returnsList, refundsList]);
 
-  const hasAnyReturnable = useMemo(() => {
-    if (!selectedSale) return false;
-    for (const val of returnableMap.values()) {
-      if (val > 0) return true;
-    }
-    return false;
-  }, [selectedSale, returnableMap]);
-
   const handleSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     setSubmitAttempted(true);
 
     if (!selectedSale) {
       toast.error(t("returns.selectSalePlaceholder"));
+      return;
+    }
+
+    // Fail closed on missing lines before anything else: `validation` would
+    // report the same "no items selected" a cashier sees when they simply have
+    // not ticked a quantity yet, which sends them looking in the wrong place.
+    if (itemsUnavailable) {
+      toast.error(t("returns.itemsUnavailable"));
       return;
     }
 
@@ -492,9 +503,16 @@ export function ReturnFormModal({
         {selectedSale && (
           <>
             {!hasAnyReturnable ? (
-              <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-center text-xs font-bold text-amber-800">
-                ⚠ {t("returns.allReturned")}
-              </div>
+              itemsUnavailable ? (
+                /* Missing lines, not a completed return: fail closed and say so. */
+                <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-center text-xs font-bold text-rose-800">
+                  ⚠ {t("returns.itemsUnavailable")}
+                </div>
+              ) : (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-center text-xs font-bold text-amber-800">
+                  ⚠ {t("returns.allReturned")}
+                </div>
+              )
             ) : (
               <>
                 <div>

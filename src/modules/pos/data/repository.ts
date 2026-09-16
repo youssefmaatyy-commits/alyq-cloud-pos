@@ -57,6 +57,16 @@ export interface SalesRepository {
    * `saleService.completeSale` is a faster, nicer error, not the gate.
    */
   completeSale(input: CompleteSaleInput, approvalRequestId?: string | null): Promise<Sale>;
+  /**
+   * Sales matching the query, newest first.
+   *
+   * Every returned sale carries its own `items` and `payments` — `listSales` is
+   * a whole-sale read, not a header read. That is a contract, not a nicety: the
+   * returns screens pick their invoice out of this list, and an empty `items`
+   * array is indistinguishable from "this sale has nothing left to return", so
+   * a header-only mapping made a brand-new invoice report as fully returned.
+   * `src/modules/pos/__tests__/supabaseSales.contract.selftest.ts` pins it.
+   */
   listSales(query?: SaleListQuery): Promise<Sale[]>;
   /**
    * Exact number of sales matching the query's date bounds, ignoring

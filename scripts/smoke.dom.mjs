@@ -1475,6 +1475,29 @@ async function main() {
   assert.ok(bodyText().includes(linkedInv), "selected invoice number displayed in summary");
   assert.ok(bodyText().includes("Smoke Customer"), "customer displayed in summary");
   assert.ok(bodyText().includes("Selected Invoice Summary") || bodyText().includes("ملخص الفاتورة"), "summary card rendered");
+
+  // Phase 27 regression (live-mode INV-000004): an invoice nobody has returned
+  // anything from must show its sold lines and offer the quantities — never the
+  // "all items already returned" banner. In live mode the modal is handed the
+  // sale from `listSales()`; when that read mapped sales with `items: []`, every
+  // fresh invoice was reported as fully returned and no qty input could be used.
+  assert.ok(
+    bodyText().includes("Sold items in invoice") || bodyText().includes("الأصناف المباعة"),
+    "a fresh invoice lists its sold items",
+  );
+  assert.ok(
+    !bodyText().includes("have already been returned") && !bodyText().includes("تم إرجاع كافة أصناف"),
+    "a fresh invoice is not reported as already returned",
+  );
+  assert.ok(
+    !bodyText().includes("could not be loaded") && !bodyText().includes("تعذّر تحميل أصناف"),
+    "a sale with its lines loaded is not reported as missing data",
+  );
+  const freshQtyInput = document.querySelector('input[placeholder="0"]');
+  assert.ok(
+    freshQtyInput && !freshQtyInput.disabled,
+    "the return quantity for an untouched invoice is editable",
+  );
   setField("#return-reason", "Smoke test return");
   const qtyInput = document.querySelector('input[placeholder="0"]');
   assert.ok(qtyInput, "return qty input present");

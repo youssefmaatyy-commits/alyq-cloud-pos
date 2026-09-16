@@ -660,6 +660,7 @@ export const en = {
   "returns.linkedReturn": "Linked return",
   "returns.movementNotice": "Stock increased via Customer Return movement",
   "returns.allReturned": "All items on this invoice have already been returned",
+  "returns.itemsUnavailable": "This invoice's items could not be loaded, so it cannot be returned yet. Reopen the invoice; if it persists, the sale's lines are missing.",
   "returns.searchPlaceholder": "Search by return #, sale #, or customer...",
 
   "refunds.title": "Refunds",
@@ -3626,6 +3627,7 @@ export const ar: Record<TranslationKey, string> = {
   "returns.linkedReturn": "المرتجع المرتبط",
   "returns.movementNotice": "تمت زيادة المخزون تلقائيًا بحركة (مرتجع عميل)",
   "returns.allReturned": "تم إرجاع كافة أصناف هذه الفاتورة مسبقًا",
+  "returns.itemsUnavailable": "تعذّر تحميل أصناف هذه الفاتورة، لذا لا يمكن إرجاعها حاليًا. أعد فتح الفاتورة، وإذا استمر الخطأ فإن أصناف البيع غير متاحة.",
   "returns.searchPlaceholder": "ابحث برقم المرتجع أو رقم الفاتورة أو العميل...",
 
   "refunds.title": "المستردات",

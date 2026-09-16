@@ -1,3 +1,4 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseClient } from "@/lib/supabase/client";
 import { AppError, toAppError } from "@/modules/products/data/repository";
 import type {
@@ -140,8 +141,16 @@ function mapSale(row: SaleRow, items: SaleItemRow[] = [], payments: SalePaymentR
 export class SupabaseSalesRepository implements SalesRepository {
   readonly kind = "supabase" as const;
 
+  /**
+   * Injectable so the contract test can drive this class against a stub client —
+   * CI has no reachable Supabase project, so the live read path would otherwise
+   * be unverified code. Production never passes one: `getSupabaseSalesRepository()`
+   * builds the singleton, which takes the shared client.
+   */
+  constructor(private readonly injected: SupabaseClient | null = null) {}
+
   private require() {
-    const client = getSupabaseClient();
+    const client = this.injected ?? getSupabaseClient();
     if (!client) throw new AppError("NOT_CONFIGURED");
     return client;
   }
@@ -201,14 +210,34 @@ export class SupabaseSalesRepository implements SalesRepository {
       if (error) throw toAppError(error);
       const sales = (data as SaleRow[] | null) ?? [];
 
+      const pageIds = sales.map((row) => row.id);
+
+      // Lines and payments are both scoped to the page's sales. The payments
+      // query used to select every row ever written, on every refresh, no
+      // matter how few sales were shown; `sale_items` was not fetched at all,
+      // which is what made a list-mapped sale arrive with `items: []` — and an
+      // empty item list is indistinguishable from "nothing left to return", so
+      // the returns modal reported a brand-new invoice as fully returned
+      // (Phase 27 regression). Both reads are bounded the same way.
+      const itemsBySale = new Map<string, SaleItemRow[]>();
       const paymentsBySale = new Map<string, SalePaymentRow[]>();
-      if (sales.length > 0) {
-        // Scoped to the page's sales. This used to select every payment row
-        // ever written, on every refresh, no matter how few sales were shown.
+      if (pageIds.length > 0) {
+        const { data: items, error: itemsError } = await client
+          .from("sale_items")
+          .select("*")
+          .in("sale_id", pageIds)
+          .order("created_at", { ascending: true });
+        if (itemsError) throw toAppError(itemsError);
+        for (const i of (items as SaleItemRow[] | null) ?? []) {
+          const list = itemsBySale.get(i.sale_id) ?? [];
+          list.push(i);
+          itemsBySale.set(i.sale_id, list);
+        }
+
         const { data: payments, error: payError } = await client
           .from("sale_payments")
           .select("*")
-          .in("sale_id", sales.map((row) => row.id))
+          .in("sale_id", pageIds)
           .order("created_at", { ascending: true });
         if (payError) throw toAppError(payError);
         for (const p of (payments as SalePaymentRow[] | null) ?? []) {
@@ -218,7 +247,9 @@ export class SupabaseSalesRepository implements SalesRepository {
         }
       }
 
-      return sales.map((row) => mapSale(row, [], paymentsBySale.get(row.id) ?? []));
+      return sales.map((row) =>
+        mapSale(row, itemsBySale.get(row.id) ?? [], paymentsBySale.get(row.id) ?? []),
+      );
     } catch (error) {
       if (error instanceof AppError) throw error;
       throw toAppError(error);
