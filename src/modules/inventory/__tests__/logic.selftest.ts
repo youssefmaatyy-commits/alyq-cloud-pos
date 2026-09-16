@@ -2,10 +2,22 @@
  * Inventory logic self-test (headless, Node).
  *
  * Covers inventory reports (valuation, low stock, movement summary, stock
- * balance) and opening stock CSV import. Pure functions only — no React,
- * no network, no database.
+ * balance), opening stock CSV import, and — since the reported "Viewing as
+ * Admin — changes are not permitted" production symptom — the inventory
+ * permission gate itself against a stubbed session: who may adjust stock, and
+ * what the dashboard banner may say to each of them. No React, no network,
+ * no database.
  */
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { en, ar } from "@/lib/i18n/dictionary";
+import { capabilitiesOf, type Capability } from "@/lib/permissions/roles";
+import { createSession } from "@/lib/auth/services/authService";
+import { primeCacheFromStorage, resetSessionCache, writeStoredSession } from "@/lib/auth/services/sessionStore";
+import { DEMO_USERS } from "@/lib/auth/demoUsers";
+import { resetStaffDirectory } from "@/lib/auth/data/staffDirectory";
+import { canAdjustStock, getCurrentUser, ROLE_LABEL } from "../permissions";
 import {
   computeStockValuation,
   computeLowStockReport,
@@ -304,6 +316,131 @@ test("matchStockToProducts: untracked products skipped", () => {
   const { matched, skippedUntracked } = matchStockToProducts(rows, products);
   assert.equal(matched.length, 0);
   assert.equal(skippedUntracked.length, 1);
+});
+
+// ── The permission gate and the banner it drives ────────────────────────────
+//
+// Production observed a real Admin on Inventory reading
+// "أنت تتصفح بصلاحية Admin — التعديلات غير مسموحة" with the adjustment
+// failing. Two facts combine there:
+//
+//   · the dashboard identity strip rendered the read-only sentence
+//     *unconditionally* — there was no "permitted" variant and no condition,
+//     so a fully privileged Admin read "changes are not permitted" while the
+//     dot beside the sentence said the opposite;
+//   · and separately, a seat whose *session* resolves a capability list
+//     without `adjust_stock` (an active custom-role overlay, or a personal
+//     denial) is genuinely read-only even when its base role is admin — the
+//     banner then said the true thing, but the label shown was still the base
+//     role ("Admin"), which is exactly the string that was reported.
+//
+// These pins keep both halves honest: the sentence must follow the gate, and
+// the gate must answer from the resolved session, not the base role alone.
+
+function repoRoot(): string {
+  let dir = process.cwd();
+  for (let i = 0; i < 10 && dir !== path.parse(dir).root; i++) {
+    if (fs.existsSync(path.join(dir, "package.json"))) return dir;
+    dir = path.dirname(dir);
+  }
+  return process.cwd();
+}
+
+/** Headless session — the same stub the settings suite uses. */
+function installSessionStub(): void {
+  const map = new Map<string, string>();
+  const storage = {
+    getItem: (key: string) => map.get(key) ?? null,
+    setItem: (key: string, value: string) => void map.set(key, value),
+    removeItem: (key: string) => void map.delete(key),
+  };
+  Object.defineProperty(globalThis, "localStorage", { value: storage, configurable: true });
+  Object.defineProperty(globalThis, "sessionStorage", { value: storage, configurable: true });
+  Object.defineProperty(globalThis, "window", {
+    value: { localStorage: storage, sessionStorage: storage, addEventListener() {}, removeEventListener() {} },
+    configurable: true,
+    writable: true,
+  });
+  resetSessionCache();
+  resetStaffDirectory();
+}
+
+function signInAsRole(role: "admin" | "manager" | "cashier" | "inventory_clerk" | "viewer"): void {
+  const record = DEMO_USERS.find((user) => user.role === role);
+  assert.ok(record, `a demo account exists for ${role}`);
+  writeStoredSession(createSession({ ...record, capabilities: capabilitiesOf(role) }, false), "local");
+  resetSessionCache();
+  primeCacheFromStorage();
+}
+
+/** The production seat: the admin account, but the session carries an active overlay's list. */
+function signInAdminWithOverlay(capabilities: readonly Capability[]): void {
+  const record = DEMO_USERS.find((user) => user.role === "admin");
+  assert.ok(record, "a demo admin account exists");
+  writeStoredSession(
+    createSession(
+      { ...record, role: "admin", custom_role_id: "overlay-repro", capabilities: [...capabilities] },
+      false,
+    ),
+    "local",
+  );
+  resetSessionCache();
+  primeCacheFromStorage();
+}
+
+test("the dashboard banner has a permitted variant in both languages, and the page picks it on the gate", () => {
+  const deniedEn = en["inventory.perm.banner"];
+  const allowedEn = en["inventory.perm.bannerAllowed"];
+  const deniedAr = ar["inventory.perm.banner"];
+  const allowedAr = ar["inventory.perm.bannerAllowed"];
+  for (const [name, value] of [
+    ["en.perm.banner", deniedEn],
+    ["en.perm.bannerAllowed", allowedEn],
+    ["ar.perm.banner", deniedAr],
+    ["ar.perm.bannerAllowed", allowedAr],
+  ] as const) {
+    assert.equal(typeof value, "string", `${name} exists`);
+    assert.ok(value.includes("{{role}}"), `${name} names the role`);
+  }
+  assert.notEqual(deniedEn, allowedEn, "EN: the two variants differ");
+  assert.notEqual(deniedAr, allowedAr, "AR: the two variants differ");
+
+  // The page must choose between the variants on `canAdjust` — the reported
+  // symptom was the denied variant rendered unconditionally.
+  const page = fs.readFileSync(
+    path.join(repoRoot(), "src/modules/inventory/pages/InventoryPage.tsx"),
+    "utf8",
+  );
+  assert.ok(
+    /canAdjust\s*\?\s*["']inventory\.perm\.bannerAllowed["']\s*:\s*["']inventory\.perm\.banner["']/.test(page),
+    "InventoryPage renders the permitted variant when canAdjust and the denied one otherwise",
+  );
+  assert.ok(!/\{\s*t\(\s*["']inventory\.perm\.banner["']/.test(page), "the denied sentence is no longer rendered unconditionally");
+});
+
+test("the gate answers from the resolved session, not the base role", () => {
+  installSessionStub();
+
+  signInAsRole("admin");
+  assert.equal(canAdjustStock(), true, "a bare admin may adjust stock");
+  assert.equal(getCurrentUser().role, "admin");
+
+  // The production seat: base role still reads `admin` — so the banner label
+  // says "Admin" — but the session's resolved list is the overlay's.
+  signInAdminWithOverlay(["view_inventory"]);
+  assert.equal(getCurrentUser().role, "admin", "the base role still renders as Admin in the banner");
+  assert.equal(ROLE_LABEL[getCurrentUser().role], "Admin");
+  assert.equal(canAdjustStock(), false, "the overlay without adjust_stock makes the seat read-only");
+});
+
+test("restricted roles stay blocked on the inventory gate, and the clerk tier keeps its ledger", () => {
+  installSessionStub();
+  signInAsRole("cashier");
+  assert.equal(canAdjustStock(), false, "a cashier sells — they do not adjust");
+  signInAsRole("viewer");
+  assert.equal(canAdjustStock(), false, "a viewer holds nothing writable");
+  signInAsRole("inventory_clerk");
+  assert.equal(canAdjustStock(), true, "the ledger is the clerk's too");
 });
 
 // ── Runner ──────────────────────────────────────────────────────────────────

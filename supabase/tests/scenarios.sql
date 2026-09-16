@@ -3172,6 +3172,256 @@ begin
 end
 $$;
 
+-- ════════════════════════════════════════════════════════════════════════════
+-- Phase 26: admin full permissions — the audit of the admin role, in the
+-- database that is the authority for it.
+--
+-- The TypeScript half of the same audit is
+-- src/lib/permissions/__tests__/adminFullAccess.selftest.ts; this block proves
+-- the promise at the layer that decides when the client is not in the room:
+--
+--   A. `public.can()` answers true for EVERY capability the model knows, as
+--      the admin profile, and `current_user_capabilities()` resolves the full
+--      set — the promise "the admin may do everything" stated row by row.
+--   B. The admin's own row keeps its guardrails: self-demotion and
+--      self-deactivation refused, a change to one's own custom role refused
+--      for ANY value including NULL, self-denial of manage_users refused —
+--      while the rest of the row stays writable, so the wall refuses the
+--      lockout and not the account.
+--   C. The same wall holds for a NON-admin holder of manage_users (a custom
+--      role): the SQL answer the client guard mirrors. The case matters
+--      because the client used to key the guard on the session role reading
+--      `admin`, which is exactly false for such a seat.
+--   D. The last-admin invariant: an admin may promote and demote ANOTHER
+--      admin, and the only path that removes the last admin — self-demotion —
+--      is the one B refuses. An installation always keeps an admin.
+--   E. The read sweep: every table and view a repository reads is granted to
+--      the role the browser gets, and the tables that carry rows by this point
+--      actually return them to the admin — an admin refused by their own
+--      book is not an admin.
+-- ════════════════════════════════════════════════════════════════════════════
+do $$
+declare
+  v_admin    uuid := '00000000-0000-4000-8000-0000000000a1';
+  v_cashier  uuid := '00000000-0000-4000-8000-0000000000c1';
+  v_viewer   uuid := '00000000-0000-4000-8000-0000000000e1';
+  v_role_id  uuid;
+  v_missing  text;
+  v_have     bigint;
+  v_total    bigint;
+  v_phone    text;
+  v_role     public.app_role;
+  v_rows     bigint;
+  -- Phase 16's gold necklace (SCN-PUB): a stock-tracked product the file has
+  -- written the ledger for before, so the admin's own write below is judged
+  -- on deltas, not on fixture state this block would have to restore.
+  v_p26      uuid := '00000000-0000-4000-8000-000000000b30';
+  v_qty      integer;
+  v_tables   text[] := array[
+    'products', 'categories', 'stock_movements', 'sales', 'sale_items',
+    'sale_payments', 'customers', 'sales_returns', 'return_items',
+    'refund_records', 'shifts', 'expenses', 'audit_log', 'online_orders',
+    'online_order_items', 'stock_reservations', 'order_events',
+    'approval_requests', 'approval_rules', 'website_settings', 'store_faqs',
+    'store_reviews', 'campaigns', 'coupons', 'product_content', 'profiles',
+    'custom_roles', 'backup_settings', 'backup_manifests'
+  ];
+  v_i        integer;
+  v_table    text;
+begin
+  perform pg_temp.become(v_admin);
+
+  -- ── A. every capability, all of them, answer yes ─────────────────────────
+  if exists (
+    select 1
+      from (select distinct capability from public.role_capabilities) all_caps
+     where not public.can(all_caps.capability)
+  ) then
+    select string_agg(distinct all_caps.capability, ', ') into v_missing
+      from (select distinct capability from public.role_capabilities) all_caps
+     where not public.can(all_caps.capability);
+    raise exception 'can() refuses the admin for: %', v_missing;
+  end if;
+  select count(*) into v_have from public.current_user_capabilities();
+  select count(distinct capability) into v_total from public.role_capabilities;
+  if v_have <> v_total then
+    raise exception 'the admin resolves % of the % known capabilities', v_have, v_total;
+  end if;
+
+  -- ── B. the admin's own row: the wall holds, and the rest is writable ─────
+  begin
+    perform public.admin_upsert_staff_profile(v_admin, 'admin', 'ALYQ Admin', null, null, 'viewer'::public.app_role, true);
+    raise exception 'the admin demoted themselves';
+  exception when check_violation then null;
+  end;
+  begin
+    perform public.admin_upsert_staff_profile(v_admin, 'admin', 'ALYQ Admin', null, null, 'admin'::public.app_role, false);
+    raise exception 'the admin deactivated their own account';
+  exception when check_violation then null;
+  end;
+  perform public.admin_upsert_staff_profile(v_admin, 'admin', 'Amina Admin', 'admin@alyq.local', '+201000000077', 'admin'::public.app_role, true);
+  select phone into v_phone from public.profiles where id = v_admin;
+  if v_phone is distinct from '+201000000077' then
+    raise exception 'the admin could not update their own contact fields';
+  end if;
+
+  select r.id into v_role_id
+    from public.admin_create_custom_role(
+           'p26_co_admin', 'Co-Admin', 'شريك إداري', null, null,
+           'manager'::public.app_role, array['manage_users', 'manage_roles']::text[]) as r;
+  begin
+    perform public.admin_set_custom_role(v_admin, v_role_id);
+    raise exception 'the admin changed their own custom role';
+  exception when check_violation then null;
+  end;
+  begin
+    perform public.admin_set_custom_role(v_admin, null);
+    raise exception 'the admin cleared their own custom role';
+  exception when check_violation then null;
+  end;
+  begin
+    perform public.admin_set_user_exceptions(v_admin, '{}'::text[], array['manage_users']::text[]);
+    raise exception 'the admin denied themselves manage_users';
+  exception when check_violation then null;
+  end;
+
+  -- ── C. the same wall, for a non-admin holder of manage_users ─────────────
+  -- The admin assigns the overlay to the cashier (allowed: it is their row,
+  -- not the caller's), and the cashier's base moves to the overlay's.
+  perform public.admin_set_custom_role(v_cashier, v_role_id);
+  select role into v_role from public.profiles where id = v_cashier;
+  if v_role is distinct from 'manager'::public.app_role then
+    raise exception 'assigning the overlay should have moved the cashier to its base, got %', v_role;
+  end if;
+
+  perform pg_temp.become(v_cashier);
+  begin
+    perform public.admin_upsert_staff_profile(v_cashier, 'cashier', 'Karim Cashier', null, null, 'viewer'::public.app_role, true);
+    raise exception 'a non-admin manage_users holder demoted themselves — the demo used to allow this';
+  exception when check_violation then null;
+  end;
+  begin
+    perform public.admin_set_custom_role(v_cashier, null);
+    raise exception 'a non-admin manage_users holder cleared their own overlay';
+  exception when check_violation then null;
+  end;
+  -- …while managing SOMEONE ELSE is exactly what the authority is for.
+  perform public.admin_upsert_staff_profile(v_viewer, 'viewer', 'Vera Viewer', null, null, 'cashier'::public.app_role, true);
+  select role into v_role from public.profiles where id = v_viewer;
+  if v_role is distinct from 'cashier'::public.app_role then
+    raise exception 'the co-admin could not reassign another account';
+  end if;
+
+  -- ── D. the last-admin invariant ───────────────────────────────────────────
+  perform pg_temp.become(v_admin);
+  perform public.admin_upsert_staff_profile(v_viewer, 'viewer', 'Vera Viewer', null, null, 'admin'::public.app_role, true);
+  select role into v_role from public.profiles where id = v_viewer;
+  if v_role is distinct from 'admin'::public.app_role then
+    raise exception 'an admin could not make a second admin';
+  end if;
+  perform public.admin_upsert_staff_profile(v_viewer, 'viewer', 'Vera Viewer', null, null, 'viewer'::public.app_role, true);
+  select role into v_role from public.profiles where id = v_viewer;
+  if v_role is distinct from 'viewer'::public.app_role then
+    raise exception 'an admin could not demote a second admin';
+  end if;
+  -- and the caller of both writes still holds the authority that will undo any
+  -- of them: the acting admin was never in the refused set (B), so at least
+  -- one admin always remains.
+  if not public.can('manage_users') or not public.can('restore_backup') then
+    raise exception 'the acting admin lost their own authority while administering';
+  end if;
+
+  -- ── E. the read sweep ─────────────────────────────────────────────────────
+  for v_i in 1 .. array_length(v_tables, 1) loop
+    v_table := v_tables[v_i];
+    if not has_table_privilege('authenticated', 'public.' || v_table, 'SELECT') then
+      raise exception 'the role the browser gets has no SELECT grant on public.%', v_table;
+    end if;
+  end loop;
+  -- The grant layer says "may try"; the policies say "and see". The tables
+  -- with guaranteed rows by this point must return them to the admin — an
+  -- RLS policy that silently filtered the admin's own book would surface here
+  -- as an empty answer, which is exactly the failure this sweep exists to name.
+  for v_i in 1 .. array_length(v_tables, 1) loop
+    v_table := v_tables[v_i];
+    begin
+      execute format('select count(*) from public.%I', v_table) into v_rows;
+      -- The ten tables with guaranteed rows by this point must return them to
+      -- the admin: an RLS policy that silently filtered the admin's own book
+      -- would surface here as an empty answer, which is the failure this sweep
+      -- exists to name.
+      if v_table = any(array[
+        'products', 'categories', 'sales', 'sale_items', 'stock_movements',
+        'audit_log', 'online_orders', 'customers', 'profiles', 'custom_roles'
+      ]) and coalesce(v_rows, 0) = 0 then
+        raise exception 'the admin sees zero rows in public.% — the policy is filtering their own book', v_table;
+      end if;
+    exception when insufficient_privilege then
+      raise exception 'the admin is refused a read of public.%', v_table;
+    end;
+  end loop;
+
+  -- ── F. the admin's own ledger write — the reported path, end to end ───────
+  -- Production reported a real Admin on Inventory reading "changes are not
+  -- permitted" with the adjustment failing. The client's adjustStock is three
+  -- statements plus a trail row: an insert into stock_movements (with check
+  -- can('adjust_stock'), 0030), an update of that row's before/after snapshot,
+  -- an update of products.stock_quantity (can('edit_product'), 0030) and an
+  -- audit_log row. Every one of them must land for the admin, and the shelf
+  -- must end exactly delta away from where it started. The refusal half of
+  -- this door is Phase 16's: cashier and viewer are both refused the first
+  -- insert by the same policy. Judged on deltas over the file's existing
+  -- tracked product (SCN-PUB), because the ledger is append-only by design —
+  -- a block may not delete its way back out.
+  perform pg_temp.become(v_admin);
+  select stock_quantity into v_qty from public.products where id = v_p26;
+  if v_qty is null then
+    raise exception 'the phase 26 product (SCN-PUB) is missing from the catalogue';
+  end if;
+
+  -- 1) the ledger row — the write the policies are asked to grant
+  insert into public.stock_movements (product_id, delta, quantity_before, quantity_after, type, reason, notes, user_id, user_name)
+  values (v_p26, 5, v_qty, v_qty + 5, 'adjustment_in', 'recount', 'Phase 26 admin', v_admin::text, 'Phase 26 Admin');
+  if not exists (
+    select 1 from public.stock_movements
+     where product_id = v_p26 and reason = 'recount' and notes = 'Phase 26 admin' and user_id = v_admin::text
+  ) then
+    raise exception 'the admin''s own stock movement did not land';
+  end if;
+
+  -- 2) the shelf itself, and it must land exactly delta away
+  update public.products set stock_quantity = v_qty + 5 where id = v_p26;
+  get diagnostics v_rows = row_count;
+  if v_rows <> 1 then
+    raise exception 'the admin could not write the product''s stock quantity (%)', v_rows;
+  end if;
+  select stock_quantity into v_qty from public.products where id = v_p26;
+  if v_qty <> (select quantity_after from public.stock_movements where product_id = v_p26 and notes = 'Phase 26 admin') then
+    raise exception 'the shelf and the ledger disagree after the admin''s adjustment';
+  end if;
+
+  -- 3) the trail — the trigger stamps the actor from the session, and the
+  -- entity from the action, so what is asserted is the stamped row
+  insert into public.audit_log (action, entity, entity_id, entity_label, user_id, user_name, details)
+  values ('stock.corrected', 'stock', v_p26::text, 'SCN-P26', v_admin::text, 'Phase 26 Admin',
+          jsonb_build_object('after', v_qty, 'delta', 5));
+  if (select user_id from public.audit_log where action = 'stock.corrected' and entity_id = v_p26::text) is distinct from v_admin::text then
+    raise exception 'the audit row was not stamped with the acting admin';
+  end if;
+
+  -- ── restoration: the file's fixture state, exactly ───────────────────────
+  perform public.admin_set_custom_role(v_cashier, null);
+  perform public.admin_upsert_staff_profile(v_cashier, 'cashier', 'Karim Cashier', null, null, 'cashier'::public.app_role, true);
+  perform public.admin_set_custom_role_active(v_role_id, false);
+  select role into v_role from public.profiles where id = v_cashier;
+  if v_role is distinct from 'cashier'::public.app_role then
+    raise exception 'the cashier did not come back to their seat';
+  end if;
+
+  raise notice 'admin full permissions — can() answers true for all % capabilities as the admin, the self-guardrails refuse every way down (including the non-admin manage_users holder the client guard used to let through) while the own row stays editable, the last admin can never be removed, the admin writes the stock ledger, the shelf and the trail in one pass, and the admin reads every table the repositories read', v_total;
+end
+$$;
+
 do $$
 begin
   perform set_config('request.jwt.claim.sub', '', true);

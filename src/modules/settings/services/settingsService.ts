@@ -73,9 +73,24 @@ export interface RoleMutationContext {
 /**
  * The three ways an admin can lock themselves out, refused before any write.
  *
- * Each maps to a SQL guard in migration 0021; the messages are the reason the
- * check is repeated here, because "You cannot deactivate your own account" is a
- * sentence an admin can act on and `insufficient_privilege` is not.
+ * Each maps to a SQL guard in migration 0021 (`admin_upsert_staff_profile` and
+ * `admin_set_custom_role`), and those guards do not test *who is calling* —
+ * they test whether the write lands on the caller's own row — so neither do
+ * we, and the messages mirror the SQL sentences because a live refusal
+ * reaches the UI untranslated:
+ *
+ * - You cannot demote yourself out of the admin role. What matters is the
+ *   authority, not the session role: a system admin wearing a custom role
+ *   whose base is not `admin` holds `manage_users` absolutely while their
+ *   session role reads the base, and the demo repository clears the overlay
+ *   whenever the role is hand-edited — so without an unconditional condition
+ *   that seat could self-demote and leave the installation with no one able
+ *   to undo it.
+ * - You cannot change your own custom role, not even to "none": the overlay
+ *   may be what carries the very `manage_users` that would undo the change,
+ *   so taking it off is not always the safe direction it looks.
+ * - You cannot deactivate yourself: that would close this screen to the only
+ *   person able to fix the mistake.
  */
 function assertNotSelfLockout(targetId: string, change: { active?: boolean; role?: string; custom_role_id?: string | null }, actor: AuthUser): void {
   if (!actor.id || targetId !== actor.id) return;
@@ -83,10 +98,10 @@ function assertNotSelfLockout(targetId: string, change: { active?: boolean; role
   if (change.active === false) {
     throw new AppError("FORBIDDEN", "You cannot deactivate your own account", "active");
   }
-  if (change.role && change.role !== "admin" && actor.role === "admin") {
+  if (change.role && change.role !== "admin") {
     throw new AppError("FORBIDDEN", "You cannot remove your own admin role", "role");
   }
-  if (change.custom_role_id !== undefined && change.custom_role_id !== null) {
+  if (change.custom_role_id !== undefined) {
     // Changing your own authority mid-session is how an installation ends up
     // with nobody who can administer it.
     throw new AppError("FORBIDDEN", "You cannot change your own role", "custom_role_id");

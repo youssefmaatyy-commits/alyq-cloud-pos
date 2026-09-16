@@ -172,6 +172,12 @@ export function UserFormModal({ open, editing, existing, roles, onClose, onSubmi
             <SelectInput
               value={form.role}
               invalid={Boolean(errors.role)}
+              // The same self-lockout rule the active switch above: the banner
+              // says the role cannot be changed, so the control says so too
+              // instead of letting the service refuse it after a round trip.
+              // The service and the database refuse it as well — this is the
+              // visible half of the wall, not the wall itself.
+              disabled={isSelf}
               onChange={(event) =>
                 setForm((f) => ({
                   ...f,
@@ -200,6 +206,10 @@ export function UserFormModal({ open, editing, existing, roles, onClose, onSubmi
             <SelectInput
               value={form.custom_role_id ?? ""}
               invalid={Boolean(errors.custom_role_id)}
+              // `admin_set_custom_role` refuses every change to the caller's own
+              // row — assigning an overlay AND clearing one — so the self row
+              // offers neither, for the same reason the active switch does.
+              disabled={isSelf}
               onChange={(event) => {
                 const id = event.target.value || null;
                 const chosen = roles.find((role) => role.id === id);

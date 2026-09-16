@@ -118,16 +118,24 @@ export function InventoryPage() {
         }
       />
 
-      {/* Signed-in identity + what this role may do (Authentication phase:
+      {/* Signed-in identity + what this seat may do (Authentication phase:
           replaces the Phase 3 role switcher — the acting role now comes from
-          the session and can only change by signing in as someone else). */}
+          the session and can only change by signing in as someone else).
+
+          The sentence follows `canAdjust`: the read-only wording used to be
+          rendered unconditionally, which is why a fully privileged Admin read
+          "Viewing as Admin — changes are not permitted" on this screen while
+          the dot beside it said the opposite. The dot and the sentence now
+          agree — both track the same resolved capability. */}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700">
         <span className="flex items-center gap-2">
           <span
             className={`h-2 w-2 rounded-full ${canAdjust ? "bg-emerald-500" : "bg-amber-500"}`}
             aria-hidden
           />
-          {t("inventory.perm.banner", { role: ROLE_LABEL[user.role] ?? user.role })}
+          {t(canAdjust ? "inventory.perm.bannerAllowed" : "inventory.perm.banner", {
+            role: ROLE_LABEL[user.role] ?? user.role,
+          })}
         </span>
         <span className="text-[11px] text-slate-500">
           {t("auth.signedInAs")}: <span className="font-bold text-slate-700">{user.name}</span>

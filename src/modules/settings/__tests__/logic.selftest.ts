@@ -635,6 +635,128 @@ test("an admin cannot lock themselves out", async () => {
   assert.equal(stillAdmin.find((user) => user.id === self.id)?.role, "admin", "and the account is untouched");
 });
 
+test("an admin wearing a custom role cannot lock themselves out either — the same wall the database makes", async () => {
+  // The case the service guard used to miss: a system admin who wears an
+  // overlay whose base is NOT admin carries that base in the session, so the
+  // old `actor.role === "admin"` condition never fired for them — and in demo
+  // mode a self-demotion then cleared the overlay on the way down, leaving an
+  // account with no `manage_users` to undo it. Live mode refuses the same
+  // write in SQL (`admin_upsert_staff_profile`, any caller, own row), so the
+  // demo installation now says the same sentence instead.
+  resetAll();
+  const admin = DEMO_USERS.find((user) => user.role === "admin");
+  assert.ok(admin);
+
+  const overlay = await createRole(
+    roleForm({
+      name_en: "Co-Admin",
+      name_ar: "شريك إداري",
+      base_role: "manager",
+      capabilities: ["manage_users", "manage_roles", "view_reports"],
+    }),
+    { existing: [] },
+  );
+
+  // The assignment is made by the repository, the way another administrator's
+  // call would land: it moves the system role to the overlay's base.
+  await getDemoSettingsRepository().assignCustomRole(admin.id, overlay.id);
+
+  // Sign the session in exactly as `identity.ts` resolves it for that row:
+  // role = the base, capabilities = the overlay's list (absolute).
+  writeStoredSession(
+    createSession(
+      {
+        ...admin,
+        role: overlay.base_role,
+        custom_role_id: overlay.id,
+        capabilities: [...overlay.capabilities],
+      },
+      false,
+    ),
+    "local",
+  );
+  resetSessionCache();
+  primeCacheFromStorage();
+
+  const listed = await loadManagedUsers();
+  const self = listed.find((user) => user.id === admin.id);
+  assert.ok(self, "the overlay-wearing admin is in the directory");
+  assert.equal(self.role, overlay.base_role, "the session wears the overlay's base");
+
+  // VECTOR 1 — demoting oneself through the role field (which clears the
+  // overlay with it, the lockout). Refused, as the database refuses it.
+  await assert.rejects(
+    () =>
+      updateUser(
+        userForm({ id: self.id, name: self.name, username: self.username, role: "viewer" }),
+        { existing: listed, roles: [overlay] },
+      ),
+    (error: unknown) =>
+      error instanceof AppError &&
+      error.code === "FORBIDDEN" &&
+      error.message === "You cannot remove your own admin role",
+    "a self-demotion is refused even when the session role is the overlay's base",
+  );
+
+  // VECTOR 2 — clearing one's own overlay. The overlay carries the very
+  // manage_users that would undo the change, so it is refused too, including
+  // the NULL that used to slip through.
+  await assert.rejects(
+    () => assignCustomRole(self.id, null, { existing: listed, roles: [overlay] }),
+    (error: unknown) => error instanceof AppError && error.code === "FORBIDDEN",
+    "clearing one's own overlay is refused",
+  );
+  await assert.rejects(
+    () => setUserActive(self.id, false, { existing: listed, roles: [overlay] }),
+    (error: unknown) => error instanceof AppError && error.code === "FORBIDDEN",
+    "deactivating oneself is still refused",
+  );
+
+  // The directory is untouched by the three refusals: base role and overlay
+  // both stand, and the account is active.
+  const after = (await loadManagedUsers()).find((user) => user.id === admin.id);
+  assert.equal(after?.role, overlay.base_role, "the base role stands");
+  assert.equal(after?.custom_role_id, overlay.id, "the overlay stands");
+  assert.equal(after?.active, true, "the account is still active");
+
+  // Legitimate self-service survives the tighter guard: contact fields on
+  // one's own row are still editable, because they change no authority.
+  const contact = await updateUser(
+    userForm({
+      id: self.id,
+      name: self.name,
+      username: self.username,
+      email: self.email ?? "",
+      phone: "+201000000000",
+      role: overlay.base_role,
+      custom_role_id: overlay.id,
+    }),
+    { existing: await loadManagedUsers(), roles: [overlay] },
+  );
+  assert.equal(contact.phone, "+201000000000", "contact fields on the own row still save");
+  assert.equal(contact.role, overlay.base_role, "…without touching the role");
+  assert.equal(contact.custom_role_id, overlay.id, "…or the overlay");
+
+  // And ordinary administration is unchanged: back to the bare admin,
+  // demoting SOMEONE ELSE is still an act they may perform.
+  const second = await createUser(
+    userForm({ name: "Dana Second", username: "dana.second", role: "viewer", password: "Till@2026x", confirmPassword: "Till@2026x" }),
+    { existing: await loadManagedUsers(), roles: [overlay] },
+  );
+  signInAs("admin");
+  const demoted = await updateUser(
+    userForm({
+      id: second.id,
+      name: second.name,
+      username: second.username,
+      role: "cashier",
+      custom_role_id: null,
+    }),
+    { existing: await loadManagedUsers(), roles: [overlay] },
+  );
+  assert.equal(demoted.role, "cashier", "another account may still be reassigned");
+});
+
 test("a duplicate username is refused by the repository, not only by the form", async () => {
   resetAll();
   await assert.rejects(
