@@ -70,6 +70,13 @@ export const ONLINE_ERROR_CODES = [
   "coupon_min_subtotal",
   "coupon_not_applicable",
   "order_not_found",
+  /**
+   * The order was accepted and written, but reading it back for the
+   * confirmation screen failed. The customer is told the order exists (with its
+   * number) instead of being told it failed — a re-order is what must not
+   * happen next.
+   */
+  "order_unreadable",
   "workflow_refused",
   "invalid_credentials",
   "identifier_taken",
@@ -101,10 +108,90 @@ export class OnlineError extends Error {
   }
 }
 
+/**
+ * What actually arrived, read off anything that can be thrown.
+ *
+ * Supabase hands back its `PostgrestError` as a **plain object**
+ * (`{ code, details, hint, message }`) rather than an `Error` instance, so
+ * `String(error)` on it is `"[object Object]"` — which hides the server's
+ * wording, the SQLSTATE and PostgREST's hint, and leaves nothing to recognise.
+ * Everything is therefore read field by field, and a value that is not an error
+ * at all degrades to a readable phrase instead of an object tag.
+ */
+export interface ThrownDescription {
+  message: string;
+  code: string | null;
+  details: string | null;
+  hint: string | null;
+}
+
+/**
+ * The message to actually use: trimmed, non-empty, and never the tag left
+ * behind by stringifying an object (`"[object Object]"` says nothing, so it is
+ * replaced by a phrase that at least tells the reader there is nothing to read).
+ */
+function readable(value: string | null | undefined, fallback = "Unknown error"): string {
+  const text = value?.trim() ?? "";
+  if (!text || text === "[object Object]") return fallback;
+  return text;
+}
+
+function textOf(value: unknown): string | null {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    return String(value);
+  }
+  return null;
+}
+
+/** Reads `{ message, code, details, hint }` off an unknown throwable. */
+export function describeThrown(error: unknown): ThrownDescription {
+  if (error === null || error === undefined) {
+    return { message: "Unknown error", code: null, details: null, hint: null };
+  }
+  if (typeof error === "string") {
+    return { message: readable(error), code: null, details: null, hint: null };
+  }
+  if (error instanceof Error) {
+    const extra = error as Error & { code?: unknown; details?: unknown; hint?: unknown };
+    return {
+      message: readable(textOf(error.message) ?? error.name),
+      code: textOf(extra.code),
+      details: textOf(extra.details),
+      hint: textOf(extra.hint),
+    };
+  }
+  if (typeof error === "object") {
+    const record = error as Record<string, unknown>;
+    const message =
+      textOf(record.message) ??
+      textOf(record.error_description) ??
+      textOf(record.error) ??
+      textOf(record.details) ??
+      textOf(record.hint);
+    return {
+      message: readable(message),
+      code: textOf(record.code) ?? textOf(record.status),
+      details: textOf(record.details),
+      hint: textOf(record.hint),
+    };
+  }
+  return { message: String(error), code: null, details: null, hint: null };
+}
+
+/** The item a server refusal names, so the customer is told which one it was. */
+function skuOf(message: string): string | null {
+  const match =
+    /\bof ([A-Za-z0-9._-]+) available\b/i.exec(message) ??
+    /\bproduct ([A-Za-z0-9._-]+) (?:is not|cannot|not found)/i.exec(message);
+  return match?.[1] ?? null;
+}
+
 /** Anything thrown, normalized — so callers only ever catch one shape. */
 export function toOnlineError(error: unknown): OnlineError {
   if (error instanceof OnlineError) return error;
-  const message = error instanceof Error ? error.message : String(error);
+  const described = describeThrown(error);
+  const message = described.message;
 
   if (/SUPABASE_NOT_CONFIGURED|NOT_CONFIGURED/i.test(message)) {
     return new OnlineError("not_configured", message);
@@ -117,7 +204,10 @@ export function toOnlineError(error: unknown): OnlineError {
   }
   // Live mode: Postgres raises with the wording written in migration 0018.
   if (/only \d+ of .* available/i.test(message)) {
-    return new OnlineError("insufficient_stock", message, { field: "lines" });
+    return new OnlineError("insufficient_stock", message, {
+      field: "lines",
+      detail: { sku: skuOf(message) },
+    });
   }
   if (/coupon .* is not valid/i.test(message)) {
     return new OnlineError("coupon_invalid", message, { field: "coupon_code" });
@@ -144,13 +234,22 @@ export function toOnlineError(error: unknown): OnlineError {
     return new OnlineError("missing_address", message, { field: "address" });
   }
   if (/not available on the website/i.test(message)) {
-    return new OnlineError("product_unavailable", message, { field: "lines" });
+    return new OnlineError("product_unavailable", message, {
+      field: "lines",
+      detail: { sku: skuOf(message) },
+    });
   }
   if (/product .* cannot be ordered online/i.test(message)) {
-    return new OnlineError("product_not_online", message, { field: "lines" });
+    return new OnlineError("product_not_online", message, {
+      field: "lines",
+      detail: { sku: skuOf(message) },
+    });
   }
   if (/product .* not found/i.test(message)) {
-    return new OnlineError("product_not_found", message, { field: "lines" });
+    return new OnlineError("product_not_found", message, {
+      field: "lines",
+      detail: { sku: skuOf(message) },
+    });
   }
   if (/empty cart/i.test(message)) {
     return new OnlineError("empty_cart", message, { field: "lines" });
@@ -176,7 +275,16 @@ export function toOnlineError(error: unknown): OnlineError {
   if (/cannot be (released|converted)/i.test(message)) {
     return new OnlineError("workflow_refused", message);
   }
-  return new OnlineError("db", message);
+  // Nothing recognisable: hand the operator the server's own wording, code,
+  // details and hint (the storefront itself only ever renders the friendly
+  // `store.error.db` text) — never a stringified object.
+  return new OnlineError("db", message, {
+    detail: {
+      server_code: described.code,
+      server_details: described.details,
+      server_hint: described.hint,
+    },
+  });
 }
 
 // ── orders ──────────────────────────────────────────────────────────────────

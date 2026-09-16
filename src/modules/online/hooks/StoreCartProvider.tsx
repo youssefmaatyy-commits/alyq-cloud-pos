@@ -29,7 +29,12 @@ import {
 } from "react";
 import type { Product } from "@/modules/products/types";
 import { getOnlineOrdersRepository } from "../data";
-import { toOnlineError, type OnlineError, type PlaceOrderResult } from "../data/repository";
+import {
+  describeThrown,
+  toOnlineError,
+  type OnlineError,
+  type PlaceOrderResult,
+} from "../data/repository";
 import type {
   CustomerAddress,
   DeliveryType,
@@ -536,13 +541,17 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
         const normalized = toOnlineError(caught);
         setCheckoutError(normalized);
         // The customer only ever sees the friendly `store.error.<code>` text.
-        // What an operator needs to act on — the code, the server's wording
-        // and the raw error — goes to the console (and from there to logs),
-        // never to the storefront. No SQL, no keys, no stack.
+        // What an operator needs to act on — the code, the server's own wording,
+        // details and hint — goes to the console (and from there to logs), never
+        // to the storefront. Read field by field, so a Supabase error (a plain
+        // object, not an `Error`) is reported as itself and never as
+        // `[object Object]`. No SQL, no keys, no tokens, no stack.
+        const described = describeThrown(caught);
         console.error("[storefront] order placement failed", {
           code: normalized.code,
-          message: normalized.message,
-          raw: caught instanceof Error ? `${caught.name}: ${caught.message}` : String(caught),
+          message: described.message,
+          details: described.details ?? normalized.detail,
+          hint: described.hint,
         });
         // A failed submission keeps its key only while the same cart is being
         // retried; once the customer changes the cart, it is a new attempt.

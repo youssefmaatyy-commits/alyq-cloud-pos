@@ -405,7 +405,21 @@ the Phase 9 section of `scripts/store.flow.mjs`. One module, two audiences: a pu
   (`place_online_order`, `submit_online_payment_proof`, `lookup_online_order`, `list_my_online_orders`,
   `resolve_online_order`), `0019_storefront_public_reads` and `0020_storefront_grants_and_coupon_check`.
   The server re-prices every line and validates every coupon — the client's totals are a preview.
-- Tests: 75 logic tests in `src/modules/online/__tests__/logic.selftest.ts`; `scripts/store.flow.mjs`
+- **Checkout contract** (live mode): the order travels as one `place_online_order` call and is read
+  back for the confirmation through `lookup_online_order` — the phone-gated read a visitor may use —
+  because `online_orders` / `online_order_items` / `order_events` are staff-only under RLS
+  (`getOrder` remains the staff path). `store_customer_id` is sent only when it can be a real
+  `store_customers.id`: storefront accounts are browser-local (`cus-…`) and the function casts the
+  field to `uuid`. A refused checkout is mapped from the server's own wording (stock, quantity,
+  inactive / website-hidden product, coupon, delivery rules) to its friendly `store.error.<code>`
+  text, and a failure is logged as `{ code, message, details, hint }` — never `[object Object]`.
+  A checkout the server accepted but could not be read back is reported as `order_unreadable` with
+  the order number, so the customer never re-orders something that already exists.
+- Tests: 75 logic tests in `src/modules/online/__tests__/logic.selftest.ts`; 20 checkout-contract
+  tests in `src/modules/online/__tests__/checkout.selftest.ts` (payload, read-back, error mapping);
+  the `supabase/tests/scenarios.sql` checkout phase runs the real function as `anon` (pickup /
+  delivery × COD / InstaPay, catalogue pricing, reservations, every refusal writing zero rows,
+  replayed key, guest read-back); `scripts/store.flow.mjs`
   drives the whole acceptance flow in the DOM (14 steps: browse → search → sort → filter → product →
   cart → guest COD checkout → tracking → approval → sale + stock → InstaPay proof → verification →
   cancellation with reason → admin screens → live theme → social links → Arabic/RTL).

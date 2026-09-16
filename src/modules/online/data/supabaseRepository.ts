@@ -14,6 +14,7 @@
  * hold `manage_online_orders`, shoppers see storefront content because it is
  * public, and nobody can select their way into someone else's order.
  */
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseClient } from "@/lib/supabase/client";
 import type {
   Campaign,
@@ -47,6 +48,7 @@ import {
   COUPON_CHECK_REASONS,
   EMPTY_ORDER_COUNTS,
   OnlineError,
+  describeThrown,
   toOnlineError,
   type BestSellerRow,
   type CampaignDraft,
@@ -231,6 +233,22 @@ function toNumber(value: Numeric): number {
   if (typeof value === "number") return value;
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The `store_customer_id` the order function will accept.
+ *
+ * The column references `public.store_customers (id)` and the function casts the
+ * payload field to `uuid`. Storefront accounts are held in the browser
+ * (`localAccounts.ts`) with ids like `cus-mf3k9a2-1a2b3c4d`, which the cast
+ * rejects outright — so only a value that can possibly be a real
+ * `store_customers.id` is sent, and anything else travels as `null`.
+ */
+export function toStoreCustomerId(value: string | null | undefined): string | null {
+  const id = (value ?? "").trim();
+  return UUID_PATTERN.test(id) ? id : null;
 }
 
 /** The website only ever uses two of the POS payment methods. */
@@ -456,8 +474,16 @@ export class SupabaseOnlineRepository
   /** Website accounts stay local in both modes — see `localAccounts.ts`. */
   private readonly accounts = getLocalStoreAccounts("supabase");
 
+  /**
+   * Client override for the logic suites: they drive this repository against a
+   * fake PostgREST so the guest checkout path (payload, read-back, error) is
+   * asserted without a browser, a network or a live project. `null` uses the
+   * shared client exactly as the application does.
+   */
+  constructor(private readonly injected: SupabaseClient | null = null) {}
+
   private require() {
-    const client = getSupabaseClient();
+    const client = this.injected ?? getSupabaseClient();
     if (!client) throw new OnlineError("not_configured");
     return client;
   }
@@ -680,7 +706,13 @@ export class SupabaseOnlineRepository
           customer_name: input.customer_name,
           customer_phone: input.customer_phone,
           customer_email: input.customer_email ?? null,
-          store_customer_id: input.store_customer_id ?? null,
+          // Only a real `store_customers.id` may travel. Website accounts are
+          // local to the browser and their ids look like `cus-…`, while the
+          // function casts this field to `uuid` while its block is being
+          // entered — so sending one aborts the whole call (`22P02`, which
+          // PostgREST reports as HTTP 400) before the duplicate check, before
+          // any validation message and before a single row is written.
+          store_customer_id: toStoreCustomerId(input.store_customer_id),
           delivery_type: input.delivery_type,
           // A pickup order sends no address; the column is `not null`, so `{}`.
           address: input.address ?? {},
@@ -692,14 +724,57 @@ export class SupabaseOnlineRepository
       });
       if (error) throw toOnlineError(error);
 
-      const result = data as { order_id?: string; duplicate?: boolean } | null;
+      const result = data as {
+        order_id?: string;
+        order_number?: string;
+        duplicate?: boolean;
+      } | null;
       const orderId = result?.order_id;
       if (!orderId) throw new OnlineError("db", "Order id missing from response");
-      const order = await this.getOrder(orderId);
+      const order = await this.readPlacedOrder(orderId, result?.order_number ?? null, input);
       return { order, duplicate: result?.duplicate === true };
     } catch (error) {
       throw toOnlineError(error);
     }
+  }
+
+  /**
+   * Read back the order that was just placed.
+   *
+   * A guest cannot follow `getOrder`: `online_orders`, `online_order_items` and
+   * `order_events` are staff-only — they carry a select policy for
+   * `authenticated` holders of `manage_online_orders` and nothing for `anon` —
+   * so the row the function just wrote is invisible to the browser that placed
+   * it, and the customer is told their order failed when it did not.
+   *
+   * The read the storefront *is* allowed is `lookup_online_order`, gated on the
+   * order number **and** the phone it was placed with (the same call tracking
+   * uses). That is the confirmation path; a staff session, which can select the
+   * tables directly, remains the fallback.
+   */
+  private async readPlacedOrder(
+    orderId: string,
+    orderNumber: string | null,
+    input: PlaceOrderInput,
+  ): Promise<OnlineOrder> {
+    const failures: unknown[] = [];
+    if (orderNumber) {
+      try {
+        return await this.lookupOrder(orderNumber, input.customer_phone);
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    try {
+      return await this.getOrder(orderId);
+    } catch (error) {
+      failures.push(error);
+    }
+    // The order exists — say so, with its number — instead of reporting a
+    // failure that would send the customer back to the cart to order again.
+    throw new OnlineError("order_unreadable", describeThrown(failures[0]).message, {
+      detail: { order_number: orderNumber ?? orderId },
+    });
   }
 
   async lookupOrder(orderNumber: string, phone: string): Promise<OnlineOrder> {

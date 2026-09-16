@@ -19,6 +19,7 @@ import { cn } from "@/utils/cn";
 import { useStoreCart, type CheckoutInput } from "../hooks/StoreCartProvider";
 import { useStoreAccount } from "../hooks/StoreAccountProvider";
 import { useStorefront } from "../hooks/StorefrontProvider";
+import type { OnlineError } from "../data/repository";
 import type { CustomerAddress, DeliveryType, OnlinePaymentMethod } from "../types";
 import { whatsappHref } from "../components/storefront/StoreLayout";
 import { FieldNote, Money } from "../components/storefront/StorePrimitives";
@@ -27,6 +28,20 @@ import { externalHref } from "../services/settingsDefaults";
 
 /** Egyptian mobile numbers: 11 digits, starting 01. */
 const EGYPT_PHONE = /^01[0-25]\d{8}$/;
+
+/**
+ * The one fact a refusal names, appended to the friendly sentence: the item it
+ * is about (a stock or availability refusal names its SKU) or — when the order
+ * itself was accepted but could not be read back — its number, so the customer
+ * can track what already exists instead of ordering it again.
+ */
+function errorSuffix(error: OnlineError): string {
+  const sku = error.detail.sku;
+  if (typeof sku === "string" && sku) return ` · ${sku}`;
+  const orderNumber = error.detail.order_number;
+  if (typeof orderNumber === "string" && orderNumber) return ` · ${orderNumber}`;
+  return "";
+}
 
 /** A blank address to type into. */
 const blankAddress = (): CustomerAddress => ({
@@ -193,9 +208,7 @@ export function StoreCheckoutPage() {
       {checkoutError ? (
         <div className="mt-4 border border-rose-300 bg-rose-50 p-3 text-sm font-bold text-rose-800" style={{ borderRadius: "var(--store-radius)" }}>
           {t(`store.error.${checkoutError.code}` as never)}
-          {checkoutError.code === "insufficient_stock" && checkoutError.detail.sku
-            ? ` · ${String(checkoutError.detail.sku)}`
-            : ""}
+          {errorSuffix(checkoutError)}
           <button type="button" onClick={clearCheckoutError} className="ms-2 underline">
             {t("common.dismiss")}
           </button>

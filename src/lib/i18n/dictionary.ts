@@ -1478,6 +1478,8 @@ export const en = {
   "online.error.coupon_min_subtotal": "The order total is below this coupon's minimum.",
   "online.error.coupon_not_applicable": "This coupon does not apply to the order items.",
   "online.error.order_not_found": "No order matches those details.",
+  "online.error.order_unreadable":
+    "The order was accepted, but its details could not be loaded. Read it back from the orders list.",
   "online.error.workflow_refused": "That action is not allowed on this order.",
   "online.error.invalid_credentials": "Those details do not match an account.",
   "online.error.identifier_taken": "That phone number or email is already registered.",
@@ -2325,6 +2327,8 @@ export const en = {
   "store.error.coupon_min_subtotal": "Your order is below this coupon's minimum.",
   "store.error.coupon_not_applicable": "This coupon does not apply to the items in your cart.",
   "store.error.order_not_found": "We could not find that order.",
+  "store.error.order_unreadable":
+    "Your order was received. We could not open its details just now — keep this number to track it:",
   "store.error.workflow_refused": "That is not possible on this order right now.",
   "store.error.invalid_credentials": "Those details do not match an account.",
   "store.error.identifier_taken": "That phone number or email already has an account.",
@@ -4442,6 +4446,8 @@ export const ar: Record<TranslationKey, string> = {
   "online.error.coupon_min_subtotal": "إجمالي الطلب أقل من الحد الأدنى لهذا الكود.",
   "online.error.coupon_not_applicable": "هذا الكود لا ينطبق على عناصر الطلب.",
   "online.error.order_not_found": "لا يوجد طلب مطابق لهذه البيانات.",
+  "online.error.order_unreadable":
+    "تم قبول الطلب، لكن تعذّر تحميل تفاصيله. اقرأه من قائمة الطلبات.",
   "online.error.workflow_refused": "هذا الإجراء غير مسموح به على الطلب.",
   "online.error.invalid_credentials": "البيانات لا تطابق أي حساب.",
   "online.error.identifier_taken": "رقم الهاتف أو البريد الإلكتروني مسجل بالفعل.",
@@ -5289,6 +5295,8 @@ export const ar: Record<TranslationKey, string> = {
   "store.error.coupon_min_subtotal": "قيمة طلبك أقل من الحد الأدنى لهذا الكود.",
   "store.error.coupon_not_applicable": "هذا الكود لا ينطبق على العناصر في سلتك.",
   "store.error.order_not_found": "لم نتمكن من العثور على هذا الطلب.",
+  "store.error.order_unreadable":
+    "تم استلام طلبك. تعذّر عرض تفاصيله الآن — احتفظ برقم الطلب لمتابعته:",
   "store.error.workflow_refused": "لا يمكن تنفيذ ذلك على هذا الطلب حالياً.",
   "store.error.invalid_credentials": "البيانات لا تطابق أي حساب.",
   "store.error.identifier_taken": "رقم الهاتف أو البريد الإلكتروني له حساب بالفعل.",

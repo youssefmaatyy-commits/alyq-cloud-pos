@@ -912,6 +912,559 @@ begin
 end
 $$;
 -- ═══════════════════════════════════════════════════════════════════════════
+-- Phase 41a — storefront checkout, end to end, as the anonymous guest.
+--
+-- The guest checkout call is `place_online_order`, and it is the one write a
+-- visitor is allowed to make. This phase exercises it the way the browser does
+-- (role `anon`, one JSON payload) and asserts the whole contract around it:
+--
+--   · pickup/delivery × cash-on-delivery/InstaPay are accepted, priced from the
+--     catalogue and the shop's own settings, and carry the right payment state;
+--   · the price in the payload is ignored — the shop's `selling_price` and any
+--     live campaign are the only prices that reach `online_order_items`;
+--   · stock is protected by a reservation against the *available* quantity
+--     (on-hand minus other orders' holds), and the shelf number does not move;
+--   · a refusal — stock, quantity, inactive, website-hidden, coupon — leaves
+--     ZERO rows behind, and raises the wording the storefront maps to a
+--     friendly message;
+--   · the placed order is readable back by its number and phone through
+--     `lookup_online_order` (the guest confirmation path), while the order
+--     tables themselves stay staff-only for `anon`;
+--   · a replayed `client_ref` returns the original order and writes nothing.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+/** Row counts the checkout may move, readable from inside the anon context. */
+create or replace function pg_temp.scn_checkout_counts()
+returns table (orders integer, items integer, holds integer)
+language sql
+security definer
+set search_path = public
+as $$
+  select (select count(*)::integer from public.online_orders),
+         (select count(*)::integer from public.online_order_items),
+         (select count(*)::integer from public.stock_reservations)
+$$;
+
+/** Rows pointing at an order that does not exist — never acceptable. */
+create or replace function pg_temp.scn_broken_links()
+returns integer
+language sql
+security definer
+set search_path = public
+as $$
+  select (select count(*)::integer
+            from public.online_order_items i
+            left join public.online_orders o on o.id = i.order_id
+           where o.id is null)
+       + (select count(*)::integer
+            from public.stock_reservations r
+            left join public.online_orders o on o.id = r.online_order_id
+           where o.id is null)
+$$;
+
+/** The coupon usage counter — staff-only rows, read with the owner's eyes. */
+create or replace function pg_temp.scn_coupon_used(p_code text)
+returns integer
+language sql
+security definer
+set search_path = public
+as $$
+  select coalesce((select used_count from public.coupons where code = p_code), -1)
+$$;
+
+/**
+ * What an order actually holds, read with the owner's eyes while the caller is
+ * still `anon`: the whole contract of the phase is about rows a visitor may not
+ * read back, so the assertions must look at them from outside the visitor.
+ */
+create or replace function pg_temp.scn_order_facts(p_order_id uuid)
+returns jsonb
+language sql
+security definer
+set search_path = public
+as $$
+  select jsonb_build_object(
+    'status',          o.status,
+    'payment_status',  o.payment_status,
+    'subtotal',        o.subtotal,
+    'discount_amount', o.discount_amount,
+    'discount_code',   o.discount_code,
+    'delivery_fee',    o.delivery_fee,
+    'total',           o.total,
+    'address_city',    o.address->>'city',
+    'phone',           o.customer_phone,
+    'notes',           o.notes,
+    'order_number',    o.order_number,
+    'lines', coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'sku', i.sku, 'unit_price', i.unit_price,
+               'quantity', i.quantity, 'line_total', i.line_total,
+               'order_id', i.order_id))
+      from public.online_order_items i where i.order_id = o.id), '[]'::jsonb),
+    'holds', (
+      select coalesce(sum(r.quantity), 0)::integer
+      from public.stock_reservations r
+      where r.online_order_id = o.id and r.status = 'reserved'),
+    'on_hand', (select p.stock_quantity from public.products p
+                where p.id = (select i.product_id from public.online_order_items i
+                              where i.order_id = o.id limit 1))
+  )
+  from public.online_orders o
+  where o.id = p_order_id
+$$;
+
+/**
+ * Call the order function and require a refusal with the given wording, with
+ * nothing written. The call runs as whoever called this (the visitor, in this
+ * phase); only the counting is done with the owner's eyes.
+ */
+create or replace function pg_temp.scn_expect_refusal(p_payload jsonb, p_fragment text)
+returns void
+language plpgsql
+as $$
+declare
+  v_before record;
+  v_after  record;
+  v_state  text;
+  v_message text;
+begin
+  select * into v_before from pg_temp.scn_checkout_counts();
+  begin
+    perform public.place_online_order(p_payload);
+    raise exception 'checkout was accepted but should have been refused: %', p_fragment;
+  exception when others then
+    get stacked diagnostics v_state = returned_sqlstate, v_message = message_text;
+  end;
+  if v_message like 'checkout was accepted but%' then
+    raise exception '%', v_message;
+  end if;
+  if v_message not like '%' || p_fragment || '%' then
+    raise exception 'refusal read "%" instead of "%"', v_message, p_fragment;
+  end if;
+  if v_state not in ('23514', '23503') then
+    raise exception 'refusal used SQLSTATE % instead of a check/foreign-key violation', v_state;
+  end if;
+  select * into v_after from pg_temp.scn_checkout_counts();
+  if (v_after.orders, v_after.items, v_after.holds) is distinct from
+     (v_before.orders, v_before.items, v_before.holds) then
+    raise exception 'a refused checkout wrote rows: % → %', v_before, v_after;
+  end if;
+end
+$$;
+
+do $scn_checkout$
+declare
+  v_owner     text := current_user;
+  v_settings  jsonb;
+  v_visible   uuid := '00000000-0000-4000-8000-000000000c10';
+  v_short     uuid := '00000000-0000-4000-8000-000000000c11';
+  v_offline   uuid := '00000000-0000-4000-8000-000000000c12';
+  v_hidden    uuid := '00000000-0000-4000-8000-000000000c13';
+  v_untracked uuid := '00000000-0000-4000-8000-000000000c14';
+  v_cat       uuid := '00000000-0000-4000-8000-0000000000f1';
+  v_phone     text := '0501234567';
+  v_guest     text;
+  v_result    jsonb;
+  v_number    text;
+  v_id        uuid;
+  v_row       record;
+  v_before    record;
+  v_after     record;
+  v_lookup    jsonb;
+  v_facts     jsonb;
+  v_rows      integer;
+  v_used      integer;
+  v_created   uuid;
+  v_created_orders uuid[] := '{}';
+begin
+  -- ── fixtures (owner: RLS is bypassed, and this is test data) ───────────────
+  insert into public.products (
+    id, sku, barcode, name_ar, name_en, category_id, selling_price, cost_price,
+    stock_quantity, low_stock_level, show_on_website, is_featured, active,
+    stock_tracking_enabled
+  ) values
+    (v_visible,   'SCN-CHK',  '6291000000210', 'خاتم فحص',   'Checkout Ring',   v_cat, 100.00, 40.00, 10, 2, true,  false, true, true),
+    (v_short,     'SCN-LOW',  '6291000000227', 'سوارة فحص',  'Checkout Bangle', v_cat,  50.00, 20.00,  3, 1, true,  false, true, true),
+    (v_offline,   'SCN-OFF',  '6291000000234', 'صنف موقوف',  'Inactive Piece',  v_cat,  70.00, 30.00,  5, 1, true,  false, false, true),
+    (v_hidden,    'SCN-HIDE', '6291000000241', 'صنف مخفي',   'Hidden Piece',    v_cat,  70.00, 30.00,  5, 1, false, false, true, true),
+    (v_untracked, 'SCN-NOTRK','6291000000258', 'صنف بالطلب', 'Made To Order',   v_cat, 500.00, 200.00, 0, 1, true,  false, true, false)
+  on conflict (id) do update
+    set selling_price           = excluded.selling_price,
+        cost_price              = excluded.cost_price,
+        stock_quantity          = excluded.stock_quantity,
+        show_on_website         = excluded.show_on_website,
+        active                  = excluded.active,
+        stock_tracking_enabled  = excluded.stock_tracking_enabled;
+
+  -- The shop's own delivery rules; restored before the block ends.
+  select settings into v_settings from public.website_settings where id = 1;
+  update public.website_settings
+     set settings = coalesce(settings, '{}'::jsonb) || jsonb_build_object(
+           'delivery', jsonb_build_object(
+             'enabled', true, 'fee', 30, 'pickup_enabled', true,
+             'cod_enabled', true, 'instapay_enabled', true))
+   where id = 1;
+
+  insert into public.coupons (code, discount_type, value, min_subtotal, active, starts_at, ends_at)
+  values
+    ('SCN-CHK10',   'percent', 10, 0, true,  null,                        null),
+    ('SCN-EXPIRED', 'percent', 10, 0, true,  null,                        now() - interval '1 day'),
+    ('SCN-INACT',   'percent', 10, 0, false, null,                        null)
+  on conflict (code) do update
+    set active = excluded.active, starts_at = excluded.starts_at, ends_at = excluded.ends_at,
+        used_count = 0, value = excluded.value;
+
+  -- ── step into the visitor's shoes ──────────────────────────────────────────
+  perform pg_temp.become(null, 'anon');
+
+  select * into v_before from pg_temp.scn_checkout_counts();
+
+  -- A. pickup + cash on delivery: accepted, free, one reservation, nothing sold
+  v_guest := 'scn-checkout-a';
+  v_result := public.place_online_order(jsonb_build_object(
+    'client_ref', v_guest,
+    'customer_name', 'أحمد الشريف',
+    'customer_phone', v_phone,
+    'customer_email', null,
+    'store_customer_id', null,
+    'delivery_type', 'pickup',
+    'address', '{}'::jsonb,
+    -- the browser's own idea of the price, which must not be trusted
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_visible::text, 'qty', 2, 'unit_price', 0.01)),
+    'coupon_code', null,
+    'payment_method', 'cod',
+    'notes', 'فحص آلي'
+  ));
+  if v_result->>'duplicate' <> 'false' then
+    raise exception 'a first checkout was reported as a duplicate';
+  end if;
+  v_number := v_result->>'order_number';
+  v_id := (v_result->>'order_id')::uuid;
+  v_created_orders := v_created_orders || v_id;
+
+  v_facts := pg_temp.scn_order_facts(v_id);
+  if v_facts->>'status' <> 'pending' or v_facts->>'payment_status' <> 'pending' then
+    raise exception 'pickup+COD landed as status % / payment %',
+      v_facts->>'status', v_facts->>'payment_status';
+  end if;
+  if (v_facts->>'subtotal')::numeric <> 200.00
+     or (v_facts->>'delivery_fee')::numeric <> 0.00
+     or (v_facts->>'total')::numeric <> 200.00 then
+    raise exception 'pickup+COD priced % + % = % instead of 200 + 0',
+      v_facts->>'subtotal', v_facts->>'delivery_fee', v_facts->>'total';
+  end if;
+  if v_facts->>'phone' <> v_phone or v_facts->>'notes' <> 'فحص آلي' then
+    raise exception 'the order lost the customer it was placed with';
+  end if;
+  -- L. the catalogue price, not the payload's
+  if (v_facts->'lines'->0->>'unit_price')::numeric <> 100.00
+     or (v_facts->'lines'->0->>'quantity')::integer <> 2
+     or (v_facts->'lines'->0->>'line_total')::numeric <> 200.00 then
+    raise exception 'the line stored price % × % = % instead of the catalogue 100 × 2',
+      v_facts->'lines'->0->>'unit_price', v_facts->'lines'->0->>'quantity',
+      v_facts->'lines'->0->>'line_total';
+  end if;
+  if v_facts->'lines'->0->>'sku' <> 'SCN-CHK' then
+    raise exception 'the line lost its sku (%)', v_facts->'lines'->0->>'sku';
+  end if;
+  -- stock is held, not taken: the shelf is untouched until the sale completes
+  if (v_facts->>'on_hand')::integer <> 10 then
+    raise exception 'placing an order moved the shelf to %', v_facts->>'on_hand';
+  end if;
+  if (v_facts->>'holds')::integer <> 2 then
+    raise exception 'the order holds % unit(s) instead of 2', v_facts->>'holds';
+  end if;
+
+  -- The guest reads it back the way the storefront must: number + phone.
+  v_lookup := public.lookup_online_order(v_number, v_phone);
+  if v_lookup->'order'->>'order_number' <> v_number then
+    raise exception 'the confirmation lookup did not return the order it just placed';
+  end if;
+  if jsonb_array_length(v_lookup->'items') <> 1 then
+    raise exception 'the confirmation lookup returned % line(s)', jsonb_array_length(v_lookup->'items');
+  end if; 
+  if v_lookup->'order'->>'total' <> '200.00' then
+    raise exception 'the confirmation lookup reported total %', v_lookup->'order'->>'total';
+  end if;
+
+  -- A guest may not read the order tables at all — the confirmation cannot be a
+  -- direct select, which is exactly the defect this phase protects.
+  begin
+    execute 'select count(*) from public.online_orders' into v_rows;
+  exception when insufficient_privilege then
+    v_rows := -1;
+  end;
+  if v_rows > 0 then
+    raise exception 'anon read % row(s) of public.online_orders directly', v_rows;
+  end if;
+
+  -- B. delivery + COD: the shop's fee, and the same in-stock item again
+  -- (each accepted order is recorded, so the invariants can be checked per order)
+  v_result := public.place_online_order(jsonb_build_object(
+    'client_ref', 'scn-checkout-b',
+    'customer_name', 'منى عبد الله',
+    'customer_phone', '0512345678',
+    'delivery_type', 'delivery',
+    'address', jsonb_build_object('city', 'القاهرة', 'street', 'شارع 9', 'building', '12'),
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_visible::text, 'qty', 1)),
+    'payment_method', 'cod'
+  ));
+  v_created_orders := v_created_orders || (v_result->>'order_id')::uuid;
+  v_facts := pg_temp.scn_order_facts((v_result->>'order_id')::uuid);
+  if (v_facts->>'delivery_fee')::numeric <> 30.00 or (v_facts->>'total')::numeric <> 130.00 then
+    raise exception 'delivery+COD priced fee % / total % instead of 30 / 130',
+      v_facts->>'delivery_fee', v_facts->>'total';
+  end if;
+  if v_facts->>'address_city' <> 'القاهرة' then
+    raise exception 'the delivery address was not stored';
+  end if;
+
+  -- C. pickup + InstaPay: a human must confirm the transfer
+  v_result := public.place_online_order(jsonb_build_object(
+    'client_ref', 'scn-checkout-c',
+    'customer_name', 'سارة حسن',
+    'customer_phone', '0523456789',
+    'delivery_type', 'pickup',
+    'address', '{}'::jsonb,
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_visible::text, 'qty', 1)),
+    'payment_method', 'instapay'
+  ));
+  v_created_orders := v_created_orders || (v_result->>'order_id')::uuid;
+  v_facts := pg_temp.scn_order_facts((v_result->>'order_id')::uuid);
+  if v_facts->>'payment_status' <> 'verification_required' then
+    raise exception 'InstaPay landed as payment_status % instead of verification_required',
+      v_facts->>'payment_status';
+  end if;
+
+  -- D. delivery + InstaPay, priced with the fee
+  v_result := public.place_online_order(jsonb_build_object(
+    'client_ref', 'scn-checkout-d',
+    'customer_name', 'ياسر فؤاد',
+    'customer_phone', '0534567890',
+    'delivery_type', 'delivery',
+    'address', jsonb_build_object('city', 'الجيزة', 'street', 'شارع الهرم'),
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_visible::text, 'qty', 1)),
+    'payment_method', 'instapay'
+  ));
+  v_created_orders := v_created_orders || (v_result->>'order_id')::uuid;
+  v_facts := pg_temp.scn_order_facts((v_result->>'order_id')::uuid);
+  if (v_facts->>'delivery_fee')::numeric <> 30.00 or (v_facts->>'total')::numeric <> 130.00
+     or v_facts->>'payment_status' <> 'verification_required' then
+    raise exception 'delivery+InstaPay priced % / total % / payment %',
+      v_facts->>'delivery_fee', v_facts->>'total', v_facts->>'payment_status';
+  end if;
+
+  -- E. over the available quantity — counted against other orders' holds
+  perform pg_temp.scn_expect_refusal(jsonb_build_object(
+    'client_ref', 'scn-checkout-e',
+    'customer_name', 'طلب زائد',
+    'customer_phone', v_phone,
+    'delivery_type', 'pickup',
+    'address', '{}'::jsonb,
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_short::text, 'qty', 4)),
+    'payment_method', 'cod'
+  ), 'Only 3 of SCN-LOW available');
+
+  -- J. a valid coupon discounts the recomputed subtotal and is counted once
+  v_used := pg_temp.scn_coupon_used('SCN-CHK10');
+  v_result := public.place_online_order(jsonb_build_object(
+    'client_ref', 'scn-checkout-j',
+    'customer_name', 'هدى كمال',
+    'customer_phone', '0545678901',
+    'delivery_type', 'delivery',
+    'address', jsonb_build_object('city', 'القاهرة', 'street', 'شارع 10'),
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_short::text, 'qty', 3)),
+    'coupon_code', 'scn-chk10',
+    'payment_method', 'cod'
+  ));
+  v_created_orders := v_created_orders || (v_result->>'order_id')::uuid;
+  v_facts := pg_temp.scn_order_facts((v_result->>'order_id')::uuid);
+  -- SCN-LOW: 3 × 50 = 150, minus 10% (15), plus 30 delivery = 165
+  if (v_facts->>'subtotal')::numeric <> 150.00
+     or (v_facts->>'discount_amount')::numeric <> 15.00
+     or (v_facts->>'total')::numeric <> 165.00 then
+    raise exception 'the coupon priced % - % + 30 = % instead of 150 - 15 + 30',
+      v_facts->>'subtotal', v_facts->>'discount_amount', v_facts->>'total';
+  end if;
+  if v_facts->>'discount_code' <> 'SCN-CHK10' then
+    raise exception 'the order did not record the code it was priced with (%)', v_facts->>'discount_code';
+  end if;
+  if pg_temp.scn_coupon_used('SCN-CHK10') <> v_used + 1 then
+    raise exception 'the coupon usage counter moved by % instead of 1',
+      pg_temp.scn_coupon_used('SCN-CHK10') - v_used;
+  end if;
+
+  -- K. every accepted order carries its lines and its hold, and only its own
+  select * into v_after from pg_temp.scn_checkout_counts();
+  if v_after.items <> v_before.items + 5 then
+    raise exception 'five accepted orders wrote % line(s) instead of 5', v_after.items - v_before.items;
+  end if;
+  if v_after.holds <> v_before.holds + 5 then
+    raise exception 'five accepted orders wrote % reservation(s) instead of 5',
+      v_after.holds - v_before.holds;
+  end if;
+  if pg_temp.scn_broken_links() <> 0 then
+    raise exception 'an order line or hold points at an order that does not exist';
+  end if;
+  -- every accepted order owns exactly its own single line
+  foreach v_created in array v_created_orders loop
+    v_facts := pg_temp.scn_order_facts(v_created);
+    if jsonb_array_length(v_facts->'lines') <> 1 then
+      raise exception 'an accepted order owns % line(s) instead of 1', jsonb_array_length(v_facts->'lines');
+    end if;
+    if exists (
+      select 1 from jsonb_array_elements(v_facts->'lines') as line
+      where line->>'order_id' <> v_created::text
+    ) then
+      raise exception 'an order owns a line belonging to another order';
+    end if;
+  end loop;
+
+  -- and the same product with no stock left at all: the holds already placed
+  -- reduce what can be promised, so a second order of the same size is refused
+  perform pg_temp.scn_expect_refusal(jsonb_build_object(
+    'client_ref', 'scn-checkout-e2',
+    'customer_name', 'طلب زائد آخر',
+    'customer_phone', v_phone,
+    'delivery_type', 'pickup',
+    'address', '{}'::jsonb,
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_short::text, 'qty', 1)),
+    'payment_method', 'cod'
+  ), 'Only 0 of SCN-LOW available');
+
+  -- H. a quantity that is not a quantity
+  perform pg_temp.scn_expect_refusal(jsonb_build_object(
+    'client_ref', 'scn-checkout-h',
+    'customer_name', 'كمية صفر',
+    'customer_phone', v_phone,
+    'delivery_type', 'pickup',
+    'address', '{}'::jsonb,
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_visible::text, 'qty', 0)),
+    'payment_method', 'cod'
+  ), 'Invalid quantity');
+
+  -- F. an inactive product
+  perform pg_temp.scn_expect_refusal(jsonb_build_object(
+    'client_ref', 'scn-checkout-f',
+    'customer_name', 'صنف موقوف',
+    'customer_phone', v_phone,
+    'delivery_type', 'pickup',
+    'address', '{}'::jsonb,
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_offline::text, 'qty', 1)),
+    'payment_method', 'cod'
+  ), 'Product SCN-OFF is not available on the website');
+
+  -- G. a product taken off the website
+  perform pg_temp.scn_expect_refusal(jsonb_build_object(
+    'client_ref', 'scn-checkout-g',
+    'customer_name', 'صنف مخفي',
+    'customer_phone', v_phone,
+    'delivery_type', 'pickup',
+    'address', '{}'::jsonb,
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_hidden::text, 'qty', 1)),
+    'payment_method', 'cod'
+  ), 'Product SCN-HIDE is not available on the website');
+
+  -- a product whose stock is not tracked cannot become a till sale
+  perform pg_temp.scn_expect_refusal(jsonb_build_object(
+    'client_ref', 'scn-checkout-notrack',
+    'customer_name', 'صنف بالطلب',
+    'customer_phone', v_phone,
+    'delivery_type', 'pickup',
+    'address', '{}'::jsonb,
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_untracked::text, 'qty', 1)),
+    'payment_method', 'cod'
+  ), 'Product SCN-NOTRK cannot be ordered online');
+
+  -- I. coupons that must not apply
+  perform pg_temp.scn_expect_refusal(jsonb_build_object(
+    'client_ref', 'scn-checkout-i1',
+    'customer_name', 'كود غير موجود',
+    'customer_phone', v_phone,
+    'delivery_type', 'pickup',
+    'address', '{}'::jsonb,
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_visible::text, 'qty', 1)),
+    'coupon_code', 'SCN-NOPE',
+    'payment_method', 'cod'
+  ), 'Coupon SCN-NOPE is not valid');
+  perform pg_temp.scn_expect_refusal(jsonb_build_object(
+    'client_ref', 'scn-checkout-i2',
+    'customer_name', 'كود منتهي',
+    'customer_phone', v_phone,
+    'delivery_type', 'pickup',
+    'address', '{}'::jsonb,
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_visible::text, 'qty', 1)),
+    'coupon_code', 'SCN-EXPIRED',
+    'payment_method', 'cod'
+  ), 'Coupon SCN-EXPIRED has expired');
+  perform pg_temp.scn_expect_refusal(jsonb_build_object(
+    'client_ref', 'scn-checkout-i3',
+    'customer_name', 'كود معطل',
+    'customer_phone', v_phone,
+    'delivery_type', 'pickup',
+    'address', '{}'::jsonb,
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_visible::text, 'qty', 1)),
+    'coupon_code', 'SCN-INACT',
+    'payment_method', 'cod'
+  ), 'Coupon SCN-INACT is not valid');
+
+  -- Misconfiguration is refused the same way: delivery off means delivery off.
+  -- Flipping the shop's settings is a merchant action, so the owner does it and
+  -- the visitor is stepped back in for the checkout that must be refused.
+  perform set_config('role', v_owner, true);
+  update public.website_settings
+     set settings = settings || jsonb_build_object('delivery',
+       jsonb_build_object('enabled', false, 'fee', 30, 'pickup_enabled', true,
+                          'cod_enabled', true, 'instapay_enabled', true))
+   where id = 1;
+  perform pg_temp.become(null, 'anon');
+  perform pg_temp.scn_expect_refusal(jsonb_build_object(
+    'client_ref', 'scn-checkout-off',
+    'customer_name', 'توصيل مغلق',
+    'customer_phone', v_phone,
+    'delivery_type', 'delivery',
+    'address', jsonb_build_object('city', 'القاهرة', 'street', 'شارع 9'),
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_visible::text, 'qty', 1)),
+    'payment_method', 'cod'
+  ), 'Delivery is not available');
+
+  -- M. a double tap is one order: the replayed key returns the original
+  select * into v_before from pg_temp.scn_checkout_counts();
+  v_result := public.place_online_order(jsonb_build_object(
+    'client_ref', v_guest,
+    'customer_name', 'أحمد الشريف',
+    'customer_phone', v_phone,
+    'delivery_type', 'pickup',
+    'address', '{}'::jsonb,
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_visible::text, 'qty', 2)),
+    'payment_method', 'cod'
+  ));
+  if v_result->>'duplicate' <> 'true' or (v_result->>'order_id')::uuid <> v_id then
+    raise exception 'a replayed checkout did not return the original order';
+  end if;
+  select * into v_after from pg_temp.scn_checkout_counts();
+  if (v_after.orders, v_after.items, v_after.holds) is distinct from
+     (v_before.orders, v_before.items, v_before.holds) then
+    raise exception 'a replayed checkout wrote a second order';
+  end if;
+
+  -- M, stated plainly: five accepted orders, five lines, five holds, and every
+  -- refusal above wrote nothing at all.
+  select * into v_after from pg_temp.scn_checkout_counts();
+  if v_after.orders <> v_before.orders or v_after.items <> v_before.items
+     or v_after.holds <> v_before.holds then
+    raise exception 'the final replay moved the totals';
+  end if;
+
+  -- ── step back out, which only the owner can do ────────────────────────────
+  perform set_config('role', v_owner, true);
+  update public.website_settings set settings = v_settings where id = 1;
+
+  raise notice 'storefront checkout — pickup/delivery × COD/InstaPay accepted and priced from the catalogue, stock held not sold, refusals (stock, quantity, inactive, website-hidden, untracked, coupon, delivery off) write zero rows, a replayed key writes no second order, and the guest reads the order back by number and phone while the tables stay staff-only';
+end
+$scn_checkout$;
+
+-- ═══════════════════════════════════════════════════════════════════════════
 -- Phase C onwards — as `authenticated`, the role the browser gets.
 -- The role is switched once here and never switched back.
 -- ═══════════════════════════════════════════════════════════════════════════
