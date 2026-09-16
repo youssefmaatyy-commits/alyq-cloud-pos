@@ -513,6 +513,15 @@ async function main() {
   assert.equal(onlineSale.source, "online", "and it is marked as coming from the website");
   assert.equal(onlineSale.customer_name, "Mona Mahmoud", "the customer travels with it");
 
+  // Phase 27: the storefront channel is independent of the drawer. This
+  // session has never opened a shift, and the online sale still completed —
+  // the shift gate is a till rule, not a website rule.
+  const storeShifts = readJson("alyq.demo.shifts.v1") ?? [];
+  assert.ok(
+    !storeShifts.some((sh) => sh.status === "open"),
+    "the whole store flow ran with no shift open",
+  );
+
   const sku = await skuForName(targetName);
   assert.equal(stockOf(sku), stockBefore - 2, "approval deducted the two units it was holding");
   assert.equal(openReservationsFor(approvedOrder.id).length, 0, "the hold became the deduction");

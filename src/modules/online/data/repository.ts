@@ -54,7 +54,10 @@ export type OnlineMode = "supabase" | "demo";
 export const ONLINE_ERROR_CODES = [
   "empty_cart",
   "insufficient_stock",
+  "invalid_quantity",
   "product_unavailable",
+  "product_not_found",
+  "product_not_online",
   "missing_contact",
   "missing_address",
   "delivery_unavailable",
@@ -65,6 +68,7 @@ export const ONLINE_ERROR_CODES = [
   "coupon_not_started",
   "coupon_limit_reached",
   "coupon_min_subtotal",
+  "coupon_not_applicable",
   "order_not_found",
   "workflow_refused",
   "invalid_credentials",
@@ -124,11 +128,14 @@ export function toOnlineError(error: unknown): OnlineError {
   if (/coupon .* has expired/i.test(message)) {
     return new OnlineError("coupon_expired", message, { field: "coupon_code" });
   }
-  if (/coupon .* has reached its usage limit/i.test(message)) {
+  if (/coupon .* (has been fully used|has reached its usage limit)/i.test(message)) {
     return new OnlineError("coupon_limit_reached", message, { field: "coupon_code" });
   }
-  if (/coupon .* requires a subtotal/i.test(message)) {
+  if (/coupon .* (needs a subtotal|requires a subtotal)/i.test(message)) {
     return new OnlineError("coupon_min_subtotal", message, { field: "coupon_code" });
+  }
+  if (/coupon .* does not apply to this cart/i.test(message)) {
+    return new OnlineError("coupon_not_applicable", message, { field: "coupon_code" });
   }
   if (/delivery is not available/i.test(message)) {
     return new OnlineError("delivery_unavailable", message, { field: "delivery_type" });
@@ -139,8 +146,23 @@ export function toOnlineError(error: unknown): OnlineError {
   if (/not available on the website/i.test(message)) {
     return new OnlineError("product_unavailable", message, { field: "lines" });
   }
+  if (/product .* cannot be ordered online/i.test(message)) {
+    return new OnlineError("product_not_online", message, { field: "lines" });
+  }
+  if (/product .* not found/i.test(message)) {
+    return new OnlineError("product_not_found", message, { field: "lines" });
+  }
   if (/empty cart/i.test(message)) {
     return new OnlineError("empty_cart", message, { field: "lines" });
+  }
+  if (/invalid quantity/i.test(message)) {
+    return new OnlineError("invalid_quantity", message, { field: "lines" });
+  }
+  if (/invalid delivery type/i.test(message)) {
+    return new OnlineError("delivery_unavailable", message, { field: "delivery_type" });
+  }
+  if (/invalid payment method/i.test(message)) {
+    return new OnlineError("payment_unavailable", message, { field: "payment_method" });
   }
   if (/customer (name|phone) is required/i.test(message)) {
     return new OnlineError("missing_contact", message, { field: "customer_name" });

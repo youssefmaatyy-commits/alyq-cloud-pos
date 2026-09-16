@@ -1,3 +1,19 @@
+// Phase 27: a till sale requires an open shift (the demo repository now
+// mirrors migration 0040). Every suite that rings up sales opens one first.
+async function openTestShift() {
+  const { getDemoShiftRepository } = await import("@/modules/shifts/data/demoRepository");
+  const shifts = await getDemoShiftRepository().listShifts();
+  if (!shifts.some((s) => s.status === "open")) {
+    await getDemoShiftRepository().openShift({
+      branch: "Main",
+      register: "Till 1",
+      opening_cash: 100,
+      opened_by: "00000000-0000-0000-0000-000000000c1t",
+      opened_by_name: "Test Cashier",
+    });
+  }
+}
+
 /**
  * Approval limits self-test (Phase 12, requirement 2).
  *
@@ -181,6 +197,10 @@ function expenseDraft(amount: number, name = "Over-limit expense"): NewExpense {
 console.log("\nPhase 12 · approval limits");
 
 // ── 1. the rules themselves ───────────────────────────────────────────────
+test("setup: open the till shift the till needs (Phase 27)", async () => {
+  await openTestShift();
+});
+
 test("a limit fires above the threshold and never at it", () => {
   const rules: ApprovalRules = {
     ...DEFAULT_APPROVAL_RULES,

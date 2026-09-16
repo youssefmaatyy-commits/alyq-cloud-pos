@@ -95,6 +95,7 @@ export class DemoCustomerRepository implements CustomerRepository {
       ...patch,
       name: patch.name !== undefined ? patch.name.trim() : current.name,
       phone: patch.phone !== undefined ? patch.phone.trim() : current.phone,
+      email: patch.email !== undefined ? (patch.email?.trim() || null) : current.email,
       address: patch.address !== undefined ? (patch.address?.trim() || null) : current.address,
       notes: patch.notes !== undefined ? (patch.notes?.trim() || null) : current.notes,
       updated_at: nowIso(),

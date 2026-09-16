@@ -38,6 +38,8 @@ interface SaleRow {
   paid_by_name: string | null;
   /** Present from migration 0017 onward; older rows simply lack it. */
   source?: Sale["source"] | null;
+  /** The open shift the till sale was completed under (migration 0040). */
+  shift_id?: string | null;
 }
 
 interface SalePaymentRow {
@@ -123,6 +125,7 @@ function mapSale(row: SaleRow, items: SaleItemRow[] = [], payments: SalePaymentR
     paid_by: row.paid_by ?? null,
     paid_by_name: row.paid_by_name ?? null,
     source: row.source ?? "pos",
+    shift_id: row.shift_id ?? null,
   };
 }
 

@@ -1933,6 +1933,39 @@ test("settings are saved with who saved them and when", async () => {
   assert.equal(stored.currency, "EGP");
 });
 
+console.log("\nPhase 27 · error normalization against the live 0034 wording");
+
+test("every live checkout refusal lands on a customer-facing code (never bare db)", () => {
+  // Each string is the exact wording migration 0034 raises. Before Phase 27
+  // eight of them fell through to `db`, and two coupon wordings had drifted
+  // from their regexes — the customer got "something went wrong" for a
+  // perfectly explained problem.
+  const cases: [string, string][] = [
+    ["Customer name is required", "missing_contact"],
+    ["Customer phone is required", "missing_contact"],
+    ["Invalid delivery type", "delivery_unavailable"],
+    ["Invalid payment method", "payment_unavailable"],
+    ["Empty cart", "empty_cart"],
+    ["Delivery is not available", "delivery_unavailable"],
+    ["A delivery address is required", "missing_address"],
+    ["Invalid quantity", "invalid_quantity"],
+    ["Product ALYQ-1001 not found", "product_not_found"],
+    ["Product ALYQ-1001 is not available on the website", "product_unavailable"],
+    ["Product ALYQ-1001 cannot be ordered online", "product_not_online"],
+    ["Only 2 of ALYQ-1001 available", "insufficient_stock"],
+    ["Coupon WELCOME is not valid", "coupon_invalid"],
+    ["Coupon WELCOME is not active yet", "coupon_not_started"],
+    ["Coupon WELCOME has expired", "coupon_expired"],
+    ["Coupon WELCOME has been fully used", "coupon_limit_reached"],
+    ["Coupon WELCOME needs a subtotal of at least 200", "coupon_min_subtotal"],
+    ["Coupon WELCOME does not apply to this cart", "coupon_not_applicable"],
+  ];
+  for (const [text, expected] of cases) {
+    const err = toOnlineError(new Error(text));
+    assert.equal(err.code, expected, `"${text}" → ${err.code}, expected ${expected}`);
+  }
+});
+
 // runner — sequential, because the demo repository keeps one write in flight
 let passed = 0;
 async function main(): Promise<void> {

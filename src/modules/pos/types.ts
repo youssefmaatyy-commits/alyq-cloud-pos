@@ -120,6 +120,11 @@ export interface Sale {
   paid_by_name: string | null;
   /** `pos` unless an approved online order created it. */
   source?: SaleSource;
+  /**
+   * The open shift a till sale was completed under (migration 0040).
+   * `null` for online-channel sales and for rows before the column existed.
+   */
+  shift_id?: string | null;
 }
 
 /** Payload the cart sends to complete a sale. */

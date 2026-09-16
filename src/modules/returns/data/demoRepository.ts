@@ -259,12 +259,38 @@ export class DemoReturnRepository implements ReturnRepository {
 
     // The linked return follows the money: its refund_status is a mirror of the
     // settlement, which is what frees the reserved refundable amount for a
-    // rejection. Stock is not reversed — the goods did come back.
+    // rejection.
     if (settled.return_id) {
       this.returns = this.returns.map((r) =>
         r.id === settled.return_id ? { ...r, refund_status: settled.status } : r,
       );
       persistReturns(this.returns);
+
+      // A rejection cancels the return, so the goods are written back out —
+      // the exact mirror of pos_settle_refund (migration 0041). This keeps the
+      // released quantity honest: a later, genuine return restores stock
+      // exactly once, for the goods that actually came back that time.
+      if (settled.status === "rejected") {
+        const linked = this.returns.find((r) => r.id === settled.return_id);
+        if (linked) {
+          const catalog = getCatalogDemo();
+          for (const item of linked.items) {
+            const products = await catalog.listProducts();
+            await applyDemoAdjustment(
+              {
+                productId: item.product_id,
+                type: "adjustment_out",
+                reason: "customer_return",
+                quantity: item.quantity,
+                notes: `Reversed: refund ${settled.refund_number} rejected (Return ${linked.return_number})`,
+                userId: input.user_id,
+                userName: input.user_name,
+              },
+              products,
+            );
+          }
+        }
+      }
     }
 
     return delay({ refund: settled, alreadySettled: false }, 60);

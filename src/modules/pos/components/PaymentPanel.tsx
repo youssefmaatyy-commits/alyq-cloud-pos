@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { Button, TextInput, ToggleSwitch, useToast } from "@/components/ui";
 import { ApprovalRequestDialog } from "@/modules/approvals";
+import { OpenShiftModal, useShifts } from "@/modules/shifts";
 import { usePos } from "../hooks/PosProvider";
 import { autoBalanceOther, round2, smartPaymentCalc } from "../services/posMath";
 import type { SalePaymentInput } from "../types";
@@ -32,7 +33,16 @@ export function PaymentPanel() {
     approvalAsk,
     dismissApprovalAsk,
     clearCart,
+    selectedCustomer,
   } = usePos();
+
+  // A till sale is drawer money: it needs an open shift to land in (Phase 27).
+  // The gate shows the moment the shift list has loaded with nothing open, so
+  // the register tells the cashier to open one instead of failing on submit —
+  // and the database still enforces the same rule server-side (0040).
+  const { openShift, loading: shiftsLoading, refresh: refreshShifts } = useShifts();
+  const [shiftModalOpen, setShiftModalOpen] = useState(false);
+  const shiftBlocked = !shiftsLoading && openShift === null;
 
   const [split, setSplit] = useState(false);
   const [cash, setCash] = useState("");
@@ -109,7 +119,7 @@ export function PaymentPanel() {
   }, [calc.cashApplied, calc.cashTendered, calc.instapay, calc.visa, instapayStatus]);
 
   const balanced = calc.remaining === 0 && payments.length > 0;
-  const canComplete = !isEmpty && !completing && canSell && balanced;
+  const canComplete = !isEmpty && !completing && canSell && balanced && !shiftBlocked;
 
   const quickAmounts = useMemo(
     () => [total, Math.ceil(total / 5) * 5, Math.ceil(total / 10) * 10, Math.ceil(total / 50) * 50],
@@ -127,6 +137,15 @@ export function PaymentPanel() {
       // for approval instead.
       await completeSale(payments);
     } catch (err) {
+      // The race where the shift closes between render and submit: the RPC
+      // (or the demo repository) is the authority, and its code comes back
+      // here — surface the same message the gate shows.
+      if ((err as { code?: string } | null)?.code === "SHIFT_REQUIRED") {
+        setFailure(t("pos.shiftRequired"));
+        toast.error(t("pos.shiftRequired"));
+        void refreshShifts();
+        return;
+      }
       const message = err instanceof Error ? err.message : String(err);
       setFailure(message);
       toast.error(message);
@@ -142,6 +161,22 @@ export function PaymentPanel() {
         <span className="text-lg font-extrabold tabular-nums text-slate-900">
           {num(total, 2)}
         </span>
+      </div>
+
+      {/* Who the sale is for — chosen in the cart, shown here so it cannot
+          be missed before money moves. Walk-in stays a first-class value. */}
+      <div className="mb-3 flex items-center gap-2 rounded-lg bg-slate-50 px-2.5 py-1.5">
+        <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+          {t("pos.customer")}
+        </span>
+        <span className="min-w-0 flex-1 truncate text-xs font-semibold text-slate-800">
+          {selectedCustomer ? selectedCustomer.name : t("customers.guestCustomer")}
+        </span>
+        {selectedCustomer ? (
+          <span className="font-mono text-[10px] text-slate-500" dir="ltr">
+            {selectedCustomer.phone}
+          </span>
+        ) : null}
       </div>
 
       {/* Cash */}
@@ -290,6 +325,20 @@ export function PaymentPanel() {
         <p className="mt-1.5 text-[11px] font-semibold text-amber-600">{t("pos.underpaid")}</p>
       ) : null}
 
+      {shiftBlocked ? (
+        <div className="mt-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2.5" role="alert">
+          <p className="text-xs font-bold text-amber-900">⏱ {t("pos.shiftRequired")}</p>
+          <Button
+            variant="secondary"
+            size="sm"
+            className="mt-2 w-full"
+            onClick={() => setShiftModalOpen(true)}
+          >
+            {t("pos.openShiftAction")}
+          </Button>
+        </div>
+      ) : null}
+
       <Button
         className="mt-3 w-full"
         size="lg"
@@ -333,6 +382,16 @@ export function PaymentPanel() {
             dismissApprovalAsk();
           }}
           onClose={dismissApprovalAsk}
+        />
+      ) : null}
+
+      {shiftModalOpen ? (
+        <OpenShiftModal
+          open
+          onClose={() => {
+            setShiftModalOpen(false);
+            void refreshShifts();
+          }}
         />
       ) : null}
     </div>

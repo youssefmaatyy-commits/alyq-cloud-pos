@@ -1,3 +1,19 @@
+// Phase 27: a till sale requires an open shift (the demo repository now
+// mirrors migration 0040). Every suite that rings up sales opens one first.
+async function openTestShift() {
+  const { getDemoShiftRepository } = await import("@/modules/shifts/data/demoRepository");
+  const shifts = await getDemoShiftRepository().listShifts();
+  if (!shifts.some((s) => s.status === "open")) {
+    await getDemoShiftRepository().openShift({
+      branch: "Main",
+      register: "Till 1",
+      opening_cash: 100,
+      opened_by: "00000000-0000-0000-0000-000000000c1t",
+      opened_by_name: "Test Cashier",
+    });
+  }
+}
+
 /**
  * POS logic self-test (headless, Node).
  * Run with:
@@ -75,6 +91,10 @@ const insta = (amount: number, status: "paid" | "pending" = "paid"): SalePayment
 });
 
 console.log("\nPOS · cart math");
+
+test("setup: open the till shift the till needs (Phase 27)", async () => {
+  await openTestShift();
+});
 
 test("line total + subtotal with rounding", () => {
   assert.equal(lineTotal(10.005, 3), 30.02); // 10.005 * 3 = 30.015 → 30.02
@@ -1131,6 +1151,85 @@ test("receipt shows customer section only when a customer is linked", async () =
   assert.ok(linkedHtml.includes("Smoke Customer"), "customer name shown");
   assert.ok(linkedHtml.includes("Phone"), "phone label shown");
   assert.ok(linkedHtml.includes("0599111222"), "customer phone shown");
+});
+
+console.log("\nPhase 27 · open-shift gate + customer stamp (demo)");
+
+test("a till sale is stamped with the open shift and keeps its customer", async () => {
+  const { getDemoShiftRepository } = await import("@/modules/shifts/data/demoRepository");
+  const shifts = await getDemoShiftRepository().listShifts();
+  const openShift = shifts.find((sh) => sh.status === "open");
+  assert.ok(openShift, "the setup test left a shift open");
+  const product = await bySku("ALYQ-1001"); // price 32.5
+  const sale = await repo.completeSale({
+    client_ref: `p27-stamp-${Date.now()}`,
+    lines: [{ product_id: product.id, qty: 1 }],
+    discount_type: "none",
+    discount_value: 0,
+    payments: [cash(product.selling_price)],
+    customer_id: "cust-p27",
+    customer_name: "Omar",
+    customer_phone: "0101111222",
+    user_id: "u1",
+    user_name: "Tester",
+  });
+  assert.equal(sale.shift_id, openShift.id, "the sale carries its shift");
+  assert.equal(sale.customer_id, "cust-p27");
+  assert.equal(sale.customer_name, "Omar");
+  assert.equal(sale.customer_phone, "0101111222");
+});
+
+test("no shift: the till sale is refused with SHIFT_REQUIRED, online is exempt", async () => {
+  const { getDemoShiftRepository } = await import("@/modules/shifts/data/demoRepository");
+  const shiftsRepo = getDemoShiftRepository();
+  const shifts = await shiftsRepo.listShifts();
+  const openShift = shifts.find((sh) => sh.status === "open")!;
+  await shiftsRepo.closeShift(openShift.id, {
+    closing_cash: openShift.opening_cash,
+    closed_by: "u1",
+    closed_by_name: "Tester",
+    summary: {
+      expected_cash: openShift.opening_cash,
+      actual_cash: openShift.opening_cash,
+      difference: 0,
+    } as Parameters<typeof shiftsRepo.closeShift>[1]["summary"],
+  });
+
+  const product = await bySku("ALYQ-1001");
+  await assert.rejects(
+    repo.completeSale({
+      client_ref: `p27-noshift-${Date.now()}`,
+      lines: [{ product_id: product.id, qty: 1 }],
+      discount_type: "none",
+      discount_value: 0,
+      payments: [cash(product.selling_price)],
+      user_id: "u1",
+      user_name: "Tester",
+    }),
+    (err: unknown) => (err as { code?: string }).code === "SHIFT_REQUIRED",
+  );
+
+  // the storefront channel does not need the drawer: COD, no shift
+  const online = await repo.completeSale({
+    client_ref: `p27-online-${Date.now()}`,
+    lines: [{ product_id: product.id, qty: 1 }],
+    discount_type: "none",
+    discount_value: 0,
+    payments: [{ method: "cod", amount: product.selling_price, status: "pending" }],
+    user_id: "u1",
+    user_name: "Tester",
+    source: "online",
+  });
+  assert.equal(online.shift_id, null, "an online sale carries no shift");
+
+  // leave the till sellable for whatever follows
+  await shiftsRepo.openShift({
+    branch: "Main",
+    register: "Till 1",
+    opening_cash: 100,
+    opened_by: "u1",
+    opened_by_name: "Tester",
+  });
 });
 
 // runner — sequential so each test sees a consistent in-memory catalog

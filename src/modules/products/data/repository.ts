@@ -16,6 +16,8 @@ export type AppErrorCode =
   | "DUPLICATE_BARCODE"
   | "CATEGORY_IN_USE"
   | "CATEGORY_CYCLE"
+  /** A till sale needs an open shift (Phase 27); the register must open one first. */
+  | "SHIFT_REQUIRED"
   /**
    * Permanent delete refused: the product is referenced by business history
    * (sales, returns, the stock ledger, online orders or reservations). Archive

@@ -921,6 +921,96 @@ async function main() {
   click("Reset");
   await sleep(400);
 
+  // ── Phase 27 · the register knows its customer, and it knows the drawer ──
+  // (a) the picker is on the register even before the first line
+  await navigate("#/pos");
+  for (let i = 0; i < 12 && !bodyText().includes("ALYQ-1001"); i += 1) await sleep(300);
+  assert.ok(document.querySelector("#customer-select"), "customer picker is available on an empty cart");
+
+  // (b) a line, but NO open shift anywhere in the session: the register must
+  // say exactly that, and the complete button stays locked
+  const p27Card = [...document.querySelectorAll("button")].find((b) =>
+    (b.textContent ?? "").includes("Classic Gold Ring"),
+  );
+  p27Card.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  await sleep(300);
+  assert.ok(
+    bodyText().includes("You must open a shift before completing a sale"),
+    "the register names the missing shift",
+  );
+  const p27Complete = [...document.querySelectorAll("button")].find(
+    (b) => (b.textContent ?? "").trim().startsWith("✓") && (b.textContent ?? "").includes("Complete sale"),
+  );
+  assert.ok(p27Complete && p27Complete.disabled, "complete is locked while no shift is open");
+  console.log("  ✓ no-shift: the register blocks completion and says why");
+
+  // (c) the way out is on the register itself: open a shift from the panel
+  const p27Open = [...document.querySelectorAll("button")].find((b) =>
+    (b.textContent ?? "").includes("Open a shift"),
+  );
+  assert.ok(p27Open, "the register offers the open-shift action");
+  p27Open.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  await sleep(350);
+  const p27Dialog = [...document.querySelectorAll('[role="dialog"]')].pop();
+  assert.ok(p27Dialog?.textContent.includes("Open a new shift"), "open-shift modal from the register");
+  const p27Inputs = [...p27Dialog.querySelectorAll("input")];
+  const p27Branch = p27Inputs.find((i) => !i.readOnly && i.type === "text");
+  const p27Cash = p27Inputs.find((i) => i.inputMode === "decimal");
+  const fillP27 = (input, value) => {
+    Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value").set.call(input, value);
+    input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+  };
+  fillP27(p27Branch, "Main branch");
+  fillP27(p27Cash, "1000");
+  await sleep(150);
+  click("Open shift", p27Dialog);
+  for (let i = 0; i < 12 && !bodyText().includes("SH-000001"); i += 1) await sleep(300);
+  assert.ok(bodyText().includes("SH-000001"), "the shift opened from the register");
+  assert.ok(
+    !bodyText().includes("You must open a shift before completing a sale"),
+    "the shift banner is gone once the drawer is open",
+  );
+  console.log("  ✓ shift opened from the register's own action");
+
+  // (d) search the customer by phone, pick the match, complete — the invoice
+  // keeps the customer it was sold to
+  const p27Picker = document.querySelector("#customer-select");
+  p27Picker.focus();
+  await sleep(150);
+  setField("#customer-select", "0501234567");
+  await sleep(250);
+  const p27Option = [...document.querySelectorAll('[role="listbox"] button')].find((b) =>
+    (b.textContent ?? "").includes("أحمد الشريف"),
+  );
+  assert.ok(p27Option, "the phone search found the customer");
+  p27Option.dispatchEvent(new dom.window.MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+  await sleep(250);
+  assert.ok(
+    bodyText().includes("أحمد الشريف") && bodyText().includes("0501234567"),
+    "the selected customer is shown before payment",
+  );
+  const p27Exact = [...document.querySelectorAll("button")].find((b) =>
+    (b.textContent ?? "").trim() === "Exact",
+  );
+  p27Exact.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  await sleep(300);
+  const p27Done = [...document.querySelectorAll("button")].find(
+    (b) => (b.textContent ?? "").trim().startsWith("✓") && (b.textContent ?? "").includes("Complete sale"),
+  );
+  p27Done.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  await sleep(1700);
+  const p27Inv = bodyText().match(/INV-\d{6}/)?.[0];
+  assert.ok(p27Inv, "the sale completed under the open shift");
+  const p27Print = [...document.querySelectorAll("button")].find((b) =>
+    (b.textContent ?? "").includes("Print receipt"),
+  );
+  p27Print.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  await sleep(400);
+  assert.ok(printedDocs[printedDocs.length - 1].includes("أحمد الشريف"), "the receipt keeps the customer");
+  click("New sale");
+  await sleep(300);
+  console.log("  ✓ shift → customer → sale, and the invoice carries the customer");
+
   await navigate("#/pos");
   assert.ok(bodyText().includes("Register"), "POS screen renders");
   assert.ok(bodyText().includes("ALYQ-1001"), "product grid loads catalog");
@@ -1308,11 +1398,18 @@ async function main() {
   plusBtn.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
   await sleep(200);
   const custSelect = document.querySelector("#customer-select");
-  assert.ok(custSelect, "customer selector in cart");
-  const custOption = [...custSelect.options].find((o) => o.text.includes("Smoke Customer v2"));
-  assert.ok(custOption, "new customer available in POS selector");
-  setField("#customer-select", custOption.value);
+  assert.ok(custSelect, "customer picker in cart");
+  custSelect.focus();
+  await sleep(150);
+  setField("#customer-select", "Smoke Customer");
   await sleep(250);
+  const custOption = [...document.querySelectorAll('[role="listbox"] button')].find((b) =>
+    (b.textContent ?? "").includes("Smoke Customer v2"),
+  );
+  assert.ok(custOption, "new customer found by the picker's search");
+  custOption.dispatchEvent(new dom.window.MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+  await sleep(250);
+  assert.ok(bodyText().includes("Smoke Customer v2"), "the chosen customer is shown at the till");
   setField('[data-testid="cash-input"]', "136");
   await sleep(250);
   const saleBtn = [...document.querySelectorAll("button")].find((b) =>
@@ -1545,7 +1642,21 @@ async function main() {
     );
   };
 
+  // Phase 27 left the till's shift (SH-000001) open so the register scenes
+  // above could run. This scenario starts from a closed drawer, so close it
+  // with the exact expected cash — the same move it makes at the end.
   await navigate("#/shifts");
+  for (let i = 0; i < 12 && !bodyText().includes("SH-000001"); i += 1) await sleep(300);
+  assert.ok(bodyText().includes("SH-000001"), "the Phase 27 shift is still open");
+  clickEl(findButton("Close shift"));
+  await sleep(350);
+  const preCloseDialog = dialog();
+  const preCloseInput = [...preCloseDialog.querySelectorAll("input")].find((i) => i.inputMode === "decimal");
+  typeInto(preCloseInput, String(kpiValue("Expected cash")));
+  await sleep(250);
+  clickEl([...preCloseDialog.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === "Close shift"));
+  await sleep(300);
+
   for (let i = 0; i < 10 && !bodyText().includes("No shift is currently open"); i += 1) {
     await sleep(300);
   }
@@ -1570,10 +1681,10 @@ async function main() {
   typeInto(cashOpeningInput, "1000");
   await sleep(200);
   clickEl([...dialog().querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === "Open shift"));
-  for (let i = 0; i < 12 && !bodyText().includes("SH-000001"); i += 1) {
+  for (let i = 0; i < 12 && !bodyText().includes("SH-000002"); i += 1) {
     await sleep(300);
   }
-  assert.ok(bodyText().includes("SH-000001"), "shift SH-000001 opened");
+  assert.ok(bodyText().includes("SH-000002"), "shift SH-000002 opened");
   assert.equal(kpiValue("Opening balance"), 1000, "opening balance KPI shows the float");
   assert.equal(kpiValue("Expected cash"), 1000, "expected cash starts at the opening float");
   console.log("  ✓ shift opened with a 1000 opening float");
@@ -1676,12 +1787,12 @@ async function main() {
 
   // ── Shift history carries the opening/closing detail and the difference ──
   await navigate("#/shifts/history");
-  for (let i = 0; i < 12 && !bodyText().includes("SH-000001"); i += 1) await sleep(300);
-  assert.ok(bodyText().includes("SH-000001"), "closed shift listed in history");
+  for (let i = 0; i < 12 && !bodyText().includes("SH-000002"); i += 1) await sleep(300);
+  assert.ok(bodyText().includes("SH-000002"), "closed shift listed in history");
   const historyRow = [...document.querySelectorAll("tbody tr")].find((tr) =>
-    (tr.textContent ?? "").includes("SH-000001"),
+    (tr.textContent ?? "").includes("SH-000002"),
   );
-  assert.ok(historyRow, "history row for SH-000001");
+  assert.ok(historyRow, "history row for SH-000002");
   const historyCells = [...historyRow.querySelectorAll("td")].map((td) => td.textContent.trim());
   const parseCell = (text) => {
     const match = text.match(/-?\d[\d,]*(?:\.\d+)?/);
@@ -1697,7 +1808,7 @@ async function main() {
   clickEl(historyRow.querySelector("button"));
   await sleep(400);
   const detailDialog = [...document.querySelectorAll('[role="dialog"]')].pop();
-  assert.ok(detailDialog?.textContent.includes("SH-000001"), "shift detail modal opens");
+  assert.ok(detailDialog?.textContent.includes("SH-000002"), "shift detail modal opens");
   assert.ok(detailDialog.textContent.includes("EXP-000001"), "detail lists the shift expense");
   assert.ok(detailDialog.textContent.includes("Delivery fuel"), "detail names the expense");
   assert.ok(detailDialog.textContent.includes("Figures frozen"), "detail marks the snapshot as frozen");
@@ -1739,7 +1850,7 @@ async function main() {
   assert.ok(bodyText().includes("Shift opened"), "audit log records the shift opening");
   assert.ok(bodyText().includes("Expense created"), "audit log records the expense");
   assert.ok(bodyText().includes("Shift closed"), "audit log records the shift closing");
-  assert.ok(bodyText().includes("SH-000001"), "audit entries reference the shift");
+  assert.ok(bodyText().includes("SH-000002"), "audit entries reference the shift");
   assert.ok(bodyText().includes("EXP-000001"), "audit entries reference the expense");
   assert.ok(bodyText().includes("ALYQ Admin"), "audit entries carry the acting user");
   console.log("  ✓ audit log records shift.opened, expense.created and shift.closed");

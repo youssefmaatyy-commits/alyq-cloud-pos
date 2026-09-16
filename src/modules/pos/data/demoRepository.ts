@@ -9,6 +9,7 @@ import type {
 import { AppError } from "@/modules/products/data/repository";
 import { getDemoRepository } from "@/modules/products/data/demoRepository";
 import { applyDemoAdjustment } from "@/modules/inventory/data/demoRepository";
+import { getDemoShiftRepository } from "@/modules/shifts/data/demoRepository";
 import { safeStorage } from "@/modules/products/data/demoSeed";
 import { cartTotals, lineTotal, round2, validateDiscount } from "../services/posMath";
 import type { SaleListQuery, SalesRepository } from "./repository";
@@ -98,6 +99,18 @@ export class DemoSalesRepository implements SalesRepository {
     try {
       if (input.lines.length === 0) {
         throw new AppError("VALIDATION", "Cart is empty", "cart");
+      }
+
+      // ── open-shift requirement (Phase 27) ─────────────────────────────────
+      // Demo mode has no RPC, so the demo repository mirrors the rule the
+      // database applies in pos_complete_sale (migration 0040): a till sale
+      // needs the drawer to be open and is stamped with the shift; the
+      // online channel stays independent of it.
+      const shifts = await getDemoShiftRepository().listShifts();
+      const openShift = shifts.find((sh) => sh.status === "open") ?? null;
+      const openShiftId: string | null = input.source === "online" ? null : (openShift?.id ?? null);
+      if (input.source !== "online" && !openShift) {
+        throw new AppError("SHIFT_REQUIRED", "A shift must be open before a sale can be completed");
       }
 
       // ── authoritative re-read: fresh stock + catalog prices ──
@@ -235,6 +248,7 @@ export class DemoSalesRepository implements SalesRepository {
         customer_name: input.customer_name ?? null,
         customer_phone: input.customer_phone ?? null,
         created_at: now,
+        shift_id: openShiftId,
         voided_at: null,
         void_reason: null,
         paid_at: allPaid ? now : lastInstaPay?.paid_at ?? null,

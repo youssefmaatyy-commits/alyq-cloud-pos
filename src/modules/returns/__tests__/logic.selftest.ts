@@ -1,3 +1,19 @@
+// Phase 27: a till sale requires an open shift (the demo repository now
+// mirrors migration 0040). Every suite that rings up sales opens one first.
+async function openTestShift() {
+  const { getDemoShiftRepository } = await import("@/modules/shifts/data/demoRepository");
+  const shifts = await getDemoShiftRepository().listShifts();
+  if (!shifts.some((s) => s.status === "open")) {
+    await getDemoShiftRepository().openShift({
+      branch: "Main",
+      register: "Till 1",
+      opening_cash: 100,
+      opened_by: "00000000-0000-0000-0000-000000000c1t",
+      opened_by_name: "Test Cashier",
+    });
+  }
+}
+
 /**
  * Phase 7 logic self-test (headless).
  * Run with:  npx esbuild src/modules/returns/__tests__/logic.selftest.ts \
@@ -18,6 +34,8 @@ import { getDemoSalesRepository } from "@/modules/pos/data/demoRepository";
 import { getDemoRepository } from "@/modules/products/data/demoRepository";
 import { getDemoInventoryRepository } from "@/modules/inventory/data/demoRepository";
 import type { Sale } from "@/modules/pos/types";
+import { getRemainingReturnableQuantities, getTotalRefundedForSale } from "../validation";
+import type { RefundRecord, SalesReturn } from "../types";
 
 type TestCase = { name: string; fn: () => void | Promise<void> };
 const tests: TestCase[] = [];
@@ -26,6 +44,10 @@ function test(name: string, fn: () => void | Promise<void>) {
 }
 
 console.log("\nPhase 7 · customers validation");
+
+test("setup: open the till shift the till needs (Phase 27)", async () => {
+  await openTestShift();
+});
 
 test("customer requires name and valid phone", () => {
   const empty = validateCustomerDraft({ ...EMPTY_CUSTOMER_FORM }, []);
@@ -46,6 +68,7 @@ test("customer rejects bad phone and duplicate phone", () => {
       id: "c1",
       name: "X",
       phone: "0501111111",
+      email: null,
       address: null,
       notes: null,
       created_at: "2026-01-01T00:00:00.000Z",
@@ -88,6 +111,7 @@ test("add + edit customer, then link customer to a sale", async () => {
   const created = await customersRepo.createCustomer({
     name: "Phase7 Tester",
     phone: "0599000111",
+    email: null,
     address: "Riyadh",
     notes: "selftest",
   });
@@ -291,10 +315,10 @@ await (async () => {
   const { computeCustomerAnalytics, computeReturnsAnalytics } = await import(
     "../services/returnsReports"
   );
-  type Customer = { id: string; name: string; phone: string; address: string | null; notes: string | null; created_at: string; updated_at: string };
+  type Customer = { id: string; name: string; phone: string; email: string | null; address: string | null; notes: string | null; created_at: string; updated_at: string };
 
   function cust(id: string, name: string): Customer {
-    return { id, name, phone: "0100000000", address: null, notes: null, created_at: "2026-01-01", updated_at: "2026-01-01" };
+    return { id, name, phone: "0100000000", email: null, address: null, notes: null, created_at: "2026-01-01", updated_at: "2026-01-01" };
   }
 
   function mkSale(id: string, customerId: string | null, total: number, status: "completed" | "voided" = "completed"): Sale {
@@ -550,6 +574,182 @@ test("settlement refuses an unknown refund and cannot move a settled row twice",
     }),
     /already settled as rejected/,
   );
+});
+
+console.log("\nPhase 27 · rejected-return parity (client rule == database rule)");
+
+test("rejection releases the quantity, writes the goods back out, and a genuine re-return restores stock once", async () => {
+  const ring = await bySku("ALYQ-1002"); // price 68
+  const qty = 2;
+  const before = (await catalog.listProducts()).find((p) => p.id === ring.id)!.stock_quantity;
+
+  const sale = await salesRepo.completeSale({
+    client_ref: `p27-sale-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    lines: [{ product_id: ring.id, qty }],
+    discount_type: "none",
+    discount_value: 0,
+    payments: [{ method: "cash", amount: ring.selling_price * qty, status: "paid", tendered: ring.selling_price * qty }],
+    customer_id: null,
+    customer_name: null,
+    customer_phone: null,
+    user_id: "u1",
+    user_name: "Tester",
+  });
+  const line = sale.items[0];
+  const stockOf = async () => (await catalog.listProducts()).find((p) => p.id === ring.id)!.stock_quantity;
+  assert.equal(await stockOf(), before - qty);
+
+  // 1) one unit back, refund pending
+  const { returnRecord, refundRecord } = await returnsRepo.createReturn({
+    sale_id: sale.id,
+    reason: "Phased in",
+    refund_method: "cash",
+    refund_status: "pending",
+    items: [{ sale_item_id: line.id, product_id: line.product_id, quantity: 1 }],
+    user_id: "u1",
+    user_name: "Tester",
+  });
+  assert.equal(await stockOf(), before - qty + 1);
+
+  // while pending, the quantity is still held
+  let remaining = getRemainingReturnableQuantities(sale, [returnRecord]).get(line.id)!;
+  assert.equal(remaining, qty - 1);
+
+  // 2) the approver rejects the refund
+  await returnsRepo.settleRefund(refundRecord.id, {
+    decision: "rejected",
+    reason: "Not within the return window",
+    user_id: "u9",
+    user_name: "Manager",
+  });
+  const [updatedReturn] = (await returnsRepo.listReturns()).filter((r) => r.id === returnRecord.id);
+  assert.equal(updatedReturn.refund_status, "rejected");
+
+  // the unit is written back out (adjustment_out trail exists)
+  assert.equal(await stockOf(), before - qty);
+  const movements = await inventory.listMovements();
+  const reversal = movements.find(
+    (m) => m.product_id === ring.id && m.type === "adjustment_out" && (m.notes ?? "").includes("Reversed: refund"),
+  );
+  assert.ok(reversal, "the stock reversal left no ledger trail");
+
+  // the quantity is released: both units are returnable again
+  remaining = getRemainingReturnableQuantities(sale, [updatedReturn!]).get(line.id)!;
+  assert.equal(remaining, qty);
+  // and the refundable balance never moved on a rejection
+  const [refundNow] = (await returnsRepo.listRefunds()).filter((r) => r.id === refundRecord.id);
+  assert.equal(getTotalRefundedForSale(sale, [refundNow!]), 0);
+
+  // 3) the goods come back for real: both units, accepted, stock back to where
+  //    a single good return leaves it — no double restoration
+  const second = await returnsRepo.createReturn({
+    sale_id: sale.id,
+    reason: "Genuine return",
+    refund_method: "cash",
+    refund_status: "completed",
+    items: [{ sale_item_id: line.id, product_id: line.product_id, quantity: qty }],
+    user_id: "u1",
+    user_name: "Tester",
+  });
+  assert.equal(await stockOf(), before);
+
+  // 4) nothing left to return — the rejected row holds none of the quantity
+  await assert.rejects(
+    returnsRepo.createReturn({
+      sale_id: sale.id,
+      reason: "Too much",
+      refund_method: "cash",
+      items: [{ sale_item_id: line.id, product_id: line.product_id, quantity: 1 }],
+      user_id: "u1",
+      user_name: "Tester",
+    }),
+  );
+  void second;
+});
+
+test("the pure rules: rejected rows hold neither quantity nor refundable balance", () => {
+  const sale: Sale = {
+    id: "s1",
+    sale_number: "INV-s1",
+    client_ref: "ref-s1",
+    status: "completed",
+    subtotal: 100,
+    discount_type: "none",
+    discount_value: 0,
+    discount_amount: 0,
+    total: 100,
+    user_id: "u1",
+    user_name: "Tester",
+    items: [
+      {
+        id: "i1", sale_id: "s1", product_id: "p1", name_ar: "ق", name_en: "Q",
+        sku: "Q-1", barcode: null, unit_price: 100, quantity: 1, line_total: 100,
+      },
+    ],
+    payments: [],
+    created_at: "2026-01-01T00:00:00.000Z",
+    voided_at: null,
+    void_reason: null,
+    payment_method: "cash",
+    payment_status: "paid",
+    amount_received: 100,
+    change: 0,
+    paid_at: null,
+    paid_by: null,
+    paid_by_name: null,
+    source: "pos",
+  };
+  const mkReturn = (status: SalesReturn["refund_status"]): SalesReturn => ({
+    id: `r-${status}`,
+    return_number: `RET-${status}`,
+    sale_id: "s1",
+    sale_number: "INV-s1",
+    customer_id: null,
+    customer_name: null,
+    reason: "t",
+    refund_amount: 100,
+    refund_method: "cash",
+    refund_status: status,
+    user_id: "u1",
+    user_name: "Tester",
+    items: [{
+      id: `ri-${status}`, return_id: `r-${status}`, sale_item_id: "i1", product_id: "p1",
+      name_ar: "ق", name_en: "Q", sku: "Q-1", barcode: null, unit_price: 100,
+      quantity: 1, line_total: 100,
+    }],
+    created_at: "2026-01-01T00:00:00.000Z",
+  });
+  const mkRefund = (status: RefundRecord["status"]): RefundRecord => ({
+    id: `f-${status}`,
+    refund_number: `REF-${status}`,
+    sale_id: "s1",
+    sale_number: "INV-s1",
+    return_id: `r-${status}`,
+    amount: 100,
+    payment_method: "cash",
+    status,
+    reason: null,
+    user_id: "u1",
+    user_name: "Tester",
+    created_at: "2026-01-01T00:00:00.000Z",
+    rejection_reason: null,
+    settled_at: null,
+    settled_by: null,
+    settled_by_name: null,
+  });
+
+  const rejected = mkReturn("rejected");
+  const pending = mkReturn("pending");
+  const completed = mkReturn("completed");
+  assert.equal(getRemainingReturnableQuantities(sale, [rejected]).get("i1")!, 1);
+  assert.equal(getRemainingReturnableQuantities(sale, [pending]).get("i1")!, 0);
+  assert.equal(getRemainingReturnableQuantities(sale, [completed]).get("i1")!, 0);
+  // a rejected and a pending row: only the pending holds the unit
+  assert.equal(getRemainingReturnableQuantities(sale, [rejected, pending]).get("i1")!, 0);
+
+  assert.equal(getTotalRefundedForSale(sale, [mkRefund("rejected")]), 0);
+  assert.equal(getTotalRefundedForSale(sale, [mkRefund("pending")]), 100);
+  assert.equal(getTotalRefundedForSale(sale, [mkRefund("completed")]), 100);
 });
 
 // runner — sequential so each test sees a consistent in-memory catalog

@@ -320,6 +320,27 @@ async function main() {
   });
   await waitFor(() => bodyText().includes(ringSku), { label: "the ring to appear" });
 
+  // Phase 27: a till sale requires an open shift — the suite rings up sales
+  // twice (baseline and re-sale), so open one once, here, as the admin.
+  await navigate("#/shifts");
+  await waitFor(() => bodyText().includes("No shift is currently open"), { label: "a closed drawer" });
+  const openShiftBtn = [...document.querySelectorAll("button")].find((b) =>
+    (b.textContent ?? "").trim().includes("Open shift"),
+  );
+  clickEl(openShiftBtn);
+  await sleep(400);
+  const shiftDialog = [...document.querySelectorAll('[role="dialog"]')].pop();
+  const shiftInputs = [...shiftDialog.querySelectorAll("input")];
+  const fillShift = (input, value) => {
+    Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value").set.call(input, value);
+    input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+  };
+  fillShift(shiftInputs.find((i) => !i.readOnly && i.type === "text"), "Main branch");
+  fillShift(shiftInputs.find((i) => i.inputMode === "decimal"), "100");
+  clickEl([...shiftDialog.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === "Open shift"));
+  await waitFor(() => /SH-\d{6}/.test(bodyText()), { label: "the shift to open" });
+  console.log("  ✓ shift opened for the POS scenes");
+
   // Sell one unit through the POS so the ring is referenced by sale_items and
   // a stock movement. Baseline first: right now it IS sellable and IS on the
   // storefront — the two things archiving must take away.

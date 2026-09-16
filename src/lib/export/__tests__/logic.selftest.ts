@@ -201,6 +201,7 @@ function customer(partial: Partial<Customer> & { id: string }): Customer {
   return {
     name: `Customer ${partial.id}`,
     phone: `0100000000${partial.id}`,
+    email: null,
     address: null,
     notes: null,
     created_at: ISO,

@@ -344,7 +344,23 @@ await step(5, "Verify cashier permissions", async () => {
   const out = [];
   out.push(`cashier session role: ${app.readSession()?.session.user.role}`);
 
-  // The till: the cashier must be able to sell.
+  // The till: the cashier must be able to sell. Phase 27 — a till sale needs
+  // the drawer open first, and the cashier holds open_shift, so the cashier
+  // opens the shift through the shifts screen.
+  await app.navigate("#/shifts");
+  for (let i = 0; i < 12 && !app.bodyText().includes("No shift is currently open"); i += 1) await sleep(300);
+  if (!app.bodyText().includes("No shift is currently open")) throw new Error("expected a closed drawer");
+  app.clickEl(app.byText("Open shift"));
+  await sleep(400);
+  const shiftDialog = [...app.document.querySelectorAll('[role="dialog"]')].pop();
+  const shiftInputs = [...shiftDialog.querySelectorAll("input")];
+  app.typeInto(shiftInputs.find((i) => !i.readOnly && i.type === "text"), "Main branch");
+  app.typeInto(shiftInputs.find((i) => i.inputMode === "decimal"), "500");
+  app.clickEl([...shiftDialog.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === "Open shift"));
+  for (let i = 0; i < 12 && !/SH-\d{6}/.test(app.bodyText()); i += 1) await sleep(300);
+  if (!/SH-\d{6}/.test(app.bodyText())) throw new Error("the cashier could not open a shift");
+  out.push(`shift opened before selling: ${(app.bodyText().match(/SH-\d{6}/) ?? [])[0]}`);
+
   const complete = await app.stageSale();
   if (!complete) throw new Error("the cashier has no Complete sale control on the register");
   if (complete.disabled) throw new Error("the cashier cannot complete a sale");

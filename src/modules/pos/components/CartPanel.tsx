@@ -29,11 +29,20 @@ export function CartPanel() {
   const discountError = validateDiscount(discount.type, discount.value);
 
   if (isEmpty) {
+    // The customer picker stays available on an empty cart: a known customer
+    // often decides what gets rung up, so the selection is made before the
+    // first line — and it carries into the first sale when lines appear.
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-slate-300 bg-white p-6 text-center">
+      <div className="flex h-full flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-slate-300 bg-white p-6 text-center">
         <span aria-hidden className="text-3xl">🧾</span>
         <p className="text-sm font-bold text-slate-900">{t("pos.emptyCart")}</p>
         <p className="text-xs font-medium text-slate-500">{t("pos.emptyCartHint")}</p>
+        <div className="w-full max-w-xs">
+          <CustomerSearchSelect
+            selectedCustomerId={selectedCustomer?.id ?? null}
+            onSelect={(c) => setSelectedCustomer(c)}
+          />
+        </div>
       </div>
     );
   }

@@ -1,3 +1,19 @@
+// Phase 27: a till sale requires an open shift (the demo repository now
+// mirrors migration 0040). Every suite that rings up sales opens one first.
+async function openTestShift() {
+  const { getDemoShiftRepository } = await import("@/modules/shifts/data/demoRepository");
+  const shifts = await getDemoShiftRepository().listShifts();
+  if (!shifts.some((s) => s.status === "open")) {
+    await getDemoShiftRepository().openShift({
+      branch: "Main",
+      register: "Till 1",
+      opening_cash: 100,
+      opened_by: "00000000-0000-0000-0000-000000000c1t",
+      opened_by_name: "Test Cashier",
+    });
+  }
+}
+
 /**
  * Audit trail self-test (Phase 13, requirement 6).
  *
@@ -170,6 +186,10 @@ const keyTranslate = ((key: string) => key) as unknown as Translate;
 console.log("\nPhase 13 · audit expansion");
 
 // ── 1. the vocabulary is complete on both sides ───────────────────────────
+test("setup: open the till shift the till needs (Phase 27)", async () => {
+  await openTestShift();
+});
+
 test("every action the app can emit is labelled in English and Arabic", () => {
   for (const action of AUDIT_ACTIONS) {
     const key = `audit.action.${action}` as keyof typeof en;

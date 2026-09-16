@@ -6,6 +6,7 @@ export { CustomersPage } from "./pages/CustomersPage";
 export { CustomerDetailPage } from "./pages/CustomerDetailPage";
 export { CustomerFormModal } from "./components/CustomerFormModal";
 export { CustomerSearchSelect } from "./components/CustomerSearchSelect";
+export { filterCustomers } from "./services/customerQuery";
 export * from "./types";
 export * from "./validation";
 export {

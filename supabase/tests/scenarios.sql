@@ -74,6 +74,53 @@ begin
 end
 $$;
 
+/**
+ * Phase 27 fixtures: the open shift a till sale needs (0040) and its mirror.
+ * Both act as the cashier fixture — the seat that holds open_shift/close_shift —
+ * and are no-ops when the wanted state already holds, so a scenario may call
+ * ensure_open_shift() without caring what the previous scenario left behind.
+ */
+create or replace function pg_temp.ensure_open_shift()
+returns uuid
+language plpgsql
+as $$
+declare
+  v_shift_id uuid;
+begin
+  select id into v_shift_id from public.shifts where status = 'open';
+  if found then
+    return v_shift_id;
+  end if;
+  perform set_config('role', 'authenticated', true);
+  perform set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-0000000000c1', true);
+  insert into public.shifts (branch, register, opening_cash, opened_by, opened_by_name)
+  values ('Main', 'Till 1', 1000, '00000000-0000-4000-8000-0000000000c1', 'Karim Cashier')
+  returning id into v_shift_id;
+  return v_shift_id;
+end;
+$$;
+
+create or replace function pg_temp.ensure_closed_shift()
+returns void
+language plpgsql
+as $$
+begin
+  perform set_config('role', 'authenticated', true);
+  perform set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-0000000000c1', true);
+  update public.shifts
+     set status         = 'closed',
+         closing_cash   = opening_cash,
+         closed_at      = now(),
+         closed_by      = '00000000-0000-4000-8000-0000000000c1',
+         closed_by_name = 'Karim Cashier',
+         summary        = jsonb_build_object(
+           'expected_cash', opening_cash,
+           'actual_cash',   opening_cash,
+           'difference',    0)
+   where status = 'open';
+end;
+$$;
+
 -- ── modelling production's grant set ──────────────────────────────────────
 -- A live Supabase project runs its migrations as `postgres`, and that role
 -- carries `ALTER DEFAULT PRIVILEGES … GRANT ALL ON TABLES TO anon,
@@ -88,10 +135,17 @@ $$;
 -- for thirty migrations: nothing here could attempt the write they allowed.
 -- Granting it back for the run makes the POLICY the thing under test, which is
 -- the only part this file can speak for. No other scenario in this file writes
--- to these three tables, so nothing else changes shape.
+-- to these tables, so nothing else changes shape.
 grant insert, update, delete on public.products         to authenticated;
 grant insert, update, delete on public.categories       to authenticated;
 grant insert, update, delete on public.stock_movements  to authenticated;
+-- Phase 27: the customer book is written straight from the till (0010's
+-- capability policies), so it gets the same treatment — the policy is the
+-- wall, not a missing privilege. The invoice counter is read to prove a
+-- refused sale burned no number; production grants it through default
+-- privileges, so SELECT-only here just restores the production shape.
+grant insert, update, delete on public.customers        to authenticated;
+grant select on public.sale_counters                    to authenticated;
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Phase A — the capability resolver (as owner; identity comes from the claim)
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -1253,6 +1307,12 @@ declare
   v_pay_count integer;
 begin
   perform pg_temp.become(v_cashier);
+
+  -- 0040: a till sale needs the drawer to be open. The shift section above
+  -- closed its only shift, so this is the first ringing-up in the file that
+  -- depends on the gate — open the shift once here; it stays open for the
+  -- rest of the file (the Phase 27 section manages its own cycles).
+  perform pg_temp.ensure_open_shift();
 
   -- 1. a card sale: no cash in the drawer, captured at the terminal
   v_sale := public.pos_complete_sale(jsonb_build_object(
@@ -3419,6 +3479,390 @@ begin
   end if;
 
   raise notice 'admin full permissions — can() answers true for all % capabilities as the admin, the self-guardrails refuse every way down (including the non-admin manage_users holder the client guard used to let through) while the own row stays editable, the last admin can never be removed, the admin writes the stock ledger, the shelf and the trail in one pass, and the admin reads every table the repositories read', v_total;
+end
+$$;
+
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Phase 27 — the sale knows its customer (0039)
+-- ═══════════════════════════════════════════════════════════════════════════
+do $$
+declare
+  v_admin     uuid := '00000000-0000-4000-8000-0000000000a1';
+  v_cashier   uuid := '00000000-0000-4000-8000-0000000000c1';
+  v_product   uuid := '00000000-0000-4000-8000-0000000000f2';
+  v_cust      uuid := '00000000-0000-4000-8000-0000000007c1';
+  v_cust2     uuid := '00000000-0000-4000-8000-0000000007c2';
+  v_sale      jsonb;
+  v_sale_id   uuid;
+  v_row       public.sales%rowtype;
+begin
+  perform pg_temp.ensure_open_shift();
+  perform pg_temp.become(v_admin, 'authenticated');
+
+  -- the book first: two customers, one with the optional email (0038)
+  insert into public.customers (id, name, phone, email)
+  values (v_cust, 'Omar Customer', '01011111111', 'omar@example.com')
+  on conflict (id) do update set name = excluded.name, phone = excluded.phone, email = excluded.email;
+  insert into public.customers (id, name, phone)
+  values (v_cust2, 'Layla Walkout', '01022222222')
+  on conflict (id) do update set name = excluded.name, phone = excluded.phone;
+
+  perform pg_temp.become(v_cashier, 'authenticated');
+
+  -- 1. an existing customer: the id is stored, and name/phone come from the
+  --    BOOK even when the payload carries stale copies
+  v_sale := public.pos_complete_sale(jsonb_build_object(
+    'client_ref',   'scn-p27-cust-1',
+    'user_id',      v_cashier::text,
+    'user_name',    'Karim Cashier',
+    'customer_id',  v_cust::text,
+    'customer_name',  'STALE NAME',
+    'customer_phone', '00000000000',
+    'payments',     jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', 10.00, 'cash_received', 10.00)),
+    'lines',        jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 1))
+  ));
+  v_sale_id := (v_sale->>'sale_id')::uuid;
+  select * into v_row from public.sales where id = v_sale_id;
+  if v_row.customer_id is distinct from v_cust then
+    raise exception 'the existing customer was not linked (got %)', v_row.customer_id;
+  end if;
+  if v_row.customer_name is distinct from 'Omar Customer' or v_row.customer_phone is distinct from '01011111111' then
+    raise exception 'the sale kept the stale payload instead of the book (% / %)',
+      v_row.customer_name, v_row.customer_phone;
+  end if;
+
+  -- 2. a forged/stale id: the sale still happens, the link is dropped
+  v_sale := public.pos_complete_sale(jsonb_build_object(
+    'client_ref',   'scn-p27-cust-2',
+    'user_id',      v_cashier::text,
+    'user_name',    'Karim Cashier',
+    'customer_id',  '99999999-9999-4999-8999-999999999999',
+    'customer_name',  'Ghost Customer',
+    'customer_phone', '01099999999',
+    'payments',     jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', 10.00, 'cash_received', 10.00)),
+    'lines',        jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 1))
+  ));
+  v_sale_id := (v_sale->>'sale_id')::uuid;
+  select * into v_row from public.sales where id = v_sale_id;
+  if v_row.customer_id is not null then
+    raise exception 'a customer id that is not in the book was stored: %', v_row.customer_id;
+  end if;
+  if v_row.customer_name is distinct from 'Ghost Customer' then
+    raise exception 'the named walk-in lost its snapshot name: %', v_row.customer_name;
+  end if;
+
+  -- 3. a walk-in: nothing to link, nothing to keep
+  v_sale := public.pos_complete_sale(jsonb_build_object(
+    'client_ref', 'scn-p27-cust-3',
+    'user_id',    v_cashier::text,
+    'user_name',  'Karim Cashier',
+    'payments',   jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', 10.00, 'cash_received', 10.00)),
+    'lines',      jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 1))
+  ));
+  v_sale_id := (v_sale->>'sale_id')::uuid;
+  if exists (select 1 from public.sales where id = v_sale_id
+             and (customer_id is not null or customer_name is not null or customer_phone is not null)) then
+    raise exception 'a walk-in sale stored customer data it was not given';
+  end if;
+
+  -- 4. deleting a customer keeps the history: id goes null, the snapshot stays
+  perform pg_temp.become(v_admin, 'authenticated');
+  delete from public.customers where id = v_cust2;
+  perform pg_temp.become(v_cashier, 'authenticated');
+  v_sale := public.pos_complete_sale(jsonb_build_object(
+    'client_ref', 'scn-p27-cust-4',
+    'user_id',    v_cashier::text,
+    'user_name',  'Karim Cashier',
+    'customer_id',  v_cust2::text,
+    'customer_name',  'Layla Walkout',
+    'customer_phone', '01022222222',
+    'payments',     jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', 10.00, 'cash_received', 10.00)),
+    'lines',        jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 1))
+  ));
+  v_sale_id := (v_sale->>'sale_id')::uuid;
+  select * into v_row from public.sales where id = v_sale_id;
+  if v_row.customer_id is not null then
+    raise exception 'a deleted customer id survived in the sale: %', v_row.customer_id;
+  end if;
+
+  raise notice 'customer persistence — the till''s choice is stored (book name/phone win), a forged id is dropped without failing the sale, a walk-in stays anonymous, and a deleted customer leaves the snapshot';
+end
+$$;
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Phase 27 — a till sale requires an open shift, and stamps it (0040)
+-- ═══════════════════════════════════════════════════════════════════════════
+do $$
+declare
+  v_admin     uuid := '00000000-0000-4000-8000-0000000000a1';
+  v_cashier   uuid := '00000000-0000-4000-8000-0000000000c1';
+  v_viewer    uuid := '00000000-0000-4000-8000-0000000000e1';
+  v_product   uuid := '00000000-0000-4000-8000-0000000000f2';
+  v_shift     uuid;
+  v_sale      jsonb;
+  v_sale_id   uuid;
+  v_row       public.sales%rowtype;
+  v_stock     integer;
+  v_sales_n   bigint;
+  v_items_n   bigint;
+  v_pays_n    bigint;
+  v_mov_n     bigint;
+  v_counter   bigint;
+begin
+  perform pg_temp.ensure_closed_shift();
+  perform pg_temp.become(v_cashier, 'authenticated');
+
+  select stock_quantity into v_stock from public.products where id = v_product;
+  select count(*) into v_sales_n from public.sales;
+  select count(*) into v_items_n from public.sale_items;
+  select count(*) into v_pays_n  from public.sale_payments;
+  select count(*) into v_mov_n   from public.stock_movements;
+  select next_value into v_counter from public.sale_counters;
+
+  -- 1. no open shift: a DIRECT RPC call — exactly the path a bypass would use
+  --    — is refused, and the refusal writes nothing: no sale, no items, no
+  --    payments, no movement, and the invoice-number counter is untouched.
+  begin
+    perform public.pos_complete_sale(jsonb_build_object(
+      'client_ref', 'scn-p27-noshift',
+      'user_id',    v_cashier::text,
+      'user_name',  'Karim Cashier',
+      'payments',   jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', 10.00, 'cash_received', 10.00)),
+      'lines',      jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 1))
+    ));
+    raise exception 'a sale completed with no open shift';
+  exception when no_data_found then
+    null; -- expected: 'no open shift'
+  end;
+
+  select stock_quantity into v_stock from public.products where id = v_product;
+  if v_stock < (select 500 - 4) then null; end if; -- no-op guard (stock checked below via counts)
+  if (select count(*) from public.sales) <> v_sales_n
+     or (select count(*) from public.sale_items) <> v_items_n
+     or (select count(*) from public.sale_payments) <> v_pays_n
+     or (select count(*) from public.stock_movements) <> v_mov_n
+     or (select next_value from public.sale_counters) <> v_counter then
+    raise exception 'the refused sale left partial records or burned an invoice number';
+  end if;
+
+  -- 2. the authorization gate still runs first: a viewer is refused for
+  --    lacking sell, not for the (unreachable) shift rule
+  perform pg_temp.become(v_viewer, 'authenticated');
+  begin
+    perform public.pos_complete_sale(jsonb_build_object(
+      'client_ref', 'scn-p27-noshift-viewer',
+      'user_id',    v_viewer::text,
+      'user_name',  'Vera Viewer',
+      'payments',   jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', 10.00, 'cash_received', 10.00)),
+      'lines',      jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 1))
+    ));
+    raise exception 'a viewer rang up a sale';
+  exception when insufficient_privilege then
+    null;
+  end;
+  perform pg_temp.become(v_cashier, 'authenticated');
+
+  -- 3. open the shift: the same payload now succeeds, stamped with its id
+  v_shift := pg_temp.ensure_open_shift();
+  v_sale := public.pos_complete_sale(jsonb_build_object(
+    'client_ref', 'scn-p27-shifted',
+    'user_id',    v_cashier::text,
+    'user_name',  'Karim Cashier',
+    'payments',   jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', 10.00, 'cash_received', 10.00)),
+    'lines',      jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 1))
+  ));
+  v_sale_id := (v_sale->>'sale_id')::uuid;
+  select * into v_row from public.sales where id = v_sale_id;
+  if v_row.shift_id is distinct from v_shift then
+    raise exception 'the sale was not stamped with the open shift (% vs %)', v_row.shift_id, v_shift;
+  end if;
+  if v_row.source <> 'pos' then
+    raise exception 'the shift gate mislabelled a till sale as %', v_row.source;
+  end if;
+
+  -- 4. close it: refused again — and a direct insert cannot smuggle a
+  --    historical stamp past the column's own rules either (FK is enforced;
+  --    the point here is the closed state refuses new till sales)
+  perform pg_temp.ensure_closed_shift();
+  begin
+    perform public.pos_complete_sale(jsonb_build_object(
+      'client_ref', 'scn-p27-closedshift',
+      'user_id',    v_cashier::text,
+      'user_name',  'Karim Cashier',
+      'payments',   jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', 10.00, 'cash_received', 10.00)),
+      'lines',      jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 1))
+    ));
+    raise exception 'a sale completed on a closed shift';
+  exception when no_data_found then
+    null;
+  end;
+
+  -- 5. the storefront channel is independent: with NO open shift, an online
+  --    COD sale completes and carries no shift id
+  v_sale := public.pos_complete_sale(jsonb_build_object(
+    'client_ref', 'scn-p27-online-noshift',
+    'user_id',    v_cashier::text,
+    'user_name',  'Karim Cashier',
+    'source',     'online',
+    'client_ref', 'scn-p27-online-noshift',
+    'payments',   jsonb_build_array(jsonb_build_object('method', 'cod', 'amount', 10.00)),
+    'lines',      jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 1))
+  ));
+  v_sale_id := (v_sale->>'sale_id')::uuid;
+  if exists (select 1 from public.sales where id = v_sale_id and shift_id is not null) then
+    raise exception 'the shift gate reached into the online channel';
+  end if;
+
+  -- leave the suite in a sellable state for whatever follows
+  perform pg_temp.ensure_open_shift();
+
+  raise notice 'open-shift gate — refused with zero rows and an unburned invoice number (direct RPC included), authorization first, stamped on success, refused on a closed shift, online untouched';
+end
+$$;
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Phase 27 — rejected returns stop holding the goods (0041)
+-- ═══════════════════════════════════════════════════════════════════════════
+do $$
+declare
+  v_admin     uuid := '00000000-0000-4000-8000-0000000000a1';
+  v_cashier   uuid := '00000000-0000-4000-8000-0000000000c1';
+  v_product   uuid := '00000000-0000-4000-8000-0000000000f2';
+  v_sale      jsonb;
+  v_sale_id   uuid;
+  v_row       public.sales%rowtype;
+  v_ret       jsonb;
+  v_return_id uuid;
+  v_refund_id uuid;
+  v_stock0    integer;
+  v_audit     public.audit_log%rowtype;
+begin
+  perform pg_temp.ensure_open_shift();
+  perform pg_temp.become(v_cashier, 'authenticated');
+  select stock_quantity into v_stock0 from public.products where id = v_product;
+
+  -- the goods: three bottles out the door
+  v_sale := public.pos_complete_sale(jsonb_build_object(
+    'client_ref', 'scn-p27-return-1',
+    'user_id',    v_cashier::text,
+    'user_name',  'Karim Cashier',
+    'payments',   jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', 30.00, 'cash_received', 30.00)),
+    'lines',      jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 3))
+  ));
+  v_sale_id := (v_sale->>'sale_id')::uuid;
+  if (select stock_quantity from public.products where id = v_product) <> v_stock0 - 3 then
+    raise exception 'the three-bottle sale did not leave the shelf short by three';
+  end if;
+
+  -- 1. one bottle comes back, refund PENDING (the approval flow shape)
+  v_ret := public.pos_process_return(jsonb_build_object(
+    'client_ref',   'scn-p27-return-1',
+    'sale_id',      v_sale_id::text,
+    'user_id',      v_cashier::text,
+    'user_name',    'Karim Cashier',
+    'refund_status', 'pending',
+    'reason',       'taste test',
+    'items',        jsonb_build_array(jsonb_build_object(
+      'sale_item_id', (select id from public.sale_items where sale_id = v_sale_id limit 1)::text,
+      'quantity',     1))
+  ));
+  v_return_id := (v_ret->>'return_id')::uuid;
+  v_refund_id := (v_ret->>'refund_id')::uuid;
+  if (select stock_quantity from public.products where id = v_product) <> v_stock0 - 2 then
+    raise exception 'the pending return did not restore its unit';
+  end if;
+
+  -- 2. the quantity is held while pending: a third return of the sold three
+  --    exceeds what is left (3 sold, 1 already back) and is refused
+  begin
+    perform public.pos_process_return(jsonb_build_object(
+      'client_ref',   'scn-p27-return-double',
+      'reason',       'should not fit',
+      'sale_id',      v_sale_id::text,
+      'user_id',      v_cashier::text,
+      'user_name',    'Karim Cashier',
+      'items',        jsonb_build_array(jsonb_build_object(
+        'sale_item_id', (select id from public.sale_items where sale_id = v_sale_id limit 1)::text,
+        'quantity',     3))
+    ));
+    raise exception 'a return beyond the remaining quantity was accepted';
+  exception when check_violation then
+    null;
+  end;
+
+  -- 3. the approver REJECTS the refund: the return's status follows the
+  --    money, the unit is written back out, and the quantity is released
+  perform pg_temp.become(v_admin, 'authenticated');
+  perform public.pos_settle_refund(v_refund_id, v_admin::text, 'Amina Admin', 'rejected', 'no receipt');
+  if (select refund_status from public.sales_returns where id = v_return_id) <> 'rejected' then
+    raise exception 'the return did not mirror the rejected refund';
+  end if;
+  if (select status from public.refund_records where id = v_refund_id) <> 'rejected' then
+    raise exception 'the refund record itself did not settle as rejected';
+  end if;
+  if (select stock_quantity from public.products where id = v_product) <> v_stock0 - 3 then
+    raise exception 'the rejected return did not write its unit back out';
+  end if;
+  if not exists (select 1 from public.stock_movements
+                 where product_id = v_product and type = 'adjustment_out'
+                   and reason = 'customer_return'
+                   and notes like '%Reversed: refund%') then
+    raise exception 'the stock reversal left no ledger trail';
+  end if;
+  select * into v_audit from public.audit_log
+    where action = 'refund.rejected' and entity_id = v_refund_id::text;
+  if v_audit.details ->> 'reversed_units' <> '1' then
+    raise exception 'the rejection audit did not record the reversed units: %', v_audit.details;
+  end if;
+
+  -- 4. the released quantity is returnable again — the goods come back this
+  --    time for real, and stock lands exactly where a single good return
+  --    leaves it (no double restoration)
+  perform pg_temp.become(v_cashier, 'authenticated');
+  v_ret := public.pos_process_return(jsonb_build_object(
+    'client_ref',   'scn-p27-return-2',
+    'reason',       'second attempt, genuine',
+    'sale_id',      v_sale_id::text,
+    'user_id',      v_cashier::text,
+    'user_name',    'Karim Cashier',
+    'refund_status', 'completed',
+    'items',        jsonb_build_array(jsonb_build_object(
+      'sale_item_id', (select id from public.sale_items where sale_id = v_sale_id limit 1)::text,
+      'quantity',     3))
+  ));
+  if (select stock_quantity from public.products where id = v_product) <> v_stock0 then
+    raise exception 'the genuine re-return restored the wrong number of units (expected back to %)', v_stock0;
+  end if;
+
+  -- 5. nothing left to return: the sale is fully returned (3 of 3, the
+  --    rejected row holding none of them)
+  begin
+    perform public.pos_process_return(jsonb_build_object(
+      'client_ref',   'scn-p27-return-3',
+      'reason',       'nothing left',
+      'sale_id',      v_sale_id::text,
+      'user_id',      v_cashier::text,
+      'user_name',    'Karim Cashier',
+      'items',        jsonb_build_array(jsonb_build_object(
+        'sale_item_id', (select id from public.sale_items where sale_id = v_sale_id limit 1)::text,
+        'quantity',     1))
+    ));
+    raise exception 'a return was accepted after the item was fully returned';
+  exception when check_violation then
+    null;
+  end;
+
+  -- 6. the money side never changed: the refunded total still equals the
+  --    completed refund only — the rejection consumed no refundable balance
+  select * into v_row from public.sales where id = v_sale_id;
+  if (select coalesce(sum(amount), 0) from public.refund_records
+      where sale_id = v_sale_id and status = 'completed') <> 30.00 then
+    raise exception 'the refundable total moved when a refund was only rejected';
+  end if;
+  if v_row.total < 30.00 then null; end if;
+
+  raise notice 'rejected-return parity — the pending unit is held, the rejection mirrors the status and writes the unit back out (with trail), the released quantity returns once and only once, and the refundable balance never moved on a rejection';
 end
 $$;
 

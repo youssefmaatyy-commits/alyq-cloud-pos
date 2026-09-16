@@ -535,6 +535,15 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
       } catch (caught) {
         const normalized = toOnlineError(caught);
         setCheckoutError(normalized);
+        // The customer only ever sees the friendly `store.error.<code>` text.
+        // What an operator needs to act on — the code, the server's wording
+        // and the raw error — goes to the console (and from there to logs),
+        // never to the storefront. No SQL, no keys, no stack.
+        console.error("[storefront] order placement failed", {
+          code: normalized.code,
+          message: normalized.message,
+          raw: caught instanceof Error ? `${caught.name}: ${caught.message}` : String(caught),
+        });
         // A failed submission keeps its key only while the same cart is being
         // retried; once the customer changes the cart, it is a new attempt.
         return null;

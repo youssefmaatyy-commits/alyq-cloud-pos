@@ -31,10 +31,18 @@ export function getRemainingReturnableQuantities(
   sale: Sale,
   existingReturns: SalesReturn[],
 ): Map<string, number> {
-  // Map of sale_item_id -> returned count
+  // Map of sale_item_id -> returned count.
+  //
+  // A REJECTED return is a cancelled return: its goods were written back out
+  // when the refund was rejected (pos_settle_refund, migration 0041 — the
+  // demo repository mirrors the same), so it must not hold the quantity.
+  // Pending and completed both hold it: in both states the goods are on the
+  // shelf, and counting a rejected row here is what made a rejected return
+  // permanently block every further one.
   const returnedCounts = new Map<string, number>();
   for (const ret of existingReturns) {
     if (ret.sale_id !== sale.id) continue;
+    if (ret.refund_status === "rejected") continue;
     for (const item of ret.items) {
       const prev = returnedCounts.get(item.sale_item_id) ?? 0;
       returnedCounts.set(item.sale_item_id, prev + item.quantity);
@@ -51,9 +59,12 @@ export function getRemainingReturnableQuantities(
 }
 
 export function getTotalRefundedForSale(sale: Sale, refunds: RefundRecord[]): number {
+  // Same rule as the database (pos_process_return, 0016): a rejected refund
+  // never moved money, so it does not consume the sale's refundable balance —
+  // pending and completed both do.
   let sum = 0;
   for (const ref of refunds) {
-    if (ref.sale_id === sale.id) {
+    if (ref.sale_id === sale.id && ref.status !== "rejected") {
       sum += ref.amount;
     }
   }

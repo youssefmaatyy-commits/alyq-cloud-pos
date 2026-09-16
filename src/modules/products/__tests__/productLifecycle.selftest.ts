@@ -1,3 +1,19 @@
+// Phase 27: a till sale requires an open shift (the demo repository now
+// mirrors migration 0040). Every suite that rings up sales opens one first.
+async function openTestShift() {
+  const { getDemoShiftRepository } = await import("@/modules/shifts/data/demoRepository");
+  const shifts = await getDemoShiftRepository().listShifts();
+  if (!shifts.some((s) => s.status === "open")) {
+    await getDemoShiftRepository().openShift({
+      branch: "Main",
+      register: "Till 1",
+      opening_cash: 100,
+      opened_by: "00000000-0000-0000-0000-000000000c1t",
+      opened_by_name: "Test Cashier",
+    });
+  }
+}
+
 /**
  * Product lifecycle logic self-test (Phase 25) — headless, Node.
  * Run with the shared runner: `npm test` (or `node scripts/test.logic.mjs lifecycle`).
@@ -121,6 +137,10 @@ async function auditActionsFor(productId: string): Promise<string[]> {
 }
 
 // ── 1 + 6: a truly unused product deletes cleanly, with the trail ──────────
+test("setup: open the till shift the till needs (Phase 27)", async () => {
+  await openTestShift();
+});
+
 test("admin permanently deletes a truly unused product, with an audit row", async () => {
   signInAs("admin");
   const product = await catalog.createProduct(draft());
