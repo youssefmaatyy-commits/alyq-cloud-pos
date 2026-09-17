@@ -300,7 +300,12 @@ const firstInStockCard = () =>
 const cardName = (card) => card.querySelector("h3")?.textContent?.trim() ?? "";
 
 /** Place an order through the storefront UI and return what it produced. */
-async function placeOrderThroughTheStore({ payment = "cod", fulfilment = "Pickup", phone = "01001234567" } = {}) {
+async function placeOrderThroughTheStore({
+  payment = "cod",
+  fulfilment = "Pickup",
+  phone = "01001234567",
+  address = null,
+} = {}) {
   await navigate("#/store/checkout", 700);
   await waitFor(() => bodyText().includes("Checkout"), { label: "the checkout page" });
 
@@ -314,6 +319,13 @@ async function placeOrderThroughTheStore({ payment = "cod", fulfilment = "Pickup
     if (!button) throw new Error(`fulfilment option not found: ${fulfilment}`);
     button.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
     await sleep(200);
+  }
+
+  if (address) {
+    setField("input[autocomplete='address-level2']", address.city);
+    setField("input[autocomplete='address-level3']", address.area);
+    setField("input[autocomplete='street-address']", address.street);
+    await sleep(250);
   }
 
   const radio = document.querySelector(`input[name="payment"][value="${payment}"]`);
@@ -1067,6 +1079,142 @@ async function main() {
   console.log(
     `  ✓ an unsafe InstaPay link renders nowhere, and ${noProofNumber} skipped the panel while staying verification_required`,
   );
+
+  // ── 10b·2 · delivery: switched off it says so, switched on it takes orders ─
+  // The rule the storefront shows and the rule the server applies are the same
+  // rule, so the customer is never told one thing and charged another.
+  const deliverySettings = websiteSettings()?.delivery ?? {};
+  const deliveryFee = deliverySettings.fee ?? 0;
+  const deliveryThreshold = deliverySettings.free_delivery_threshold;
+  const goodsOf = (order) => Math.round((order.subtotal - order.discount_amount) * 100) / 100;
+  const expectedDeliveryFee = (order) => {
+    const goods = goodsOf(order);
+    if (deliveryThreshold !== null && deliveryThreshold !== undefined && deliveryThreshold > 0 && goods >= deliveryThreshold) {
+      return 0;
+    }
+    return deliveryFee;
+  };
+  const addOneToCart = async () => {
+    await navigate("#/store/products", 900);
+    await waitFor(() => productCards().length > 0, { label: "the product list" });
+    const card = firstInStockCard();
+    assert.ok(card, "an in-stock product to order");
+    const button = [...card.querySelectorAll("button")].find(
+      (n) => (n.textContent ?? "").trim() === "Add to cart",
+    );
+    button.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+    await sleep(400);
+  };
+
+  await navigate("#/online/website", 900);
+  clickExact("Delivery & payment");
+  await waitFor(() => bodyText().includes("Payment methods"), { label: "the payment methods section" });
+  assert.ok(bodyText().includes("Delivery areas"), "the builder configures where the shop delivers");
+  assert.ok(bodyText().includes("Minimum order for delivery"), "and the delivery minimum");
+  const deliverySwitch = switchByLabel("Offer delivery");
+  assert.equal(deliverySwitch.getAttribute("aria-checked"), "true", "delivery starts switched on");
+  deliverySwitch.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  await sleep(200);
+  await saveBuilder();
+  await waitFor(() => websiteSettings()?.delivery?.enabled === false, { label: "delivery to be switched off" });
+
+  // With a cart open, a shop that has switched delivery off says so — it does
+  // not offer the channel and fail at the last step.
+  await addOneToCart();
+  await navigate("#/store/checkout", 700);
+  await waitFor(() => bodyText().includes("Checkout"), { label: "the checkout page" });
+  assert.ok(
+    bodyText().includes("Delivery is switched off"),
+    "with delivery switched off, the checkout says so",
+  );
+  const fulfilmentOptions = [...document.querySelectorAll("section button")].map((n) =>
+    (n.textContent ?? "").trim(),
+  );
+  assert.ok(
+    !fulfilmentOptions.some((text) => text.startsWith("Delivery")),
+    "and only pickup is offered",
+  );
+  console.log("  ✓ with delivery switched off the checkout explains it and offers pickup only");
+
+  // Switched back on: both channels are offered, and a delivery order carries
+  // the shop's fee and the whole address.
+  await navigate("#/online/website", 900);
+  clickExact("Delivery & payment");
+  await waitFor(() => bodyText().includes("Payment methods"), { label: "the payment methods section" });
+  switchByLabel("Offer delivery").dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  await sleep(200);
+  await saveBuilder();
+  await waitFor(() => websiteSettings()?.delivery?.enabled === true, { label: "delivery to be switched back on" });
+
+  const courierAddress = { city: "القاهرة", area: "مدينة نصر", street: "شارع 9" };
+  const { number: deliveryNumber, order: deliveryOrder } = await placeOrderThroughTheStore({
+    fulfilment: "Delivery",
+    address: courierAddress,
+  });
+  assert.ok(deliveryOrder, `${deliveryNumber} was written`);
+  assert.equal(deliveryOrder.delivery_type, "delivery");
+  assert.equal(deliveryOrder.address.city, courierAddress.city, "the city is on the order");
+  assert.equal(deliveryOrder.address.area, courierAddress.area, "the area is on the order");
+  assert.equal(deliveryOrder.address.street, courierAddress.street, "and so is the street");
+  assert.equal(
+    deliveryOrder.delivery_fee,
+    expectedDeliveryFee(deliveryOrder),
+    "the delivery fee is the shop's own, waived at the threshold",
+  );
+  assert.equal(
+    deliveryOrder.total,
+    Math.round((goodsOf(deliveryOrder) + deliveryOrder.delivery_fee) * 100) / 100,
+    "the total carries the delivery fee",
+  );
+  assert.ok(bodyText().includes(courierAddress.city), "the confirmation shows where it is going");
+  console.log(
+    `  ✓ delivery checkout ${deliveryNumber} — address stored, fee ${deliveryOrder.delivery_fee}`,
+  );
+
+  // Delivery with InstaPay: the same address rules, the same fee, and a human
+  // still confirms the money.
+  await addOneToCart();
+  const { number: deliveryPayNumber, order: deliveryPayOrder } = await placeOrderThroughTheStore({
+    payment: "instapay",
+    fulfilment: "Delivery",
+    address: { city: "الإسماعيلية", area: "حي الأربعين", street: "شارع السلطان حسين" },
+  });
+  assert.ok(deliveryPayOrder, `${deliveryPayNumber} was written`);
+  assert.equal(deliveryPayOrder.delivery_type, "delivery");
+  assert.equal(
+    deliveryPayOrder.delivery_fee,
+    expectedDeliveryFee(deliveryPayOrder),
+    "InstaPay is priced like cash on delivery",
+  );
+  assert.equal(
+    deliveryPayOrder.payment_status,
+    "verification_required",
+    "delivery does not shortcut the money check",
+  );
+  console.log(
+    `  ✓ delivery + InstaPay ${deliveryPayNumber} — ${deliveryPayOrder.delivery_fee} fee, still verification_required`,
+  );
+
+  // The staff read the same fee and the whole address the customer typed.
+  await navigate("#/online/orders", 900);
+  await waitFor(() => bodyText().includes(deliveryNumber), { label: "the delivery order in the list" });
+  const orderSearch = document.querySelector('input[type="search"]');
+  assert.ok(orderSearch, "the order list can be searched");
+  setField('input[type="search"]', deliveryNumber);
+  orderSearch.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  await sleep(400);
+  await waitFor(() => bodyText().includes(deliveryNumber), { label: "the filtered order row" });
+  clickAria("View");
+  await waitFor(() => Boolean(dialog()), { label: "the delivery order detail" });
+  const deliveryModal = dialog().textContent ?? "";
+  assert.ok(deliveryModal.includes(deliveryNumber), "the detail opens on the delivery order");
+  assert.ok(deliveryModal.includes(courierAddress.area), "the staff see the area the customer typed");
+  assert.ok(deliveryModal.includes(courierAddress.street), "and the street");
+  if (deliveryOrder.delivery_fee > 0) {
+    assert.ok(deliveryModal.includes("Delivery fee"), "and the fee the order was written with");
+  }
+  clickExact("Close", dialog());
+  console.log("  ✓ the delivery address and fee are in the staff order view as well");
 
   // ── 10c · every other configured external link follows the same policy ────
   // Real https profiles and the map link render exactly where they did before;

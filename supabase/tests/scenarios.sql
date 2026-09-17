@@ -992,6 +992,7 @@ as $$
     'delivery_fee',    o.delivery_fee,
     'total',           o.total,
     'address_city',    o.address->>'city',
+    'address_area',    o.address->>'area',
     'phone',           o.customer_phone,
     'notes',           o.notes,
     'order_number',    o.order_number,
@@ -1061,6 +1062,7 @@ declare
   v_offline   uuid := '00000000-0000-4000-8000-000000000c12';
   v_hidden    uuid := '00000000-0000-4000-8000-000000000c13';
   v_untracked uuid := '00000000-0000-4000-8000-000000000c14';
+  v_bulk      uuid := '00000000-0000-4000-8000-000000000c15';
   v_cat       uuid := '00000000-0000-4000-8000-0000000000f1';
   v_phone     text := '0501234567';
   v_guest     text;
@@ -1087,7 +1089,8 @@ begin
     (v_short,     'SCN-LOW',  '6291000000227', 'سوارة فحص',  'Checkout Bangle', v_cat,  50.00, 20.00,  3, 1, true,  false, true, true),
     (v_offline,   'SCN-OFF',  '6291000000234', 'صنف موقوف',  'Inactive Piece',  v_cat,  70.00, 30.00,  5, 1, true,  false, false, true),
     (v_hidden,    'SCN-HIDE', '6291000000241', 'صنف مخفي',   'Hidden Piece',    v_cat,  70.00, 30.00,  5, 1, false, false, true, true),
-    (v_untracked, 'SCN-NOTRK','6291000000258', 'صنف بالطلب', 'Made To Order',   v_cat, 500.00, 200.00, 0, 1, true,  false, true, false)
+    (v_untracked, 'SCN-NOTRK','6291000000258', 'صنف بالطلب', 'Made To Order',   v_cat, 500.00, 200.00, 0, 1, true,  false, true, false),
+    (v_bulk,      'SCN-BULK', '6291000000265', 'صنف جملة',   'Bulk Piece',      v_cat, 100.00, 40.00, 50, 5, true,  false, true, true)
   on conflict (id) do update
     set selling_price           = excluded.selling_price,
         cost_price              = excluded.cost_price,
@@ -1205,7 +1208,7 @@ begin
     'customer_name', 'منى عبد الله',
     'customer_phone', '0512345678',
     'delivery_type', 'delivery',
-    'address', jsonb_build_object('city', 'القاهرة', 'street', 'شارع 9', 'building', '12'),
+    'address', jsonb_build_object('city', 'القاهرة', 'area', 'مدينة نصر', 'street', 'شارع 9', 'building', '12'),
     'lines', jsonb_build_array(jsonb_build_object('product_id', v_visible::text, 'qty', 1)),
     'payment_method', 'cod'
   ));
@@ -1242,7 +1245,7 @@ begin
     'customer_name', 'ياسر فؤاد',
     'customer_phone', '0534567890',
     'delivery_type', 'delivery',
-    'address', jsonb_build_object('city', 'الجيزة', 'street', 'شارع الهرم'),
+    'address', jsonb_build_object('city', 'الجيزة', 'area', 'الهرم', 'street', 'شارع الهرم'),
     'lines', jsonb_build_array(jsonb_build_object('product_id', v_visible::text, 'qty', 1)),
     'payment_method', 'instapay'
   ));
@@ -1272,7 +1275,7 @@ begin
     'customer_name', 'هدى كمال',
     'customer_phone', '0545678901',
     'delivery_type', 'delivery',
-    'address', jsonb_build_object('city', 'القاهرة', 'street', 'شارع 10'),
+    'address', jsonb_build_object('city', 'القاهرة', 'area', 'مدينة نصر', 'street', 'شارع 10'),
     'lines', jsonb_build_array(jsonb_build_object('product_id', v_short::text, 'qty', 3)),
     'coupon_code', 'scn-chk10',
     'payment_method', 'cod'
@@ -1319,6 +1322,165 @@ begin
       raise exception 'an order owns a line belonging to another order';
     end if;
   end loop;
+
+  -- ── the shop's own delivery rules (0042) ──────────────────────────────────
+  -- N. a whole address — city, area, street — is stored, and neither the fee nor
+  --    the total in the payload is what the order is written with.
+  v_result := public.place_online_order(jsonb_build_object(
+    'client_ref', 'scn-checkout-n',
+    'customer_name', 'نادية سمير',
+    'customer_phone', '0567890123',
+    'delivery_type', 'delivery',
+    'address', jsonb_build_object('city', 'القاهرة', 'area', 'مدينة نصر', 'street', 'شارع 9'),
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_bulk::text, 'qty', 1)),
+    'delivery_fee', 0,
+    'total', 0.01,
+    'payment_method', 'cod'
+  ));
+  v_created_orders := v_created_orders || (v_result->>'order_id')::uuid;
+  v_facts := pg_temp.scn_order_facts((v_result->>'order_id')::uuid);
+  if (v_facts->>'delivery_fee')::numeric <> 30.00 or (v_facts->>'total')::numeric <> 130.00 then
+    raise exception 'the payload priced the order (fee %, total %) instead of the shop''s 30 / 130',
+      v_facts->>'delivery_fee', v_facts->>'total';
+  end if;
+  if v_facts->>'address_city' <> 'القاهرة' or v_facts->>'address_area' <> 'مدينة نصر' then
+    raise exception 'the stored address lost its city or area (% / %)',
+      v_facts->>'address_city', v_facts->>'address_area';
+  end if;
+
+  -- O. a delivery address needs a city, an area AND a street: either half is
+  --    refused, so a driver is never sent to a city with no street
+  perform pg_temp.scn_expect_refusal(jsonb_build_object(
+    'client_ref', 'scn-checkout-o1',
+    'customer_name', 'عنوان ناقص',
+    'customer_phone', v_phone,
+    'delivery_type', 'delivery',
+    'address', jsonb_build_object('city', 'القاهرة', 'street', 'شارع 9'),
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_bulk::text, 'qty', 1)),
+    'payment_method', 'cod'
+  ), 'A delivery address is required');
+  perform pg_temp.scn_expect_refusal(jsonb_build_object(
+    'client_ref', 'scn-checkout-o2',
+    'customer_name', 'عنوان ناقص',
+    'customer_phone', v_phone,
+    'delivery_type', 'delivery',
+    'address', jsonb_build_object('city', 'القاهرة', 'area', 'مدينة نصر'),
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_bulk::text, 'qty', 1)),
+    'payment_method', 'cod'
+  ), 'A delivery address is required');
+
+  -- P. once the shop lists the places it serves, anywhere else is refused…
+  perform set_config('role', v_owner, true);
+  update public.website_settings
+     set settings = settings || jsonb_build_object('delivery',
+       jsonb_build_object('enabled', true, 'fee', 30, 'pickup_enabled', true,
+                          'cod_enabled', true, 'instapay_enabled', true,
+                          'areas', jsonb_build_array(
+                            jsonb_build_object('ar', 'الإسماعيلية', 'en', 'Ismailia'))))
+   where id = 1;
+  perform pg_temp.become(null, 'anon');
+  perform pg_temp.scn_expect_refusal(jsonb_build_object(
+    'client_ref', 'scn-checkout-p1',
+    'customer_name', 'خارج النطاق',
+    'customer_phone', v_phone,
+    'delivery_type', 'delivery',
+    'address', jsonb_build_object('city', 'القاهرة', 'area', 'مدينة نصر', 'street', 'شارع 9'),
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_bulk::text, 'qty', 1)),
+    'payment_method', 'cod'
+  ), 'Delivery to القاهرة is not available');
+
+  -- …and a served place is accepted however the customer typed it: the shop
+  --    listed Ismailia / الإسماعيلية, the address says "  ismailia ".
+  v_result := public.place_online_order(jsonb_build_object(
+    'client_ref', 'scn-checkout-p2',
+    'customer_name', 'سلمى فتحي',
+    'customer_phone', '0567890124',
+    'delivery_type', 'delivery',
+    'address', jsonb_build_object('city', '  ismailia ', 'area', 'حي الأربعين', 'street', 'شارع السلطان حسين'),
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_bulk::text, 'qty', 1)),
+    'payment_method', 'cod'
+  ));
+  v_created_orders := v_created_orders || (v_result->>'order_id')::uuid;
+  v_facts := pg_temp.scn_order_facts((v_result->>'order_id')::uuid);
+  if (v_facts->>'delivery_fee')::numeric <> 30.00 then
+    raise exception 'a served place was priced with fee %', v_facts->>'delivery_fee';
+  end if;
+
+  -- Q. the minimum order gates delivery, and only delivery
+  perform set_config('role', v_owner, true);
+  update public.website_settings
+     set settings = settings || jsonb_build_object('delivery',
+       jsonb_build_object('enabled', true, 'fee', 30, 'pickup_enabled', true,
+                          'cod_enabled', true, 'instapay_enabled', true,
+                          'minimum_order', 1000))
+   where id = 1;
+  perform pg_temp.become(null, 'anon');
+  perform pg_temp.scn_expect_refusal(jsonb_build_object(
+    'client_ref', 'scn-checkout-q1',
+    'customer_name', 'طلب صغير',
+    'customer_phone', v_phone,
+    'delivery_type', 'delivery',
+    'address', jsonb_build_object('city', 'القاهرة', 'area', 'مدينة نصر', 'street', 'شارع 9'),
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_bulk::text, 'qty', 1)),
+    'payment_method', 'cod'
+  ), 'Delivery orders need at least 1000.00');
+  -- the same cart collected in person is fine: pickup is not gated by it
+  v_result := public.place_online_order(jsonb_build_object(
+    'client_ref', 'scn-checkout-q2',
+    'customer_name', 'طلب صغير',
+    'customer_phone', v_phone,
+    'delivery_type', 'pickup',
+    'address', '{}'::jsonb,
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_bulk::text, 'qty', 1)),
+    'payment_method', 'cod'
+  ));
+  v_created_orders := v_created_orders || (v_result->>'order_id')::uuid;
+  v_facts := pg_temp.scn_order_facts((v_result->>'order_id')::uuid);
+  if (v_facts->>'delivery_fee')::numeric <> 0.00 or (v_facts->>'total')::numeric <> 100.00 then
+    raise exception 'pickup under the delivery minimum priced fee % / total %',
+      v_facts->>'delivery_fee', v_facts->>'total';
+  end if;
+
+  -- R. free delivery at or above the threshold — the waiver the checkout shows,
+  --    measured on the goods total after the coupon: 600 − 10% = 540 ≥ 500.
+  perform set_config('role', v_owner, true);
+  update public.website_settings
+     set settings = settings || jsonb_build_object('delivery',
+       jsonb_build_object('enabled', true, 'fee', 30, 'pickup_enabled', true,
+                          'cod_enabled', true, 'instapay_enabled', true,
+                          'free_delivery_threshold', 500))
+   where id = 1;
+  perform pg_temp.become(null, 'anon');
+  v_result := public.place_online_order(jsonb_build_object(
+    'client_ref', 'scn-checkout-r',
+    'customer_name', 'هدية كبيرة',
+    'customer_phone', '0567890125',
+    'delivery_type', 'delivery',
+    'address', jsonb_build_object('city', 'القاهرة', 'area', 'مدينة نصر', 'street', 'شارع 9'),
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_bulk::text, 'qty', 6)),
+    'coupon_code', 'SCN-CHK10',
+    'payment_method', 'cod'
+  ));
+  v_created_orders := v_created_orders || (v_result->>'order_id')::uuid;
+  v_facts := pg_temp.scn_order_facts((v_result->>'order_id')::uuid);
+  if (v_facts->>'subtotal')::numeric <> 600.00
+     or (v_facts->>'discount_amount')::numeric <> 60.00
+     or (v_facts->>'delivery_fee')::numeric <> 0.00
+     or (v_facts->>'total')::numeric <> 540.00 then
+    raise exception 'the free-delivery threshold priced % − % + % = % instead of 600 − 60 + 0',
+      v_facts->>'subtotal', v_facts->>'discount_amount',
+      v_facts->>'delivery_fee', v_facts->>'total';
+  end if;
+
+  -- and the four accepted orders above each own exactly one line and one hold
+  select * into v_after from pg_temp.scn_checkout_counts();
+  if v_after.items <> v_before.items + 9 or v_after.holds <> v_before.holds + 9 then
+    raise exception 'the delivery-rule cases wrote % line(s) and % hold(s) instead of 4 and 4',
+      v_after.items - v_before.items - 5, v_after.holds - v_before.holds - 5;
+  end if;
+  if pg_temp.scn_broken_links() <> 0 then
+    raise exception 'an order line or hold points at an order that does not exist';
+  end if;
 
   -- and the same product with no stock left at all: the holds already placed
   -- reduce what can be promised, so a second order of the same size is refused
@@ -1423,7 +1585,7 @@ begin
     'customer_name', 'توصيل مغلق',
     'customer_phone', v_phone,
     'delivery_type', 'delivery',
-    'address', jsonb_build_object('city', 'القاهرة', 'street', 'شارع 9'),
+    'address', jsonb_build_object('city', 'القاهرة', 'area', 'مدينة نصر', 'street', 'شارع 9'),
     'lines', jsonb_build_array(jsonb_build_object('product_id', v_visible::text, 'qty', 1)),
     'payment_method', 'cod'
   ), 'Delivery is not available');
@@ -1460,7 +1622,7 @@ begin
   perform set_config('role', v_owner, true);
   update public.website_settings set settings = v_settings where id = 1;
 
-  raise notice 'storefront checkout — pickup/delivery × COD/InstaPay accepted and priced from the catalogue, stock held not sold, refusals (stock, quantity, inactive, website-hidden, untracked, coupon, delivery off) write zero rows, a replayed key writes no second order, and the guest reads the order back by number and phone while the tables stay staff-only';
+  raise notice 'storefront checkout — pickup/delivery × COD/InstaPay accepted and priced from the catalogue; the shop''s own delivery rules hold (city+area+street required, unserved places refused, minimum gates delivery only, free delivery at the threshold measured after the coupon, payload fee ignored); stock held not sold; refusals (stock, quantity, inactive, website-hidden, untracked, coupon, address, outside area, below minimum, delivery off) write zero rows; a replayed key writes no second order; and the guest reads the order back by number and phone while the tables stay staff-only';
 end
 $scn_checkout$;
 

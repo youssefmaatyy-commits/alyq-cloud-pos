@@ -536,11 +536,32 @@ export interface StoreContact {
  * Delivery and pickup. `enabled` and `fee` are the exact keys the checkout RPC
  * reads server-side, so the fee can never be set by the customer's browser.
  */
+/**
+ * One place the shop delivers to, as the customer's `city` is matched against
+ * it. Bilingual because the storefront renders in both languages.
+ */
+export interface DeliveryArea {
+  ar: string;
+  en: string;
+}
+
 export interface DeliverySettings {
   enabled: boolean;
   fee: number;
   /** Free delivery at or above this subtotal; `null` = never free. */
   free_delivery_threshold: number | null;
+  /**
+   * Where the shop delivers. Empty = anywhere (the behaviour before areas
+   * existed, so an untouched document keeps working). Non-empty = the checkout
+   * offers exactly these and `place_online_order` refuses anything else.
+   */
+  areas: DeliveryArea[];
+  /**
+   * Smallest goods total (after discount) a delivery order may have; `null` =
+   * no minimum. Pickup is never gated by it — collecting in person is how a
+   * customer orders less.
+   */
+  minimum_order: number | null;
   note_ar: string;
   note_en: string;
   pickup_enabled: boolean;

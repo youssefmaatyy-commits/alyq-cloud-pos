@@ -26,8 +26,12 @@ import {
   campaignCovers,
   campaignFor,
   checkCoupon,
+  deliveryAreaSupported,
+  deliveryAreasOf,
   deliveryFeeFor,
+  deliveryMinimumShortfall,
   freeDeliveryProgress,
+  normalizePlaceName,
   goodsTotalOf,
   isCampaignLive,
   liveCampaigns,
@@ -121,6 +125,7 @@ import { HOMEPAGE_SECTIONS } from "../types";
 import type {
   Campaign,
   Coupon,
+  CustomerAddress,
   DeliverySettings,
   OnlineOrder,
   OrderEvent,
@@ -147,6 +152,8 @@ const DELIVERY: DeliverySettings = {
   enabled: true,
   fee: 30,
   free_delivery_threshold: 500,
+  areas: [],
+  minimum_order: null,
   note_ar: "",
   note_en: "",
   pickup_enabled: true,
@@ -505,6 +512,42 @@ test("free-delivery progress tells the customer what is left", () => {
   assert.deepEqual(freeDeliveryProgress(DELIVERY, 200), { eligible: false, remaining: 300, threshold: 500 });
   assert.deepEqual(freeDeliveryProgress(DELIVERY, 600), { eligible: true, remaining: 0, threshold: 500 });
   assert.equal(freeDeliveryProgress({ ...DELIVERY, free_delivery_threshold: null }, 600), null);
+});
+
+test("no list of places means the shop delivers anywhere", () => {
+  assert.deepEqual(deliveryAreasOf({ ...DELIVERY, areas: [] }), []);
+  assert.equal(deliveryAreaSupported({ ...DELIVERY, areas: [] }, "أي مكان", "أي حي"), true);
+  // Plain-object entries that are blank are not places.
+  assert.equal(
+    deliveryAreaSupported({ ...DELIVERY, areas: [{ ar: "  ", en: "" }] }, "القاهرة", "مدينة نصر"),
+    true,
+  );
+});
+
+test("a listed place matches the city or the area, in either language", () => {
+  const delivery = {
+    ...DELIVERY,
+    areas: [
+      { ar: "الإسماعيلية", en: "Ismailia" },
+      { ar: "حي الأربعين", en: "Al Arba'een" },
+    ],
+  };
+  assert.equal(deliveryAreaSupported(delivery, "ismailia", ""), true, "English name, lower case");
+  assert.equal(deliveryAreaSupported(delivery, "  ISMAILIA  ", ""), true, "trimmed and folded");
+  assert.equal(deliveryAreaSupported(delivery, "", "الإسماعيلية"), true, "the area may carry it");
+  assert.equal(deliveryAreaSupported(delivery, "القاهرة", "مدينة نصر"), false);
+  assert.equal(deliveryAreaSupported(delivery, "", ""), false, "an empty address is not a place");
+  assert.equal(normalizePlaceName("  حي   الأربعين "), "حي الأربعين");
+});
+
+test("the delivery minimum is measured on goods, and never gates pickup", () => {
+  const delivery = { ...DELIVERY, minimum_order: 500 };
+  assert.equal(deliveryMinimumShortfall(delivery, "delivery", 200), 300);
+  assert.equal(deliveryMinimumShortfall(delivery, "delivery", 500), 0);
+  assert.equal(deliveryMinimumShortfall(delivery, "delivery", 900), 0);
+  assert.equal(deliveryMinimumShortfall(delivery, "pickup", 10), 0, "collecting in person is how a customer orders less");
+  assert.equal(deliveryMinimumShortfall({ ...DELIVERY, minimum_order: null }, "delivery", 10), 0);
+  assert.equal(deliveryMinimumShortfall({ ...DELIVERY, minimum_order: 0 }, "delivery", 10), 0);
 });
 
 // ── the cart ────────────────────────────────────────────────────────────────
@@ -1947,6 +1990,8 @@ test("every live checkout refusal lands on a customer-facing code (never bare db
     ["Invalid payment method", "payment_unavailable"],
     ["Empty cart", "empty_cart"],
     ["Delivery is not available", "delivery_unavailable"],
+    ["Delivery to القاهرة is not available", "delivery_area_unsupported"],
+    ["Delivery orders need at least 1000.00", "delivery_minimum_not_met"],
     ["A delivery address is required", "missing_address"],
     ["Invalid quantity", "invalid_quantity"],
     ["Product ALYQ-1001 not found", "product_not_found"],
@@ -1963,6 +2008,151 @@ test("every live checkout refusal lands on a customer-facing code (never bare db
   for (const [text, expected] of cases) {
     const err = toOnlineError(new Error(text));
     assert.equal(err.code, expected, `"${text}" → ${err.code}, expected ${expected}`);
+  }
+
+  const minimum = toOnlineError(new Error("Delivery orders need at least 1000.00"));
+  assert.equal(minimum.detail.minimum, 1000, "the refusal carries the shop's number");
+  const outside = toOnlineError(new Error("Delivery to القاهرة is not available"));
+  assert.equal(outside.field, "address", "the customer is pointed at the address");
+});
+
+console.log("\nPhase 42 · the shop's own delivery rules, end to end in demo mode");
+
+test("delivery areas and the minimum order gate the cart the way the server does", async () => {
+  const repository = getDemoOnlineRepository();
+  const products = await getDemoRepository().listProducts();
+  const product = products.find(
+    (candidate) => candidate.show_on_website && candidate.stock_tracking_enabled && candidate.stock_quantity >= 12,
+  );
+  assert.ok(product, "a tracked, on-website product to order");
+
+  const original = await repository.getSettings();
+  const delivery = {
+    ...original.delivery,
+    enabled: true,
+    fee: 30,
+    free_delivery_threshold: null,
+    minimum_order: null,
+    areas: [{ ar: "الإسماعيلية", en: "Ismailia" }],
+  };
+
+  const lines = [{ product_id: product.id, qty: 1 }];
+  type OrderInput = Parameters<typeof repository.placeOrder>[0];
+  const order = (
+    over: Pick<OrderInput, "client_ref" | "delivery_type" | "address"> & Partial<OrderInput>,
+  ): OrderInput => ({
+    customer_name: "Mona",
+    customer_phone: "01001234567",
+    payment_method: "cod" as const,
+    lines,
+    ...over,
+  });
+  const address = (over: Partial<CustomerAddress> = {}): CustomerAddress => ({
+    id: "",
+    label: "",
+    full_name: "",
+    phone: "",
+    city: "الإسماعيلية",
+    area: "حي الأربعين",
+    street: "شارع السلطان حسين",
+    building: "",
+    floor: "",
+    apartment: "",
+    notes: "",
+    is_default: false,
+    ...over,
+  });
+
+  try {
+    await repository.saveSettings({ settings: { ...original, delivery }, ...STAFF });
+
+    // a whole address inside the shop's places goes through, priced by the shop
+    const placed = await repository.placeOrder(
+      order({ client_ref: "ref-delivery-ok", delivery_type: "delivery", address: address() }),
+    );
+    assert.equal(placed.order.delivery_fee, 30, "the shop's fee, not the browser's");
+    assert.equal(
+      placed.order.total,
+      round2(placed.order.subtotal - placed.order.discount_amount + placed.order.delivery_fee),
+    );
+    assert.equal(placed.order.address?.city, "الإسماعيلية");
+    assert.equal(placed.order.address?.area, "حي الأربعين");
+
+    // an address outside them does not — with the shop's own wording
+    await assert.rejects(
+      repository.placeOrder(
+        order({
+          client_ref: "ref-delivery-outside",
+          delivery_type: "delivery",
+          address: address({ city: "القاهرة", area: "مدينة نصر" }),
+        }),
+      ),
+      (error: unknown) => {
+        assert.equal(toOnlineError(error).code, "delivery_area_unsupported");
+        return true;
+      },
+    );
+
+    // a half address is refused: city, area and street are all required
+    for (const [ref, half] of [
+      ["ref-delivery-noarea", { area: "" }],
+      ["ref-delivery-nostreet", { street: "" }],
+      ["ref-delivery-nocity", { city: "" }],
+    ] as const) {
+      await assert.rejects(
+        repository.placeOrder(
+          order({ client_ref: ref, delivery_type: "delivery", address: address(half) }),
+        ),
+        (error: unknown) => {
+          assert.equal(toOnlineError(error).code, "missing_address");
+          return true;
+        },
+      );
+    }
+
+    // the minimum gates delivery, and only delivery
+    await repository.saveSettings({
+      settings: { ...original, delivery: { ...delivery, minimum_order: 5000 } },
+      ...STAFF,
+    });
+    await assert.rejects(
+      repository.placeOrder(
+        order({ client_ref: "ref-delivery-minimum", delivery_type: "delivery", address: address() }),
+      ),
+      (error: unknown) => {
+        assert.equal(toOnlineError(error).code, "delivery_minimum_not_met");
+        return true;
+      },
+    );
+    const pickup = await repository.placeOrder(
+      order({ client_ref: "ref-pickup-minimum", delivery_type: "pickup", address: null }),
+    );
+    assert.equal(pickup.order.delivery_fee, 0, "collecting in person is how a customer orders less");
+
+    // free delivery at the threshold, measured on the goods total
+    await repository.saveSettings({
+      settings: {
+        ...original,
+        delivery: {
+          ...delivery,
+          minimum_order: null,
+          free_delivery_threshold: round2(product.selling_price * 2),
+        },
+      },
+      ...STAFF,
+    });
+    const free = await repository.placeOrder(
+      order({
+        client_ref: "ref-delivery-free",
+        delivery_type: "delivery",
+        address: address(),
+        lines: [{ product_id: product.id, qty: 2 }],
+      }),
+    );
+    assert.equal(free.order.delivery_fee, 0, "at the threshold delivery is free");
+    assert.equal(free.order.total, round2(free.order.subtotal - free.order.discount_amount));
+  } finally {
+    await repository.saveSettings({ settings: original, ...STAFF });
   }
 });
 

@@ -61,7 +61,9 @@ import {
 } from "../services/settingsDefaults";
 import {
   checkCoupon,
+  deliveryAreaSupported,
   deliveryFeeFor,
+  deliveryMinimumShortfall,
   normalizeCouponCode,
   priceCart,
   round2,
@@ -752,10 +754,23 @@ export class DemoOnlineRepository
       }
       if (input.delivery_type === "delivery") {
         const address = input.address;
-        if (!address || (!address.city.trim() && !address.street.trim())) {
+        const city = address?.city.trim() ?? "";
+        const area = address?.area.trim() ?? "";
+        const street = address?.street.trim() ?? "";
+        // The same rule as `place_online_order`: a driver needs the whole
+        // address, and an address outside the places the shop serves is refused
+        // with the shop's own wording.
+        if (!address || !city || !area || !street) {
           throw new OnlineError("missing_address", "A delivery address is required", {
             field: "address",
           });
+        }
+        if (!deliveryAreaSupported(settings.delivery, city, area)) {
+          throw new OnlineError(
+            "delivery_area_unsupported",
+            `Delivery to ${city || area} is not available`,
+            { field: "address", detail: { place: city || area } },
+          );
         }
       }
 
@@ -864,6 +879,23 @@ export class DemoOnlineRepository
             { field: "coupon_code", detail: { reason: check.reason } },
           );
         }
+      }
+
+      // The shop's minimum for delivery, measured on the goods total after the
+      // coupon — and only for delivery: collecting in person is how a customer
+      // orders less than the delivery minimum.
+      const goodsTotal = round2(totals.subtotal - totals.discount_amount);
+      const shortfall = deliveryMinimumShortfall(
+        settings.delivery,
+        input.delivery_type,
+        goodsTotal,
+      );
+      if (shortfall > 0) {
+        throw new OnlineError(
+          "delivery_minimum_not_met",
+          `Delivery orders need at least ${settings.delivery.minimum_order ?? 0}`,
+          { field: "delivery_type", detail: { minimum: settings.delivery.minimum_order, shortfall } },
+        );
       }
 
       // The delivery fee is the shop's number, never the cart's.

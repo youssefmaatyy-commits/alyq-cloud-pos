@@ -25,6 +25,12 @@ import { whatsappHref } from "../components/storefront/StoreLayout";
 import { FieldNote, Money } from "../components/storefront/StorePrimitives";
 import { applyDocumentMeta, clearDocumentMeta } from "../services/seo";
 import { externalHref } from "../services/settingsDefaults";
+import {
+  deliveryAreaSupported,
+  deliveryAreasOf,
+  deliveryMinimumShortfall,
+  round2,
+} from "../services/pricing";
 
 /** Egyptian mobile numbers: 11 digits, starting 01. */
 const EGYPT_PHONE = /^01[0-25]\d{8}$/;
@@ -42,6 +48,17 @@ function errorSuffix(error: OnlineError): string {
   if (typeof orderNumber === "string" && orderNumber) return ` · ${orderNumber}`;
   return "";
 }
+
+/**
+ * Standard autocomplete hints for the address fields that matter. City and area
+ * map to the two administrative levels a browser knows; the street to
+ * `street-address`. Optional fields carry no hint.
+ */
+const ADDRESS_AUTOCOMPLETE: Partial<Record<keyof CustomerAddress, string>> = {
+  city: "address-level2",
+  area: "address-level3",
+  street: "street-address",
+};
 
 /** A blank address to type into. */
 const blankAddress = (): CustomerAddress => ({
@@ -150,12 +167,37 @@ export function StoreCheckoutPage() {
       : touched && !EGYPT_PHONE.test(phone.replace(/\s+/g, ""))
         ? t("store.checkout.phoneInvalid")
         : null;
+
+  // The shop's own delivery rules, computed live so they are visible before the
+  // submit. `place_online_order` (0042) enforces exactly these two, from the
+  // shop's settings, so a cart that passes here passes there.
+  const deliveryPlaces = useMemo(() => deliveryAreasOf(settings.delivery), [settings.delivery]);
+  const goodsTotal = round2(totals.subtotal - totals.discount_amount);
+  const deliveryShortfall = deliveryMinimumShortfall(settings.delivery, deliveryType, goodsTotal);
+  const addressTyped = Boolean(address.city.trim() || address.area.trim());
+
+  // A whole address — city, area and street — for a driver to find. The server
+  // refuses anything less as well.
   const addressError =
-    touched && deliveryType === "delivery" && !address.city.trim() && !address.street.trim()
+    touched && deliveryType === "delivery" &&
+    (!address.city.trim() || !address.area.trim() || !address.street.trim())
       ? t("store.checkout.addressRequired")
       : null;
+  // Only when the customer has actually typed a place: an empty form is the
+  // "address required" case, not the "we do not deliver there" one.
+  const areaError =
+    deliveryType === "delivery" &&
+    addressTyped &&
+    !deliveryAreaSupported(settings.delivery, address.city, address.area)
+      ? t("store.checkout.areaNotServed")
+      : null;
   const blocked = problems.length > 0;
-  const invalid = Boolean(nameError || phoneError || addressError) || blocked;
+  const orderingOpen = settings.delivery.enabled || settings.delivery.pickup_enabled;
+  const invalid =
+    Boolean(nameError || phoneError || addressError || areaError) ||
+    blocked ||
+    deliveryShortfall > 0 ||
+    !orderingOpen;
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -258,6 +300,13 @@ export function StoreCheckoutPage() {
             <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-muted)]">
               {t("store.checkout.fulfilment")}
             </h2>
+            {!settings.delivery.enabled ? (
+              <p className="mt-2 rounded-lg border border-amber-300 bg-amber-50 p-2 text-xs font-semibold text-amber-900">
+                {settings.delivery.pickup_enabled
+                  ? t("store.checkout.deliveryDisabled")
+                  : t("store.checkout.orderingDisabled")}
+              </p>
+            ) : null}
             <div className="mt-3 grid gap-2 sm:grid-cols-2">
               {settings.delivery.enabled ? (
                 <button
@@ -348,6 +397,14 @@ export function StoreCheckoutPage() {
                   </div>
                 ) : null}
 
+                {deliveryPlaces.length > 0 ? (
+                  <datalist id="store-delivery-places">
+                    {deliveryPlaces.map((place, index) => (
+                      <option key={`${place.en}-${index}`} value={pick(place.ar, place.en)} />
+                    ))}
+                  </datalist>
+                ) : null}
+
                 <div className="grid gap-3 sm:grid-cols-2">
                   {(
                     [
@@ -366,6 +423,12 @@ export function StoreCheckoutPage() {
                         onChange={(event) =>
                           setAddress((current) => ({ ...current, [field]: event.target.value }))
                         }
+                        list={
+                          deliveryPlaces.length > 0 && (field === "city" || field === "area")
+                            ? "store-delivery-places"
+                            : undefined
+                        }
+                        autoComplete={ADDRESS_AUTOCOMPLETE[field]}
                         className={inputClass}
                       />
                     </label>
@@ -384,6 +447,7 @@ export function StoreCheckoutPage() {
                   </label>
                 </div>
                 {addressError ? <FieldNote tone="error">{addressError}</FieldNote> : null}
+                {areaError ? <FieldNote tone="error">{areaError}</FieldNote> : null}
               </div>
             ) : (
               <p className="mt-3 text-xs leading-relaxed text-[var(--store-muted)]">
@@ -575,6 +639,15 @@ export function StoreCheckoutPage() {
                 <dd className="font-black text-[var(--store-text)]"><Money value={totals.total} /></dd>
               </div>
             </dl>
+
+            {deliveryShortfall > 0 ? (
+              <p className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-2 text-xs font-semibold text-amber-900">
+                {t("store.checkout.minimumOrder", {
+                  amount: money(settings.delivery.minimum_order ?? 0),
+                  remaining: money(deliveryShortfall),
+                })}
+              </p>
+            ) : null}
 
             <button
               type="submit"

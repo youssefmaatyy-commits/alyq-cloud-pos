@@ -377,6 +377,17 @@ the Phase 9 section of `scripts/store.flow.mjs`. One module, two audiences: a pu
 - **Cart and checkout**: add/update/remove, coupon codes, delivery or pickup, COD or InstaPay,
   guest or signed-in. Customer accounts (`localAccounts` in demo, Supabase Auth live) add profile,
   saved addresses, order history, reorder and wishlist.
+- **Delivery rules, configured and enforced** (`#/online/website` → Delivery & payment): the shop
+  switches delivery on or off, sets its fee, a free-delivery threshold, a minimum order for delivery,
+  and the list of places it delivers to (cities or neighbourhoods, Arabic and English). The checkout
+  offers delivery and pickup exactly as configured, explains it when delivery is switched off, asks
+  for a city, an area *and* a street on delivery orders, and shows how much is still missing when the
+  cart is under the minimum. Migration `0042_delivery_areas_and_minimum` applies the same rules in
+  `place_online_order`: an address outside the shop's places (or a delivery below its minimum) is
+  refused with the shop's own wording, the fee is waived at or above the threshold — measured on the
+  goods total after the coupon, exactly like `deliveryFeeFor`, which the checkout and the demo
+  repository share — and the payload's `delivery_fee` and `total` are ignored, as before. Pickup is
+  never gated by the minimum and never pays a fee.
 - **The POS queue** (`#/online/orders`, capability `manage_online_orders`): statuses Pending,
   Approved, Processing, Ready, Completed, Cancelled. Approving creates the sale through the existing
   `pos_complete_sale` path with `source: "online"` and deducts stock once; cancelling keeps the
@@ -403,7 +414,8 @@ the Phase 9 section of `scripts/store.flow.mjs`. One module, two audiences: a pu
   builder, rendered in the storefront header and footer plus a floating WhatsApp button.
 - **Live schema**: migrations `0017_online_storefront` (tables), `0018_online_order_functions`
   (`place_online_order`, `submit_online_payment_proof`, `lookup_online_order`, `list_my_online_orders`,
-  `resolve_online_order`), `0019_storefront_public_reads` and `0020_storefront_grants_and_coupon_check`.
+  `resolve_online_order`), `0019_storefront_public_reads`, `0020_storefront_grants_and_coupon_check`,
+  later `0034_online_order_line_prices` and `0042_delivery_areas_and_minimum`.
   The server re-prices every line and validates every coupon — the client's totals are a preview.
 - **Checkout contract** (live mode): the order travels as one `place_online_order` call and is read
   back for the confirmation through `lookup_online_order` — the phone-gated read a visitor may use —
@@ -411,18 +423,24 @@ the Phase 9 section of `scripts/store.flow.mjs`. One module, two audiences: a pu
   (`getOrder` remains the staff path). `store_customer_id` is sent only when it can be a real
   `store_customers.id`: storefront accounts are browser-local (`cus-…`) and the function casts the
   field to `uuid`. A refused checkout is mapped from the server's own wording (stock, quantity,
-  inactive / website-hidden product, coupon, delivery rules) to its friendly `store.error.<code>`
-  text, and a failure is logged as `{ code, message, details, hint }` — never `[object Object]`.
+  inactive / website-hidden product, coupon, delivery switched off, an address outside the shop's
+  places, a delivery under its minimum) to its friendly `store.error.<code>` text, and a failure is
+  logged as `{ code, message, details, hint }` — never `[object Object]`.
   A checkout the server accepted but could not be read back is reported as `order_unreadable` with
   the order number, so the customer never re-orders something that already exists.
-- Tests: 75 logic tests in `src/modules/online/__tests__/logic.selftest.ts`; 20 checkout-contract
-  tests in `src/modules/online/__tests__/checkout.selftest.ts` (payload, read-back, error mapping);
-  the `supabase/tests/scenarios.sql` checkout phase runs the real function as `anon` (pickup /
-  delivery × COD / InstaPay, catalogue pricing, reservations, every refusal writing zero rows,
-  replayed key, guest read-back); `scripts/store.flow.mjs`
-  drives the whole acceptance flow in the DOM (14 steps: browse → search → sort → filter → product →
-  cart → guest COD checkout → tracking → approval → sale + stock → InstaPay proof → verification →
-  cancellation with reason → admin screens → live theme → social links → Arabic/RTL).
+- Tests: 85 logic tests in `src/modules/online/__tests__/logic.selftest.ts` (pricing, campaigns,
+  coupons, delivery areas / minimum / threshold, reservations, workflow, error normalization); 20
+  checkout-contract tests in `src/modules/online/__tests__/checkout.selftest.ts` (payload, read-back,
+  error mapping, the delivery refusals); 30 reservation-repair tests; the
+  `supabase/tests/scenarios.sql` checkout phase runs the real function as `anon` (pickup /
+  delivery × COD / InstaPay, catalogue pricing, reservations, the shop's delivery rules — a whole
+  address required, unserved places refused, the minimum gating delivery only, free delivery at the
+  threshold after the coupon, the payload's fee ignored — every refusal writing zero rows, replayed
+  key, guest read-back); `scripts/store.flow.mjs` drives the whole acceptance flow in the DOM
+  (browse → search → sort → filter → product → cart → guest COD checkout → tracking → approval →
+  sale + stock → InstaPay proof → verification → cancellation with reason → admin screens → live
+  theme → social links → delivery switched off then on, a delivery checkout and **delivery +
+  InstaPay**, with the fee and address in the staff view → Arabic/RTL).
 
 ### Remaining gaps
 - The customer-account path in demo mode is a local directory (`localAccounts`), so passwords are not

@@ -19,7 +19,7 @@
  * them as a second percentage: two stacked discounts on one line is how a shop
  * sells below cost by accident.
  */
-import type { Campaign, Coupon, DeliverySettings, ProductContent } from "../types";
+import type { Campaign, Coupon, DeliveryArea, DeliverySettings, ProductContent } from "../types";
 
 /** Money is Egyptian pounds, rounded to piastres. */
 export function round2(value: number): number {
@@ -229,6 +229,63 @@ export function deliveryFeeFor(
 }
 
 /** True when the order is close enough to the threshold to be worth saying so. */
+/**
+ * The shop's delivery areas, cleaned: trimmed, empties dropped. An entry is a
+ * place name the customer's city is matched against, in either language.
+ */
+export function deliveryAreasOf(delivery: DeliverySettings): DeliveryArea[] {
+  return (delivery.areas ?? [])
+    .map((area) => ({ ar: (area?.ar ?? "").trim(), en: (area?.en ?? "").trim() }))
+    .filter((area) => area.ar.length > 0 || area.en.length > 0);
+}
+
+/** A place name compared the way a person would: trimmed, case-folded, spaced. */
+export function normalizePlaceName(value: string): string {
+  return value.trim().replace(/\s+/g, " ").toLocaleLowerCase();
+}
+
+/**
+ * Is the address one of the places the shop delivers to?
+ *
+ * The shop lists places — "Ismailia", "حي الأربعين" — and the customer's city
+ * *and* area are both checked against every entry, in either language, because
+ * a shop at the edge of a city often names the neighbourhood rather than the
+ * city. An empty list means the shop has not restricted delivery. The server
+ * compares the same way (0042), so a cart that passes here passes there.
+ */
+export function deliveryAreaSupported(
+  delivery: DeliverySettings,
+  city: string,
+  area: string,
+): boolean {
+  const places = deliveryAreasOf(delivery);
+  if (places.length === 0) return true; // no list = delivers anywhere
+  const wanted = [normalizePlaceName(city), normalizePlaceName(area)].filter(Boolean);
+  if (wanted.length === 0) return false;
+  return places.some((place) => {
+    const names = [normalizePlaceName(place.ar), normalizePlaceName(place.en)].filter(Boolean);
+    return names.some((name) => wanted.includes(name));
+  });
+}
+
+/**
+ * How much more the goods must be worth before delivery is allowed; 0 when the
+ * order already qualifies (or no minimum is set, or this is a pickup).
+ *
+ * The same number the order function computes server-side — the message the
+ * customer reads and the refusal they would get must agree.
+ */
+export function deliveryMinimumShortfall(
+  delivery: DeliverySettings,
+  deliveryType: "delivery" | "pickup",
+  subtotalAfterDiscount: number,
+): number {
+  if (deliveryType !== "delivery") return 0;
+  const minimum = delivery.minimum_order;
+  if (minimum === null || minimum === undefined || minimum <= 0) return 0;
+  return round2(Math.max(minimum - subtotalAfterDiscount, 0));
+}
+
 export function freeDeliveryProgress(
   delivery: DeliverySettings,
   subtotalAfterDiscount: number,

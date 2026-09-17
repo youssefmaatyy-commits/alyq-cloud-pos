@@ -895,6 +895,24 @@ export function WebsiteSettingsPage() {
                     }
                   />
                 </Field>
+                <Field label={t("online.settings.minimumOrder")} hint={t("online.settings.minimumOrderHint")}>
+                  <TextInput
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={draft.delivery.minimum_order === null ? "" : String(draft.delivery.minimum_order)}
+                    onChange={(event) =>
+                      patch((current) => ({
+                        ...current,
+                        delivery: {
+                          ...current.delivery,
+                          minimum_order:
+                            event.target.value.trim() === "" ? null : Math.max(0, Number(event.target.value) || 0),
+                        },
+                      }))
+                    }
+                  />
+                </Field>
                 <Field label={t("online.settings.deliveryNoteAr")}>
                   <TextArea
                     rows={2}
@@ -911,6 +929,83 @@ export function WebsiteSettingsPage() {
                     onChange={(event) => patch((current) => ({ ...current, delivery: { ...current.delivery, note_en: event.target.value } }))}
                   />
                 </Field>
+              </div>
+
+              <div className="space-y-3 border-t border-slate-200 pt-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900">{t("online.settings.deliveryAreas")}</h3>
+                    <p className="text-[11px] leading-relaxed text-slate-500">
+                      {t("online.settings.deliveryAreasHint")}
+                    </p>
+                  </div>
+                  <Button
+                    variant="secondary"
+                    onClick={() =>
+                      patch((current) => ({
+                        ...current,
+                        delivery: {
+                          ...current.delivery,
+                          areas: [...current.delivery.areas, { ar: "", en: "" }],
+                        },
+                      }))
+                    }
+                  >
+                    {t("online.settings.addDeliveryArea")}
+                  </Button>
+                </div>
+                {draft.delivery.areas.map((place, index) => (
+                  <div key={index} className="grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+                    <Field label={t("online.settings.deliveryPlaceAr")}>
+                      <TextInput
+                        dir="rtl"
+                        value={place.ar}
+                        onChange={(event) =>
+                          patch((current) => ({
+                            ...current,
+                            delivery: {
+                              ...current.delivery,
+                              areas: current.delivery.areas.map((entry, position) =>
+                                position === index ? { ...entry, ar: event.target.value } : entry,
+                              ),
+                            },
+                          }))
+                        }
+                      />
+                    </Field>
+                    <Field label={t("online.settings.deliveryPlaceEn")}>
+                      <TextInput
+                        dir="ltr"
+                        value={place.en}
+                        onChange={(event) =>
+                          patch((current) => ({
+                            ...current,
+                            delivery: {
+                              ...current.delivery,
+                              areas: current.delivery.areas.map((entry, position) =>
+                                position === index ? { ...entry, en: event.target.value } : entry,
+                              ),
+                            },
+                          }))
+                        }
+                      />
+                    </Field>
+                    <Button
+                      variant="ghost"
+                      onClick={() =>
+                        patch((current) => ({
+                          ...current,
+                          delivery: {
+                            ...current.delivery,
+                            areas: current.delivery.areas.filter((_entry, position) => position !== index),
+                          },
+                        }))
+                      }
+                    >
+                      {t("common.delete")}
+                    </Button>
+                  </div>
+                ))}
               </div>
 
               <ToggleSwitch

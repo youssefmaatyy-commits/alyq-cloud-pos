@@ -61,6 +61,16 @@ export const ONLINE_ERROR_CODES = [
   "missing_contact",
   "missing_address",
   "delivery_unavailable",
+  /**
+   * The shop listed the places it delivers to and this address is not one of
+   * them (0042 / `deliveryAreaSupported`). The customer can still choose pickup.
+   */
+  "delivery_area_unsupported",
+  /**
+   * The goods total is under the shop's minimum for delivery. Pickup is never
+   * gated by it, so the refusal names the alternative too.
+   */
+  "delivery_minimum_not_met",
   "pickup_unavailable",
   "payment_unavailable",
   "coupon_invalid",
@@ -226,6 +236,16 @@ export function toOnlineError(error: unknown): OnlineError {
   }
   if (/coupon .* does not apply to this cart/i.test(message)) {
     return new OnlineError("coupon_not_applicable", message, { field: "coupon_code" });
+  }
+  if (/delivery to .* is not available/i.test(message)) {
+    return new OnlineError("delivery_area_unsupported", message, { field: "address" });
+  }
+  if (/delivery orders need at least/i.test(message)) {
+    const minimum = /delivery orders need at least ([\d.]+)/i.exec(message);
+    return new OnlineError("delivery_minimum_not_met", message, {
+      field: "delivery_type",
+      detail: { minimum: minimum ? Number(minimum[1]) : null },
+    });
   }
   if (/delivery is not available/i.test(message)) {
     return new OnlineError("delivery_unavailable", message, { field: "delivery_type" });

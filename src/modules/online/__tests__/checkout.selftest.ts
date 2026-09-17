@@ -447,6 +447,17 @@ test("a business refusal keeps its meaning instead of collapsing to the db code"
       code: "missing_address",
     },
     {
+      // 0042: the shop listed the places it serves and this address is not one
+      // of them. Before the mapping it fell through to `db` — the customer read
+      // "something went wrong" for a rule the shop had configured on purpose.
+      error: postgrestError({ code: "23514", message: "Delivery to القاهرة is not available" }),
+      code: "delivery_area_unsupported",
+    },
+    {
+      error: postgrestError({ code: "23514", message: "Delivery orders need at least 1000.00" }),
+      code: "delivery_minimum_not_met",
+    },
+    {
       error: postgrestError({ code: "23514", message: "Empty cart" }),
       code: "empty_cart",
     },
@@ -459,6 +470,22 @@ test("a business refusal keeps its meaning instead of collapsing to the db code"
       code: "order_not_found",
     },
   ];
+
+  const minimum = makeStub({
+    place: {
+      data: null,
+      error: postgrestError({ code: "23514", message: "Delivery orders need at least 1000.00" }),
+    },
+  });
+  await assert.rejects(
+    () => repo(minimum).placeOrder(guestOrder()),
+    (caught: unknown) => {
+      assert.ok(caught instanceof OnlineError);
+      assert.equal(caught.code, "delivery_minimum_not_met");
+      assert.equal(caught.detail.minimum, 1000, "the refusal carries the shop's number");
+      return true;
+    },
+  );
 
   for (const { error, code, sku } of cases) {
     const stub = makeStub({ place: { data: null, error } });

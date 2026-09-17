@@ -152,6 +152,10 @@ export const DEFAULT_WEBSITE_SETTINGS: WebsiteSettings = {
     enabled: true,
     fee: 30,
     free_delivery_threshold: 500,
+    // No restriction and no minimum out of the box: the shop names its areas
+    // (and, if it wants one, a minimum) in the website settings.
+    areas: [],
+    minimum_order: null,
     note_ar: "التوصيل خلال ٢٤ ساعة داخل الإسماعيلية",
     note_en: "Delivery within 24 hours inside Ismailia",
     pickup_enabled: true,
