@@ -35,6 +35,11 @@ const line = (id: string, quantity: number, unitPrice = 350): SaleItem => ({
   id,
   sale_id: "sale-1",
   product_id: `prod-${id}`,
+  variant_id: null,
+  variant_color_ar: null,
+  variant_color_en: null,
+  variant_size: null,
+  variant_size_label: null,
   name_ar: "خاتم",
   name_en: "Classic Gold Ring",
   sku: `SKU-${id}`,
@@ -93,7 +98,7 @@ const returned = (
   user_id: "u-cashier",
   user_name: "Karim Cashier",
   items: lines.map(
-    (l, index): ReturnItem => ({
+    (l, index): ReturnItem => ({ variant_id: null, variant_color_ar: null, variant_color_en: null, variant_size: null, variant_size_label: null,
       id: `ret-${id}-item-${index}`,
       return_id: `ret-${id}`,
       sale_item_id: l.sale_item_id,

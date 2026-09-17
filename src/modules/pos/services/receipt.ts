@@ -148,6 +148,7 @@ function receiptCss(rtl: boolean): string {
   td { padding: 2px 0; vertical-align: top; }
   .pname { font-weight: 700; line-height: 1.25; }
   .meta { font-family: ui-monospace, Menlo, monospace; font-size: 8.5px; color: #666; direction: ltr; text-align: ${align}; }
+  .variant { font-size: 9px; font-weight: 600; color: #333; }
   .price, .total, .qty { font-family: ui-monospace, Menlo, monospace; }
   .totals { font-size: 10.5px; }
   .totals .row { display: flex; justify-content: space-between; gap: 8px; margin: 1px 0; }
@@ -227,6 +228,31 @@ ${bodyHtml}
 // Sales receipt
 // ═══════════════════════════════════════════════════════════════════════════
 
+/**
+ * The combination a line was sold as, from the line's OWN frozen snapshot:
+ * colour first, then the numeric size. Returns "" for a plain product, so every
+ * legacy receipt renders exactly as it did before Phase 43.
+ */
+function variantLine(
+  item: {
+    variant_id?: string | null;
+    variant_color_ar?: string | null;
+    variant_color_en?: string | null;
+    variant_size?: number | null;
+    variant_size_label?: string | null;
+  },
+  rtl: boolean,
+): string {
+  if (!item.variant_id) return "";
+  const color =
+    (rtl ? item.variant_color_ar || item.variant_color_en : item.variant_color_en || item.variant_color_ar) ?? "";
+  const size =
+    item.variant_size === null || item.variant_size === undefined
+      ? (item.variant_size_label ?? "").trim()
+      : String(Math.round(item.variant_size * 100) / 100);
+  return [color.trim(), size].filter(Boolean).join(" / ");
+}
+
 export function buildReceiptHtml({ sale, strings, direction }: ReceiptData): string {
   const rtl = direction === "rtl";
   const date = new Date(sale.created_at);
@@ -241,10 +267,12 @@ export function buildReceiptHtml({ sale, strings, direction }: ReceiptData): str
   const rows = sale.items
     .map((item) => {
       const name = rtl ? item.name_ar || item.name_en : item.name_en || item.name_ar;
+      const variantText = variantLine(item, rtl);
       return `
       <tr>
         <td class="name">
           <div class="pname">${escapeXml(name)}</div>
+          ${variantText ? `<div class="variant">${escapeXml(variantText)}</div>` : ""}
           <div class="meta">${escapeXml(item.sku)}${item.barcode ? ` · ${escapeXml(item.barcode)}` : ""}</div>
         </td>
         <td class="qty">${item.quantity}</td>
@@ -366,6 +394,12 @@ export interface ReturnReceiptRecord {
   refund_status: "completed" | "pending" | "rejected";
   items: {
     id: string;
+    /** Phase 43: the exact combination returned, from the sold line. */
+    variant_id?: string | null;
+    variant_color_ar?: string | null;
+    variant_color_en?: string | null;
+    variant_size?: number | null;
+    variant_size_label?: string | null;
     name_ar: string;
     name_en: string;
     sku: string;
@@ -405,10 +439,12 @@ export function buildReturnReceiptHtml({
   const rows = returnRecord.items
     .map((item) => {
       const name = rtl ? item.name_ar || item.name_en : item.name_en || item.name_ar;
+      const variantText = variantLine(item, rtl);
       return `
       <tr>
         <td class="name">
           <div class="pname">${escapeXml(name)}</div>
+          ${variantText ? `<div class="variant">${escapeXml(variantText)}</div>` : ""}
           <div class="meta">${escapeXml(item.sku)}${item.barcode ? ` · ${escapeXml(item.barcode)}` : ""}</div>
         </td>
         <td class="qty">${item.quantity}</td>

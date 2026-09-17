@@ -1,8 +1,15 @@
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { Button, SelectInput, TextInput } from "@/components/ui";
+import { lineKey } from "../types";
 import { usePos } from "../hooks/PosProvider";
 import { validateDiscount } from "../services/posMath";
 import { CustomerSearchSelect } from "@/modules/customers/components/CustomerSearchSelect";
+
+/** "17" or "One Size" — the numeric size without trailing zeros. */
+function sizeText(size: number | null, label: string | null): string {
+  if (size === null || !Number.isFinite(size)) return (label ?? "").trim();
+  return String(Math.round(size * 100) / 100);
+}
 
 /**
  * Cart panel — the right side of the register.
@@ -66,11 +73,21 @@ export function CartPanel() {
       {/* lines */}
       <ul className="flex-1 divide-y divide-slate-100 overflow-y-auto px-2">
         {lines.map((line) => (
-          <li key={line.product_id} className="flex items-center gap-2 px-2 py-2.5">
+          <li key={lineKey(line)} className="flex items-center gap-2 px-2 py-2.5">
             <div className="min-w-0 flex-1">
               <p className="truncate text-xs font-semibold text-slate-900">
                 {line.name_en || line.name_ar}
               </p>
+              {/* The exact combination, frozen onto the line: colour then size.
+                  Two sizes of one product are two lines and read as such. */}
+              {line.variant_id ? (
+                <p className="mt-0.5 truncate text-[10px] font-semibold text-indigo-600">
+                  {line.color_en || line.color_ar}
+                  {line.size !== null || line.size_label
+                    ? ` / ${sizeText(line.size, line.size_label)}`
+                    : ""}
+                </p>
+              ) : null}
               <p className="mt-0.5 flex items-center gap-2 font-mono text-[10px] text-slate-500">
                 <span>{line.sku}</span>
                 <span className="tabular-nums">{num(line.unit_price, 2)}</span>
@@ -83,7 +100,7 @@ export function CartPanel() {
                 variant="secondary"
                 size="sm"
                 className="h-7 w-7 !px-0"
-                onClick={() => decrease(line.product_id)}
+                onClick={() => decrease(lineKey(line))}
                 aria-label="−"
               >
                 −
@@ -96,7 +113,7 @@ export function CartPanel() {
                 size="sm"
                 className="h-7 w-7 !px-0"
                 disabled={line.qty >= line.max_qty}
-                onClick={() => increase(line.product_id)}
+                onClick={() => increase(lineKey(line))}
                 aria-label="+"
               >
                 +
@@ -116,7 +133,7 @@ export function CartPanel() {
 
             <button
               type="button"
-              onClick={() => removeLine(line.product_id)}
+              onClick={() => removeLine(lineKey(line))}
               aria-label="×"
               className="flex h-6 w-6 items-center justify-center rounded-md text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
             >

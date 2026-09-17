@@ -44,6 +44,16 @@ export interface SaleItem {
   id: string;
   sale_id: string;
   product_id: string;
+  /**
+   * Phase 43: the exact combination sold. Null on every legacy line and on a
+   * product sold as a whole.
+   */
+  variant_id: string | null;
+  /** Frozen colour and size — an archived or renamed variant still reads here. */
+  variant_color_ar: string | null;
+  variant_color_en: string | null;
+  variant_size: number | null;
+  variant_size_label: string | null;
   /** Snapshot of the product name at sale time (historical, not a live join). */
   name_ar: string;
   name_en: string;
@@ -134,7 +144,7 @@ export interface CompleteSaleInput {
    * Only product ids + quantities come from the client. Prices, names and
    * totals are re-read/recalculated on the authoritative side.
    */
-  lines: { product_id: string; qty: number }[];
+  lines: { product_id: string; qty: number; variant_id?: string | null }[];
   discount_type: DiscountType;
   discount_value: number;
   /** One or more payments whose amounts sum exactly to the sale total. */
@@ -163,15 +173,42 @@ export interface ConfirmPaymentInput {
 /** A line in the active cart (UI state only — never persisted as-is). */
 export interface CartLine {
   product_id: string;
+  /**
+   * Phase 43: the exact combination this line is, when the product sells by
+   * variant. THIS is part of the line's identity — two combinations of one
+   * product are two lines that never merge, because merging them would charge
+   * one shelf for stock that came off another.
+   *
+   * Null for a product sold as a whole, and on a legacy line.
+   */
+  variant_id: string | null;
+  /** The combination's own code, frozen onto the line at add time. */
+  variant_sku: string | null;
+  /** Frozen colour/size, so a rename cannot rewrite a line already in the cart. */
+  color_ar: string | null;
+  color_en: string | null;
+  size: number | null;
+  size_label: string | null;
   sku: string;
   name_ar: string;
   name_en: string;
   barcode: string | null;
   unit_price: number;
-  /** Maximum sellable quantity right now (live stock for tracked goods). */
+  /** Maximum sellable quantity right now — the VARIANT's shelf when there is one. */
   max_qty: number;
   qty: number;
   image_url: string | null;
+}
+
+/**
+ * The identity of a cart line: product + exact combination.
+ *
+ * Used for lookups, for React keys and for the "already in the cart" badge, so
+ * Gold/17 and Silver/17 are separate lines everywhere and neither can be
+ * increased by clicking the other.
+ */
+export function lineKey(line: Pick<CartLine, "product_id" | "variant_id">): string {
+  return `${line.product_id}::${line.variant_id ?? ""}`;
 }
 
 export interface CartDiscount {

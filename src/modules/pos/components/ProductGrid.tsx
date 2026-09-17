@@ -1,8 +1,9 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { Badge } from "@/components/ui";
 import { normalizeText } from "@/modules/products/services/productQuery";
 import { usePos } from "../hooks/PosProvider";
+import { VariantPicker } from "./VariantPicker";
 
 /**
  * POS product grid — the left side of the register.
@@ -12,7 +13,9 @@ import { usePos } from "../hooks/PosProvider";
 
 export function ProductGrid() {
   const { t, pick } = useI18n();
-  const { products, addLine, addBySku, lines } = usePos();
+  const { products, addLine, addBySku, lines, variantsOf } = usePos();
+  // The product whose combinations the cashier is choosing between, if any.
+  const [picking, setPicking] = useState<string | null>(null);
 
   const [search, setSearch] = useSearchState();
   const [category, setCategory] = useCategoryState();
@@ -58,7 +61,10 @@ export function ProductGrid() {
     }
   };
 
-  const inCart = (id: string) => lines.find((l) => l.product_id === id)?.qty ?? 0;
+  // Every combination of the product counts towards its badge, so "2 on the
+  // ticket" is honest even when they are two different sizes.
+  const inCart = (id: string) =>
+    lines.filter((l) => l.product_id === id).reduce((sum, l) => sum + l.qty, 0);
 
   return (
     <div className="flex h-full flex-col gap-3">
@@ -92,14 +98,27 @@ export function ProductGrid() {
       {/* grid */}
       <div className="grid flex-1 grid-cols-2 gap-2.5 overflow-y-auto pb-1 sm:grid-cols-3 xl:grid-cols-4">
         {filtered.map((product) => {
-          const out = product.stock_quantity <= 0;
+          // A variant product is never "out" because the rollup says so — it is
+          // out when no active combination has stock left.
+          const combinations = variantsOf(product.id);
+          const sellsByVariant = product.variants_enabled && combinations.length > 0;
+          const sellable = combinations.filter((v) => v.active && v.stock_quantity > 0);
+          const out = sellsByVariant ? sellable.length === 0 : product.stock_quantity <= 0;
+          const totalUnits = sellsByVariant
+            ? combinations.filter((v) => v.active).reduce((sum, v) => sum + v.stock_quantity, 0)
+            : product.stock_quantity;
           const qty = inCart(product.id);
           return (
             <button
               key={product.id}
               type="button"
               disabled={out}
-              onClick={() => addLine(product)}
+              onClick={() => {
+                // A variant product opens the picker; the register never chooses
+                // a colour or a size for the cashier.
+                if (sellsByVariant) setPicking(product.id);
+                else addLine(product);
+              }}
               className={`group flex flex-col rounded-2xl border bg-white p-3 text-start shadow-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-200 ${
                 out
                   ? "cursor-not-allowed border-slate-200 opacity-60"
@@ -136,23 +155,40 @@ export function ProductGrid() {
               <p className="mt-0.5 truncate font-mono text-[10px] text-slate-500">{product.sku}</p>
               <div className="mt-1.5 flex items-center justify-between gap-2">
                 <span className="text-sm font-extrabold tabular-nums text-slate-900">
-                  {product.selling_price.toFixed(2)}
+                  {(sellsByVariant && sellable[0]?.price_override != null
+                    ? sellable[0].price_override
+                    : product.selling_price
+                  ).toFixed(2)}
                 </span>
                 {out ? (
                   <Badge tone="danger">{t("inventory.status.out")}</Badge>
-                ) : product.stock_quantity <= product.low_stock_level ? (
+                ) : sellsByVariant && sellable.some((v) => v.stock_quantity <= v.low_stock_level) ? (
                   <Badge tone="warning">
-                    {t("inventory.status.low")} · {product.stock_quantity}
+                    {t("inventory.status.low")} · {totalUnits}
                   </Badge>
                 ) : (
                   <span className="text-[11px] font-semibold text-slate-500 tabular-nums">
-                    {product.stock_quantity}
+                    {sellsByVariant ? `${sellable.length}/${combinations.filter((v) => v.active).length}` : totalUnits}
                   </span>
                 )}
               </div>
+              {sellsByVariant ? (
+                <p className="mt-1 text-[10px] font-semibold text-indigo-600">
+                  {t("pos.variants.hint")}
+                </p>
+              ) : null}
             </button>
           );
         })}
+
+        {picking ? (
+          <VariantPicker
+            product={products.find((p) => p.id === picking) as (typeof products)[number]}
+            variants={variantsOf(picking)}
+            onPick={() => setPicking(null)}
+            onClose={() => setPicking(null)}
+          />
+        ) : null}
 
         {filtered.length === 0 ? (
           <div className="col-span-full flex h-40 items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white text-sm font-medium text-slate-500">

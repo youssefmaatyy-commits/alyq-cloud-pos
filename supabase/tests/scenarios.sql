@@ -2901,8 +2901,12 @@ begin
   end if;
 
   select public.reports_inventory_summary() into v_inv;
+  -- Phase 43 added the variant counts beside the product totals. They are
+  -- additive: the product keys keep their meaning, and the variant keys answer
+  -- what a product total cannot ("3 of 6 combinations are low").
   v_shape := pg_temp.report_shape(v_inv, array[
-    'products','tracked','units','atCost','atRetail','potentialMargin','lowStock','outOfStock']);
+    'products','tracked','units','atCost','atRetail','potentialMargin','lowStock','outOfStock',
+    'variantProducts','variants','activeVariants','lowVariants','soldOutVariants']);
   if v_shape <> '|' then
     raise exception 'the inventory summary changed shape (unexpected|missing): %', v_shape;
   end if;

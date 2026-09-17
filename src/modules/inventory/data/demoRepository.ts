@@ -1,4 +1,5 @@
 import type { Product, ProductPatch } from "@/modules/products/types";
+import type { ProductVariant } from "@/modules/products/variants";
 import { AppError } from "@/modules/products/data/repository";
 import { buildDemoCategories, buildDemoProducts, safeStorage } from "@/modules/products/data/demoSeed";
 import { getDemoRepository as getCatalogDemo } from "@/modules/products/data/demoRepository";
@@ -62,6 +63,24 @@ export class DemoInventoryRepository implements InventoryRepository {
 
   async updateProductStock(productId: string, patch: ProductPatch): Promise<Product> {
     return getCatalogDemo().updateProduct(productId, patch);
+  }
+
+  async listVariants(): Promise<ProductVariant[]> {
+    return getCatalogDemo().listVariants();
+  }
+
+  /**
+   * The combination's shelf, written through the catalog demo repository so the
+   * rollup, the identity rules and the in-memory cache behave exactly as they do
+   * for a catalogue edit — there is only one demo authority for variant stock.
+   */
+  async updateVariantStock(variantId: string, quantity: number): Promise<ProductVariant> {
+    const catalog = getCatalogDemo();
+    const current = (await catalog.listVariants()).find((v) => v.id === variantId);
+    if (!current) throw new AppError("VARIANT_NOT_FOUND", `Variant ${variantId} not found`);
+    const wanted = Math.max(0, Math.trunc(quantity));
+    catalog.moveVariantStock(variantId, wanted - current.stock_quantity);
+    return (await catalog.listVariants()).find((v) => v.id === variantId) as ProductVariant;
   }
 
   async listMovements(): Promise<StockMovement[]> {
@@ -135,12 +154,62 @@ export async function applyDemoAdjustment(
   if (!current.stock_tracking_enabled) {
     throw new AppError("VALIDATION", "Stock tracking is disabled for this product", "quantity");
   }
+
+  // ── Phase 43: a variant product's movement moves the EXACT variant ────────
+  if (current.variants_enabled) {
+    const catalog = getCatalogDemo();
+    const variant = (await catalog.listVariants()).find(
+      (v) => v.id === args.variantId && v.product_id === current.id,
+    );
+    if (!variant) {
+      // The rollup is not a shelf anybody can adjust. Saying which one is the
+      // difference between a correction and a guess.
+      throw new AppError(
+        current.variants_enabled && !args.variantId ? "VARIANT_REQUIRED" : "VARIANT_NOT_FOUND",
+        args.variantId
+          ? `Variant ${args.variantId} does not belong to ${current.sku}`
+          : `${current.sku} sells by variant — say which colour and size moved`,
+        "variant_id",
+      );
+    }
+    const variantBefore = variant.stock_quantity;
+    const variantAfter = Math.max(0, variantBefore + signedDelta(args.type, args.quantity));
+    const movement: StockMovement = {
+      id: newId("mov"),
+      product_id: current.id,
+      variant_id: variant.id,
+      variant_color_ar: variant.color_ar,
+      variant_color_en: variant.color_en,
+      variant_size: variant.size,
+      variant_size_label: variant.size_label,
+      delta: args.quantity,
+      type: args.type,
+      reason: args.reason,
+      notes: args.notes,
+      user_id: args.userId,
+      user_name: args.userName,
+      quantity_before: variantBefore,
+      quantity_after: variantAfter,
+      created_at: nowIso(),
+    };
+    repo.appendMovement(movement);
+    await repo.updateVariantStock(variant.id, variantAfter);
+    const product = (await repo.listProducts()).find((p) => p.id === current.id) as Product;
+    return { product, movement };
+  }
+
   const quantityBefore = current.stock_quantity;
   const newQty = Math.max(0, quantityBefore + signedDelta(args.type, args.quantity));
   // Pre-compute the snapshot so the movement is durable in one read.
   const movement: StockMovement = {
     id: newId("mov"),
     product_id: current.id,
+    // A plain product has no combination: the movement describes the product.
+    variant_id: null,
+    variant_color_ar: null,
+    variant_color_en: null,
+    variant_size: null,
+    variant_size_label: null,
     delta: args.quantity,
     type: args.type,
     reason: args.reason,

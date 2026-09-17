@@ -43,6 +43,20 @@ export type StockReason = (typeof STOCK_REASONS)[number];
 export interface StockMovement {
   id: string;
   product_id: string;
+  /**
+   * Phase 43: the exact combination the movement moved, when it moved one.
+   * `quantity_before`/`quantity_after` then describe THAT variant's shelf, not
+   * the product rollup — a Gold/17 correction that says 2 → 1 is about Gold/17.
+   * Null on every legacy movement and on a product that sells as a whole.
+   */
+  variant_id: string | null;
+  /** Frozen colour and size at the moment of the movement. A rename later does
+   *  not rewrite what the ledger says was moved. */
+  variant_color_ar: string | null;
+  variant_color_en: string | null;
+  variant_size: number | null;
+  /** Textual size fallback ("One Size") when there is no number. */
+  variant_size_label: string | null;
   /** Positive number; sign implied by `type`. */
   delta: number;
   quantity_before: number;

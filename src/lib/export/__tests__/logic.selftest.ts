@@ -140,6 +140,11 @@ function category(partial: Partial<Category> & { id: string }): Category {
 function item(partial: Partial<SaleItem> & { id: string; sale_id: string }): SaleItem {
   return {
     product_id: "p1",
+    variant_id: null,
+    variant_color_ar: null,
+    variant_color_en: null,
+    variant_size: null,
+    variant_size_label: null,
     name_ar: "أقراط",
     name_en: "Earrings",
     sku: "ALYQ-1001",
@@ -298,6 +303,11 @@ function shift(partial: Partial<Shift> & { id: string }): Shift {
 function movement(partial: Partial<StockMovement> & { id: string }): StockMovement {
   return {
     product_id: "p1",
+    variant_id: null,
+    variant_color_ar: null,
+    variant_color_en: null,
+    variant_size: null,
+    variant_size_label: null,
     delta: 5,
     quantity_before: 5,
     quantity_after: 10,
@@ -944,7 +954,7 @@ test("the supplier roll-up groups by name and states it is not a payable balance
 // ── Returns & Expenses: the standalone screens' exports ─────────────────────
 
 const RETURN_ITEMS: ReturnItem[] = [
-  {
+  { variant_id: null, variant_color_ar: null, variant_color_en: null, variant_size: null, variant_size_label: null,
     id: "ri1",
     return_id: "r1",
     sale_item_id: "si1",
@@ -957,7 +967,7 @@ const RETURN_ITEMS: ReturnItem[] = [
     quantity: 2,
     line_total: 60,
   },
-  {
+  { variant_id: null, variant_color_ar: null, variant_color_en: null, variant_size: null, variant_size_label: null,
     id: "ri2",
     return_id: "r1",
     sale_item_id: "si2",

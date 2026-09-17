@@ -377,8 +377,8 @@ test("recentSales: items_count derived from items array", () => {
       id: "1",
       total: 100,
       items: [
-        { id: "i1", sale_id: "1", product_id: "p1", name_ar: "", name_en: "", sku: "", barcode: null, unit_price: 50, quantity: 1, line_total: 50 },
-        { id: "i2", sale_id: "1", product_id: "p2", name_ar: "", name_en: "", sku: "", barcode: null, unit_price: 50, quantity: 1, line_total: 50 },
+        { id: "i1", sale_id: "1", product_id: "p1", variant_id: null, variant_color_ar: null, variant_color_en: null, variant_size: null, variant_size_label: null, name_ar: "", name_en: "", sku: "", barcode: null, unit_price: 50, quantity: 1, line_total: 50 },
+        { id: "i2", sale_id: "1", product_id: "p2", variant_id: null, variant_color_ar: null, variant_color_en: null, variant_size: null, variant_size_label: null, name_ar: "", name_en: "", sku: "", barcode: null, unit_price: 50, quantity: 1, line_total: 50 },
       ],
     }),
   ];
@@ -423,6 +423,11 @@ function line(productId: string, quantity: number, unitPrice: number): SaleItem 
     id: `${productId}-${quantity}`,
     sale_id: "s",
     product_id: productId,
+    variant_id: null,
+    variant_color_ar: null,
+    variant_color_en: null,
+    variant_size: null,
+    variant_size_label: null,
     name_ar: "منتج",
     name_en: `Product ${productId}`,
     sku: `SKU-${productId}`,

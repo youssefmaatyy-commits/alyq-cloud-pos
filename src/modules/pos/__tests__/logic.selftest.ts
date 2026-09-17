@@ -66,6 +66,12 @@ function test(name: string, fn: () => void | Promise<void>) {
 
 function line(partial: Partial<CartLine> & { product_id: string; sku: string }): CartLine {
   return {
+    variant_id: null,
+    variant_sku: null,
+    color_ar: null,
+    color_en: null,
+    size: null,
+    size_label: null,
     name_ar: "",
     name_en: partial.sku,
     barcode: null,
@@ -917,6 +923,11 @@ test("sales receipt renders customer name + phone only when linked", () => {
         id: "i1",
         sale_id: "s1",
         product_id: "p1",
+        variant_id: null,
+        variant_color_ar: null,
+        variant_color_en: null,
+        variant_size: null,
+        variant_size_label: null,
         name_ar: "أقراط",
         name_en: "Earrings",
         sku: "ALYQ-1001",

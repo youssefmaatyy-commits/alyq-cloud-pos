@@ -9,6 +9,7 @@ import type {
 import { AppError } from "@/modules/products/data/repository";
 import { getDemoRepository } from "@/modules/products/data/demoRepository";
 import { applyDemoAdjustment } from "@/modules/inventory/data/demoRepository";
+import { variantLabel } from "@/modules/products/variants";
 import { getDemoShiftRepository } from "@/modules/shifts/data/demoRepository";
 import { safeStorage } from "@/modules/products/data/demoSeed";
 import { cartTotals, lineTotal, round2, validateDiscount } from "../services/posMath";
@@ -114,7 +115,9 @@ export class DemoSalesRepository implements SalesRepository {
       }
 
       // ── authoritative re-read: fresh stock + catalog prices ──
-      const fresh = await getDemoRepository().listProducts();
+      const catalog = getDemoRepository();
+      const fresh = await catalog.listProducts();
+      const freshVariants = await catalog.listVariants();
 
       const items: SaleItem[] = [];
       for (const line of input.lines) {
@@ -128,22 +131,68 @@ export class DemoSalesRepository implements SalesRepository {
         if (!Number.isFinite(qty) || qty <= 0) {
           throw new AppError("VALIDATION", `Invalid quantity for ${product.sku}`, "cart");
         }
-        if (qty > product.stock_quantity) {
+
+        // ── Phase 43: the shelf is the EXACT variant's ──────────────────────
+        // The same three refusals the database raises from pos_complete_sale: no
+        // combination named, a combination that is not this product's, an
+        // archived combination, or more units than that combination holds. A
+        // sibling size or colour never authorises the sale.
+        let variant = null as (typeof freshVariants)[number] | null;
+        let unit = round2(product.selling_price);
+        if (product.variants_enabled) {
+          if (!line.variant_id) {
+            throw new AppError(
+              "VALIDATION",
+              `Choose the colour and the size for ${product.sku}`,
+              "cart",
+            );
+          }
+          variant =
+            freshVariants.find((v) => v.id === line.variant_id && v.product_id === product.id) ??
+            null;
+          if (!variant) {
+            throw new AppError(
+              "VALIDATION",
+              `That colour and size does not belong to ${product.sku}`,
+              "cart",
+            );
+          }
+          if (!variant.active) {
+            throw new AppError(
+              "VALIDATION",
+              `${variantLabel(variant)} is no longer sold`,
+              "cart",
+            );
+          }
+          if (qty > variant.stock_quantity) {
+            throw new AppError(
+              "VALIDATION",
+              `Only ${variant.stock_quantity} of ${variantLabel(variant)} in stock`,
+              "cart",
+            );
+          }
+          unit = round2(variant.price_override ?? product.selling_price);
+        } else if (qty > product.stock_quantity) {
           throw new AppError(
             "VALIDATION",
             `Only ${product.stock_quantity} of ${product.sku} in stock`,
             "cart",
           );
         }
-        const unit = round2(product.selling_price);
+
         items.push({
           id: `sli-${items.length}-${Date.now()}`,
           sale_id: "pending",
           product_id: product.id,
+          variant_id: variant?.id ?? null,
+          variant_color_ar: variant?.color_ar ?? null,
+          variant_color_en: variant?.color_en ?? null,
+          variant_size: variant?.size ?? null,
+          variant_size_label: variant?.size_label ?? null,
           name_ar: product.name_ar,
           name_en: product.name_en,
-          sku: product.sku,
-          barcode: product.barcode,
+          sku: variant?.sku ?? product.sku,
+          barcode: variant?.barcode ?? product.barcode,
           unit_price: unit,
           quantity: qty,
           line_total: lineTotal(unit, qty),
@@ -264,6 +313,9 @@ export class DemoSalesRepository implements SalesRepository {
         await applyDemoAdjustment(
           {
             productId: item.product_id,
+            // The movement names the shelf it came off, so the ledger and the
+            // invoice agree line for line.
+            variantId: item.variant_id,
             type: "issue",
             reason: "other",
             quantity: item.quantity,

@@ -9,6 +9,11 @@ import {
   type ReactNode,
 } from "react";
 import type { Product } from "@/modules/products/types";
+import {
+  compareVariants,
+  variantPrice,
+  type ProductVariant,
+} from "@/modules/products/variants";
 import { AppError } from "@/modules/products/data/repository";
 import { getDemoRepository } from "@/modules/products/data/demoRepository";
 import { getSupabaseRepository } from "@/modules/products/data/supabaseRepository";
@@ -24,12 +29,13 @@ import { SALES_ROW_CAP, getSalesRepository, type SalesRepository } from "../data
 import { completeSale as completeSaleGuarded } from "../services/saleService";
 import { isApprovalRequired, type ApprovalRequirement } from "@/modules/approvals";
 import { cartTotals, validateDiscount, type CartTotals as Totals } from "../services/posMath";
-import type {
-  CartDiscount,
-  CartLine,
-  CompleteSaleInput,
-  Sale as SaleModel,
-  SalePaymentInput,
+import {
+  lineKey,
+  type CartDiscount,
+  type CartLine,
+  type CompleteSaleInput,
+  type Sale as SaleModel,
+  type SalePaymentInput,
 } from "../types";
 import type { Customer } from "@/modules/customers/types";
 import { EMPTY_DISCOUNT, newClientRef } from "../types";
@@ -39,6 +45,12 @@ export interface PosContextValue {
   repository: SalesRepository;
   // catalog snapshot (re-used from products module load)
   products: Product[];
+  /**
+   * Every combination of every product, in display order. The grid reads it to
+   * decide whether a product needs a colour/size picked before it can be added,
+   * and to draw how much of each combination is on the shelf.
+   */
+  variants: ProductVariant[];
   loading: boolean;
   error: AppError | null;
   // cart
@@ -48,11 +60,22 @@ export interface PosContextValue {
   isEmpty: boolean;
   selectedCustomer: Customer | null;
   setSelectedCustomer: (customer: Customer | null) => void;
-  addLine: (product: Product) => void;
+  /**
+   * Add one unit of a product, or of an exact combination.
+   *
+   * Returns false — and adds nothing — when the product sells by variant and no
+   * combination was named: the register never picks one for the cashier, because
+   * the wrong silent choice is a customer walking out with the wrong ring and a
+   * shelf count that is wrong in two places.
+   */
+  addLine: (product: Product, variant?: ProductVariant | null) => boolean;
+  /** Scan/type a code. Resolves a variant's own code first, then a plain product. */
   addBySku: (skuOrBarcode: string) => boolean;
-  increase: (productId: string) => void;
-  decrease: (productId: string) => void;
-  removeLine: (productId: string) => void;
+  /** Variants of one product, active first, in numeric size order. */
+  variantsOf: (productId: string) => ProductVariant[];
+  increase: (key: string) => void;
+  decrease: (key: string) => void;
+  removeLine: (key: string) => void;
   setDiscount: (discount: CartDiscount) => void;
   clearCart: () => void;
   // completion
@@ -102,6 +125,7 @@ const PosContext = createContext<PosContextValue | null>(null);
 /** Loads the catalog once (same store as the products module) and owns the cart. */
 export function PosProvider({ children }: { children: ReactNode }) {
   const [products, setProducts] = useState<Product[]>([]);
+  const [variants, setVariants] = useState<ProductVariant[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<AppError | null>(null);
   const [lines, setLines] = useState<CartLine[]>([]);
@@ -139,8 +163,12 @@ export function PosProvider({ children }: { children: ReactNode }) {
       isSupabaseConfigured && getSupabaseClient()
         ? getSupabaseRepository()
         : getDemoRepository();
-    const list = await repo.listProducts();
+    const [list, combinations] = await Promise.all([
+      repo.listProducts(),
+      repo.listVariants(),
+    ]);
     setProducts(list);
+    setVariants([...combinations].sort(compareVariants));
     return list;
   }, []);
 
@@ -202,64 +230,114 @@ export function PosProvider({ children }: { children: ReactNode }) {
 
   // ── cart operations ─────────────────────────────────────────────────────
 
-  const addLine = useCallback(
-    (product: Product) => {
-      if (!product.stock_tracking_enabled || product.stock_quantity <= 0) return;
-      setLines((prev) => {
-        const existing = prev.find((l) => l.product_id === product.id);
-        if (existing) {
-          if (existing.qty + 1 > existing.max_qty) return prev;
-          return prev.map((l) => (l.product_id === product.id ? { ...l, qty: l.qty + 1 } : l));
-        }
-        const line: CartLine = {
-          product_id: product.id,
-          sku: product.sku,
-          name_ar: product.name_ar,
-          name_en: product.name_en,
-          barcode: product.barcode,
-          unit_price: product.selling_price,
-          max_qty: product.stock_quantity,
-          qty: 1,
-          image_url: product.image_url,
-        };
-        return [...prev, line];
-      });
-    },
-    [],
+  /** The combinations a product sells as, in size order. */
+  const variantsOf = useCallback(
+    (productId: string) => variants.filter((v) => v.product_id === productId),
+    [variants],
   );
 
+  /**
+   * Add one unit. The line's identity is product + variant, so two combinations
+   * of one product are two lines — they never merge, and neither inherits the
+   * other's stock.
+   */
+  const addLine = useCallback(
+    (product: Product, variant: ProductVariant | null = null) => {
+      if (!product.active || !product.stock_tracking_enabled) return false;
+
+      const active = variants.filter((v) => v.product_id === product.id && v.active);
+      // A variant product needs the exact combination named. Falling back to the
+      // product (or to its first variant) would be the silent mistake this whole
+      // feature exists to prevent.
+      if (product.variants_enabled && active.length > 0) {
+        if (!variant) return false;
+        if (!variant.active || variant.product_id !== product.id) return false;
+      }
+
+      const maxQty = variant ? variant.stock_quantity : product.stock_quantity;
+      if (maxQty <= 0) return false;
+
+      const line: CartLine = {
+        product_id: product.id,
+        variant_id: variant?.id ?? null,
+        variant_sku: variant?.sku ?? null,
+        color_ar: variant?.color_ar ?? null,
+        color_en: variant?.color_en ?? null,
+        size: variant?.size ?? null,
+        size_label: variant?.size_label ?? null,
+        sku: variant?.sku ?? product.sku,
+        name_ar: product.name_ar,
+        name_en: product.name_en,
+        barcode: variant?.barcode ?? product.barcode,
+        unit_price: variant ? variantPrice(variant, product) : product.selling_price,
+        max_qty: maxQty,
+        qty: 1,
+        image_url: variant?.image_url ?? product.image_url,
+      };
+
+      let added = false;
+      setLines((prev) => {
+        const key = lineKey(line);
+        const existing = prev.find((l) => lineKey(l) === key);
+        if (existing) {
+          if (existing.qty + 1 > existing.max_qty) return prev;
+          added = true;
+          return prev.map((l) => (lineKey(l) === key ? { ...l, qty: l.qty + 1 } : l));
+        }
+        added = true;
+        return [...prev, line];
+      });
+      return added;
+    },
+    [variants],
+  );
+
+  /**
+   * Scan-to-add. A variant's own SKU/barcode resolves to that exact combination;
+   * a product code resolves only for a product that does not sell by variant.
+   * A variant product returns false, so the grid opens the picker instead of
+   * charging a shelf nobody chose.
+   */
   const addBySku = useCallback(
     (skuOrBarcode: string) => {
       const code = skuOrBarcode.trim().toUpperCase();
       if (!code) return false;
+
+      const variant = variants.find(
+        (v) => v.sku.toUpperCase() === code || (v.barcode ?? "").toUpperCase() === code,
+      );
+      if (variant) {
+        if (!variant.active) return false;
+        const owner = products.find((p) => p.id === variant.product_id);
+        if (!owner) return false;
+        return addLine(owner, variant);
+      }
+
       const product = products.find(
         (p) => p.sku.toUpperCase() === code || (p.barcode ?? "").toUpperCase() === code,
       );
       if (!product) return false;
-      addLine(product);
-      return true;
+      const active = variants.filter((v) => v.product_id === product.id && v.active);
+      if (product.variants_enabled && active.length > 0) return false;
+      return addLine(product);
     },
-    [products, addLine],
+    [products, variants, addLine],
   );
 
-  const increase = useCallback((productId: string) => {
+  const increase = useCallback((key: string) => {
     setLines((prev) =>
-      prev.map((l) =>
-        l.product_id === productId && l.qty + 1 <= l.max_qty ? { ...l, qty: l.qty + 1 } : l,
-      ),
+      prev.map((l) => (lineKey(l) === key && l.qty + 1 <= l.max_qty ? { ...l, qty: l.qty + 1 } : l)),
     );
   }, []);
 
-  const decrease = useCallback((productId: string) => {
+  const decrease = useCallback((key: string) => {
     setLines((prev) =>
-      prev
-        .map((l) => (l.product_id === productId ? { ...l, qty: l.qty - 1 } : l))
-        .filter((l) => l.qty > 0),
+      prev.map((l) => (lineKey(l) === key ? { ...l, qty: l.qty - 1 } : l)).filter((l) => l.qty > 0),
     );
   }, []);
 
-  const removeLine = useCallback((productId: string) => {
-    setLines((prev) => prev.filter((l) => l.product_id !== productId));
+  const removeLine = useCallback((key: string) => {
+    setLines((prev) => prev.filter((l) => lineKey(l) !== key));
   }, []);
 
   const setDiscount = useCallback(
@@ -294,7 +372,13 @@ export function PosProvider({ children }: { children: ReactNode }) {
       // which is what stops an approved sale from being written twice.
       const input: CompleteSaleInput = {
           client_ref: newClientRef(),
-          lines: lines.map((l) => ({ product_id: l.product_id, qty: l.qty })),
+          // The exact combination travels with the line; the server re-reads the
+          // price and the shelf anyway and refuses a line that names none.
+          lines: lines.map((l) => ({
+            product_id: l.product_id,
+            qty: l.qty,
+            variant_id: l.variant_id,
+          })),
           discount_type: discount.type,
           discount_value: discount.value,
           payments,
@@ -339,6 +423,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       mode,
       repository,
       products,
+      variants,
       loading,
       error,
       lines,
@@ -349,6 +434,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       setSelectedCustomer,
       addLine,
       addBySku,
+      variantsOf,
       increase,
       decrease,
       removeLine,
@@ -373,6 +459,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       mode,
       repository,
       products,
+      variants,
       loading,
       error,
       lines,
@@ -382,6 +469,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       selectedCustomer,
       addLine,
       addBySku,
+      variantsOf,
       increase,
       decrease,
       removeLine,
