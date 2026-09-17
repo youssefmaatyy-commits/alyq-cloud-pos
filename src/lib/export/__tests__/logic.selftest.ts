@@ -99,6 +99,7 @@ const ISO = "2026-03-10T09:30:00.000Z";
 function product(partial: Partial<Product> & { id: string }): Product {
   return {
     sku: `SKU-${partial.id}`,
+    variants_enabled: false,
     barcode: `622${partial.id}`,
     name_ar: `منتج ${partial.id}`,
     name_en: `Product ${partial.id}`,

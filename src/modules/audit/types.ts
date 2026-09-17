@@ -55,6 +55,17 @@ export const AUDIT_ACTIONS = [
   "product.deleted",
   "product.archived",
   "product.reactivated",
+  // Phase 43 (0043): the variant lifecycle. The variant itself is named in the
+  // row's `details` (variant_id, colour, size), so the trail answers who added
+  // that size, who archived it and who put the opening stock there — over the
+  // same `product` entity the catalogue already audits.
+  "product.variant_created",
+  "product.variant_updated",
+  "product.variant_archived",
+  "product.variant_reactivated",
+  "product.variant_deleted",
+  "product.variants_enabled",
+  "product.variants_disabled",
   "stock.adjusted",
   "stock.corrected",
   // Approval limits (Phase 12, requirement 2). Live mode writes these from

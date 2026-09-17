@@ -6,6 +6,7 @@ import type {
   Product,
   ProductPatch,
 } from "../types";
+import type { NewProductVariant, ProductVariant, ProductVariantPatch } from "../variants";
 
 /** Machine-readable failure codes the UI can react to. */
 export type AppErrorCode =
@@ -24,6 +25,35 @@ export type AppErrorCode =
    * it instead — the record must outlive its selling life.
    */
   | "PRODUCT_HAS_HISTORY"
+  /**
+   * Phase 43, variants. Every one of these is also decided server-side; the
+   * codes exist so the right field lights up and the right sentence is shown,
+   * never so the client can decide.
+   *
+   *   VARIANT_REQUIRED            a product that sells by variant was used
+   *                               without saying which colour and size.
+   *   VARIANT_NOT_FOUND           the named combination is not one of its own
+   *                               (another product's, deleted, or a stale id).
+   *   VARIANT_UNAVAILABLE         the combination exists but is archived —
+   *                               history must read, new sales must not.
+   *   VARIANT_STOCK_INSUFFICIENT  the exact combination is short of units.
+   *   VARIANT_IN_USE              a referenced combination cannot be deleted.
+   *   VARIANTS_IN_USE             the product has variant history and may never
+   *                               silently leave variant mode.
+   *   VARIANTS_STOCK_MISMATCH     an opening distribution (or a consolidation)
+   *                               does not add up — stock is never created or
+   *                               destroyed by the conversion.
+   *   VARIANT_STOCK_READONLY      a direct write to a variant product's stock
+   *                               rollup: adjust the variant instead.
+   */
+  | "VARIANT_REQUIRED"
+  | "VARIANT_NOT_FOUND"
+  | "VARIANT_UNAVAILABLE"
+  | "VARIANT_STOCK_INSUFFICIENT"
+  | "VARIANT_IN_USE"
+  | "VARIANTS_IN_USE"
+  | "VARIANTS_STOCK_MISMATCH"
+  | "VARIANT_STOCK_READONLY"
   | "VALIDATION"
   | "NETWORK"
   | "DB"
@@ -93,6 +123,33 @@ export const EMPTY_PRODUCT_REFERENCES: ProductReferenceCounts = {
 /** product id → its reference counts (only products with total > 0 appear). */
 export type ProductReferenceMap = Record<string, ProductReferenceCounts>;
 
+/** variant id → how much preserved history names that exact combination. */
+export type VariantReferenceMap = Record<string, number>;
+
+/**
+ * The distribution of stock already on the shelf when a product is switched to
+ * variant stock (Phase 43, correction 1).
+ *
+ * `quantity` is units, keyed by the variant id they belong to. The sum is
+ * checked against the product's existing stock — the conversion may neither
+ * create nor destroy a unit, and it never defaults the lot onto one variant.
+ */
+export interface VariantOpening {
+  variantId: string;
+  quantity: number;
+}
+
+/**
+ * Who is making a variant-stock transition. The live functions take the actor
+ * explicitly (so the audit row names the person even when the session is a
+ * service one) and the database overwrites attribution from `auth.uid()` when
+ * there is one — the client cannot forge it either way.
+ */
+export interface VariantActor {
+  userId: string;
+  userName: string;
+}
+
 /**
  * Persistence contract for the catalog module.
  * Implemented twice: `supabaseRepository` (live) and `demoRepository` (offline).
@@ -116,6 +173,42 @@ export interface CatalogRepository {
    * `FORBIDDEN` without the capability. Never cascades into history.
    */
   deleteProduct(id: string): Promise<void>;
+
+  // ── variants (Phase 43) ────────────────────────────────────────────────
+
+  /** Every variant of every product, ordered by product then colour then size. */
+  listVariants(): Promise<ProductVariant[]>;
+  createVariant(input: NewProductVariant): Promise<ProductVariant>;
+  updateVariant(id: string, patch: ProductVariantPatch): Promise<ProductVariant>;
+  /**
+   * Permanently remove a combination. Refused with `VARIANT_IN_USE` when any
+   * history names it, `VARIANT_REQUIRED` when it is the product's last one, and
+   * `NOT_FOUND` when it does not exist. Archive is the normal verb.
+   */
+  deleteVariant(id: string): Promise<void>;
+  /** variant id → referenced-row count, so the screen can explain a refusal. */
+  listVariantReferences(): Promise<VariantReferenceMap>;
+  /**
+   * Switch a product to variant stock, distributing what it already holds.
+   * Refused with `VARIANTS_STOCK_MISMATCH` unless the opening sums to exactly
+   * the product's current stock.
+   */
+  enableProductVariants(
+    productId: string,
+    opening: readonly VariantOpening[],
+    actor: VariantActor,
+  ): Promise<Product>;
+  /**
+   * Switch a product back to plain stock, consolidating every combination into
+   * one figure. Refused with `VARIANTS_IN_USE` when any history references a
+   * variant, and with `VARIANTS_STOCK_MISMATCH` unless the consolidated figure
+   * equals the sum of the variants.
+   */
+  disableProductVariants(
+    productId: string,
+    consolidatedStock: number,
+    actor: VariantActor,
+  ): Promise<Product>;
 
   listCategories(): Promise<Category[]>;
   createCategory(input: NewCategory): Promise<Category>;

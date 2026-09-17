@@ -1,5 +1,10 @@
 import { safeStorage } from "./demoSeed";
-import { EMPTY_PRODUCT_REFERENCES, type ProductReferenceCounts, type ProductReferenceMap } from "./repository";
+import {
+  EMPTY_PRODUCT_REFERENCES,
+  type ProductReferenceCounts,
+  type ProductReferenceMap,
+  type VariantReferenceMap,
+} from "./repository";
 
 /**
  * Demo-mode mirror of `public.product_reference_counts` (migration 0037).
@@ -93,6 +98,33 @@ export function demoProductReferences(): ProductReferenceMap {
       counts.online_order_items +
       counts.stock_reservations;
     if (counts.total > 0) map[id] = counts;
+  }
+  return map;
+}
+
+/**
+ * The same five ledgers, counted by VARIANT instead of by product (Phase 43).
+ *
+ * A variant row can be permanently deleted only while nothing names it: these
+ * counts are what `delete_variant` refuses on, and what the Admin table shows
+ * before the click. Rows written before Phase 43 carry no `variant_id` and are
+ * simply not counted — which is exactly right, because they were never about a
+ * combination.
+ */
+export function demoVariantReferences(): VariantReferenceMap {
+  const buckets = [
+    lineItems(readArray(SALES_KEY)),
+    lineItems(readArray(RETURNS_KEY)),
+    readArray(MOVEMENTS_KEY),
+    lineItems(readArray(ORDERS_KEY)),
+    readArray(RESERVATIONS_KEY),
+  ];
+  const map: VariantReferenceMap = {};
+  for (const rows of buckets) {
+    for (const row of rows) {
+      const id = (row as { variant_id?: unknown }).variant_id;
+      if (typeof id === "string" && id.length > 0) map[id] = (map[id] ?? 0) + 1;
+    }
   }
   return map;
 }

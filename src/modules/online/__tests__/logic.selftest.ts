@@ -170,6 +170,7 @@ function makeProduct(overrides: Partial<Product> = {}): Product {
   return {
     id: "prd-1",
     sku: "SKU-1",
+    variants_enabled: false,
     barcode: "6221000000017",
     name_ar: "أقراط",
     name_en: "Earrings",

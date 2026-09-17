@@ -3782,16 +3782,38 @@ begin
   if v_count <> 5 then
     raise exception 'the five history tables do not all RESTRICT product deletion (% found)', v_count;
   end if;
-  if exists (
-    select 1
+  -- Phase 43 sharpens the same rule instead of just listing allowed names: a
+  -- cascading child is fine only while it is catalogue dressing. What must never
+  -- happen is a cascade that can REACH history — so this walks the cascade graph
+  -- from products, through however many levels, and fails if any of the five
+  -- history tables is anywhere in it. `product_variants` and `catalogue_codes`
+  -- may cascade (they are the product's own shape, like product_content), but
+  -- their own foreign keys back into the five tables are RESTRICT, which this
+  -- proves rather than assumes.
+  with recursive cascade_tree as (
+    select c.conrelid as rel
       from pg_constraint c
-      join pg_class t on t.oid = c.conrelid
      where c.contype = 'f'
        and c.confrelid = 'public.products'::regclass
        and c.confdeltype = 'c'
-       and t.relname <> all (array['product_content', 'store_reviews'])
-  ) then
-    raise exception 'an ON DELETE CASCADE points from products at history';
+    union all
+    select c.conrelid
+      from pg_constraint c
+      join cascade_tree t on c.confrelid = t.rel
+     where c.contype = 'f'
+       and c.confdeltype = 'c'
+  )
+  select count(*) into v_count
+    from cascade_tree t
+   where t.rel = any (array[
+     'public.sale_items'::regclass,
+     'public.return_items'::regclass,
+     'public.stock_movements'::regclass,
+     'public.online_order_items'::regclass,
+     'public.stock_reservations'::regclass
+   ]);
+  if v_count > 0 then
+    raise exception 'a cascade from products can reach a history table';
   end if;
   if not exists (select 1 from public.products where id = v_used) then
     raise exception 'a referenced product disappeared';
