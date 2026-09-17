@@ -30,6 +30,8 @@ import type {
   SettingsSaveInput,
   StoreCustomer,
   StoreFaq,
+  StorefrontCategoryContent,
+  StorefrontCategoryContentDraft,
   StoreReview,
   StockReservation,
   ReservationHoldInput,
@@ -440,6 +442,8 @@ export interface WebsiteSnapshot {
   faqs: StoreFaq[];
   reviews: StoreReview[];
   campaigns: Campaign[];
+  /** Phase 45: the shop-window face of the active categories. */
+  categoryContents: StorefrontCategoryContent[];
 }
 
 /** What the marketing screen manages: codes and campaigns. Staff only. */
@@ -532,6 +536,16 @@ export interface WebsiteRepository {
   listProductContents(): Promise<ProductContent[]>;
   saveProductContent(draft: ProductContentDraft): Promise<ProductContent>;
   deleteProductContent(productId: string): Promise<void>;
+
+  /**
+   * Phase 45: the shop-window face of categories. Reads are public (the
+   * storefront renders them); every write is RLS-gated on `manage_website`
+   * server-side. Only ACTIVE categories are published to the storefront, and
+   * deleting a category removes its content with it (ON DELETE CASCADE).
+   */
+  listCategoryContents(): Promise<StorefrontCategoryContent[]>;
+  saveCategoryContent(draft: StorefrontCategoryContentDraft): Promise<StorefrontCategoryContent>;
+  deleteCategoryContent(categoryId: string): Promise<void>;
 
   listFaqs(): Promise<StoreFaq[]>;
   saveFaq(draft: FaqDraft): Promise<StoreFaq>;

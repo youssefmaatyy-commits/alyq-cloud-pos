@@ -18,6 +18,7 @@ export { StoreCheckoutPage } from "./pages/StoreCheckoutPage";
 export { StoreConfirmationPage } from "./pages/StoreConfirmationPage";
 export { StoreTrackPage } from "./pages/StoreTrackPage";
 export { StoreAccountPage } from "./pages/StoreAccountPage";
+export { StoreAboutPage } from "./pages/StoreAboutPage";
 export { StoreContactPage } from "./pages/StoreContactPage";
 
 // POS / back-office screens

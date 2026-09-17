@@ -30,6 +30,17 @@ export const DEFAULT_SECTION_LIMITS: Record<HomepageSectionKey, number> = {
   bestSellers: 8,
   newArrivals: 8,
   promoBanners: 0,
+  // Phase 45 sections.
+  collection: 8,
+  sale: 8,
+  campaigns: 4,
+  editorial: 0,
+  lookbook: 0,
+  aboutPreview: 0,
+  trustStrip: 4,
+  socialGallery: 6,
+  textImage: 0,
+  newsletter: 0,
   brands: 12,
   reviews: 6,
   faq: 8,
@@ -41,6 +52,8 @@ export const PRODUCT_SECTIONS: readonly HomepageSectionKey[] = [
   "featured",
   "bestSellers",
   "newArrivals",
+  "collection",
+  "sale",
 ];
 
 /** Visible sections, in the order the admin put them in. */
@@ -182,6 +195,11 @@ export interface ResolvedSlide {
   ctaLabel: string;
   ctaHref: string;
   align: HeroSlide["align"];
+  /** Phase 45 presentation: phone image, scrim strength, copy corner, height. */
+  mobileImageUrl: string | null;
+  overlay: number | null;
+  contentPosition: HeroSlide["content_position"];
+  height: HeroSlide["height"];
 }
 
 /**
@@ -203,6 +221,10 @@ export function resolvedSlides(
       ctaLabel: pick(slide.cta_label_ar, slide.cta_label_en).trim(),
       ctaHref: slide.cta_href.trim(),
       align: slide.align,
+      mobileImageUrl: slide.mobile_image_url ?? null,
+      overlay: typeof slide.overlay === "number" ? Math.min(100, Math.max(0, Math.round(slide.overlay))) : null,
+      contentPosition: slide.content_position ?? "center",
+      height: slide.height ?? "editorial",
     }))
     .filter((slide) => slide.title.length > 0 || slide.imageUrl);
 }

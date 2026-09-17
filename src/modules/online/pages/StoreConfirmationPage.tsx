@@ -20,6 +20,7 @@ import { whatsappHref } from "../components/storefront/StoreLayout";
 import { OrderStatusPill, OrderSummary, PaymentStatusPill } from "../components/storefront/StorePrimitives";
 import { PaymentProofPanel } from "../components/storefront/PaymentProofPanel";
 import { applyDocumentMeta, clearDocumentMeta } from "../services/seo";
+import { configuredHref } from "../services/settingsDefaults";
 
 export function StoreConfirmationPage() {
   const { t, pick } = useI18n();
@@ -47,6 +48,20 @@ export function StoreConfirmationPage() {
     t("store.confirmation.whatsappMessage", { number }),
   );
 
+  // Phase 45: the admin's confirmation words. The order number, total and
+  // status come from the order and stay untouched — copy customisation is
+  // presentation, never a rewrite of what happened.
+  const confirmation = settings.confirmation;
+  const confTitle = pick(confirmation.title_ar, confirmation.title_en).trim();
+  const confMessage = pick(confirmation.message_ar, confirmation.message_en).trim();
+  const confGuidance = pick(confirmation.guidance_ar, confirmation.guidance_en).trim();
+  const supportLabel = pick(confirmation.support_cta_ar, confirmation.support_cta_en).trim();
+  const supportHref = configuredHref(confirmation.support_href);
+  const proofNoteCopy = pick(
+    settings.checkout_copy.proof_note_ar,
+    settings.checkout_copy.proof_note_en,
+  ).trim();
+
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(number);
@@ -73,8 +88,13 @@ export function StoreConfirmationPage() {
           {lastWasDuplicate ? t("store.confirmation.duplicateTitle") : t("store.confirmation.received")}
         </p>
         <h1 className="mt-2 text-2xl font-black tracking-tight text-emerald-900">
-          {lastWasDuplicate ? t("store.confirmation.duplicateHeading") : t("store.confirmation.thankYou")}
+          {lastWasDuplicate
+            ? t("store.confirmation.duplicateHeading")
+            : confTitle || t("store.confirmation.thankYou")}
         </h1>
+        {!lastWasDuplicate && confMessage ? (
+          <p className="mx-auto mt-2 max-w-md text-xs leading-relaxed text-emerald-800">{confMessage}</p>
+        ) : null}
 
         <div className="mt-4 inline-flex flex-col items-center gap-1 rounded-xl bg-white/70 px-5 py-3">
           <span className="text-[11px] font-bold uppercase tracking-widest text-emerald-700">
@@ -105,11 +125,17 @@ export function StoreConfirmationPage() {
           <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-muted)]">
             {t("store.confirmation.whatHappensNext")}
           </h2>
-          <ol className="mt-3 list-decimal space-y-1.5 ps-5 text-sm text-[var(--store-text)]">
-            {whatsNext.map((step) => (
-              <li key={step}>{step}</li>
-            ))}
-          </ol>
+          {confGuidance ? (
+            <p className="mt-3 whitespace-pre-line text-sm leading-relaxed text-[var(--store-text)]">
+              {confGuidance}
+            </p>
+          ) : (
+            <ol className="mt-3 list-decimal space-y-1.5 ps-5 text-sm text-[var(--store-text)]">
+              {whatsNext.map((step) => (
+                <li key={step}>{step}</li>
+              ))}
+            </ol>
+          )}
           <div className="mt-4 flex flex-wrap items-center gap-2">
             <OrderStatusPill status={order.status} />
             <PaymentStatusPill status={order.payment_status} />
@@ -162,6 +188,9 @@ export function StoreConfirmationPage() {
       {order.payment_method === "instapay" ? (
         settings.delivery.instapay_proof_required ? (
           <div className="mt-4">
+            {proofNoteCopy ? (
+              <p className="mb-3 text-xs leading-relaxed text-[var(--store-muted)]">{proofNoteCopy}</p>
+            ) : null}
             <PaymentProofPanel
               orderNumber={number}
               phone={order.customer_phone}
@@ -202,7 +231,28 @@ export function StoreConfirmationPage() {
         >
           {t("store.cart.continueShopping")}
         </button>
-        {waHref ? (
+        {supportLabel && supportHref ? (
+          supportHref.startsWith("#") ? (
+            <Link
+              to={supportHref.slice(1)}
+              className="border border-[var(--store-border)] px-5 py-3 text-sm font-black text-[var(--store-text)]"
+              style={{ borderRadius: "var(--store-radius-button)" }}
+            >
+              {supportLabel}
+            </Link>
+          ) : (
+            <a
+              href={supportHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="border border-[var(--store-border)] px-5 py-3 text-sm font-black text-[var(--store-text)]"
+              style={{ borderRadius: "var(--store-radius-button)" }}
+            >
+              {supportLabel}
+            </a>
+          )
+        ) : null}
+        {waHref && confirmation.whatsapp_cta ? (
           <a
             href={waHref}
             target="_blank"

@@ -50,6 +50,8 @@ import type {
   StoreCustomer,
   StoreFaq,
   StoreReview,
+  StorefrontCategoryContent,
+  StorefrontCategoryContentDraft,
   WebsiteSettings,
   WebsiteSettingsMeta,
 } from "../types";
@@ -111,6 +113,7 @@ const KEYS = {
   reservations: "alyq.demo.stock_reservations.v1",
   settings: "alyq.demo.website_settings.v1",
   contents: "alyq.demo.product_contents.v1",
+  categoryContents: "alyq.demo.storefront_category_contents.v1",
   faqs: "alyq.demo.store_faqs.v1",
   reviews: "alyq.demo.store_reviews.v1",
   coupons: "alyq.demo.coupons.v1",
@@ -375,6 +378,9 @@ export class DemoOnlineRepository
       meta: null,
     };
   private contents: ProductContent[] = readArray<ProductContent>(KEYS.contents);
+  private categoryContents: StorefrontCategoryContent[] = readArray<StorefrontCategoryContent>(
+    KEYS.categoryContents,
+  );
   private faqs: StoreFaq[] = readArray<StoreFaq>(KEYS.faqs);
   private reviews: StoreReview[] = readArray<StoreReview>(KEYS.reviews);
   private coupons: Coupon[] = readArray<Coupon>(KEYS.coupons);
@@ -1478,6 +1484,7 @@ export class DemoOnlineRepository
       faqs: [...this.faqs].sort((a, b) => a.sort_order - b.sort_order),
       reviews: [...this.reviews].sort((a, b) => a.sort_order - b.sort_order),
       campaigns: this.campaigns,
+      categoryContents: [...this.categoryContents],
     });
   }
 
@@ -1594,6 +1601,50 @@ export class DemoOnlineRepository
     await this.ensureSeeded();
     this.contents = this.contents.filter((content) => content.product_id !== productId);
     write(KEYS.contents, this.contents);
+    await delay(null);
+  }
+
+  // ── storefront category content (Phase 45) ──────────────────────────────
+  // The demo mirror of `storefront_category_content` (0045): same shape, same
+  // cascade-by-hand on category delete, same publish-only-active discipline —
+  // the storefront reads these beside the ACTIVE category list, so an archived
+  // category's content is unreachable by construction.
+
+  async listCategoryContents(): Promise<StorefrontCategoryContent[]> {
+    await this.ensureSeeded();
+    return delay([...this.categoryContents]);
+  }
+
+  async saveCategoryContent(draft: StorefrontCategoryContentDraft): Promise<StorefrontCategoryContent> {
+    await this.ensureSeeded();
+    const now = nowIso();
+    const existing = this.categoryContents.find((row) => row.category_id === draft.category_id);
+    const saved: StorefrontCategoryContent = {
+      id: existing?.id ?? newId("scc"),
+      category_id: draft.category_id,
+      title_ar: draft.title_ar?.trim() || null,
+      title_en: draft.title_en?.trim() || null,
+      description_ar: draft.description_ar?.trim() || null,
+      description_en: draft.description_en?.trim() || null,
+      image_url: draft.image_url?.trim() || null,
+      mobile_image_url: draft.mobile_image_url?.trim() || null,
+      homepage_image_url: draft.homepage_image_url?.trim() || null,
+      featured: draft.featured ?? false,
+      sort_order: draft.sort_order ?? 0,
+      created_at: existing?.created_at ?? now,
+      updated_at: now,
+    };
+    this.categoryContents = existing
+      ? this.categoryContents.map((row) => (row.category_id === draft.category_id ? saved : row))
+      : [...this.categoryContents, saved];
+    write(KEYS.categoryContents, this.categoryContents);
+    return delay(saved);
+  }
+
+  async deleteCategoryContent(categoryId: string): Promise<void> {
+    await this.ensureSeeded();
+    this.categoryContents = this.categoryContents.filter((row) => row.category_id !== categoryId);
+    write(KEYS.categoryContents, this.categoryContents);
     await delay(null);
   }
 

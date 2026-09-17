@@ -38,7 +38,7 @@ import {
 } from "@/components/ui";
 import { getWebsiteRepository } from "../data";
 import { toOnlineError, type OnlineErrorCode } from "../data/repository";
-import { resolveSettings } from "../services/settingsDefaults";
+import { resolveSettings, sanitizeSettings } from "../services/settingsDefaults";
 import {
   moveSection,
   orderedSections,
@@ -66,15 +66,51 @@ import type {
 } from "../types";
 import { SettingsImageField } from "../components/admin/SettingsImageField";
 import { StorefrontPreview } from "../components/admin/StorefrontPreview";
+import {
+  CampaignsPanel,
+  CategoriesContentPanel,
+  CheckoutCopyPanel,
+  ConfirmationPanel,
+  FooterPanel,
+  HeaderPanel,
+  ProductDisplayPanel,
+  SectionContentPanel,
+  SocialPanel,
+} from "../components/admin/website/WebsiteTabPanels";
 
-type Tab = "appearance" | "homepage" | "contact" | "delivery" | "seo";
+type Tab =
+  | "general"
+  | "homepage"
+  | "hero"
+  | "sections"
+  | "categories"
+  | "campaigns"
+  | "productDisplay"
+  | "productContent"
+  | "theme"
+  | "header"
+  | "footer"
+  | "social"
+  | "delivery"
+  | "checkout"
+  | "confirmation";
 
-const TABS: { key: Tab; labelKey: "online.settings.tabAppearance" | "online.settings.tabHomepage" | "online.settings.tabContact" | "online.settings.tabDelivery" | "online.settings.tabSeo" }[] = [
-  { key: "appearance", labelKey: "online.settings.tabAppearance" },
-  { key: "homepage", labelKey: "online.settings.tabHomepage" },
-  { key: "contact", labelKey: "online.settings.tabContact" },
-  { key: "delivery", labelKey: "online.settings.tabDelivery" },
-  { key: "seo", labelKey: "online.settings.tabSeo" },
+const TABS: { key: Tab; labelKey: string }[] = [
+  { key: "general", labelKey: "online.ws.general" },
+  { key: "homepage", labelKey: "online.ws.homepage" },
+  { key: "hero", labelKey: "online.ws.hero" },
+  { key: "sections", labelKey: "online.ws.sections" },
+  { key: "categories", labelKey: "online.ws.categoriesTab" },
+  { key: "campaigns", labelKey: "online.ws.campaigns" },
+  { key: "productDisplay", labelKey: "online.ws.productDisplay" },
+  { key: "productContent", labelKey: "online.ws.productContent" },
+  { key: "theme", labelKey: "online.ws.theme" },
+  { key: "header", labelKey: "online.ws.header" },
+  { key: "footer", labelKey: "online.ws.footer" },
+  { key: "social", labelKey: "online.ws.social" },
+  { key: "delivery", labelKey: "online.ws.delivery" },
+  { key: "checkout", labelKey: "online.ws.checkout" },
+  { key: "confirmation", labelKey: "online.ws.confirmation" },
 ];
 
 const newId = () =>
@@ -111,7 +147,7 @@ export function WebsiteSettingsPage() {
   const { t, date } = useI18n();
   const toast = useToast();
   const { user } = useAuth();
-  const { products } = useCatalog();
+  const { products, categories } = useCatalog();
   const repository = useMemo(() => getWebsiteRepository(), []);
   const canManage = canActAs(user, "manage_website");
 
@@ -123,7 +159,7 @@ export function WebsiteSettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [loadError, setLoadError] = useState<OnlineErrorCode | null>(null);
-  const [tab, setTab] = useState<Tab>("appearance");
+  const [tab, setTab] = useState<Tab>("general");
 
   useEffect(() => {
     let cancelled = false;
@@ -171,8 +207,13 @@ export function WebsiteSettingsPage() {
     setSaving(true);
     try {
       const actor = getCurrentUser();
+      // Phase 45: the document is sanitized before it leaves the page — the
+      // same policy the database guard enforces (0045), applied client-side so
+      // an unsafe URL or an oversized list is refused with the form still open
+      // rather than by a SQL error after submit. Sanitizing is idempotent, so
+      // a document that is already clean saves unchanged.
       const nextMeta = await repository.saveSettings({
-        settings: draft,
+        settings: sanitizeSettings(draft),
         user_id: actor.id,
         user_name: actor.name,
       });
@@ -281,14 +322,14 @@ export function WebsiteSettingsPage() {
               tab === entry.key ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"
             }`}
           >
-            {t(entry.labelKey)}
+            {t(entry.labelKey as never)}
           </button>
         ))}
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[1fr_22rem]">
         <div className="space-y-4">
-          {tab === "appearance" ? (
+          {tab === "theme" ? (
             <>
               <Card className="space-y-3">
                 <h2 className="text-sm font-bold text-slate-900">{t("online.settings.branding")}</h2>
@@ -503,8 +544,23 @@ export function WebsiteSettingsPage() {
             </>
           ) : null}
 
-          {tab === "homepage" ? (
+          {tab === "sections" ? (
             <>
+              <SectionContentPanel
+                patch={patch}
+                sections={sections}
+                categories={categories.map((category) => ({
+                  id: category.id,
+                  name_ar: category.name_ar,
+                  name_en: category.name_en,
+                  active: category.active,
+                }))}
+                products={products.map((product) => ({
+                  id: product.id,
+                  name_ar: product.name_ar,
+                  name_en: product.name_en,
+                }))}
+              />
               <Card className="space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <h2 className="text-sm font-bold text-slate-900">{t("online.settings.sections")}</h2>
@@ -632,6 +688,11 @@ export function WebsiteSettingsPage() {
                 </ol>
               </Card>
 
+            </>
+          ) : null}
+
+          {tab === "hero" ? (
+            <>
               <Card className="space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <h2 className="text-sm font-bold text-slate-900">{t("online.settings.heroSlides")}</h2>
@@ -680,6 +741,11 @@ export function WebsiteSettingsPage() {
                 ))}
               </Card>
 
+            </>
+          ) : null}
+
+          {tab === "homepage" ? (
+            <>
               <Card className="space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <h2 className="text-sm font-bold text-slate-900">{t("online.settings.promoBanners")}</h2>
@@ -729,7 +795,7 @@ export function WebsiteSettingsPage() {
             </>
           ) : null}
 
-          {tab === "contact" ? (
+          {tab === "general" ? (
             <>
               <Card className="space-y-3">
                 <h2 className="text-sm font-bold text-slate-900">{t("online.settings.storeInfo")}</h2>
@@ -851,6 +917,37 @@ export function WebsiteSettingsPage() {
                   a different tab from its switch. */}
             </>
           ) : null}
+
+          {tab === "categories" ? (
+            <CategoriesContentPanel repository={repository} categories={categories} />
+          ) : null}
+
+          {tab === "campaigns" ? <CampaignsPanel draft={draft} patch={patch} /> : null}
+
+          {tab === "productDisplay" ? <ProductDisplayPanel draft={draft} patch={patch} /> : null}
+
+          {tab === "productContent" ? (
+            <Card className="space-y-3">
+              <h2 className="text-sm font-bold text-slate-900">{t("online.ws.productContent")}</h2>
+              <p className="text-xs text-slate-500">{t("online.ws.productContentHint")}</p>
+              <a
+                href="#/online/content"
+                className="inline-block rounded-xl bg-slate-900 px-4 py-2 text-xs font-bold text-white hover:bg-slate-700"
+              >
+                {t("online.ws.openContent")}
+              </a>
+            </Card>
+          ) : null}
+
+          {tab === "header" ? <HeaderPanel draft={draft} patch={patch} /> : null}
+
+          {tab === "footer" ? <FooterPanel draft={draft} patch={patch} /> : null}
+
+          {tab === "social" ? <SocialPanel draft={draft} patch={patch} /> : null}
+
+          {tab === "checkout" ? <CheckoutCopyPanel draft={draft} patch={patch} /> : null}
+
+          {tab === "confirmation" ? <ConfirmationPanel draft={draft} patch={patch} /> : null}
 
           {tab === "delivery" ? (
             <Card className="space-y-4">
@@ -1135,7 +1232,7 @@ export function WebsiteSettingsPage() {
             </Card>
           ) : null}
 
-          {tab === "seo" ? (
+          {tab === "general" ? (
             <Card className="space-y-3">
               <h2 className="text-sm font-bold text-slate-900">{t("online.settings.seo")}</h2>
               <p className="text-[11px] leading-relaxed text-slate-500">{t("online.settings.seoHint")}</p>
@@ -1205,7 +1302,8 @@ export function WebsiteSettingsPage() {
           <p className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">
             {t("online.settings.preview")}
           </p>
-          <StorefrontPreview settings={draft} />
+          <PreviewDeviceSwitcher settings={draft} />
+          <p className="mt-2 text-[11px] leading-relaxed text-slate-500">{t("online.ws.previewNote")}</p>
           <p className="mt-2 text-[11px] leading-relaxed text-slate-500">{t("online.settings.previewHint")}</p>
           <p className="mt-1 text-[11px] font-semibold text-slate-500">
             {t("online.settings.currencyLocked", { currency: draft.currency })}
@@ -1307,13 +1405,58 @@ function SlideEditor({
           <option value="end">{t("online.settings.alignEnd")}</option>
         </SelectInput>
       </div>
-      <div className="mt-2">
+      <div className="mt-2 grid gap-2 sm:grid-cols-2">
         <SettingsImageField
           label={t("online.settings.slideImage")}
           previewClass="h-24 w-full"
           value={slide.image_url}
           onChange={(url) => onChange({ ...slide, image_url: url })}
         />
+        <SettingsImageField
+          label={t("online.s45.imageMobile")}
+          previewClass="h-24 w-full"
+          value={slide.mobile_image_url ?? null}
+          onChange={(url) => onChange({ ...slide, mobile_image_url: url })}
+        />
+      </div>
+      <div className="mt-2 grid gap-2 sm:grid-cols-3">
+        <Field label={t("online.s45.heroOverlay")}>
+          <TextInput
+            dir="ltr"
+            type="number"
+            min={0}
+            max={100}
+            className="h-9 text-xs"
+            value={slide.overlay ?? 42}
+            onChange={(event) =>
+              onChange({ ...slide, overlay: Math.min(100, Math.max(0, Number(event.target.value) || 0)) })
+            }
+          />
+        </Field>
+        <Field label={t("online.s45.heroPosition")}>
+          <SelectInput
+            className="h-9 text-xs"
+            value={slide.content_position ?? "center"}
+            onChange={(event) =>
+              onChange({ ...slide, content_position: event.target.value as HeroSlide["content_position"] })
+            }
+          >
+            <option value="start">{t("online.settings.alignStart")}</option>
+            <option value="center">{t("online.settings.alignCenter")}</option>
+            <option value="end">{t("online.settings.alignEnd")}</option>
+          </SelectInput>
+        </Field>
+        <Field label={t("online.s45.heroHeight")}>
+          <SelectInput
+            className="h-9 text-xs"
+            value={slide.height ?? "editorial"}
+            onChange={(event) => onChange({ ...slide, height: event.target.value as HeroSlide["height"] })}
+          >
+            <option value="compact">{t("online.s45.heightCompact")}</option>
+            <option value="classic">{t("online.s45.heightClassic")}</option>
+            <option value="editorial">{t("online.s45.heightEditorial")}</option>
+          </SelectInput>
+        </Field>
       </div>
     </div>
   );
@@ -1403,6 +1546,35 @@ function BannerEditor({
           value={banner.image_url}
           onChange={(url) => onChange({ ...banner, image_url: url })}
         />
+      </div>
+    </div>
+  );
+}
+
+
+/** Desktop / tablet / mobile preview widths — representative, not exact. */
+function PreviewDeviceSwitcher({ settings }: { settings: WebsiteSettings }) {
+  const { t } = useI18n();
+  const [device, setDevice] = useState<"desktop" | "tablet" | "mobile">("desktop");
+  const width = device === "desktop" ? "100%" : device === "tablet" ? "42rem" : "24rem";
+  return (
+    <div>
+      <div className="mb-2 flex gap-1 rounded-xl bg-slate-100 p-1">
+        {(["desktop", "tablet", "mobile"] as const).map((candidate) => (
+          <button
+            key={candidate}
+            type="button"
+            onClick={() => setDevice(candidate)}
+            className={`flex-1 rounded-lg px-2 py-1 text-[11px] font-bold transition-all ${
+              device === candidate ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"
+            }`}
+          >
+            {t(`online.ws.preview${candidate.charAt(0).toUpperCase()}${candidate.slice(1)}` as never)}
+          </button>
+        ))}
+      </div>
+      <div className="mx-auto transition-all" style={{ width, maxWidth: "100%" }}>
+        <StorefrontPreview settings={settings} />
       </div>
     </div>
   );

@@ -37,6 +37,8 @@ import type {
   StoreCustomer,
   StoreFaq,
   StoreReview,
+  StorefrontCategoryContent,
+  StorefrontCategoryContentDraft,
   WebsiteSettings,
   WebsiteSettingsMeta,
 } from "../types";
@@ -881,12 +883,13 @@ export class SupabaseOnlineRepository
       // five times. Coupons are not read here: they are staff-only rows, and a
       // visitor validates a typed code through `checkCoupon` instead.
       this.require();
-      const [settings, contents, faqs, reviews, campaigns] = await Promise.all([
+      const [settings, contents, faqs, reviews, campaigns, categoryContents] = await Promise.all([
         this.readSettingsRow(),
         this.listProductContents(),
         this.listFaqs(),
         this.listReviews(),
         this.listCampaigns(),
+        this.listCategoryContents(),
       ]);
       return {
         settings: settings.settings,
@@ -895,6 +898,7 @@ export class SupabaseOnlineRepository
         faqs,
         reviews,
         campaigns,
+        categoryContents,
       };
     } catch (error) {
       throw toOnlineError(error);
@@ -1056,6 +1060,25 @@ export class SupabaseOnlineRepository
               ? draft.seo_description.slice(0, 320)
               : null,
             specs: draft.specs ?? [],
+            // Phase 45: the redesigned product page's editorial fields. Absent
+            // fields write null — an accordion that renders nothing.
+            short_description_ar: draft.short_description_ar?.trim() || null,
+            short_description_en: draft.short_description_en?.trim() || null,
+            description_ar: draft.description_ar?.trim() || null,
+            description_en: draft.description_en?.trim() || null,
+            materials_ar: draft.materials_ar?.trim() || null,
+            materials_en: draft.materials_en?.trim() || null,
+            dimensions_ar: draft.dimensions_ar?.trim() || null,
+            dimensions_en: draft.dimensions_en?.trim() || null,
+            care_ar: draft.care_ar?.trim() || null,
+            care_en: draft.care_en?.trim() || null,
+            shipping_ar: draft.shipping_ar?.trim() || null,
+            shipping_en: draft.shipping_en?.trim() || null,
+            returns_ar: draft.returns_ar?.trim() || null,
+            returns_en: draft.returns_en?.trim() || null,
+            gift_note_ar: draft.gift_note_ar?.trim() || null,
+            gift_note_en: draft.gift_note_en?.trim() || null,
+            media: draft.media ?? [],
             updated_at: new Date().toISOString(),
           },
           { onConflict: "product_id" },
@@ -1073,6 +1096,58 @@ export class SupabaseOnlineRepository
     try {
       const client = this.require();
       const { error } = await client.from("product_content").delete().eq("product_id", productId);
+      if (error) throw toOnlineError(error);
+    } catch (error) {
+      throw toOnlineError(error);
+    }
+  }
+
+  async listCategoryContents(): Promise<StorefrontCategoryContent[]> {
+    try {
+      const client = this.require();
+      const { data, error } = await client.from("storefront_category_content").select("*");
+      if (error) throw toOnlineError(error);
+      return (data ?? []) as StorefrontCategoryContent[];
+    } catch (error) {
+      throw toOnlineError(error);
+    }
+  }
+
+  async saveCategoryContent(draft: StorefrontCategoryContentDraft): Promise<StorefrontCategoryContent> {
+    try {
+      const client = this.require();
+      const row = {
+        category_id: draft.category_id,
+        title_ar: draft.title_ar?.trim() || null,
+        title_en: draft.title_en?.trim() || null,
+        description_ar: draft.description_ar?.trim() || null,
+        description_en: draft.description_en?.trim() || null,
+        image_url: draft.image_url?.trim() || null,
+        mobile_image_url: draft.mobile_image_url?.trim() || null,
+        homepage_image_url: draft.homepage_image_url?.trim() || null,
+        featured: draft.featured ?? false,
+        sort_order: draft.sort_order ?? 0,
+        updated_at: new Date().toISOString(),
+      };
+      const { data, error } = await client
+        .from("storefront_category_content")
+        .upsert(row, { onConflict: "category_id" })
+        .select()
+        .single();
+      if (error) throw toOnlineError(error);
+      return data as StorefrontCategoryContent;
+    } catch (error) {
+      throw toOnlineError(error);
+    }
+  }
+
+  async deleteCategoryContent(categoryId: string): Promise<void> {
+    try {
+      const client = this.require();
+      const { error } = await client
+        .from("storefront_category_content")
+        .delete()
+        .eq("category_id", categoryId);
       if (error) throw toOnlineError(error);
     } catch (error) {
       throw toOnlineError(error);

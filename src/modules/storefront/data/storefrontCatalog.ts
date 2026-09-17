@@ -6,7 +6,7 @@
  * No authentication required — this is the public storefront.
  *
  * In live mode the two reads go through `storefront_catalogue()` and
- * `storefront_categories()` instead of through the tables, and that is not a
+ * `storefront_categories_v2()` instead of through the tables, and that is not a
  * stylistic choice: every policy on `products` and `categories` is
  * `to authenticated`, so a visitor's select on the table returns zero rows and
  * the shop window is empty. The functions are `security definer` with a fixed
@@ -30,8 +30,35 @@ import { getDemoRepository } from "@/modules/products/data/demoRepository";
  */
 type StorefrontProductRow = Omit<Product, "cost_price" | "low_stock_level">;
 
-/** What `storefront_categories()` returns: the whole `Category` shape. */
-type StorefrontCategoryRow = Category;
+/**
+ * Phase 45: `storefront_categories_v2()` returns the same row with the shop
+ * window's content columns appended. The content itself is read through the
+ * settings snapshot (`storefront_category_content` is anon-readable by policy);
+ * here the extras are stripped so the storefront's `Category` objects stay
+ * exactly the catalogue's — one shape, one set of rules.
+ */
+type StorefrontCategoryV2Row = Category & {
+  content_title_ar: string | null;
+  content_title_en: string | null;
+  content_description_ar: string | null;
+  content_description_en: string | null;
+  content_image_url: string | null;
+  content_mobile_image_url: string | null;
+  content_homepage_image_url: string | null;
+  featured: boolean;
+  storefront_sort: number | null;
+};
+
+const toPublicCategory = (row: StorefrontCategoryV2Row): Category => ({
+  id: row.id,
+  name_ar: row.name_ar,
+  name_en: row.name_en,
+  parent_id: row.parent_id,
+  active: row.active,
+  sort_order: row.sort_order,
+  created_at: row.created_at,
+  updated_at: row.updated_at,
+});
 
 const toProduct = (row: StorefrontProductRow): Product => ({
   ...row,
@@ -65,7 +92,7 @@ export async function fetchStorefrontCatalog(): Promise<{
     // never an unpublished product or an archived combination.
     const [productResult, categoryResult, variantResult] = await Promise.all([
       client.rpc("storefront_catalogue"),
-      client.rpc("storefront_categories"),
+      client.rpc("storefront_categories_v2"),
       client.rpc("storefront_product_variants"),
     ]);
 
@@ -79,7 +106,7 @@ export async function fetchStorefrontCatalog(): Promise<{
 
     return {
       products: ((productResult.data ?? []) as StorefrontProductRow[]).map(toProduct),
-      categories: (categoryResult.data ?? []) as StorefrontCategoryRow[],
+      categories: ((categoryResult.data ?? []) as StorefrontCategoryV2Row[]).map(toPublicCategory),
       variants: (variantResult.error ? [] : (variantResult.data ?? [])) as StoreVariant[],
       mode: "supabase",
     };

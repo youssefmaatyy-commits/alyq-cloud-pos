@@ -45,6 +45,7 @@ import type {
   StoreReview,
   WebsiteSettings,
   WebsiteSettingsMeta,
+  StorefrontCategoryContent,
 } from "../types";
 import { resolveSettings } from "../services/settingsDefaults";
 import { unitsSold } from "../services/badges";
@@ -83,6 +84,8 @@ export interface StorefrontContextValue {
   faqs: StoreFaq[];
   reviews: StoreReview[];
   campaigns: Campaign[];
+  /** Phase 45: the shop-window content of the active categories. */
+  categoryContents: StorefrontCategoryContent[];
 
   /** Ids of the best-selling products, strongest first. */
   bestSellerIds: string[];
@@ -139,6 +142,7 @@ export function StorefrontProvider({ children }: { children: ReactNode }) {
     faqs: StoreFaq[];
     reviews: StoreReview[];
     campaigns: Campaign[];
+    categoryContents: StorefrontCategoryContent[];
   }>({
     settings: null,
     meta: null,
@@ -146,6 +150,7 @@ export function StorefrontProvider({ children }: { children: ReactNode }) {
     faqs: [],
     reviews: [],
     campaigns: [],
+    categoryContents: [],
   });
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -184,6 +189,7 @@ export function StorefrontProvider({ children }: { children: ReactNode }) {
         faqs: site.faqs,
         reviews: site.reviews,
         campaigns: site.campaigns,
+        categoryContents: site.categoryContents ?? [],
       });
       setBestSellers(top);
       setReservedList(holds);
@@ -349,6 +355,7 @@ export function StorefrontProvider({ children }: { children: ReactNode }) {
       faqs: snapshot.faqs,
       reviews: snapshot.reviews,
       campaigns: snapshot.campaigns,
+      categoryContents: snapshot.categoryContents,
       bestSellerIds: bestSellers.map((row) => row.product_id),
       units,
       reserved,

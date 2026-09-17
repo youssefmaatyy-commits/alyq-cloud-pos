@@ -23,6 +23,8 @@
  * Available-to-promise is therefore `stock_quantity − Σ reserved`.
  */
 
+import type { Category } from "@/modules/products/types";
+
 // ── order lifecycle ─────────────────────────────────────────────────────────
 
 /** Where the goods are. Forward-only, except cancellation. */
@@ -428,8 +430,60 @@ export interface ProductContent {
   seo_title: string | null;
   seo_description: string | null;
   specs: ProductSpec[];
+  /**
+   * Phase 45, the redesigned product page's editorial fields. Nullable like
+   * everything above: an absent field renders no accordion, and a row written
+   * before the phase simply has none of them.
+   */
+  short_description_ar?: string | null;
+  short_description_en?: string | null;
+  description_ar?: string | null;
+  description_en?: string | null;
+  materials_ar?: string | null;
+  materials_en?: string | null;
+  dimensions_ar?: string | null;
+  dimensions_en?: string | null;
+  care_ar?: string | null;
+  care_en?: string | null;
+  shipping_ar?: string | null;
+  shipping_en?: string | null;
+  returns_ar?: string | null;
+  returns_en?: string | null;
+  gift_note_ar?: string | null;
+  gift_note_en?: string | null;
+  media?: ProductContentMediaItem[];
   created_at: string;
   updated_at: string;
+}
+
+/** One content field group on the product page, ready to render or skip. */
+export interface ProductContentSection {
+  key: string;
+  title_ar: string;
+  title_en: string;
+  body_ar: string;
+  body_en: string;
+}
+
+/** Assemble the product page's accordions from whatever content exists. */
+export function productContentSections(content: ProductContent | null): ProductContentSection[] {
+  if (!content) return [];
+  const section = (key: string, titleAr: string, titleEn: string, ar?: string | null, en?: string | null) => ({
+    key,
+    title_ar: titleAr,
+    title_en: titleEn,
+    body_ar: (ar ?? "").trim(),
+    body_en: (en ?? "").trim(),
+  });
+  return [
+    section("description", "الوصف", "Description", content.description_ar, content.description_en),
+    section("materials", "المواد", "Materials", content.materials_ar, content.materials_en),
+    section("dimensions", "المقاسات", "Dimensions", content.dimensions_ar, content.dimensions_en),
+    section("care", "العناية", "Care", content.care_ar, content.care_en),
+    section("shipping", "الشحن", "Shipping", content.shipping_ar, content.shipping_en),
+    section("returns", "الاستبدال والإرجاع", "Exchanges & returns", content.returns_ar, content.returns_en),
+    section("gift", "ملاحظة هدية", "Gift note", content.gift_note_ar, content.gift_note_en),
+  ].filter((s) => s.body_ar !== "" || s.body_en !== "");
 }
 
 // ── website settings (the appearance document) ──────────────────────────────
@@ -460,7 +514,23 @@ export interface HeroSlide {
   cta_href: string;
   /** Where the text sits over the image. */
   align: "start" | "center" | "end";
+  /**
+   * Phase 45, the redesigned hero: a second, phone-shaped image, how dark the
+   * scrim over it is, where the words sit and how tall the stage is. Absent
+   * fields fall back to the desktop image and the shipped presentation, so a
+   * slide saved before this phase renders exactly as it did.
+   */
+  mobile_image_url?: string | null;
+  /** 0–100: how strong the dark overlay over the imagery is. */
+  overlay?: number;
+  /** Which corner (or centre) the copy block sits in. */
+  content_position?: "start" | "center" | "end";
+  /** Preset heights; `editorial` is the tall, image-led default. */
+  height?: "compact" | "classic" | "editorial";
 }
+
+export const HERO_HEIGHTS = ["compact", "classic", "editorial"] as const;
+export type HeroHeight = (typeof HERO_HEIGHTS)[number];
 
 export interface PromoBanner {
   id: string;
@@ -504,7 +574,7 @@ export interface StoreTheme {
   dark_mode: boolean;
 }
 
-/** The homepage sections an admin can hide, reorder and retitle. */
+/** Every homepage section an admin can hide, reorder and retitle (Phase 45 set). */
 export const HOMEPAGE_SECTIONS = [
   "hero",
   "categories",
@@ -512,6 +582,18 @@ export const HOMEPAGE_SECTIONS = [
   "bestSellers",
   "newArrivals",
   "promoBanners",
+  // Phase 45: appended after the shipped keys so an existing document keeps its
+  // arrangement; `repairSections` places new keys at the end, visible.
+  "collection",
+  "sale",
+  "campaigns",
+  "editorial",
+  "lookbook",
+  "aboutPreview",
+  "trustStrip",
+  "socialGallery",
+  "textImage",
+  "newsletter",
   "brands",
   "reviews",
   "faq",
@@ -528,6 +610,24 @@ export interface HomepageSectionConfig {
   title_en: string;
   /** How many products a product section shows. Ignored by other sections. */
   limit: number;
+  /**
+   * Phase 45 per-section content, optional so an old document merges cleanly.
+   * Which fields mean what depends on the key — a `categories` section reads
+   * `category_ids` (the exact shop window the admin chose, never inferred),
+   * an `editorial`/`textImage`/`lookbook` section reads the body/CTA pair,
+   * `collection`/`sale` read `product_ids`.
+   */
+  category_ids?: string[];
+  product_ids?: string[];
+  /** Presentation preset for `categories`: image tiles, a mobile carousel, or a wide editorial split. */
+  layout?: "tiles" | "carousel" | "editorial";
+  body_ar?: string;
+  body_en?: string;
+  image_url?: string | null;
+  mobile_image_url?: string | null;
+  cta_ar?: string;
+  cta_en?: string;
+  cta_href?: string;
 }
 
 export interface StoreSocialLinks {
@@ -627,6 +727,252 @@ export interface AnnouncementSettings {
   text_en: string;
   /** Optional link the announcement bar points at. */
   href: string;
+  /**
+   * Phase 45: the bar becomes a small stage. `static` shows one message;
+   * `rotate` fades between them; `scroll` runs them as a marquee. Absent with
+   * the legacy single text, the bar renders exactly as it always did.
+   */
+  mode?: "static" | "rotate" | "scroll";
+  /** Bar background; falls back to the theme's secondary colour. */
+  bg_color?: string;
+  /** Bar text colour; falls back to a readable colour on the background. */
+  text_color?: string;
+  /** Rotation interval for `rotate`, in milliseconds (clamped 2s–15s). */
+  interval_ms?: number;
+  /** The messages themselves, in display order. */
+  messages?: AnnouncementMessage[];
+}
+
+export interface AnnouncementMessage {
+  id: string;
+  enabled: boolean;
+  text_ar: string;
+  text_en: string;
+  /** Optional destination: an in-app `#/…` route or a safe http(s) URL. */
+  href?: string;
+  /** Optional call-to-action word shown after the message. */
+  cta_ar?: string;
+  cta_en?: string;
+}
+
+// ── Phase 45: the redesigned storefront's own settings groups ───────────────
+
+/** How a product card presents itself, from safe presets only. */
+export const PRODUCT_CARD_ASPECTS = ["portrait", "square", "landscape"] as const;
+export type ProductCardAspect = (typeof PRODUCT_CARD_ASPECTS)[number];
+export const PRODUCT_CARD_FITS = ["cover", "contain"] as const;
+export type ProductCardFit = (typeof PRODUCT_CARD_FITS)[number];
+export const PRODUCT_CARD_GAPS = ["cozy", "normal", "airy"] as const;
+export type ProductCardGap = (typeof PRODUCT_CARD_GAPS)[number];
+export const PRODUCT_CARD_ALIGNS = ["start", "center"] as const;
+export type ProductCardAlign = (typeof PRODUCT_CARD_ALIGNS)[number];
+
+export interface ProductCardSettings {
+  /** Columns on a phone. 2 is the fashion-house default. */
+  mobile_columns: 1 | 2 | 3;
+  /** Columns at desktop width. */
+  desktop_columns: 2 | 3 | 4 | 5 | 6;
+  aspect: ProductCardAspect;
+  image_fit: ProductCardFit;
+  gap: ProductCardGap;
+  text_align: ProductCardAlign;
+  show_price: boolean;
+  show_badge: boolean;
+  show_wishlist: boolean;
+  show_quick_add: boolean;
+  show_swatches: boolean;
+}
+
+/** Which storefront badges may render. A badge that is off never renders. */
+export interface BadgeSettings {
+  show_new: boolean;
+  show_sale: boolean;
+  show_best_seller: boolean;
+  show_limited: boolean;
+}
+
+/** Icons are keys into the app's own safe set — never uploaded markup. */
+export const TRUST_ICONS = [
+  "shield",
+  "truck",
+  "support",
+  "exchange",
+  "gift",
+  "star",
+  "store",
+  "clock",
+] as const;
+export type TrustIcon = (typeof TRUST_ICONS)[number];
+
+export interface TrustItem {
+  id: string;
+  enabled: boolean;
+  icon: TrustIcon;
+  title_ar: string;
+  title_en: string;
+  desc_ar: string;
+  desc_en: string;
+  sort_order: number;
+}
+
+export interface TrustSettings {
+  items: TrustItem[];
+}
+
+export interface AboutSettings {
+  title_ar: string;
+  title_en: string;
+  body_ar: string;
+  body_en: string;
+  image_url: string | null;
+  cta_ar: string;
+  cta_en: string;
+  cta_href: string;
+}
+
+export interface FooterPolicyLink {
+  id: string;
+  enabled: boolean;
+  label_ar: string;
+  label_en: string;
+  href: string;
+}
+
+export interface FooterSettings {
+  description_ar: string;
+  description_en: string;
+  newsletter_enabled: boolean;
+  newsletter_note_ar: string;
+  newsletter_note_en: string;
+  show_social: boolean;
+  copyright_ar: string;
+  copyright_en: string;
+  policy_links: FooterPolicyLink[];
+}
+
+/** Checkout copy. Words only — the rules stay server-side and out of reach. */
+export interface CheckoutCopySettings {
+  heading_ar: string;
+  heading_en: string;
+  delivery_note_ar: string;
+  delivery_note_en: string;
+  pickup_note_ar: string;
+  pickup_note_en: string;
+  payment_note_ar: string;
+  payment_note_en: string;
+  cod_note_ar: string;
+  cod_note_en: string;
+  instapay_note_ar: string;
+  instapay_note_en: string;
+  proof_note_ar: string;
+  proof_note_en: string;
+  place_order_ar: string;
+  place_order_en: string;
+}
+
+export interface ConfirmationCopySettings {
+  title_ar: string;
+  title_en: string;
+  message_ar: string;
+  message_en: string;
+  guidance_ar: string;
+  guidance_en: string;
+  support_cta_ar: string;
+  support_cta_en: string;
+  /** Where the support CTA points: a route or a safe external URL. */
+  support_href: string;
+  /** Show a "continue on WhatsApp" button when a number is configured. */
+  whatsapp_cta: boolean;
+}
+
+/**
+ * An editorial campaign block: an image, words, a CTA and a window. Pure
+ * presentation — it sells nothing by itself, so its schedule is a rendering
+ * rule (who sees it when), not a pricing rule; every price stays
+ * server-derived exactly as before.
+ */
+export interface EditorialCampaign {
+  id: string;
+  enabled: boolean;
+  title_ar: string;
+  title_en: string;
+  subtitle_ar: string;
+  subtitle_en: string;
+  desktop_image_url: string | null;
+  mobile_image_url: string | null;
+  cta_ar: string;
+  cta_en: string;
+  cta_href: string;
+  /** ISO instants; `null` = open-ended on that side. */
+  starts_at: string | null;
+  ends_at: string | null;
+  /** `homepage` renders in the campaigns section; `banner` also under the header. */
+  placement: "homepage" | "banner";
+  sort_order: number;
+}
+
+export const SOCIAL_PLATFORMS = ["instagram", "facebook", "tiktok", "whatsapp"] as const;
+export type SocialPlatform = (typeof SOCIAL_PLATFORMS)[number];
+
+export interface SocialLinkConfig {
+  platform: SocialPlatform;
+  enabled: boolean;
+  /** Profile URL, or a phone number for WhatsApp. */
+  url: string;
+  label_ar: string;
+  label_en: string;
+}
+
+export interface HeaderSettings {
+  sticky: boolean;
+  search_enabled: boolean;
+  account_enabled: boolean;
+  /** The cart can be hidden only cosmetically; checkout stays reachable. */
+  cart_enabled: boolean;
+}
+
+export interface ProductContentMediaItem {
+  url: string;
+  alt_ar: string;
+  alt_en: string;
+  kind: "product" | "lifestyle";
+  sort_order: number;
+}
+
+/**
+ * Storefront-only category extras (`storefront_category_content`, 0045) — the
+ * shop-window face of a category. Nothing here can archive, restore or move a
+ * category; Phase 44's lifecycle stays the only writer of `categories.active`.
+ */
+export interface StorefrontCategoryContent {
+  id: string;
+  category_id: string;
+  title_ar: string | null;
+  title_en: string | null;
+  description_ar: string | null;
+  description_en: string | null;
+  image_url: string | null;
+  mobile_image_url: string | null;
+  homepage_image_url: string | null;
+  featured: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export type StorefrontCategoryContentDraft = Omit<
+  StorefrontCategoryContent,
+  "id" | "created_at" | "updated_at"
+> & { id?: string };
+
+/**
+ * A category as the storefront sees it: the live row plus whatever content the
+ * admin wrote. `category` is always ACTIVE — an archived category produces no
+ * view of itself anywhere on the shop window.
+ */
+export interface StorefrontCategory {
+  category: Category;
+  content: StorefrontCategoryContent | null;
 }
 
 export interface WebsiteSettings {
@@ -642,6 +988,17 @@ export interface WebsiteSettings {
   delivery: DeliverySettings;
   seo: SeoSettings;
   announcement: AnnouncementSettings;
+  /** Phase 45: the redesigned storefront's groups. Every field deep-merges. */
+  header: HeaderSettings;
+  product_card: ProductCardSettings;
+  badges: BadgeSettings;
+  trust: TrustSettings;
+  about: AboutSettings;
+  footer: FooterSettings;
+  checkout_copy: CheckoutCopySettings;
+  confirmation: ConfirmationCopySettings;
+  campaigns: EditorialCampaign[];
+  social_links: SocialLinkConfig[];
 }
 
 /** Who changed the settings — shown next to "last saved". */

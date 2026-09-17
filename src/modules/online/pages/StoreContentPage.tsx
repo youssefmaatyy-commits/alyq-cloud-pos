@@ -43,8 +43,9 @@ import type {
   ReviewDraft,
 } from "../data/repository";
 import type { Product } from "@/modules/products/types";
-import type { ProductContent, ProductSpec, StoreFaq, StoreReview } from "../types";
+import type { ProductContent, ProductContentMediaItem, ProductSpec, StoreFaq, StoreReview } from "../types";
 import { slugifyAscii } from "../services/seo";
+import { MediaListEditor } from "../components/admin/website/WebsiteTabPanels";
 
 type Tab = "products" | "faqs" | "reviews";
 
@@ -140,6 +141,7 @@ export function StoreContentPage() {
       seo_title: null,
       seo_description: null,
       specs: [],
+      media: [],
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
@@ -160,6 +162,25 @@ export function StoreContentPage() {
         slug: slug || null,
         seo_title: contentDraft.content.seo_title?.trim() || null,
         seo_description: contentDraft.content.seo_description?.trim() || null,
+        // Phase 45 editorial fields: trimmed to null when empty, so an old
+        // row's values are replaced rather than merged with stale text.
+        short_description_ar: contentDraft.content.short_description_ar?.trim() || null,
+        short_description_en: contentDraft.content.short_description_en?.trim() || null,
+        description_ar: contentDraft.content.description_ar?.trim() || null,
+        description_en: contentDraft.content.description_en?.trim() || null,
+        materials_ar: contentDraft.content.materials_ar?.trim() || null,
+        materials_en: contentDraft.content.materials_en?.trim() || null,
+        dimensions_ar: contentDraft.content.dimensions_ar?.trim() || null,
+        dimensions_en: contentDraft.content.dimensions_en?.trim() || null,
+        care_ar: contentDraft.content.care_ar?.trim() || null,
+        care_en: contentDraft.content.care_en?.trim() || null,
+        shipping_ar: contentDraft.content.shipping_ar?.trim() || null,
+        shipping_en: contentDraft.content.shipping_en?.trim() || null,
+        returns_ar: contentDraft.content.returns_ar?.trim() || null,
+        returns_en: contentDraft.content.returns_en?.trim() || null,
+        gift_note_ar: contentDraft.content.gift_note_ar?.trim() || null,
+        gift_note_en: contentDraft.content.gift_note_en?.trim() || null,
+        media: contentDraft.content.media ?? [],
         // A spec with no label and no value in either language is noise.
         specs: contentDraft.content.specs.filter(
           (spec) =>
@@ -661,6 +682,74 @@ export function StoreContentPage() {
                 />
               </Field>
             </div>
+
+            {/* Phase 45: the editorial accordion fields — exactly the fields
+                the product page renders, in the same order, so what the admin
+                writes here is what the shopper reads there. */}
+            <details className="rounded-xl border border-slate-200 p-3">
+              <summary className="cursor-pointer text-xs font-bold text-slate-800">
+                {t("online.ws.productContent")}
+              </summary>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <Field label={t("online.pc.shortAr")}>
+                  <TextArea dir="rtl" rows={2} value={contentDraft.content.short_description_ar ?? ""} onChange={(e) => setContentDraft({ ...contentDraft, content: { ...contentDraft.content, short_description_ar: e.target.value } })} />
+                </Field>
+                <Field label={t("online.pc.shortEn")}>
+                  <TextArea dir="ltr" rows={2} value={contentDraft.content.short_description_en ?? ""} onChange={(e) => setContentDraft({ ...contentDraft, content: { ...contentDraft.content, short_description_en: e.target.value } })} />
+                </Field>
+                <Field label={t("online.pc.descAr")}>
+                  <TextArea dir="rtl" rows={4} value={contentDraft.content.description_ar ?? ""} onChange={(e) => setContentDraft({ ...contentDraft, content: { ...contentDraft.content, description_ar: e.target.value } })} />
+                </Field>
+                <Field label={t("online.pc.descEn")}>
+                  <TextArea dir="ltr" rows={4} value={contentDraft.content.description_en ?? ""} onChange={(e) => setContentDraft({ ...contentDraft, content: { ...contentDraft.content, description_en: e.target.value } })} />
+                </Field>
+                <Field label={t("online.pc.materialsAr")}>
+                  <TextArea dir="rtl" rows={2} value={contentDraft.content.materials_ar ?? ""} onChange={(e) => setContentDraft({ ...contentDraft, content: { ...contentDraft.content, materials_ar: e.target.value } })} />
+                </Field>
+                <Field label={t("online.pc.materialsEn")}>
+                  <TextArea dir="ltr" rows={2} value={contentDraft.content.materials_en ?? ""} onChange={(e) => setContentDraft({ ...contentDraft, content: { ...contentDraft.content, materials_en: e.target.value } })} />
+                </Field>
+                <Field label={t("online.pc.dimensionsAr")}>
+                  <TextArea dir="rtl" rows={2} value={contentDraft.content.dimensions_ar ?? ""} onChange={(e) => setContentDraft({ ...contentDraft, content: { ...contentDraft.content, dimensions_ar: e.target.value } })} />
+                </Field>
+                <Field label={t("online.pc.dimensionsEn")}>
+                  <TextArea dir="ltr" rows={2} value={contentDraft.content.dimensions_en ?? ""} onChange={(e) => setContentDraft({ ...contentDraft, content: { ...contentDraft.content, dimensions_en: e.target.value } })} />
+                </Field>
+                <Field label={t("online.pc.careAr")}>
+                  <TextArea dir="rtl" rows={2} value={contentDraft.content.care_ar ?? ""} onChange={(e) => setContentDraft({ ...contentDraft, content: { ...contentDraft.content, care_ar: e.target.value } })} />
+                </Field>
+                <Field label={t("online.pc.careEn")}>
+                  <TextArea dir="ltr" rows={2} value={contentDraft.content.care_en ?? ""} onChange={(e) => setContentDraft({ ...contentDraft, content: { ...contentDraft.content, care_en: e.target.value } })} />
+                </Field>
+                <Field label={t("online.pc.shippingAr")}>
+                  <TextArea dir="rtl" rows={2} value={contentDraft.content.shipping_ar ?? ""} onChange={(e) => setContentDraft({ ...contentDraft, content: { ...contentDraft.content, shipping_ar: e.target.value } })} />
+                </Field>
+                <Field label={t("online.pc.shippingEn")}>
+                  <TextArea dir="ltr" rows={2} value={contentDraft.content.shipping_en ?? ""} onChange={(e) => setContentDraft({ ...contentDraft, content: { ...contentDraft.content, shipping_en: e.target.value } })} />
+                </Field>
+                <Field label={t("online.pc.returnsAr")}>
+                  <TextArea dir="rtl" rows={2} value={contentDraft.content.returns_ar ?? ""} onChange={(e) => setContentDraft({ ...contentDraft, content: { ...contentDraft.content, returns_ar: e.target.value } })} />
+                </Field>
+                <Field label={t("online.pc.returnsEn")}>
+                  <TextArea dir="ltr" rows={2} value={contentDraft.content.returns_en ?? ""} onChange={(e) => setContentDraft({ ...contentDraft, content: { ...contentDraft.content, returns_en: e.target.value } })} />
+                </Field>
+                <Field label={t("online.pc.giftAr")}>
+                  <TextArea dir="rtl" rows={2} value={contentDraft.content.gift_note_ar ?? ""} onChange={(e) => setContentDraft({ ...contentDraft, content: { ...contentDraft.content, gift_note_ar: e.target.value } })} />
+                </Field>
+                <Field label={t("online.pc.giftEn")}>
+                  <TextArea dir="ltr" rows={2} value={contentDraft.content.gift_note_en ?? ""} onChange={(e) => setContentDraft({ ...contentDraft, content: { ...contentDraft.content, gift_note_en: e.target.value } })} />
+                </Field>
+              </div>
+              <div className="mt-3 border-t border-slate-100 pt-3">
+                <p className="mb-2 text-xs font-bold text-slate-800">{t("online.pc.media")}</p>
+                <MediaListEditor
+                  media={contentDraft.content.media ?? []}
+                  onChange={(media: ProductContentMediaItem[]) =>
+                    setContentDraft({ ...contentDraft, content: { ...contentDraft.content, media } })
+                  }
+                />
+              </div>
+            </details>
 
             <div className="rounded-xl border border-slate-200 p-3">
               <div className="flex items-center justify-between gap-2">

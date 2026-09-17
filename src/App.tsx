@@ -65,6 +65,7 @@ import {
   StoreCartPage,
   StoreCheckoutPage,
   StoreConfirmationPage,
+  StoreAboutPage,
   StoreContactPage,
   StoreContentPage,
   StoreHomePage,
@@ -212,6 +213,8 @@ export default function App() {
                 <Route path="confirmation" element={<StoreConfirmationPage />} />
                 <Route path="track" element={<StoreTrackPage />} />
                 <Route path="account" element={<StoreAccountPage />} />
+                {/* Phase 45: the shop's own About page, from website_settings.about. */}
+                <Route path="about" element={<StoreAboutPage />} />
                 <Route path="contact" element={<StoreContactPage />} />
                 <Route path="*" element={<Navigate to="/store" replace />} />
               </Route>

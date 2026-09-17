@@ -34,6 +34,7 @@ import {
 } from "../services/pricing";
 import { variantAvailableToPromise } from "../services/availability";
 import { variantLabelOf } from "../services/variantLabel";
+import { productContentSections } from "../types";
 import { VariantPicker } from "../components/storefront/VariantPicker";
 import {
   applyDocumentMeta,
@@ -51,6 +52,79 @@ import { ProductCard, ProductGrid } from "../components/storefront/ProductCard";
 
 /** How far the zoomed image follows the pointer. */
 const ZOOM = 2;
+
+/**
+ * The Phase 45 content accordions: the short pitch plus every editorial field
+ * the admin wrote, collapsed by default (the first stays open so a product is
+ * never a wall of closed drawers). Text nodes only — product content renders as
+ * text, never as markup.
+ */
+function ContentAccordions({
+  shortDescription,
+  sections,
+  firstOpen = false,
+}: {
+  shortDescription: string;
+  sections: ReturnType<typeof productContentSections>;
+  firstOpen?: boolean;
+}) {
+  const { pick } = useI18n();
+  const [open, setOpen] = useState<string | null>(firstOpen ? "description" : null);
+
+  const rows: { key: string; title: string; body: string }[] = [
+    ...sections.map((section) => ({
+      key: section.key,
+      title: pick(section.title_ar, section.title_en),
+      body: pick(section.body_ar, section.body_en),
+    })),
+  ];
+  if (rows.length === 0 && !shortDescription) return null;
+
+  return (
+    <div className="mt-5">
+      {shortDescription ? (
+        <p className="text-sm font-medium leading-relaxed text-[var(--store-text)]">{shortDescription}</p>
+      ) : null}
+      {rows.length > 0 ? (
+        <div className="mt-3 divide-y divide-[var(--store-hairline)] border-y border-[var(--store-hairline)]">
+          {rows.map((row) => {
+            const isOpen = open === row.key;
+            return (
+              <div key={row.key}>
+                <button
+                  type="button"
+                  onClick={() => setOpen(isOpen ? null : row.key)}
+                  aria-expanded={isOpen}
+                  data-testid={`product-content-${row.key}`}
+                  className="flex w-full items-center justify-between gap-3 py-3 text-start text-[11px] font-black uppercase tracking-[0.18em] text-[var(--store-text)]"
+                >
+                  {row.title}
+                  <span
+                    aria-hidden
+                    className={cn("text-[var(--store-muted)] transition-transform", isOpen && "rotate-45")}
+                  >
+                    +
+                  </span>
+                </button>
+                {isOpen ? (
+                  <div className="space-y-2 pb-4 text-sm leading-relaxed text-[var(--store-muted)]">
+                    {row.body
+                      .split(/\n{2,}/)
+                      .map((paragraph) => paragraph.trim())
+                      .filter(Boolean)
+                      .map((paragraph) => (
+                        <p key={paragraph.slice(0, 32)}>{paragraph}</p>
+                      ))}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 export function StoreProductPage() {
   const { key = "" } = useParams<{ key: string }>();
@@ -142,11 +216,27 @@ export function StoreProductPage() {
   );
 
   const gallery = useMemo(() => {
-    if (!product) return [];
-    return [product.image_url, ...product.images].filter(
+    if (!product) return [] as string[];
+    const base = [product.image_url, ...product.images].filter(
       (url): url is string => Boolean(url && url.trim()),
     );
-  }, [product]);
+    // Phase 45: the product-content gallery (uploads with real alt text) joins
+    // the queue after the catalogue images, in the admin's order.
+    const media = [...(content?.media ?? [])]
+      .sort((a, b) => a.sort_order - b.sort_order)
+      .map((item) => item.url.trim())
+      .filter(Boolean);
+    return [...base, ...media.filter((url) => !base.includes(url))];
+  }, [content, product]);
+
+  // Alt text per gallery image where the admin wrote one (content media).
+  const altOf = useCallback(
+    (url: string) => {
+      const item = content?.media?.find((candidate) => candidate.url === url);
+      return (item ? pick(item.alt_ar, item.alt_en) : "").trim() || pick(product?.name_ar, product?.name_en) || "";
+    },
+    [content, product, pick],
+  );
 
   const category = product?.category_id
     ? categories.find((candidate) => candidate.id === product.category_id) ?? null
@@ -249,7 +339,6 @@ export function StoreProductPage() {
   }
 
   const name = pick(product.name_ar, product.name_en);
-  const description = pick(product.description_ar, product.description_en);
   const specs = content?.specs ?? [];
   const brand = pick(content?.brand_ar ?? null, content?.brand_en ?? null);
   const badgeText = campaignBadgeText(product.id, campaigns, (arabic, english) => pick(arabic, english));
@@ -322,8 +411,8 @@ export function StoreProductPage() {
             }}
           >
             <StoreImage
-              src={gallery[imageIndex] ?? null}
-              alt={name}
+              src={chosenVariant?.image_url ?? gallery[imageIndex] ?? null}
+              alt={chosenVariant?.image_url ? `${name} — ${variantLabelOf(chosenVariant, lang)}` : name}
               ratio="aspect-square"
               priority
               sizes="(max-width: 1024px) 100vw, 50vw"
@@ -334,7 +423,19 @@ export function StoreProductPage() {
               }
             />
             {entry.badges.length > 0 ? (
-              <ProductBadges badges={entry.badges} text={badgeText} className="absolute top-3 p-0" />
+              <ProductBadges
+                badges={entry.badges.filter((badge) =>
+                  badge === "new"
+                    ? settings.badges.show_new
+                    : badge === "sale"
+                      ? settings.badges.show_sale
+                      : badge === "bestSeller"
+                        ? settings.badges.show_best_seller
+                        : settings.badges.show_limited,
+                )}
+                text={badgeText}
+                className="absolute top-3 p-0"
+              />
             ) : null}
           </div>
 
@@ -355,7 +456,7 @@ export function StoreProductPage() {
                   )}
                   style={{ borderRadius: "var(--store-radius)" }}
                 >
-                  <img src={url} alt="" aria-hidden loading="lazy" decoding="async" className="h-full w-full object-cover" />
+                  <img src={url} alt={altOf(url)} aria-hidden loading="lazy" decoding="async" className="h-full w-full object-cover" />
                 </button>
               ))}
             </div>
@@ -365,9 +466,9 @@ export function StoreProductPage() {
           ) : null}
         </div>
 
-        <div>
+        <div className="lg:sticky lg:top-28 lg:self-start">
           {brand ? (
-            <p className="text-xs font-black uppercase tracking-widest text-[var(--store-muted)]">{brand}</p>
+            <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[var(--store-muted)]">{brand}</p>
           ) : null}
           <h1 className="mt-1 text-2xl font-black leading-tight tracking-tight text-[var(--store-text)] sm:text-3xl">
             {name}
@@ -442,17 +543,9 @@ export function StoreProductPage() {
                   : t("store.product.inStock")}
           </p>
 
-          {description ? (
-            <div className="mt-5 space-y-2 text-sm leading-relaxed text-[var(--store-muted)]">
-              {description
-                .split(/\n{2,}/)
-                .map((paragraph) => paragraph.trim())
-                .filter(Boolean)
-                .map((paragraph) => (
-                  <p key={paragraph.slice(0, 32)}>{paragraph}</p>
-                ))}
-            </div>
-          ) : null}
+          {/* Phase 45: the short pitch sits under the price; everything else an
+              admin wrote — full description, materials, dimensions, care,
+              shipping, returns, gift note — becomes a quiet accordion. */}
 
           <div className="mt-6 flex flex-wrap items-center gap-3">
             <QuantityStepper
@@ -566,6 +659,15 @@ export function StoreProductPage() {
               ) : null}
             </dl>
           ) : null}
+
+          <ContentAccordions
+            shortDescription={pick(
+              content?.short_description_ar ?? null,
+              content?.short_description_en ?? null,
+            ).trim()}
+            sections={productContentSections(content)}
+            firstOpen
+          />
 
           {specs.length > 0 ? (
             <div className="mt-6">

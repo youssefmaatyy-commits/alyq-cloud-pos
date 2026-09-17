@@ -1,20 +1,20 @@
 /**
- * The storefront shell: announcement bar, header, footer, WhatsApp button.
+ * The storefront shell — Phase 45's redesigned premium frame.
  *
- * Two jobs besides framing the pages. The first is navigation that works on a
- * phone: the header collapses to a drawer, the search field is one tap away, and
- * the cart count is visible from every screen, because a shopper who cannot see
- * what is in their cart abandons it.
+ * The visual language of the whole shop window: a quiet announcement stage, a
+ * centered-wordmark header (hamburger + search on one side, account + cart on
+ * the other, exactly the phone pattern the task names, expanding into a
+ * conventional premium navigation on desktop), a full-height navigation drawer,
+ * and an editorial footer.
  *
- * The second is that everything here is driven by the settings document — logo,
- * store name, tagline, social links, contact details, opening hours, the
- * announcement bar and the background image. An admin who changes any of it sees
- * the change on the next render, with no code and no rebuild.
- *
- * Social links are opened in a new tab with `noopener`: they leave the shop, and
- * the shop should not hand a third party a reference to the window it came from.
+ * Everything customer-facing here is driven by the settings document — the
+ * announcement messages and their mode, the header's sticky behaviour and
+ * which icons it shows, the footer's copy, the social links — so the builder
+ * changes the shop without code. Text nodes only: configured strings render as
+ * text, configured URLs pass the one safe-URL policy (`externalHref` /
+ * `configuredHref` / `whatsappHref`) or render no link at all.
  */
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { cn } from "@/utils/cn";
@@ -22,7 +22,15 @@ import { useStorefront } from "../../hooks/StorefrontProvider";
 import { useStoreCart } from "../../hooks/StoreCartProvider";
 import { useStoreAccount } from "../../hooks/StoreAccountProvider";
 import { storefrontSurfaceStyle } from "../../services/theme";
-import { configuredHref, externalHref } from "../../services/settingsDefaults";
+import {
+  announcementIntervalMs,
+  configuredHref,
+  externalHref,
+  resolvedAnnouncementMessages,
+  resolvedSocialLinks,
+  activeEditorialCampaigns,
+} from "../../services/settingsDefaults";
+import type { AnnouncementMessage, SocialLinkConfig } from "../../types";
 import { StoreImage } from "./StorePrimitives";
 
 /** `wa.me/<number>?text=…` from whatever the admin typed. */
@@ -53,7 +61,7 @@ function SocialIcon({ kind }: { kind: "facebook" | "instagram" | "tiktok" | "wha
     instagram: (
       <path
         fill="currentColor"
-        d="M12 8.4A3.6 3.6 0 1 0 12 15.6 3.6 3.6 0 0 0 12 8.4Zm0 5.9a2.3 2.3 0 1 1 0-4.6 2.3 2.3 0 0 1 0 4.6Zm4.6-6.1a.9.9 0 1 1-1.8 0 .9.9 0 0 1 1.8 0ZM12 5.2c1.9 0 2.1 0 2.9.1.9 0 1.4.2 1.7.3.4.2.7.4 1 .7.3.3.5.6.7 1 .1.3.3.8.3 1.7.1.8.1 1 .1 2.9s0 2.1-.1 2.9c0 .9-.2 1.4-.3 1.7-.2.4-.4.7-.7 1-.3.3-.6.5-1 .7-.3.1-.8.3-1.7.3-.8.1-1 .1-2.9.1s-2.1 0-2.9-.1c-.9 0-1.4-.2-1.7-.3a2.8 2.8 0 0 1-1-.7 2.8 2.8 0 0 1-.7-1c-.1-.3-.3-.8-.3-1.7-.1-.8-.1-1-.1-2.9s0-2.1.1-2.9c0-.9.2-1.4.3-1.7.2-.4.4-.7.7-1 .3-.3.6-.5 1-.7.3-.1.8-.3 1.7-.3.8-.1 1-.1 2.9-.1Zm0-1.3c-1.9 0-2.2 0-3 .1-1 0-1.7.2-2.3.4-.6.3-1.2.6-1.7 1.1A4.7 4.7 0 0 0 3.9 7.2c-.2.6-.4 1.3-.4 2.3-.1.8-.1 1.1-.1 3s0 2.2.1 3c0 1 .2 1.7.4 2.3.3.6.6 1.2 1.1 1.7.5.5 1.1.8 1.7 1.1.6.2 1.3.4 2.3.4.8.1 1.1.1 3 .1s2.2 0 3-.1c1 0 1.7-.2 2.3-.4a4.7 4.7 0 0 0 1.7-1.1c.5-.5.8-1.1 1.1-1.7.2-.6.4-1.3.4-2.3.1-.8.1-1.1.1-3s0-2.2-.1-3c0-1-.2-1.7-.4-2.3a4.7 4.7 0 0 0-1.1-1.7 4.7 4.7 0 0 0-1.7-1.1c-.6-.2-1.3-.4-2.3-.4-.8-.1-1.1-.1-3-.1Z"
+        d="M12 8.4A3.6 3.6 0 1 0 12 15.6 3.6 3.6 0 0 0 12 8.4Zm0 5.9a2.3 2.3 0 1 1 0-4.6 2.3 2.3 0 0 1 0 4.6Zm4.6-6.1a.9.9 0 1 1-1.8 0 .9.9 0 1 1 1.8 0ZM12 5.2c1.9 0 2.1 0 2.9.1.9 0 1.4.2 1.7.3.4.2.7.4 1 .7.3.3.5.6.7 1 .1.3.3.8.3 1.7.1.8.1 1 .1 2.9s0 2.1-.1 2.9c0 .9-.2 1.4-.3 1.7-.2.4-.4.7-.7 1-.3.3-.6.5-1 .7-.3.1-.8.3-1.7.3-.8.1-1 .1-2.9.1s-2.1 0-2.9-.1c-.9 0-1.4-.2-1.7-.3a2.8 2.8 0 0 1-1-.7 2.8 2.8 0 0 1-.7-1c-.1-.3-.3-.8-.3-1.7-.1-.8-.1-1-.1-2.9s0-2.2.1-3c0-1 .2-1.7.4-2.3.3-.6.6-1.2 1.1-1.7.5-.5 1.1-.8 1.7-1.1.6-.2 1.3-.4 2.3-.4.8-.1 1.1-.1 3-.1s2.2 0 3-.1c1 0 1.7-.2 2.3-.4a4.7 4.7 0 0 0 1.7-1.1c.5-.5.8-1.1 1.1-1.7.2-.6.4-1.3.4-2.3.1-.8.1-1.1.1-3s0-2.2-.1-3c0-1-.2-1.7-.4-2.3a4.7 4.7 0 0 0-1.1-1.7 4.7 4.7 0 0 0-1.7-1.1c-.6-.2-1.3-.4-2.3-.4-.8-.1-1.1-.1-3-.1Z"
       />
     ),
     tiktok: (
@@ -82,162 +90,283 @@ function SocialIcon({ kind }: { kind: "facebook" | "instagram" | "tiktok" | "wha
   );
 }
 
-export function StoreLayout({ children }: { children: ReactNode }) {
-  const { t, pick, lang, toggleLang, dir } = useI18n();
+// ── the announcement stage ──────────────────────────────────────────────────
+
+function AnnouncementMessageView({ message }: { message: AnnouncementMessage }) {
+  const { t, pick } = useI18n();
+  const body = pick(message.text_ar, message.text_en);
+  const cta = pick(message.cta_ar, message.cta_en);
+  const href = configuredHref(message.href ?? "");
+  const label = cta ? `${body} — ${cta}` : body;
+  if (!href) return <span className="truncate">{body}</span>;
+  const internal = href.startsWith("#");
+  return internal ? (
+    <Link to={href.slice(1)} className="truncate underline-offset-4 hover:underline">
+      {label}
+    </Link>
+  ) : (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="truncate underline-offset-4 hover:underline"
+    >
+      {label}
+      <span className="sr-only"> {t("common.opensInNewTab")}</span>
+    </a>
+  );
+}
+
+function AnnouncementBar() {
+  const { t, pick } = useI18n();
   const { settings } = useStorefront();
+  const messages = useMemo(() => resolvedAnnouncementMessages(settings), [settings]);
+  const mode = settings.announcement.mode ?? "rotate";
+  const interval = announcementIntervalMs(settings);
+  const [index, setIndex] = useState(0);
+  const [paused, setPaused] = useState(false);
+
+  useEffect(() => {
+    if (!settings.announcement.enabled || messages.length < 2 || mode !== "rotate" || paused) return;
+    const timer = window.setInterval(() => setIndex((i) => (i + 1) % messages.length), interval);
+    return () => window.clearInterval(timer);
+  }, [settings.announcement.enabled, messages.length, mode, paused, interval]);
+
+  if (!settings.announcement.enabled) return null;
+  const shown = messages.length > 0 ? messages[index % messages.length] : null;
+  if (!shown) return null;
+
+  const background = settings.announcement.bg_color?.trim() || "var(--store-secondary)";
+  const color =
+    settings.announcement.text_color?.trim() || "var(--store-on-secondary)";
+  const scrolling = mode === "scroll" && messages.length > 1;
+
+  return (
+    <div
+      role="region"
+      aria-label={t("store.announcements.label")}
+      className="relative overflow-hidden px-4 py-2 text-center text-[11px] font-bold tracking-wide"
+      style={{ backgroundColor: background, color }}
+      onMouseEnter={() => setPaused(true)}
+      onMouseLeave={() => setPaused(false)}
+    >
+      {scrolling ? (
+        // A marquee for the scroll mode. Animation is decoration only: with
+        // reduced motion (or before hydration) the first message simply shows.
+        <div
+          className="flex w-max gap-16 whitespace-nowrap motion-reduce:animate-none"
+          style={{ animation: "store-marquee 24s linear infinite" }}
+        >
+          {[...messages, ...messages].map((message, i) => (
+            <span key={`${message.id}-${i}`} className="inline-flex items-center gap-2">
+              <AnnouncementMessageView message={message} />
+            </span>
+          ))}
+        </div>
+      ) : (
+        <div
+          key={shown.id}
+          className="flex items-center justify-center gap-2"
+          aria-live="polite"
+        >
+          <AnnouncementMessageView message={shown} />
+          {messages.length > 1 && mode === "rotate" ? (
+            <span className="flex gap-1" aria-hidden>
+              {messages.map((message, i) => (
+                <span
+                  key={message.id}
+                  className="h-1 w-1 rounded-full"
+                  style={{ backgroundColor: color, opacity: i === index % messages.length ? 1 : 0.35 }}
+                />
+              ))}
+            </span>
+          ) : null}
+        </div>
+      )}
+      <style>{`@keyframes store-marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }`}</style>
+      {/* The dot row is decorative; screen readers get the message itself. */}
+      <span className="sr-only">
+        {pick(settings.announcement.text_ar, settings.announcement.text_en)}
+      </span>
+    </div>
+  );
+}
+
+// ── the social row (footer + drawer share it) ───────────────────────────────
+
+export function SocialRow({ size = "md" }: { size?: "sm" | "md" }) {
+  const { settings } = useStorefront();
+  const { t } = useI18n();
+  const links = useMemo(() => resolvedSocialLinks(settings), [settings]);
+  if (!settings.footer.show_social) return null;
+
+  const render = (config: SocialLinkConfig) => {
+    if (!config.enabled) return null;
+    const label = config.label_ar || config.label_en;
+    if (config.platform === "whatsapp") {
+      const href = whatsappHref(config.url, t("store.contact.whatsappMessage"));
+      if (!href) return null;
+      return (
+        <a
+          key={config.platform}
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label={label || "WhatsApp"}
+          className={cn(
+            "grid place-items-center rounded-full border border-[var(--store-hairline)] text-[var(--store-muted)] transition hover:border-[var(--store-text)] hover:text-[var(--store-text)]",
+            size === "sm" ? "h-8 w-8" : "h-9 w-9",
+          )}
+        >
+          <SocialIcon kind="whatsapp" />
+        </a>
+      );
+    }
+    const href = externalHref(config.url);
+    if (!href) return null;
+    return (
+      <a
+        key={config.platform}
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label={label || config.platform}
+        className={cn(
+          "grid place-items-center rounded-full border border-[var(--store-hairline)] text-[var(--store-muted)] transition hover:border-[var(--store-text)] hover:text-[var(--store-text)]",
+          size === "sm" ? "h-8 w-8" : "h-9 w-9",
+        )}
+      >
+        <SocialIcon kind={config.platform} />
+      </a>
+    );
+  };
+
+  const rendered = links.map(render).filter(Boolean);
+  if (rendered.length === 0) return null;
+  return <div className="flex items-center gap-2">{rendered}</div>;
+}
+
+// ── the header ──────────────────────────────────────────────────────────────
+
+function Header({
+  onMenu,
+  menuOpen,
+}: {
+  onMenu: () => void;
+  menuOpen: boolean;
+}) {
+  const { t, pick, lang, toggleLang } = useI18n();
+  const { settings, categories, categoryContents } = useStorefront();
   const { unitCount } = useStoreCart();
   const { customer } = useStoreAccount();
   const navigate = useNavigate();
-  const location = useLocation();
-
-  const [menuOpen, setMenuOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const [search, setSearch] = useState("");
 
-  useEffect(() => {
-    setMenuOpen(false);
-  }, [location.pathname, location.search]);
-
-  const storeName = pick(settings.contact.store_name_ar, settings.contact.store_name_en) || t("app.name");
-  const tagline = pick(settings.contact.tagline_ar, settings.contact.tagline_en);
-  const social = settings.social;
-  const whatsapp = whatsappHref(social.whatsapp, t("store.contact.whatsappMessage"));
-  // Every configured link is admin-typed text bound for a public `href`, so all
-  // of them pass the one policy: a safe absolute http(s) URL renders, anything
-  // else — blank, relative, `javascript:` — renders no link at all.
-  const instapayLink = externalHref(social.instapay_link);
-  const facebookLink = externalHref(social.facebook);
-  const instagramLink = externalHref(social.instagram);
-  const tiktokLink = externalHref(social.tiktok);
-  const mapLink = externalHref(settings.contact.map_url);
-  // The announcement bar also accepts a route inside the shop ("#/store/…").
-  const announcementLink = configuredHref(settings.announcement.href);
+  const storeName = pick(settings.contact.store_name_ar, settings.contact.store_name_en) || "ALYQ";
+  const sticky = settings.header.sticky;
+  const categoryNav = useMemo(() => {
+    // Active categories only (the provider's list is already active-only in
+    // both modes), titled by their storefront content when it exists, in the
+    // shop-window order.
+    const contentBy = new Map(categoryContents.map((row) => [row.category_id, row]));
+    return [...categories]
+      .sort((a, b) => {
+        const ca = contentBy.get(a.id)?.sort_order ?? Number.MAX_SAFE_INTEGER;
+        const cb = contentBy.get(b.id)?.sort_order ?? Number.MAX_SAFE_INTEGER;
+        return ca - cb || a.sort_order - b.sort_order || a.name_en.localeCompare(b.name_en);
+      })
+      .slice(0, 6)
+      .map((category) => {
+        const content = contentBy.get(category.id) ?? null;
+        return {
+          id: category.id,
+          to: `/store/products?category=${encodeURIComponent(category.id)}`,
+          label: pick(content?.title_ar ?? category.name_ar, content?.title_en ?? category.name_en),
+        };
+      });
+  }, [categories, categoryContents, pick]);
 
   const submitSearch = (event: React.FormEvent) => {
     event.preventDefault();
     const query = search.trim();
+    setSearchOpen(false);
     navigate(query ? `/store/products?q=${encodeURIComponent(query)}` : "/store/products");
   };
 
-  const navLinks = [
-    { to: "/store", label: t("store.nav.home"), end: true },
-    { to: "/store/products", label: t("store.nav.products"), end: false },
-    { to: "/store/track", label: t("store.nav.track"), end: false },
-    { to: "/store/contact", label: t("store.nav.contact"), end: false },
-  ];
+  const iconButton =
+    "grid h-10 w-10 place-items-center text-[var(--store-text)] transition hover:text-[var(--store-accent)]";
 
   return (
-    <div
-      className="flex min-h-screen flex-col text-[var(--store-text)]"
-      style={{
-        ...storefrontSurfaceStyle(settings),
-        backgroundImage: settings.images.background_url
-          ? `url(${settings.images.background_url})`
-          : undefined,
-        backgroundAttachment: settings.images.background_url ? "fixed" : undefined,
-        backgroundSize: "cover",
-      }}
+    <header
+      className={cn(
+        "z-40 border-b border-[var(--store-hairline)] bg-[var(--store-surface)]/95 backdrop-blur",
+        sticky && "sticky top-0",
+      )}
     >
-      {settings.announcement.enabled ? (
-        <div className="bg-[var(--store-secondary)] px-4 py-2 text-center text-xs font-semibold text-[var(--store-on-secondary)]">
-          {announcementLink ? (
-            <a
-              href={announcementLink}
-              className="underline-offset-2 hover:underline"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              {pick(settings.announcement.text_ar, settings.announcement.text_en)}
-            </a>
-          ) : (
-            pick(settings.announcement.text_ar, settings.announcement.text_en)
-          )}
-        </div>
-      ) : null}
-
-      <header className="sticky top-0 z-30 border-b border-[var(--store-border)] bg-[var(--store-surface)]/95 backdrop-blur">
-        <div className="mx-auto flex w-full max-w-[var(--store-max-width,72rem)] items-center gap-3 px-4 py-3 sm:px-6">
+      <div className="mx-auto flex w-full max-w-[var(--store-max-width)] items-center gap-1 px-4 py-2.5 sm:px-6">
+        {/* left: hamburger + search (mobile) */}
+        <div className="flex flex-1 items-center gap-0.5">
           <button
             type="button"
-            onClick={() => setMenuOpen((open) => !open)}
+            onClick={onMenu}
             aria-label={t("store.nav.menu")}
             aria-expanded={menuOpen}
-            className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-[var(--store-border)] text-[var(--store-text)] lg:hidden"
+            className={cn(iconButton, "lg:hidden")}
           >
             <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden>
-              <path
-                fill="currentColor"
-                d="M4 6h16v2H4V6Zm0 5h16v2H4v-2Zm0 5h16v2H4v-2Z"
-              />
+              <path fill="currentColor" d="M4 6h16v1.8H4V6Zm0 5.1h16v1.8H4v-1.8ZM4 16.2h16V18H4v-1.8Z" />
             </svg>
           </button>
-
-          <Link to="/store" className="flex min-w-0 items-center gap-2.5">
-            {settings.images.logo_url ? (
-              <StoreImage
-                src={settings.images.logo_url}
-                alt={storeName}
-                ratio=""
-                className="h-10 w-10 shrink-0 bg-transparent"
-                sizes="40px"
-              />
-            ) : (
-              <span
-                className="grid h-10 w-10 shrink-0 place-items-center bg-[var(--store-primary)] text-sm font-black text-[var(--store-on-primary)]"
-                style={{ borderRadius: "var(--store-radius)" }}
-              >
-                {storeName.slice(0, 2).toUpperCase()}
-              </span>
-            )}
-            <span className="min-w-0">
-              <span className="block truncate text-sm font-extrabold leading-tight text-[var(--store-text)]">
-                {storeName}
-              </span>
-              {tagline ? (
-                <span className="hidden truncate text-[11px] font-medium text-[var(--store-muted)] sm:block">
-                  {tagline}
-                </span>
-              ) : null}
-            </span>
-          </Link>
-
-          <form onSubmit={submitSearch} className="ms-auto hidden max-w-md flex-1 md:block">
-            <label className="relative block">
-              <span className="sr-only">{t("store.search.label")}</span>
-              <input
-                type="search"
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder={t("store.search.placeholder")}
-                className="w-full border border-[var(--store-border)] bg-[var(--store-surface-alt)] py-2 text-sm text-[var(--store-text)] outline-none transition focus:border-[var(--store-primary)]"
-                style={{ borderRadius: "var(--store-radius-button)", paddingInline: "2.5rem 0.9rem" }}
-              />
-              <svg
-                viewBox="0 0 24 24"
-                className="pointer-events-none absolute top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--store-muted)]"
-                style={{ insetInlineStart: "0.8rem" }}
-                aria-hidden
-              >
+          {settings.header.search_enabled ? (
+            <button
+              type="button"
+              onClick={() => setSearchOpen((open) => !open)}
+              aria-label={t("store.search.label")}
+              aria-expanded={searchOpen}
+              className={cn(iconButton, "md:hidden")}
+            >
+              <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden>
                 <path
                   fill="currentColor"
                   d="M10.5 4a6.5 6.5 0 0 1 5.1 10.5l4.2 4.2-1.4 1.4-4.2-4.2A6.5 6.5 0 1 1 10.5 4Zm0 2a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9Z"
                 />
               </svg>
-            </label>
-          </form>
-
-          <div className="ms-auto flex items-center gap-1.5 md:ms-0">
-            <button
-              type="button"
-              onClick={toggleLang}
-              className="grid h-9 place-items-center rounded-lg border border-[var(--store-border)] px-2 text-xs font-bold text-[var(--store-text)]"
-              aria-label={t("store.nav.changeLanguage")}
-            >
-              {lang === "en" ? "عربي" : "EN"}
             </button>
+          ) : null}
+        </div>
 
+        {/* centre: the wordmark */}
+        <Link
+          to="/store"
+          aria-label={storeName}
+          className="flex min-w-0 shrink-0 items-center justify-center"
+        >
+          {settings.images.logo_url ? (
+            <StoreImage
+              src={settings.images.logo_url}
+              alt={storeName}
+              ratio=""
+              className="h-9 w-auto bg-transparent"
+              sizes="120px"
+            />
+          ) : (
+            <span
+              dir="ltr"
+              className="block whitespace-nowrap text-center text-xl font-black uppercase leading-none tracking-[0.32em] text-[var(--store-text)]"
+              style={{ fontFamily: "var(--store-font-display)" }}
+            >
+              {storeName}
+            </span>
+          )}
+        </Link>
+
+        {/* right: account + cart */}
+        <div className="flex flex-1 items-center justify-end gap-0.5">
+          {settings.header.account_enabled ? (
             <Link
               to="/store/account"
-              className="grid h-9 w-9 place-items-center rounded-lg border border-[var(--store-border)] text-[var(--store-text)]"
+              className={iconButton}
               aria-label={customer ? t("store.account.title") : t("store.account.signIn")}
               title={customer ? customer.name : t("store.account.signIn")}
             >
@@ -248,12 +377,9 @@ export function StoreLayout({ children }: { children: ReactNode }) {
                 />
               </svg>
             </Link>
-
-            <Link
-              to="/store/cart"
-              className="relative grid h-9 place-items-center rounded-lg bg-[var(--store-primary)] px-3 text-[var(--store-on-primary)]"
-              aria-label={t("store.cart.title")}
-            >
+          ) : null}
+          {settings.header.cart_enabled ? (
+            <Link to="/store/cart" className={cn(iconButton, "relative")} aria-label={t("store.cart.title")}>
               <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden>
                 <path
                   fill="currentColor"
@@ -261,25 +387,78 @@ export function StoreLayout({ children }: { children: ReactNode }) {
                 />
               </svg>
               {unitCount > 0 ? (
-                <span className="absolute -top-1.5 grid h-5 min-w-5 place-items-center rounded-full bg-[var(--store-accent)] px-1 text-[10px] font-black text-[var(--store-on-accent)]">
+                <span
+                  aria-label={t("store.cart.itemCount", { count: unitCount })}
+                  className="absolute top-1 grid h-4.5 min-w-4.5 place-items-center rounded-full bg-[var(--store-accent)] px-1 text-[10px] font-black leading-none text-[var(--store-on-accent)]"
+                  style={{ insetInlineEnd: "0.15rem" }}
+                >
                   {unitCount > 99 ? "99+" : unitCount}
                 </span>
               ) : null}
             </Link>
-          </div>
+          ) : null}
+          <button
+            type="button"
+            onClick={toggleLang}
+            className="hidden h-10 items-center px-2 text-[11px] font-bold uppercase tracking-widest text-[var(--store-muted)] transition hover:text-[var(--store-text)] sm:grid"
+            aria-label={t("store.nav.changeLanguage")}
+          >
+            {lang === "en" ? "عربي" : "EN"}
+          </button>
         </div>
+      </div>
 
-        <nav className="mx-auto hidden w-full max-w-[var(--store-max-width,72rem)] gap-1 px-4 pb-2 sm:px-6 lg:flex">
-          {navLinks.map((link) => (
+      {/* expanding search row (mobile) */}
+      {searchOpen && settings.header.search_enabled ? (
+        <form
+          onSubmit={submitSearch}
+          role="search"
+          className="border-t border-[var(--store-hairline)] px-4 py-2.5 md:hidden"
+        >
+          <input
+            // The row exists to be typed into the moment it opens.
+            autoFocus
+            type="search"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder={t("store.search.placeholder")}
+            aria-label={t("store.search.label")}
+            className="w-full border-0 border-b border-[var(--store-hairline)] bg-transparent px-1 py-2 text-sm tracking-wide text-[var(--store-text)] outline-none placeholder:text-[var(--store-muted)] focus:border-[var(--store-text)]"
+          />
+        </form>
+      ) : null}
+
+      {/* desktop search + navigation */}
+      <div className="hidden md:block">
+        {settings.header.search_enabled ? (
+          <form
+            onSubmit={submitSearch}
+            role="search"
+            className="mx-auto flex w-full max-w-[var(--store-max-width)] justify-center px-6 pb-2"
+          >
+            <input
+              type="search"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder={t("store.search.placeholder")}
+              aria-label={t("store.search.label")}
+              className="w-full max-w-md border-0 border-b border-[var(--store-hairline)] bg-transparent px-1 py-1.5 text-center text-sm tracking-wide text-[var(--store-text)] outline-none transition placeholder:text-[var(--store-muted)] focus:border-[var(--store-text)]"
+            />
+          </form>
+        ) : null}
+        <nav
+          aria-label={t("store.nav.menu")}
+          className="mx-auto flex w-full max-w-[var(--store-max-width)] flex-wrap items-center justify-center gap-x-7 gap-y-1 px-6 pb-3"
+        >
+          {categoryNav.map((link) => (
             <NavLink
-              key={link.to}
+              key={link.id}
               to={link.to}
-              end={link.end}
               className={({ isActive }) =>
                 cn(
-                  "rounded-lg px-3 py-1.5 text-sm font-bold transition",
+                  "text-[11px] font-bold uppercase tracking-[0.18em] transition",
                   isActive
-                    ? "bg-[var(--store-primary-soft)] text-[var(--store-primary)]"
+                    ? "text-[var(--store-text)]"
                     : "text-[var(--store-muted)] hover:text-[var(--store-text)]",
                 )
               }
@@ -287,194 +466,237 @@ export function StoreLayout({ children }: { children: ReactNode }) {
               {link.label}
             </NavLink>
           ))}
+          <Link
+            to="/store/products?sort=newest"
+            className="text-[11px] font-bold uppercase tracking-[0.18em] text-[var(--store-muted)] transition hover:text-[var(--store-text)]"
+          >
+            {t("store.nav.new")}
+          </Link>
+          <Link
+            to="/store/about"
+            className="text-[11px] font-bold uppercase tracking-[0.18em] text-[var(--store-muted)] transition hover:text-[var(--store-text)]"
+          >
+            {t("store.nav.about")}
+          </Link>
+          <Link
+            to="/store/contact"
+            className="text-[11px] font-bold uppercase tracking-[0.18em] text-[var(--store-muted)] transition hover:text-[var(--store-text)]"
+          >
+            {t("store.nav.contact")}
+          </Link>
+        </nav>
+      </div>
+    </header>
+  );
+}
+
+// ── the mobile drawer ───────────────────────────────────────────────────────
+
+function MenuDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { t, pick, lang, toggleLang } = useI18n();
+  const { settings, categories, categoryContents, sections } = useStorefront();
+  const { customer } = useStoreAccount();
+  const navigate = useNavigate();
+  const drawerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    drawerRef.current?.focus();
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  const contentBy = new Map(categoryContents.map((row) => [row.category_id, row]));
+  const categoriesList = [...categories]
+    .sort((a, b) => {
+      const ca = contentBy.get(a.id)?.sort_order ?? Number.MAX_SAFE_INTEGER;
+      const cb = contentBy.get(b.id)?.sort_order ?? Number.MAX_SAFE_INTEGER;
+      return ca - cb || a.sort_order - b.sort_order;
+    })
+    .slice(0, 12);
+  const has = (key: string) => sections.some((s) => s.key === key && s.visible);
+
+  const go = (to: string) => {
+    onClose();
+    navigate(to);
+  };
+
+  const item =
+    "block w-full px-6 py-3 text-start text-sm font-semibold tracking-wide text-[var(--store-text)] transition hover:bg-[var(--store-primary-soft)]";
+
+  return (
+    <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true" aria-label={t("store.nav.menu")}>
+      <button
+        type="button"
+        aria-label={t("common.close")}
+        onClick={onClose}
+        className="absolute inset-0 bg-black/40 backdrop-blur-[2px]"
+      />
+      <div
+        ref={drawerRef}
+        tabIndex={-1}
+        className="absolute inset-y-0 flex w-[86%] max-w-sm flex-col overflow-y-auto bg-[var(--store-surface)] shadow-2xl outline-none"
+        style={{ insetInlineStart: 0 }}
+      >
+        <div className="flex items-center justify-between border-b border-[var(--store-hairline)] px-6 py-4">
+          <span
+            dir="ltr"
+            className="text-base font-black uppercase tracking-[0.3em] text-[var(--store-text)]"
+            style={{ fontFamily: "var(--store-font-display)" }}
+          >
+            {pick(settings.contact.store_name_ar, settings.contact.store_name_en) || "ALYQ"}
+          </span>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={t("common.close")}
+            className="grid h-9 w-9 place-items-center text-[var(--store-muted)] hover:text-[var(--store-text)]"
+          >
+            <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden>
+              <path
+                fill="currentColor"
+                d="m6.4 5 5.6 5.6L17.6 5 19 6.4 13.4 12l5.6 5.6-1.4 1.4-5.6-5.6L6.4 19 5 17.6 10.6 12 5 6.4 6.4 5Z"
+              />
+            </svg>
+          </button>
+        </div>
+
+        <nav className="py-2">
+          <button type="button" className={item} onClick={() => go("/store")}>
+            {t("store.nav.home")}
+          </button>
+          <button type="button" className={item} onClick={() => go("/store/products")}>
+            {t("store.nav.products")}
+          </button>
+          {has("newArrivals") ? (
+            <button type="button" className={item} onClick={() => go("/store/products?sort=newest")}>
+              {t("store.nav.new")}
+            </button>
+          ) : null}
+          {has("bestSellers") ? (
+            <button type="button" className={item} onClick={() => go("/store/products?sort=best")}>
+              {t("store.section.bestSellers")}
+            </button>
+          ) : null}
+
+          <p className="px-6 pb-1 pt-5 text-[10px] font-black uppercase tracking-[0.22em] text-[var(--store-muted)]">
+            {t("store.nav.categories")}
+          </p>
+          {categoriesList.map((category) => {
+            const content = contentBy.get(category.id) ?? null;
+            return (
+              <button
+                key={category.id}
+                type="button"
+                className={cn(item, "py-2.5 text-[13px] font-medium text-[var(--store-muted)]")}
+                onClick={() => go(`/store/products?category=${encodeURIComponent(category.id)}`)}
+              >
+                {pick(content?.title_ar ?? category.name_ar, content?.title_en ?? category.name_en)}
+              </button>
+            );
+          })}
+
+          <p className="px-6 pb-1 pt-5 text-[10px] font-black uppercase tracking-[0.22em] text-[var(--store-muted)]">
+            {t("store.footer.shop")}
+          </p>
+          <button type="button" className={item} onClick={() => go("/store/about")}>
+            {t("store.nav.about")}
+          </button>
+          <button type="button" className={item} onClick={() => go("/store/contact")}>
+            {t("store.nav.contact")}
+          </button>
+          <button type="button" className={item} onClick={() => go("/store/track")}>
+            {t("store.nav.track")}
+          </button>
+          <button type="button" className={item} onClick={() => go("/store/account")}>
+            {customer ? t("store.account.title") : t("store.account.signIn")}
+          </button>
         </nav>
 
-        {menuOpen ? (
-          <div className="border-t border-[var(--store-border)] bg-[var(--store-surface)] px-4 py-3 lg:hidden">
-            <form onSubmit={submitSearch} className="mb-3 md:hidden">
-              <input
-                type="search"
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder={t("store.search.placeholder")}
-                className="w-full border border-[var(--store-border)] bg-[var(--store-surface-alt)] px-3 py-2 text-sm outline-none focus:border-[var(--store-primary)]"
-                style={{ borderRadius: "var(--store-radius-button)" }}
-              />
-            </form>
-            <div className="flex flex-col gap-1">
-              {navLinks.map((link) => (
-                <NavLink
-                  key={link.to}
-                  to={link.to}
-                  end={link.end}
-                  className="rounded-lg px-3 py-2 text-sm font-bold text-[var(--store-text)] hover:bg-[var(--store-primary-soft)]"
-                >
-                  {link.label}
-                </NavLink>
-              ))}
-            </div>
+        <div className="mt-auto space-y-4 border-t border-[var(--store-hairline)] px-6 py-5">
+          <SocialRow size="sm" />
+          <button
+            type="button"
+            onClick={toggleLang}
+            className="text-[11px] font-bold uppercase tracking-widest text-[var(--store-muted)]"
+          >
+            {lang === "en" ? "العربية" : "English"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── banner campaigns (slim strips under the header) ─────────────────────────
+
+function CampaignBanners() {
+  const { pick } = useI18n();
+  const { settings } = useStorefront();
+  const banners = useMemo(
+    () => activeEditorialCampaigns(settings).filter((c) => c.placement === "banner"),
+    [settings],
+  );
+  if (banners.length === 0) return null;
+  return (
+    <div className="mx-auto w-full max-w-[var(--store-max-width)] px-4 pt-4 sm:px-6">
+      {banners.slice(0, 2).map((campaign) => {
+        const href = configuredHref(campaign.cta_href);
+        const body = (
+          <div className="flex items-center justify-center gap-3 bg-[var(--store-primary-soft)] px-4 py-2 text-center text-xs font-bold tracking-wide text-[var(--store-text)]">
+            <span>{pick(campaign.title_ar, campaign.title_en)}</span>
+            {pick(campaign.cta_ar, campaign.cta_en) ? (
+              <span className="underline underline-offset-4">
+                {pick(campaign.cta_ar, campaign.cta_en)}
+              </span>
+            ) : null}
           </div>
-        ) : null}
-      </header>
+        );
+        return href ? (
+          <Link key={campaign.id} to={href.startsWith("#") ? href.slice(1) : href} className="block">
+            {body}
+          </Link>
+        ) : (
+          <div key={campaign.id}>{body}</div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── the shell ───────────────────────────────────────────────────────────────
+
+export function StoreLayout({ children }: { children: ReactNode }) {
+  const { t, dir } = useI18n();
+  const { settings } = useStorefront();
+  const { whatsapp } = { whatsapp: whatsappHref(settings.social.whatsapp, t("store.contact.whatsappMessage")) };
+  const [menuOpen, setMenuOpen] = useState(false);
+  const location = useLocation();
+
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [location.pathname, location.search]);
+
+  return (
+    <div
+      className="flex min-h-screen flex-col text-[var(--store-text)]"
+      style={storefrontSurfaceStyle(settings)}
+      dir={dir}
+    >
+      <AnnouncementBar />
+      <Header onMenu={() => setMenuOpen(true)} menuOpen={menuOpen} />
+      <CampaignBanners />
 
       <main className="flex-1">{children}</main>
 
-      <footer className="mt-10 border-t border-[var(--store-border)] bg-[var(--store-surface)]">
-        <div className="mx-auto grid w-full max-w-[var(--store-max-width,72rem)] gap-8 px-4 py-10 sm:px-6 md:grid-cols-4">
-          <div>
-            <p className="text-sm font-extrabold text-[var(--store-text)]">{storeName}</p>
-            {tagline ? (
-              <p className="mt-1 text-xs leading-relaxed text-[var(--store-muted)]">{tagline}</p>
-            ) : null}
-            <div className="mt-3 flex flex-wrap gap-2">
-              {facebookLink ? (
-                <a
-                  href={facebookLink}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label="Facebook"
-                  className="grid h-9 w-9 place-items-center rounded-full border border-[var(--store-border)] text-[var(--store-muted)] transition hover:text-[var(--store-primary)]"
-                >
-                  <SocialIcon kind="facebook" />
-                </a>
-              ) : null}
-              {instagramLink ? (
-                <a
-                  href={instagramLink}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label="Instagram"
-                  className="grid h-9 w-9 place-items-center rounded-full border border-[var(--store-border)] text-[var(--store-muted)] transition hover:text-[var(--store-primary)]"
-                >
-                  <SocialIcon kind="instagram" />
-                </a>
-              ) : null}
-              {tiktokLink ? (
-                <a
-                  href={tiktokLink}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label="TikTok"
-                  className="grid h-9 w-9 place-items-center rounded-full border border-[var(--store-border)] text-[var(--store-muted)] transition hover:text-[var(--store-primary)]"
-                >
-                  <SocialIcon kind="tiktok" />
-                </a>
-              ) : null}
-              {whatsapp ? (
-                <a
-                  href={whatsapp}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label="WhatsApp"
-                  className="grid h-9 w-9 place-items-center rounded-full border border-[var(--store-border)] text-[var(--store-muted)] transition hover:text-[var(--store-primary)]"
-                >
-                  <SocialIcon kind="whatsapp" />
-                </a>
-              ) : null}
-              {instapayLink ? (
-                <a
-                  href={instapayLink}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label="InstaPay"
-                  className="grid h-9 w-9 place-items-center rounded-full border border-[var(--store-border)] text-[var(--store-muted)] transition hover:text-[var(--store-primary)]"
-                >
-                  <SocialIcon kind="instapay" />
-                </a>
-              ) : null}
-            </div>
-          </div>
+      <SiteFooter />
 
-          <div>
-            <p className="text-xs font-black uppercase tracking-widest text-[var(--store-muted)]">
-              {t("store.footer.shop")}
-            </p>
-            <ul className="mt-3 space-y-2 text-sm">
-              {navLinks.map((link) => (
-                <li key={link.to}>
-                  <Link to={link.to} className="text-[var(--store-text)] hover:text-[var(--store-primary)]">
-                    {link.label}
-                  </Link>
-                </li>
-              ))}
-              <li>
-                <Link to="/store/account" className="text-[var(--store-text)] hover:text-[var(--store-primary)]">
-                  {t("store.account.title")}
-                </Link>
-              </li>
-            </ul>
-          </div>
-
-          <div>
-            <p className="text-xs font-black uppercase tracking-widest text-[var(--store-muted)]">
-              {t("store.footer.contact")}
-            </p>
-            <ul className="mt-3 space-y-2 text-sm text-[var(--store-text)]">
-              {settings.contact.phone ? (
-                <li>
-                  <a href={`tel:${settings.contact.phone}`} className="hover:text-[var(--store-primary)]">
-                    {settings.contact.phone}
-                  </a>
-                </li>
-              ) : null}
-              {settings.contact.email ? (
-                <li>
-                  <a href={`mailto:${settings.contact.email}`} className="hover:text-[var(--store-primary)]">
-                    {settings.contact.email}
-                  </a>
-                </li>
-              ) : null}
-              {pick(settings.contact.address_ar, settings.contact.address_en) ? (
-                <li className="text-[var(--store-muted)]">
-                  {pick(settings.contact.address_ar, settings.contact.address_en)}
-                </li>
-              ) : null}
-              {pick(settings.contact.hours_ar, settings.contact.hours_en) ? (
-                <li className="text-[var(--store-muted)]">
-                  {pick(settings.contact.hours_ar, settings.contact.hours_en)}
-                </li>
-              ) : null}
-              {mapLink ? (
-                <li>
-                  <a
-                    href={mapLink}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="font-bold text-[var(--store-primary)]"
-                  >
-                    {t("store.contact.openMap")}
-                  </a>
-                </li>
-              ) : null}
-            </ul>
-          </div>
-
-          <div>
-            <p className="text-xs font-black uppercase tracking-widest text-[var(--store-muted)]">
-              {t("store.footer.delivery")}
-            </p>
-            <ul className="mt-3 space-y-2 text-sm text-[var(--store-muted)]">
-              {settings.delivery.enabled ? (
-                <li>
-                  {t("store.footer.deliveryFee", {
-                    amount: settings.delivery.fee > 0 ? settings.delivery.fee.toString() : "0",
-                  })}
-                </li>
-              ) : null}
-              {settings.delivery.pickup_enabled ? <li>{t("store.footer.pickupAvailable")}</li> : null}
-              {settings.delivery.cod_enabled ? <li>{t("store.footer.codAvailable")}</li> : null}
-              {settings.delivery.instapay_enabled ? <li>{t("store.footer.instapayAvailable")}</li> : null}
-              {pick(settings.delivery.note_ar, settings.delivery.note_en) ? (
-                <li>{pick(settings.delivery.note_ar, settings.delivery.note_en)}</li>
-              ) : null}
-            </ul>
-          </div>
-        </div>
-
-        <div className="border-t border-[var(--store-border)] px-4 py-4 text-center text-xs text-[var(--store-muted)] sm:px-6" dir={dir}>
-          {t("store.footer.rights", { name: storeName })}
-        </div>
-      </footer>
+      <MenuDrawer open={menuOpen} onClose={() => setMenuOpen(false)} />
 
       {whatsapp ? (
         <a
@@ -489,5 +711,240 @@ export function StoreLayout({ children }: { children: ReactNode }) {
         </a>
       ) : null}
     </div>
+  );
+}
+
+// ── the footer ──────────────────────────────────────────────────────────────
+
+function SiteFooter() {
+  const { t, pick, dir } = useI18n();
+  const { settings, sections } = useStorefront();
+  const footer = settings.footer;
+  const storeName = pick(settings.contact.store_name_ar, settings.contact.store_name_en) || "ALYQ";
+  const description = pick(footer.description_ar, footer.description_en).trim();
+  const copyright = pick(footer.copyright_ar, footer.copyright_en).trim();
+  const mapLink = externalHref(settings.contact.map_url);
+  const policies = (footer.policy_links ?? []).filter((link) => {
+    if (!link.enabled || (!link.label_ar.trim() && !link.label_en.trim())) return false;
+    return configuredHref(link.href) !== null;
+  });
+
+  const email = settings.contact.email.trim();
+  const newsletterSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    // The shop has no mailing-list backend; the honest subscribe is a mail draft
+    // to the shop's own address with the customer's address in the body.
+    const input = event.currentTarget.elements.namedItem("email") as HTMLInputElement | null;
+    const address = input?.value.trim() ?? "";
+    if (email && address) {
+      window.location.href = `mailto:${email}?subject=${encodeURIComponent(
+        "ALYQ newsletter",
+      )}&body=${encodeURIComponent(address)}`;
+    }
+  };
+
+  return (
+    <footer className="mt-[var(--store-space-section)] border-t border-[var(--store-hairline)] bg-[var(--store-surface)]">
+      {footer.newsletter_enabled ? (
+        <div className="border-b border-[var(--store-hairline)]">
+          <div className="mx-auto flex w-full max-w-[var(--store-max-width)] flex-col items-center gap-4 px-6 py-10 text-center">
+            <p
+              className="text-lg font-bold tracking-wide text-[var(--store-text)]"
+              style={{ fontFamily: "var(--store-font-display)" }}
+            >
+              {t("store.footer.newsletterTitle")}
+            </p>
+            {pick(footer.newsletter_note_ar, footer.newsletter_note_en) ? (
+              <p className="max-w-md text-xs leading-relaxed text-[var(--store-muted)]">
+                {pick(footer.newsletter_note_ar, footer.newsletter_note_en)}
+              </p>
+            ) : null}
+            <form onSubmit={newsletterSubmit} className="flex w-full max-w-sm items-center gap-2">
+              <label className="sr-only" htmlFor="footer-newsletter-email">
+                {t("store.footer.emailLabel")}
+              </label>
+              <input
+                id="footer-newsletter-email"
+                name="email"
+                type="email"
+                required
+                placeholder={t("store.footer.emailPlaceholder")}
+                className="min-w-0 flex-1 border-0 border-b border-[var(--store-hairline)] bg-transparent px-1 py-2 text-sm text-[var(--store-text)] outline-none placeholder:text-[var(--store-muted)] focus:border-[var(--store-text)]"
+              />
+              <button
+                type="submit"
+                className="shrink-0 px-4 py-2 text-[11px] font-black uppercase tracking-[0.2em] text-[var(--store-on-primary)] transition hover:opacity-90"
+                style={{ backgroundColor: "var(--store-primary)" }}
+              >
+                {t("store.footer.subscribe")}
+              </button>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
+      <div className="mx-auto grid w-full max-w-[var(--store-max-width)] gap-10 px-6 py-12 sm:grid-cols-2 lg:grid-cols-4">
+        <div>
+          <p
+            dir="ltr"
+            className="text-lg font-black uppercase tracking-[0.3em] text-[var(--store-text)]"
+            style={{ fontFamily: "var(--store-font-display)" }}
+          >
+            {storeName}
+          </p>
+          {description ? (
+            <p className="mt-3 max-w-xs text-xs leading-relaxed text-[var(--store-muted)]">{description}</p>
+          ) : (
+            <p className="mt-3 max-w-xs text-xs leading-relaxed text-[var(--store-muted)]">
+              {pick(settings.contact.tagline_ar, settings.contact.tagline_en)}
+            </p>
+          )}
+          <div className="mt-4">
+            <SocialRow />
+          </div>
+        </div>
+
+        <div>
+          <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[var(--store-muted)]">
+            {t("store.footer.shop")}
+          </p>
+          <ul className="mt-4 space-y-2.5 text-sm">
+            {sections
+              .filter((section) => section.visible && ["newArrivals", "bestSellers", "featured"].includes(section.key))
+              .map((section) => (
+                <li key={section.key}>
+                  <Link
+                    to={
+                      section.key === "newArrivals"
+                        ? "/store/products?sort=newest"
+                        : section.key === "bestSellers"
+                          ? "/store/products?sort=best"
+                          : "/store/products"
+                    }
+                    className="text-[var(--store-muted)] transition hover:text-[var(--store-text)]"
+                  >
+                    {pick(section.title_ar, section.title_en) || t(`store.section.${section.key}` as never)}
+                  </Link>
+                </li>
+              ))}
+            <li>
+              <Link to="/store/track" className="text-[var(--store-muted)] transition hover:text-[var(--store-text)]">
+                {t("store.nav.track")}
+              </Link>
+            </li>
+          </ul>
+        </div>
+
+        <div>
+          <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[var(--store-muted)]">
+            {t("store.footer.info")}
+          </p>
+          <ul className="mt-4 space-y-2.5 text-sm">
+            <li>
+              <Link to="/store/about" className="text-[var(--store-muted)] transition hover:text-[var(--store-text)]">
+                {t("store.nav.about")}
+              </Link>
+            </li>
+            <li>
+              <Link to="/store/contact" className="text-[var(--store-muted)] transition hover:text-[var(--store-text)]">
+                {t("store.nav.contact")}
+              </Link>
+            </li>
+            {settings.contact.phone ? (
+              <li>
+                <a
+                  href={`tel:${settings.contact.phone}`}
+                  className="text-[var(--store-muted)] transition hover:text-[var(--store-text)]"
+                >
+                  {settings.contact.phone}
+                </a>
+              </li>
+            ) : null}
+            {email ? (
+              <li>
+                <a
+                  href={`mailto:${email}`}
+                  className="text-[var(--store-muted)] transition hover:text-[var(--store-text)]"
+                >
+                  {email}
+                </a>
+              </li>
+            ) : null}
+            {pick(settings.contact.address_ar, settings.contact.address_en) ? (
+              <li className="text-[var(--store-muted)]">
+                {pick(settings.contact.address_ar, settings.contact.address_en)}
+              </li>
+            ) : null}
+            {mapLink ? (
+              <li>
+                <a
+                  href={mapLink}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[var(--store-muted)] underline underline-offset-4 transition hover:text-[var(--store-text)]"
+                >
+                  {t("store.contact.openMap")}
+                </a>
+              </li>
+            ) : null}
+          </ul>
+        </div>
+
+        <div>
+          <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[var(--store-muted)]">
+            {t("store.footer.delivery")}
+          </p>
+          <ul className="mt-4 space-y-2.5 text-sm text-[var(--store-muted)]">
+            {settings.delivery.enabled ? (
+              <li>
+                {t("store.footer.deliveryFee", {
+                  amount: settings.delivery.fee > 0 ? settings.delivery.fee.toString() : "0",
+                })}
+              </li>
+            ) : null}
+            {settings.delivery.pickup_enabled ? <li>{t("store.footer.pickupAvailable")}</li> : null}
+            {settings.delivery.cod_enabled ? <li>{t("store.footer.codAvailable")}</li> : null}
+            {settings.delivery.instapay_enabled ? <li>{t("store.footer.instapayAvailable")}</li> : null}
+          </ul>
+          {policies.length > 0 ? (
+            <>
+              <p className="mt-6 text-[10px] font-black uppercase tracking-[0.22em] text-[var(--store-muted)]">
+                {t("store.footer.policies")}
+              </p>
+              <ul className="mt-4 space-y-2.5 text-sm">
+                {policies.map((link) => {
+                  const href = configuredHref(link.href)!;
+                  return (
+                    <li key={link.id}>
+                      {href.startsWith("#") ? (
+                        <Link
+                          to={href.slice(1)}
+                          className="text-[var(--store-muted)] transition hover:text-[var(--store-text)]"
+                        >
+                          {pick(link.label_ar, link.label_en)}
+                        </Link>
+                      ) : (
+                        <a
+                          href={href}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[var(--store-muted)] transition hover:text-[var(--store-text)]"
+                        >
+                          {pick(link.label_ar, link.label_en)}
+                        </a>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="border-t border-[var(--store-hairline)] px-6 py-4 text-center text-[11px] tracking-wide text-[var(--store-muted)]" dir={dir}>
+        {copyright || `© ${new Date().getFullYear()} ${storeName} — ${t("store.footer.rights")}`}
+      </div>
+    </footer>
   );
 }

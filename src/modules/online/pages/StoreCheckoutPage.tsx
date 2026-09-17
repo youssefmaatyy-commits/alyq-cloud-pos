@@ -242,9 +242,24 @@ export function StoreCheckoutPage() {
   const inputClass =
     "w-full rounded-lg border border-[var(--store-border)] bg-[var(--store-surface)] px-3 py-2 text-sm text-[var(--store-text)] outline-none transition focus:border-[var(--store-primary)]";
 
+  // Phase 45: the admin's checkout words. Copy only — fees, thresholds,
+  // minimums and the payment flow itself stay exactly as configured and
+  // server-derived; these strings change nothing about the rules.
+  const copy = settings.checkout_copy;
+  const copyOr = (ar: string, en: string) => pick(ar, en).trim();
+  const headingCopy = copyOr(copy.heading_ar, copy.heading_en);
+  const deliveryNoteCopy = copyOr(copy.delivery_note_ar, copy.delivery_note_en);
+  const pickupNoteCopy = copyOr(copy.pickup_note_ar, copy.pickup_note_en);
+  const paymentNoteCopy = copyOr(copy.payment_note_ar, copy.payment_note_en);
+  const codNoteCopy = copyOr(copy.cod_note_ar, copy.cod_note_en);
+  const instapayNoteCopy = copyOr(copy.instapay_note_ar, copy.instapay_note_en);
+  const placeOrderCopy = copyOr(copy.place_order_ar, copy.place_order_en);
+
   return (
     <form onSubmit={submit} className="mx-auto w-full max-w-[var(--store-max-width,72rem)] px-4 py-6 sm:px-6">
-      <h1 className="text-2xl font-black tracking-tight text-[var(--store-text)]">{t("store.checkout.title")}</h1>
+      <h1 className="text-2xl font-black tracking-tight text-[var(--store-text)]">
+        {headingCopy || t("store.checkout.title")}
+      </h1>
 
       {!customer ? (
         <p className="mt-2 text-xs font-semibold text-[var(--store-muted)]">
@@ -355,6 +370,12 @@ export function StoreCheckoutPage() {
               ) : null}
             </div>
 
+            {deliveryNoteCopy && deliveryType === "delivery" ? (
+              <p className="mt-3 text-xs leading-relaxed text-[var(--store-muted)]">{deliveryNoteCopy}</p>
+            ) : null}
+            {pickupNoteCopy && deliveryType === "pickup" ? (
+              <p className="mt-3 text-xs leading-relaxed text-[var(--store-muted)]">{pickupNoteCopy}</p>
+            ) : null}
             {deliveryType === "delivery" ? (
               <div className="mt-4">
                 {addresses.length > 0 ? (
@@ -473,6 +494,9 @@ export function StoreCheckoutPage() {
             <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-muted)]">
               {t("store.checkout.payment")}
             </h2>
+            {paymentNoteCopy ? (
+              <p className="mt-2 text-xs leading-relaxed text-[var(--store-muted)]">{paymentNoteCopy}</p>
+            ) : null}
             <div className="mt-3 flex flex-col gap-2">
               {settings.delivery.cod_enabled ? (
                 <label
@@ -494,6 +518,9 @@ export function StoreCheckoutPage() {
                   <span>
                     <span className="block text-sm font-black text-[var(--store-text)]">{t("store.checkout.cod")}</span>
                     <span className="block text-xs text-[var(--store-muted)]">{t("store.checkout.codHint")}</span>
+                    {codNoteCopy ? (
+                      <span className="mt-1 block text-xs leading-relaxed text-[var(--store-muted)]">{codNoteCopy}</span>
+                    ) : null}
                   </span>
                 </label>
               ) : null}
@@ -563,6 +590,11 @@ export function StoreCheckoutPage() {
                             decoding="async"
                             className="mt-3 h-32 w-32 rounded-lg border border-[var(--store-border)] bg-white object-contain p-1"
                           />
+                        ) : null}
+                        {instapayNoteCopy ? (
+                          <span className="mt-2 block whitespace-pre-line text-xs leading-relaxed text-[var(--store-muted)]">
+                            {instapayNoteCopy}
+                          </span>
                         ) : null}
                         <span className="mt-2 block text-[11px] font-semibold text-amber-700">
                           {t("store.checkout.instapayNeverAutomatic")}
@@ -673,7 +705,9 @@ export function StoreCheckoutPage() {
               className="mt-4 w-full bg-[var(--store-primary)] px-4 py-3 text-sm font-black text-[var(--store-on-primary)] transition hover:bg-[var(--store-primary-hover)] disabled:cursor-not-allowed disabled:bg-[var(--store-border)] disabled:text-[var(--store-muted)]"
               style={{ borderRadius: "var(--store-radius-button)" }}
             >
-              {placing ? t("store.checkout.placing") : t("store.checkout.placeOrder")}
+              {placing
+                ? t("store.checkout.placing")
+                : placeOrderCopy || t("store.checkout.placeOrder")}
             </button>
             <p className="mt-2 text-[11px] leading-relaxed text-[var(--store-muted)]">
               {t("store.checkout.placementNote")}
