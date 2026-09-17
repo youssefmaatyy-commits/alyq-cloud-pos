@@ -723,7 +723,10 @@ async function main(): Promise<void> {
       assert.ok(used);
       await assert.rejects(
         () => repo.deleteCategory(used!.id),
-        (error: { code: string }) => error.code === "CATEGORY_IN_USE",
+        // Phase 44: the repository raises the structured CATEGORY_NOT_EMPTY
+        // (the live RPC raises the same rule; CATEGORY_IN_USE remains the
+        // service/legacy code for the generic "still has content" case).
+        (error: { code: string }) => error.code === "CATEGORY_NOT_EMPTY",
       );
     });
 

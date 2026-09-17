@@ -44,6 +44,11 @@ const SUITES = [
     file: "scripts/variants.flow.mjs",
     title: "Variant Test Ring (generate, balanced enable, per-shelf sale + refusal, breakdown, disable block)",
   },
+  {
+    id: "categories",
+    file: "scripts/categories.flow.mjs",
+    title: "Category lifecycle (empty delete, blocked delete w/ count, archive → hidden, reactivate, atomic move+delete, archived destination refused)",
+  },
   { id: "backup", file: "scripts/backup.flow.mjs", title: "Backup & recovery flow (snapshot, download, health, schedule, restore, permissions)" },
   { id: "crash", file: "scripts/crash.flow.mjs", title: "Crash recovery (ErrorBoundary: the screen, no leaked detail, the sibling survives)" },
   {

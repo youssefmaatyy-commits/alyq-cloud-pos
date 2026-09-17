@@ -17,6 +17,21 @@ export type AppErrorCode =
   | "DUPLICATE_BARCODE"
   | "CATEGORY_IN_USE"
   | "CATEGORY_CYCLE"
+  /**
+   * Phase 44, category lifecycle — every one decided server-side; the codes
+   * exist so the dialog states the real obstacle, never so the client can
+   * decide.
+   *
+   *   CATEGORY_NOT_EMPTY    hard delete refused: products still reference the
+   *                         category (count re-checked in-transaction).
+   *   CATEGORY_HAS_CHILDREN hard delete / move refused: child categories hang
+   *                         from it; move or delete them first.
+   *   CATEGORY_ARCHIVED     the assignment or move target is an archived
+   *                         category — reactivate it or pick another.
+   */
+  | "CATEGORY_NOT_EMPTY"
+  | "CATEGORY_HAS_CHILDREN"
+  | "CATEGORY_ARCHIVED"
   /** A till sale needs an open shift (Phase 27); the register must open one first. */
   | "SHIFT_REQUIRED"
   /**
@@ -213,6 +228,27 @@ export interface CatalogRepository {
   listCategories(): Promise<Category[]>;
   createCategory(input: NewCategory): Promise<Category>;
   updateCategory(id: string, patch: CategoryPatch): Promise<Category>;
-  /** Throws `CATEGORY_IN_USE` when products still reference the category. */
+  /**
+   * Hard delete, server-adjudicated: the store locks the row and re-checks
+   * inside the deleting transaction (Phase 44). Throws `CATEGORY_NOT_EMPTY`
+   * with the structured product count, `CATEGORY_HAS_CHILDREN` when child
+   * categories exist — archive or move them first.
+   */
   deleteCategory(id: string): Promise<void>;
+  /**
+   * Archive (active=false) or reactivate. Products are untouched: an archived
+   * category hides from pickers, the register and the storefront, while its
+   * products stay sellable. Idempotent server-side.
+   */
+  setCategoryActive(id: string, active: boolean): Promise<Category>;
+  /**
+   * Move every product from `sourceId` to `targetId` and delete the source —
+   * ONE server-side transaction. Throws on a missing side, a same-side call,
+   * an archived target (`CATEGORY_ARCHIVED`) or a source with children
+   * (`CATEGORY_HAS_CHILDREN`).
+   */
+  moveProductsAndDeleteCategory(
+    sourceId: string,
+    targetId: string,
+  ): Promise<{ moved: number; source: Category; target: Category }>;
 }

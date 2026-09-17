@@ -561,19 +561,93 @@ export class SupabaseRepository implements CatalogRepository {
 
   async deleteCategory(id: string): Promise<void> {
     try {
-      // Guard in the client too — the DB also has a trigger-based guard.
-      const { count, error: countError } = await this.require()
-        .from("products")
-        .select("id", { count: "exact", head: true })
-        .eq("category_id", id);
-      if (countError) this.rethrow(countError);
-      if ((count ?? 0) > 0) throw new AppError("CATEGORY_IN_USE", `Category ${id} in use`);
-
-      const { error } = await this.require().from("categories").delete().eq("id", id);
-      if (error) this.rethrow(error);
+      // Phase 44: the server decides. The RPC locks the category row and
+      // re-counts products and children inside the deleting transaction —
+      // this client no longer counts anything it cannot see.
+      const { error } = await this.require().rpc("delete_empty_category", {
+        p_category_id: id,
+      });
+      if (error) this.rethrowCategory(error);
     } catch (error) {
-      this.rethrow(error);
+      this.rethrowCategory(error);
     }
+  }
+
+  async setCategoryActive(id: string, active: boolean): Promise<Category> {
+    try {
+      const { error } = await this.require().rpc("set_category_active", {
+        p_category_id: id,
+        p_active: active,
+      });
+      if (error) this.rethrowCategory(error);
+      // Re-read the row so callers get the full Category the contract promises.
+      const { data, error: readError } = await this.require()
+        .from("categories")
+        .select(CATEGORIES_SELECT)
+        .eq("id", id)
+        .single();
+      if (readError) this.rethrow(readError);
+      return mapCategory(data as CategoryRow);
+    } catch (error) {
+      this.rethrowCategory(error);
+    }
+  }
+
+  async moveProductsAndDeleteCategory(
+    sourceId: string,
+    targetId: string,
+  ): Promise<{ moved: number; source: Category; target: Category }> {
+    try {
+      const { data, error } = await this.require().rpc("move_products_and_delete_category", {
+        p_source_category_id: sourceId,
+        p_target_category_id: targetId,
+      });
+      if (error) this.rethrowCategory(error);
+      const result = (data ?? {}) as { moved?: number | string; source_name?: string };
+      // Re-read the survivor so the UI can refresh against real state.
+      const { data: target, error: readError } = await this.require()
+        .from("categories")
+        .select(CATEGORIES_SELECT)
+        .eq("id", targetId)
+        .single();
+      if (readError) this.rethrow(readError);
+      return {
+        moved: Number(result.moved ?? 0),
+        target: mapCategory(target as CategoryRow),
+        // The source is gone; echo what the transaction deleted.
+        source: {
+          id: sourceId,
+          name_en: String(result.source_name ?? sourceId),
+          name_ar: String(result.source_name ?? sourceId),
+        } as Category,
+      };
+    } catch (error) {
+      this.rethrowCategory(error);
+    }
+  }
+
+  /**
+   * Error mapping for the category lifecycle RPCs (migration 0044). The
+   * functions raise with Postgres codes; the messages disambiguate the
+   * business rule behind a shared code, exactly like rethrowLifecycle.
+   */
+  private rethrowCategory(error: unknown): never {
+    const err = error as { code?: string; message?: string } | null;
+    const pgCode = err?.code;
+    const message = err?.message ?? "Unknown database error";
+
+    if (pgCode === "42501") throw new AppError("FORBIDDEN", message, undefined, pgCode);
+    if (pgCode === "23001") throw new AppError("CATEGORY_HAS_CHILDREN", message, undefined, pgCode);
+    if (pgCode === "23503") {
+      if (/not found/i.test(message)) throw new AppError("NOT_FOUND", message, undefined, pgCode);
+      throw new AppError("CATEGORY_IN_USE", message, undefined, pgCode);
+    }
+    if (pgCode === "23514") {
+      if (/archived/i.test(message)) throw new AppError("CATEGORY_ARCHIVED", message, undefined, pgCode);
+      if (/same category/i.test(message)) throw new AppError("VALIDATION", message, undefined, pgCode);
+      throw new AppError("CATEGORY_NOT_EMPTY", message, undefined, pgCode);
+    }
+    throw toAppError(error);
   }
 }
 

@@ -473,7 +473,9 @@ async function main() {
   assert.ok(bodyText().includes("Smoke category"), "category created");
   console.log("  ✓ categories add flow + bilingual validation");
 
-  // 11 ─ delete guard on a category that holds products
+  // 11 ─ the lifecycle dialog on a category that holds products (Phase 44):
+  //      the delete is anticipated with the client's counts, and the dialog
+  //      offers the two safe routes — move-and-delete, or archive.
   const populatedDelete = [...document.querySelectorAll('button[title="Delete"]')].find((btn) => {
     const row = btn.closest(".group");
     return row && (row.textContent ?? "").includes("Earrings");
@@ -482,10 +484,18 @@ async function main() {
   populatedDelete.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
   await sleep(250);
   const dialogText = dialog()?.textContent ?? "";
-  assert.ok(dialogText.includes("cannot be deleted"), "delete guard explains why");
-  confirmInDialog("Deactivate");
+  assert.ok(
+    dialogText.replace(/\s+/g, "").includes("Thiscategorycontains"),
+    "the lifecycle dialog names the products",
+  );
+  assert.ok(
+    dialogText.replace(/\s+/g, "").includes("Movetheproducts") &&
+      dialogText.replace(/\s+/g, "").includes("Archiveonly"),
+    "the two safe routes are offered",
+  );
+  confirmInDialog("Cancel");
   await sleep(450);
-  console.log("  ✓ deleting a category that contains products is blocked → deactivation offered");
+  console.log("  ✓ deleting a category that contains products opens the lifecycle dialog (move / archive)");
 
   // ── Barcode: auto-generation, live preview, override, print ──
   await navigate("#/products/new");

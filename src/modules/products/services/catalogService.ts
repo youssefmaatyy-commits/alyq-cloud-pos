@@ -19,6 +19,9 @@ const APP_ERROR_KEY: Record<string, string> = {
   DUPLICATE_SKU: "validation.skuTaken",
   DUPLICATE_BARCODE: "validation.barcodeTaken",
   CATEGORY_IN_USE: "categories.deleteBlockedTitle",
+  CATEGORY_NOT_EMPTY: "categories.deleteBlockedTitle",
+  CATEGORY_HAS_CHILDREN: "categories.childrenBlockDelete",
+  CATEGORY_ARCHIVED: "categories.archivedTarget",
   CATEGORY_CYCLE: "categories.moveUnderSelf",
   PRODUCT_HAS_HISTORY: "products.errorHasHistory",
   FORBIDDEN: "common.forbidden",
@@ -314,7 +317,114 @@ export function assertCategoryDeletable(id: string, ctx: DeleteCategoryCheck): v
 export async function deleteCategory(id: string, ctx: DeleteCategoryCheck): Promise<void> {
   assertCanDeleteCategory();
   assertCategoryDeletable(id, ctx);
-  await getCatalogRepository().deleteCategory(id);
+  const repository = getCatalogRepository();
+  // The label is read before the delete so the trail names what was removed.
+  const category = ctx.categories.find((c) => c.id === id);
+  await repository.deleteCategory(id);
+  if (repository.kind === "demo") {
+    // Live mode writes category.deleted from the categories_audit trigger
+    // (0044); the demo writes the same event from here. Fire-and-forget for
+    // the same reason as every audit row above: a failed trail must not
+    // undo a succeeded change.
+    void recordAudit({
+      action: "category.deleted",
+      entity: "category",
+      entity_id: id,
+      entity_label: category?.name_en ?? id,
+      details: {
+        name_ar: category?.name_ar ?? null,
+        name_en: category?.name_en ?? null,
+        was_active: category?.active ?? null,
+      },
+    });
+  }
+}
+
+/**
+ * Archive (`active = false`) or reactivate a category. Archiving is *not*
+ * deleting: products stay exactly where they are and keep selling — the
+ * category only leaves the pickers, the register filter and the storefront
+ * navigation, and can no longer accept new products.
+ *
+ * Live mode goes through `public.set_category_active` (0044), which re-checks
+ * `edit_product` and lets the categories_audit trigger write
+ * category.archived / category.reactivated, so the trail exists however the
+ * flip was made. Demo mode records the same event from here.
+ */
+export async function setCategoryActive(id: string, active: boolean): Promise<Category> {
+  assertCanEditCategory();
+  const repository = getCatalogRepository();
+  const before = (await repository.listCategories()).find((c) => c.id === id);
+  const category = await repository.setCategoryActive(id, active);
+  if (category.active === (before?.active ?? null)) return category; // idempotent replay: no event
+  if (repository.kind === "demo") {
+    void recordAudit({
+      action: active ? "category.reactivated" : "category.archived",
+      entity: "category",
+      entity_id: category.id,
+      entity_label: category.name_en,
+      details: {
+        name_ar: category.name_ar,
+        name_en: category.name_en,
+        previous: !active,
+        next: active,
+      },
+    });
+  }
+  return category;
+}
+
+export interface MoveCategoryArgs {
+  sourceId: string;
+  targetId: string;
+}
+
+/**
+ * Move every product from the source category to the target and delete the
+ * emptied source — ONE server-side transaction (`public.
+ * move_products_and_delete_category`, 0044): both categories locked, target
+ * must be active, source must have no children, the move is one statement and
+ * zero-remaining is verified before the delete commits. Needs BOTH the
+ * authority to edit products (the move) and to delete a category (the
+ * deletion). Demo mode mirrors the same checks in the repository and records
+ * category.products_moved + category.deleted from here.
+ */
+export async function moveProductsAndDeleteCategory({
+  sourceId,
+  targetId,
+}: MoveCategoryArgs): Promise<{ moved: number }> {
+  assertCanEditCategory();
+  assertCanDeleteCategory();
+  const repository = getCatalogRepository();
+  const result = await repository.moveProductsAndDeleteCategory(sourceId, targetId);
+  if (repository.kind === "demo") {
+    void recordAudit({
+      action: "category.products_moved",
+      entity: "category",
+      entity_id: targetId,
+      entity_label: result.target.name_en,
+      details: {
+        source_id: sourceId,
+        source_name: result.source.name_en,
+        target_id: targetId,
+        target_name: result.target.name_en,
+        moved: result.moved,
+        source_deleted: true,
+      },
+    });
+    void recordAudit({
+      action: "category.deleted",
+      entity: "category",
+      entity_id: sourceId,
+      entity_label: result.source.name_en,
+      details: {
+        name_ar: result.source.name_ar,
+        name_en: result.source.name_en,
+        was_active: result.source.active,
+      },
+    });
+  }
+  return { moved: result.moved };
 }
 
 /**

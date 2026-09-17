@@ -119,6 +119,9 @@ export class DemoRepository implements CatalogRepository {
   async createProduct(input: NewProduct): Promise<Product> {
     this.assertUniqueSku(input.sku);
     if (input.barcode) this.assertUniqueBarcode(input.barcode);
+    // Mirrors products_enforce_category_active (0044): even a forged direct
+    // call cannot shelve a product under an archived category.
+    this.assertCategoryAssignable(input.category_id, "create");
     const product: Product = {
       ...input,
       // The column is NOT NULL DEFAULT false in the database; the demo state
@@ -160,6 +163,7 @@ export class DemoRepository implements CatalogRepository {
     if (patch.barcode) {
       this.assertUniqueBarcode(patch.barcode, id);
     }
+    this.assertCategoryAssignable(next.category_id, "update");
     next.updated_at = nowIso();
     const updated = [...this.state.products];
     updated[index] = next;
@@ -562,6 +566,9 @@ export class DemoRepository implements CatalogRepository {
   }
 
   // ── categories ─────────────────────────────────────────────────────────
+  // The demo mirrors migration 0044 rule for rule: same refusals, same
+  // AppError codes, same pgCode strings — so a test that passes here states
+  // the live contract too.
 
   listCategories(): Promise<Category[]> {
     return delay([...this.state.categories]);
@@ -586,12 +593,127 @@ export class DemoRepository implements CatalogRepository {
     return delay(next, 60);
   }
 
+  /**
+   * Mirrors `products_enforce_category_active` (0044): a product may never be
+   * assigned to an archived category — not from the form, not from a forged
+   * call, not from an import. `context` only flavours the message.
+   */
+  private assertCategoryAssignable(categoryId: string | null | undefined, context: string): void {
+    if (!categoryId) return;
+    const category = this.state.categories.find((c) => c.id === categoryId);
+    if (category && !category.active) {
+      throw new AppError(
+        "CATEGORY_ARCHIVED",
+        `Category ${category.name_en} is archived — a product cannot be assigned to it (${context})`,
+        "category_id",
+        "23514",
+      );
+    }
+  }
+
   async deleteCategory(id: string): Promise<void> {
-    const inUse = this.state.products.some((p) => p.category_id === id);
-    if (inUse) throw new AppError("CATEGORY_IN_USE");
+    // The demo delete mirrors delete_empty_category: re-check products and
+    // children at the moment of deletion, refuse with the structured code.
+    const category = this.state.categories.find((c) => c.id === id);
+    if (!category) throw new AppError("NOT_FOUND", `Category ${id} not found`, undefined, "23503");
+    const productCount = this.state.products.filter((p) => p.category_id === id).length;
+    if (productCount > 0) {
+      throw new AppError(
+        "CATEGORY_NOT_EMPTY",
+        `Category ${category.name_en} still contains ${productCount} product(s)`,
+        undefined,
+        "23514",
+      );
+    }
+    const childCount = this.state.categories.filter((c) => c.parent_id === id).length;
+    if (childCount > 0) {
+      throw new AppError(
+        "CATEGORY_HAS_CHILDREN",
+        `Category ${category.name_en} still contains ${childCount} child categor(y/ies); move or delete them first`,
+        undefined,
+        "23001",
+      );
+    }
     this.state.categories = this.state.categories.filter((c) => c.id !== id);
     this.persist();
     await delay(undefined, 60);
+  }
+
+  async setCategoryActive(id: string, active: boolean): Promise<Category> {
+    const index = this.state.categories.findIndex((c) => c.id === id);
+    if (index === -1) throw new AppError("NOT_FOUND", `Category ${id} not found`, undefined, "23503");
+    const current = this.state.categories[index];
+    // Idempotent like set_category_active: no change, no event.
+    if (current.active === active) return delay(current, 30);
+    const next: Category = { ...current, active, updated_at: nowIso() };
+    const updated = [...this.state.categories];
+    updated[index] = next;
+    this.state.categories = updated;
+    this.persist();
+    return delay(next, 60);
+  }
+
+  async moveProductsAndDeleteCategory(
+    sourceId: string,
+    targetId: string,
+  ): Promise<{ moved: number; source: Category; target: Category }> {
+    if (sourceId === targetId) {
+      throw new AppError(
+        "VALIDATION",
+        "Source and target are the same category",
+        undefined,
+        "23514",
+      );
+    }
+    const source = this.state.categories.find((c) => c.id === sourceId);
+    if (!source) {
+      throw new AppError("NOT_FOUND", `Source category ${sourceId} not found`, undefined, "23503");
+    }
+    const target = this.state.categories.find((c) => c.id === targetId);
+    if (!target) {
+      throw new AppError("NOT_FOUND", `Target category ${targetId} not found`, undefined, "23503");
+    }
+    if (!target.active) {
+      throw new AppError(
+        "CATEGORY_ARCHIVED",
+        `Target category ${target.name_en} is archived — products cannot move into it`,
+        undefined,
+        "23514",
+      );
+    }
+    const childCount = this.state.categories.filter((c) => c.parent_id === sourceId).length;
+    if (childCount > 0) {
+      throw new AppError(
+        "CATEGORY_HAS_CHILDREN",
+        `Source category ${source.name_en} still contains ${childCount} child categor(y/ies); move or delete them first`,
+        undefined,
+        "23001",
+      );
+    }
+
+    // One atomic step: move, verify zero remaining, delete. Demo state is
+    // single-threaded, so the window the live RPC closes with row locks does
+    // not exist here — the verification still runs, mirroring the server.
+    const movedIds: string[] = [];
+    const products = this.state.products.map((p) => {
+      if (p.category_id !== sourceId) return p;
+      movedIds.push(p.id);
+      return { ...p, category_id: targetId, updated_at: nowIso() };
+    });
+    const remaining = products.filter((p) => p.category_id === sourceId).length;
+    if (remaining > 0) {
+      throw new AppError(
+        "CATEGORY_NOT_EMPTY",
+        `Category ${source.name_en} still holds ${remaining} product(s) after the move`,
+        undefined,
+        "23514",
+      );
+    }
+    this.state.products = products;
+    this.state.categories = this.state.categories.filter((c) => c.id !== sourceId);
+    this.persist();
+    await delay(undefined, 60);
+    return { moved: movedIds.length, source, target };
   }
 
   /** Test/dev helper used by the module reset button. */

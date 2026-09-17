@@ -19,14 +19,31 @@ export function CategoriesPage() {
   const { t, pick } = useI18n();
   const { tree, products, categories, loading, error, refresh } = useCatalog();
   const [modal, setModal] = useState<{ open: boolean }>({ open: false });
+  // Phase 44: archived categories are not gone — they live behind this filter
+  // so they can be found and reactivated, without cluttering the working tree.
+  const [view, setView] = useState<"active" | "archived" | "all">("active");
 
-  const flat = useMemo(() => flattenCategoryTree(tree, { includeInactive: true }), [tree]);
+  const flat = useMemo(
+    () => flattenCategoryTree(tree, { includeInactive: true }),
+    [tree],
+  );
+  const visibleFlat = useMemo(() => {
+    if (view === "all") return flat;
+    return flat.filter((node) => (view === "archived" ? !node.active : node.active));
+  }, [flat, view]);
   const uncategorized = useMemo(
     () => products.filter((p) => !p.category_id).length,
     [products],
   );
   const roots = tree.length;
   const activeCount = categories.filter((c) => c.active).length;
+  const archivedCount = categories.length - activeCount;
+
+  const viewTabs: { id: typeof view; label: string; count: number }[] = [
+    { id: "active", label: t("categories.viewActive"), count: activeCount },
+    { id: "archived", label: t("categories.viewArchived"), count: archivedCount },
+    { id: "all", label: t("categories.viewAll"), count: categories.length },
+  ];
 
   return (
     <div>
@@ -85,14 +102,35 @@ export function CategoriesPage() {
       ) : (
         <div className="grid gap-4 lg:grid-cols-3">
           <div className="alyq-card p-2 lg:col-span-2">
-            <CategoryTree />
+            <div
+              className="flex flex-wrap items-center gap-1 px-2 pt-2"
+              role="tablist"
+              aria-label={t("common.filters")}
+            >
+              {viewTabs.map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={view === tab.id}
+                  onClick={() => setView(tab.id)}
+                  className={cnView(view === tab.id)}
+                >
+                  {tab.label}
+                  <span className="ms-1 rounded-full bg-slate-200/80 px-1.5 text-[11px] font-bold tabular-nums text-slate-700">
+                    {tab.count}
+                  </span>
+                </button>
+              ))}
+            </div>
+            <CategoryTree view={view} />
           </div>
 
           <div className="space-y-3">
             <div className="alyq-card p-4">
               <h2 className="mb-2 text-sm font-bold text-slate-900">{t("categories.tree")}</h2>
               <ul className="space-y-1 text-sm font-medium text-slate-700">
-                {flat.map((node) => (
+                {visibleFlat.map((node) => (
                   <li key={node.id} className="flex items-center justify-between gap-2">
                     <span className="truncate">{pick(node.name_ar, node.name_en)}</span>
                     <span className="flex items-center gap-1">
@@ -135,4 +173,14 @@ export function CategoriesPage() {
       <CategoryFormModal open={modal.open} onClose={() => setModal({ open: false })} />
     </div>
   );
+}
+
+/** Small local helper for the view tabs' active styling. */
+function cnView(active: boolean): string {
+  return [
+    "rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors",
+    active
+      ? "bg-indigo-600 text-white"
+      : "bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900",
+  ].join(" ");
 }

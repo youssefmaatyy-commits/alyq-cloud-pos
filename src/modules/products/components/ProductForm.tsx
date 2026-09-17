@@ -151,10 +151,33 @@ export function ProductForm({ productId }: { productId?: string }) {
     win.document.close();
   }, [values, printCopies, money, t, toast, isRTL]);
 
-  const categoryOptions = useMemo(
-    () => toCategoryOptions(tree, pick, { includeInactive: true }),
-    [tree, pick],
-  );
+  // Phase 44: archived categories are not offered. A product already sitting
+  // in an archived category keeps its label visible (so an edit can be saved
+  // without a forced move) — but new assignments go to active shelves only.
+  // The server refuses an archived assignment regardless of what the picker
+  // allowed.
+  const categoryOptions = useMemo(() => {
+    const options = toCategoryOptions(tree, pick);
+    const current = values.category_id;
+    if (
+      current &&
+      !options.some((option) => option.id === current) &&
+      categories.some((c) => c.id === current)
+    ) {
+      const archived = categories.find((c) => c.id === current)!;
+      return [
+        ...options,
+        {
+          id: archived.id,
+          label: `${pick(archived.name_ar, archived.name_en)} (${t("categories.archivedBadge")})`,
+          depth: 0,
+          active: false,
+          productCount: 0,
+        },
+      ];
+    }
+    return options;
+  }, [tree, pick, categories, values.category_id, t]);
 
   // Cost is two capabilities, not one: seeing the number and writing it. A seat
   // that may see but not write gets a read-only field that says why; a seat that

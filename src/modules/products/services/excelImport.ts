@@ -605,14 +605,21 @@ export function importProductsFromRows(rows: string[][]): ImportResult {
 /**
  * Resolve category names to IDs. Call after import to link products to
  * existing categories by name match (case-insensitive, bilingual).
+ *
+ * Phase 44: only ACTIVE categories match. An archived category's name must
+ * not quietly capture imported products — the server would refuse the
+ * assignment (products_enforce_category_active, 0044), so the name simply
+ * falls through to the default shelf instead. Whatever this resolves to, a
+ * forged or stale assignment is still re-checked server-side.
  */
 export function resolveCategoryIds(
   rows: ImportRowResult[],
-  categories: { id: string; name_ar: string; name_en: string }[],
+  categories: { id: string; name_ar: string; name_en: string; active?: boolean }[],
   defaultCategoryId: string | null,
 ): ImportRowResult[] {
   const byName = new Map<string, string>();
   for (const cat of categories) {
+    if (cat.active === false) continue;
     byName.set(cat.name_ar.trim().toLowerCase(), cat.id);
     byName.set(cat.name_en.trim().toLowerCase(), cat.id);
   }

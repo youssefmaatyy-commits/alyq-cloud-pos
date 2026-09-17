@@ -66,6 +66,16 @@ export const AUDIT_ACTIONS = [
   "product.variant_deleted",
   "product.variants_enabled",
   "product.variants_disabled",
+  // Phase 44 (0044): the category lifecycle. Archiving is not deleting — the
+  // trail must show both — and the move-and-delete is one transaction that
+  // leaves two rows: what moved, and what stopped existing. Live mode writes
+  // them from the `categories_audit` trigger and the move RPC, so the event
+  // exists however the change was made; demo mode writes the same from the
+  // catalog service.
+  "category.archived",
+  "category.reactivated",
+  "category.deleted",
+  "category.products_moved",
   "stock.adjusted",
   "stock.corrected",
   // Approval limits (Phase 12, requirement 2). Live mode writes these from
@@ -158,6 +168,8 @@ export const AUDIT_ENTITIES = [
   "sale",
   /** A catalogue product (`products`) — its price or cost moving. */
   "product",
+  /** A catalogue category (`categories`) — archived, reactivated, emptied or deleted. */
+  "category",
   /** A stock level and the movement that changed it (`stock_movements`). */
   "stock",
   /** An over-limit act waiting for a decision (`approval_requests`). */

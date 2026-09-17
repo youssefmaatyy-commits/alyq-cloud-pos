@@ -1,7 +1,12 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { Badge } from "@/components/ui";
 import { normalizeText } from "@/modules/products/services/productQuery";
+import { useCatalog } from "@/modules/products/hooks/CatalogProvider";
+import {
+  categoryNameIndex,
+  sellableCategoryFilterIds,
+} from "@/modules/products/services/categoryTree";
 import { usePos } from "../hooks/PosProvider";
 import { VariantPicker } from "./VariantPicker";
 
@@ -14,20 +19,41 @@ import { VariantPicker } from "./VariantPicker";
 export function ProductGrid() {
   const { t, pick } = useI18n();
   const { products, addLine, addBySku, lines, variantsOf } = usePos();
+  // Phase 44: the register's filter chips come from the category table, not
+  // from the products — so an ARCHIVED category leaves the shelf labels even
+  // while its products keep selling (products are never auto-archived).
+  const { categories } = useCatalog();
   // The product whose combinations the cashier is choosing between, if any.
   const [picking, setPicking] = useState<string | null>(null);
 
   const [search, setSearch] = useSearchState();
   const [category, setCategory] = useCategoryState();
 
+  const categoryLabels = useMemo(() => categoryNameIndex(categories, pick), [categories, pick]);
+
   const categoryOptions = useMemo(() => {
     const set = new Map<string, string>();
+    const activeIds = sellableCategoryFilterIds(categories);
     for (const product of products) {
       if (!product.category_id) continue;
-      set.set(product.category_id, prettyCategory(product.category_id));
+      // An archived category's products stay sellable but the shelf itself is
+      // gone; without a live label the id would leak as raw text anyway.
+      if (!activeIds.has(product.category_id)) continue;
+      set.set(
+        product.category_id,
+        categoryLabels.get(product.category_id) ?? prettyCategory(product.category_id),
+      );
     }
     return [...set.entries()];
-  }, [products]);
+  }, [products, categories, categoryLabels]);
+
+  // A filter pointing at a category that has since been archived resets
+  // itself — the register never sits on a shelf that no longer exists.
+  useEffect(() => {
+    if (category !== "all" && !categoryOptions.some(([id]) => id === category)) {
+      setCategory("all");
+    }
+  }, [category, categoryOptions, setCategory]);
 
   const filtered = useMemo(() => {
     const needle = normalizeText(search);

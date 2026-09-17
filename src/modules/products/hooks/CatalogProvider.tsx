@@ -21,6 +21,8 @@ import {
   saveCategory as saveCategoryService,
   saveProduct as saveProductService,
   setProductActive as setProductActiveService,
+  setCategoryActive as setCategoryActiveService,
+  moveProductsAndDeleteCategory as moveProductsAndDeleteCategoryService,
 } from "../services/catalogService";
 import { mayPerform } from "@/lib/permissions/actions";
 import { buildCategoryTree } from "../services/categoryTree";
@@ -61,6 +63,10 @@ export interface CatalogContextValue {
   setProductActive: (id: string, active: boolean) => Promise<Product>;
   deleteProduct: (id: string) => Promise<void>;
   deleteCategory: (id: string) => Promise<void>;
+  /** Archive / reactivate a category (Phase 44). Server-adjudicated. */
+  setCategoryActive: (id: string, active: boolean) => Promise<Category>;
+  /** Move every product to the target and delete the source — one transaction. */
+  moveProductsAndDeleteCategory: (sourceId: string, targetId: string) => Promise<{ moved: number }>;
   categoryById: (id: string | null | undefined) => Category | undefined;
 }
 
@@ -205,6 +211,24 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
     [categories, products, refresh],
   );
 
+  const setCategoryActive = useCallback(
+    async (id: string, active: boolean) => {
+      const category = await setCategoryActiveService(id, active);
+      await refresh();
+      return category;
+    },
+    [refresh],
+  );
+
+  const moveProductsAndDeleteCategory = useCallback(
+    async (sourceId: string, targetId: string) => {
+      const result = await moveProductsAndDeleteCategoryService({ sourceId, targetId });
+      await refresh();
+      return { moved: result.moved };
+    },
+    [refresh],
+  );
+
   const categoryById = useCallback(
     (id: string | null | undefined) => (id ? categories.find((c) => c.id === id) : undefined),
     [categories],
@@ -241,6 +265,8 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
       setProductActive,
       deleteProduct,
       deleteCategory,
+      setCategoryActive,
+      moveProductsAndDeleteCategory,
       categoryById,
     }),
     [
@@ -261,6 +287,8 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
       setProductActive,
       deleteProduct,
       deleteCategory,
+      setCategoryActive,
+      moveProductsAndDeleteCategory,
       categoryById,
     ],
   );

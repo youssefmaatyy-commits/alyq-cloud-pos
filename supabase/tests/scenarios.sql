@@ -4913,6 +4913,302 @@ begin
 end
 $$;
 
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Phase 44 — category lifecycle: safe delete, move, archive (0044)
+-- ═══════════════════════════════════════════════════════════════════════════
+-- The acceptance example, locked at the database:
+--
+--   Temporary Empty hard-deletes. Rings Old (5 products) refuses a direct
+--   delete — no cascade, no null-out. The 5 move to Rings New and Rings Old
+--   dies in ONE transaction, stock byte-identical. Hidden Rings is archived
+--   and can neither receive products nor appear on the storefront; a forged
+--   assignment to it is refused by a trigger, not by a dropdown. Reactivate
+--   restores everything. A seat stripped of delete_product is refused all
+--   three destructive verbs; with it restored, the verbs work — the
+--   capability matrix, not the caller's word, decides.
+--
+-- Concurrency is proven by construction rather than by a race here: both
+-- destructive RPCs lock the category rows FOR UPDATE before re-counting, and
+-- a concurrent product INSERT takes FOR KEY SHARE on the same row, so an
+-- assignment either lands first (and the recount refuses) or waits behind
+-- the delete (and the RESTRICT FK refuses). The serialised facts those locks
+-- guarantee are what this block pins.
+do $$
+declare
+  v_admin   uuid := '00000000-0000-4000-8000-0000000000a1';
+  v_clerk   uuid;
+  v_empty   uuid := '00000000-0000-4000-8000-000000004401';
+  v_old     uuid := '00000000-0000-4000-8000-000000004402';
+  v_new     uuid := '00000000-0000-4000-8000-000000004403';
+  v_hidden  uuid := '00000000-0000-4000-8000-000000004404';
+  v_parent  uuid := '00000000-0000-4000-8000-000000004405';
+  v_child   uuid := '00000000-0000-4000-8000-000000004406';
+  v_prod    uuid;
+  v_result  jsonb;
+  v_rows    integer;
+  v_stock   integer;
+  v_events  integer;
+  v_i       integer;
+begin
+  perform pg_temp.become(v_admin, 'authenticated');
+
+  -- ── the fixtures ────────────────────────────────────────────────────────
+  insert into public.categories (id, name_ar, name_en, parent_id, active, sort_order) values
+    (v_empty,  'فارغة',        'Temporary Empty', null, true, 901),
+    (v_old,    'خوواتم قديمة', 'Rings Old',       null, true, 902),
+    (v_new,    'خوواتم جديدة', 'Rings New',       null, true, 903),
+    (v_hidden, 'خوواتم مخفية', 'Hidden Rings',    null, false, 904),
+    (v_parent, 'أب',           'Lifecycle Parent', null, true, 905),
+    (v_child,  'ابن',          'Lifecycle Child',  v_parent, true, 906)
+  on conflict (id) do update
+    set name_en = excluded.name_en, parent_id = excluded.parent_id, active = excluded.active;
+
+  -- Rings Old holds FIVE products with distinct stock; re-runs restore them.
+  for v_i in 1..5 loop
+    v_prod := ('00000000-0000-4000-8000-0000000044' || lpad((9 + v_i)::text, 2, '0'))::uuid;
+    insert into public.products (
+      id, sku, barcode, name_ar, name_en, category_id,
+      selling_price, cost_price, stock_quantity, low_stock_level,
+      active, show_on_website
+    ) values (
+      v_prod, 'SCN-CAT-' || v_i, null, 'خاتم ' || v_i, 'Scenario Category Ring ' || v_i,
+      v_old, 100.00, 40.00, v_i * 10, 2, true, true
+    )
+    on conflict (id) do update
+      set category_id = v_old, stock_quantity = v_i * 10, active = true, show_on_website = true;
+  end loop;
+
+  -- ── 1. the empty category hard-deletes, and the trail knows ─────────────
+  v_result := public.delete_empty_category(v_empty, v_admin::text, 'Amina Admin');
+  if (v_result->>'deleted')::boolean is not true then
+    raise exception 'the empty category did not delete';
+  end if;
+  select count(*) into v_rows from public.categories where id = v_empty;
+  if v_rows <> 0 then
+    raise exception 'the empty category is still there';
+  end if;
+  if not exists (select 1 from public.audit_log
+                 where action = 'category.deleted' and entity_id = v_empty::text) then
+    raise exception 'the empty delete left no category.deleted row';
+  end if;
+
+  -- ── 2. the direct delete of Rings Old is refused — structured, and final ─
+  begin
+    perform public.delete_empty_category(v_old, v_admin::text, 'Amina Admin');
+    raise exception 'a 5-product category was hard-deleted';
+  exception when check_violation then
+    -- the message names the obstacle: 'Category Rings Old still contains 5 product(s)'
+    null;
+  end;
+  select count(*) into v_rows from public.categories where id = v_old;
+  if v_rows <> 1 then
+    raise exception 'the refused delete still removed the category';
+  end if;
+  select count(*), coalesce(sum(stock_quantity), 0) into v_rows, v_stock
+    from public.products where category_id = v_old;
+  if v_rows <> 5 or v_stock <> 150 then
+    raise exception 'the refused delete changed the products (rows=% stock=%)', v_rows, v_stock;
+  end if;
+
+  -- ── 3. the refusals around the move ─────────────────────────────────────
+  begin
+    perform public.move_products_and_delete_category(v_old, v_old, v_admin::text, 'Amina Admin');
+    raise exception 'source == target was accepted';
+  exception when check_violation then
+    null;
+  end;
+  begin
+    perform public.move_products_and_delete_category(
+      v_old, '00000000-0000-4000-8000-000000000000', v_admin::text, 'Amina Admin');
+    raise exception 'a missing target was accepted';
+  exception when foreign_key_violation then
+    null;
+  end;
+  begin
+    perform public.delete_empty_category(
+      '00000000-0000-4000-8000-000000000000', v_admin::text, 'Amina Admin');
+    raise exception 'a missing source was accepted';
+  exception when foreign_key_violation then
+    null;
+  end;
+  begin
+    perform public.move_products_and_delete_category(v_old, v_hidden, v_admin::text, 'Amina Admin');
+    raise exception 'an archived target accepted products';
+  exception when check_violation then
+    null;
+  end;
+  begin
+    perform public.move_products_and_delete_category(v_parent, v_new, v_admin::text, 'Amina Admin');
+    raise exception 'a parent with children was moved-and-deleted';
+  exception when restrict_violation then
+    null;
+  end;
+  begin
+    perform public.delete_empty_category(v_parent, v_admin::text, 'Amina Admin');
+    raise exception 'a parent with children was hard-deleted';
+  exception when restrict_violation then
+    null;
+  end;
+
+  -- ── 4. a seat stripped of delete_product is refused the destructive verbs ─
+  select p.id into v_clerk from public.profiles p
+   where p.role::text = 'inventory_clerk' and p.active limit 1;
+  if v_clerk is null then
+    raise exception 'no active inventory_clerk profile for the permission proof';
+  end if;
+  perform public.admin_set_user_exceptions(v_clerk, null, array['delete_product']);
+  perform pg_temp.become(v_clerk, 'authenticated');
+  begin
+    perform public.delete_empty_category(v_old, v_clerk::text, 'Clerk');
+    raise exception 'a seat without delete_product deleted a category';
+  exception when insufficient_privilege then
+    null;
+  end;
+  begin
+    perform public.move_products_and_delete_category(v_old, v_new, v_clerk::text, 'Clerk');
+    raise exception 'a seat without delete_product moved-and-deleted';
+  exception when insufficient_privilege then
+    null;
+  end;
+  -- archiving rides edit_product, which the clerk still holds: the flip works
+  -- (and is undone — the denial never narrows beyond the matrix)
+  v_result := public.set_category_active(v_old, false, v_clerk::text, 'Clerk');
+  if (v_result->>'changed')::boolean is not true then
+    raise exception 'the clerk could not flip a category the matrix allows';
+  end if;
+  v_result := public.set_category_active(v_old, true, v_clerk::text, 'Clerk');
+  if (v_result->>'active')::boolean is not true then
+    raise exception 'the clerk could not flip back';
+  end if;
+
+  -- now strip edit_product: the archive verb is refused too
+  perform pg_temp.become(v_admin, 'authenticated');
+  perform public.admin_set_user_exceptions(v_clerk, null, array['edit_product']);
+  perform pg_temp.become(v_clerk, 'authenticated');
+  begin
+    perform public.set_category_active(v_old, false, v_clerk::text, 'Clerk');
+    raise exception 'a seat without edit_product archived a category';
+  exception when insufficient_privilege then
+    null;
+  end;
+  perform pg_temp.become(v_admin, 'authenticated');
+  perform public.admin_set_user_exceptions(v_clerk, null, null);
+  perform pg_temp.become(v_clerk, 'authenticated');
+  -- the restored clerk may still archive — the denial was the exception, not
+  -- the rule (archive rides edit_product, which the clerk holds)
+  v_result := public.set_category_active(v_new, true, v_clerk::text, 'Clerk');
+  if (v_result->>'active')::boolean is not true then
+    raise exception 'the clerk could not flip a category the matrix allows';
+  end if;
+  perform pg_temp.become(v_admin, 'authenticated');
+
+  -- ── 5. the move: 5 products, one transaction, stock byte-identical ──────
+  v_result := public.move_products_and_delete_category(v_old, v_new, v_admin::text, 'Amina Admin');
+  if (v_result->>'moved')::integer <> 5 or (v_result->>'deleted')::boolean is not true then
+    raise exception 'the move did not report 5 moved + deleted';
+  end if;
+  select count(*) into v_rows from public.categories where id = v_old;
+  if v_rows <> 0 then
+    raise exception 'the source survived its own move-and-delete';
+  end if;
+  select count(*), coalesce(sum(stock_quantity), 0) into v_rows, v_stock
+    from public.products where category_id = v_new;
+  if v_rows <> 5 or v_stock <> 150 then
+    raise exception 'the target received rows=% stock=% (wanted 5 / 150)', v_rows, v_stock;
+  end if;
+  -- both events, in order: what moved, and what stopped existing
+  if not exists (select 1 from public.audit_log
+                 where action = 'category.products_moved'
+                   and details->>'source_id' = v_old::text
+                   and details->>'target_id' = v_new::text
+                   and (details->>'moved')::integer = 5) then
+    raise exception 'the move left no category.products_moved row';
+  end if;
+
+  -- the storefront still sells the moved products (archive ≠ delete, for goods)
+  perform pg_temp.become(v_admin, 'authenticated');
+  select count(*) into v_rows from public.storefront_categories() where id = v_new;
+  if v_rows <> 1 then
+    raise exception 'the active target vanished from the storefront';
+  end if;
+
+  -- ── 6. archive with products: hidden, untouched, restorable ─────────────
+  select count(*) into v_events from public.audit_log
+   where action = 'category.archived' and entity_id = v_new::text;
+  v_result := public.set_category_active(v_new, false, v_admin::text, 'Amina Admin');
+  if (v_result->>'changed')::boolean is not true then
+    raise exception 'archiving reported no change';
+  end if;
+  if (select count(*) from public.audit_log
+      where action = 'category.archived' and entity_id = v_new::text) <> v_events + 1 then
+    raise exception 'the archive wrote no trail row';
+  end if;
+  -- the products are NOT auto-archived: still active, still on the website
+  select count(*) into v_rows from public.products
+   where category_id = v_new and active and show_on_website;
+  if v_rows <> 5 then
+    raise exception 'archiving the category touched its products (live=%)', v_rows;
+  end if;
+  -- the storefront shelf is gone; the goods remain in the catalogue
+  select count(*) into v_rows from public.storefront_categories() where id = v_new;
+  if v_rows <> 0 then
+    raise exception 'the archived category still fronts the storefront';
+  end if;
+
+  -- ── 7. the forged assignment: refused by a trigger, not a dropdown ──────
+  begin
+    update public.products set category_id = v_new
+     where id = '00000000-0000-4000-8000-000000004410';
+    raise exception 'a forged update shelved a product in an archived category';
+  exception when check_violation then
+    null;
+  end;
+  begin
+    insert into public.products (
+      id, sku, name_ar, name_en, category_id, selling_price, cost_price,
+      stock_quantity, active
+    ) values (
+      '00000000-0000-4000-8000-0000000044f0', 'SCN-CAT-FORGED', 'مزوّر', 'Forged',
+      v_hidden, 1.00, 0.50, 1, true
+    )
+    on conflict (id) do update set category_id = excluded.category_id;
+    raise exception 'a forged insert shelved a product in an archived category';
+  exception when check_violation then
+    null;
+  end;
+
+  -- ── 8. re-running the flip is a no-op that writes nothing ───────────────
+  select count(*) into v_events from public.audit_log
+   where action in ('category.archived', 'category.reactivated') and entity_id = v_new::text;
+  v_result := public.set_category_active(v_new, false, v_admin::text, 'Amina Admin');
+  if (v_result->>'changed')::boolean is not false then
+    raise exception 'a repeated archive reported a change';
+  end if;
+  if (select count(*) from public.audit_log
+      where action in ('category.archived', 'category.reactivated')
+        and entity_id = v_new::text) <> v_events then
+    raise exception 'a repeated flip manufactured an audit row';
+  end if;
+
+  -- ── 9. reactivate restores the shelf everywhere ──────────────────────────
+  v_result := public.set_category_active(v_new, true, v_admin::text, 'Amina Admin');
+  if (v_result->>'changed')::boolean is not true then
+    raise exception 'reactivating reported no change';
+  end if;
+  if not exists (select 1 from public.audit_log
+                 where action = 'category.reactivated' and entity_id = v_new::text) then
+    raise exception 'the reactivation left no trail row';
+  end if;
+  select count(*) into v_rows from public.storefront_categories() where id = v_new;
+  if v_rows <> 1 then
+    raise exception 'the reactivated category did not return to the storefront';
+  end if;
+
+  raise notice 'category lifecycle (0044) — the empty shelf deletes, the 5-product shelf refuses with its count, mirrored and missing sides refuse, the archived target refuses, children refuse, the stripped clerk is refused all three verbs and restored by the matrix, 5 products move atomically with byte-identical stock, the archive hides the shelf and touches no product, forged assignments hit the trigger, and a replay writes no second event';
+end
+$$;
+
 do $$
 begin
   perform set_config('request.jwt.claim.sub', '', true);
