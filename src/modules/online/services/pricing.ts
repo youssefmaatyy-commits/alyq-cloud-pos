@@ -228,7 +228,6 @@ export function deliveryFeeFor(
   return round2(Math.max(delivery.fee, 0));
 }
 
-/** True when the order is close enough to the threshold to be worth saying so. */
 /**
  * The shop's delivery areas, cleaned: trimmed, empties dropped. An entry is a
  * place name the customer's city is matched against, in either language.
@@ -286,6 +285,7 @@ export function deliveryMinimumShortfall(
   return round2(Math.max(minimum - subtotalAfterDiscount, 0));
 }
 
+/** True when the order is close enough to the threshold to be worth saying so. */
 export function freeDeliveryProgress(
   delivery: DeliverySettings,
   subtotalAfterDiscount: number,
