@@ -31,6 +31,11 @@ interface ReturnItemRow {
   return_id: string;
   sale_item_id: string;
   product_id: string;
+  variant_id?: string | null;
+  variant_color_ar?: string | null;
+  variant_color_en?: string | null;
+  variant_size?: number | string | null;
+  variant_size_label?: string | null;
   name_ar: string;
   name_en: string;
   sku: string;
@@ -85,6 +90,14 @@ function mapReturn(row: ReturnRow, items: ReturnItemRow[] = []): SalesReturn {
       return_id: i.return_id,
       sale_item_id: i.sale_item_id,
       product_id: i.product_id,
+      // Written by `pos_process_return` from the sold line; read back so the
+      // return document still names the exact combination.
+      variant_id: i.variant_id ?? null,
+      variant_color_ar: i.variant_color_ar ?? null,
+      variant_color_en: i.variant_color_en ?? null,
+      variant_size:
+        i.variant_size === null || i.variant_size === undefined ? null : toNumber(i.variant_size),
+      variant_size_label: i.variant_size_label ?? null,
       name_ar: i.name_ar,
       name_en: i.name_en,
       sku: i.sku,

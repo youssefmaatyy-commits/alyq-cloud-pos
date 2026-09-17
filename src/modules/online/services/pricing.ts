@@ -28,6 +28,11 @@ export function round2(value: number): number {
 
 export interface PricedLine {
   product_id: string;
+  /**
+   * Phase 43: the exact combination priced, when the product sells by variant.
+   * Null on a product-level line.
+   */
+  variant_id: string | null;
   quantity: number;
   /** Catalogue price, before any campaign. */
   list_price: number;
@@ -110,6 +115,104 @@ export function unitPriceOf(
     return round2((listPrice * (100 - percent)) / 100);
   }
   return round2(Math.max(listPrice - campaign.discount_value, 0));
+}
+
+// ── variants (Phase 43) ─────────────────────────────────────────────────────
+
+/**
+ * The published shape of a combination, as `storefront_product_variants()`
+ * returns it. Never cost, never the low-stock threshold — the same rule the
+ * product window has.
+ */
+export interface StoreVariant {
+  id: string;
+  product_id: string;
+  sku: string;
+  color_key: string;
+  color_ar: string | null;
+  color_en: string | null;
+  color_hex: string | null;
+  size: number | null;
+  size_label: string | null;
+  image_url: string | null;
+  /** Null → the product's own selling_price (campaigns may then apply). */
+  price_override: number | null;
+  stock_quantity: number;
+  active: boolean;
+  sort_order: number;
+}
+
+/**
+ * What one combination sells for, under the same rule the database prices with:
+ *
+ *   · a combination with its own price override sells at that override, FIXED —
+ *     a campaign never stacks on top, because a shop that marked one size down
+ *     did so deliberately;
+ *   · every other combination sells at the product price, campaigns included.
+ */
+export function variantUnitPriceOf(
+  variant: Pick<StoreVariant, "price_override">,
+  productPrice: number,
+  campaign: Campaign | null,
+): number {
+  if (variant.price_override !== null) return round2(Math.max(variant.price_override, 0));
+  return unitPriceOf(productPrice, campaign);
+}
+
+/**
+ * Display order: colour, then NUMERIC size, then the shop's own ordering —
+ * `16 → 16.5 → 17 → 17.5`, never lexicographically. The storefront's twin of
+ * the catalogue's `compareVariants`, kept here because the customer side never
+ * imports the catalogue's internals.
+ */
+export function sortStoreVariants<T extends Pick<StoreVariant, "color_key" | "size" | "size_label" | "sort_order" | "sku">>(
+  variants: readonly T[],
+): T[] {
+  return [...variants].sort((a, b) => {
+    if (a.color_key !== b.color_key) return a.color_key.localeCompare(b.color_key);
+    if (a.size !== null && b.size !== null && a.size !== b.size) return a.size - b.size;
+    if (a.size === null && b.size !== null) return 1;
+    if (a.size !== null && b.size === null) return -1;
+    if ((a.size_label ?? "") !== (b.size_label ?? "")) {
+      return (a.size_label ?? "").localeCompare(b.size_label ?? "");
+    }
+    if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
+    return a.sku.localeCompare(b.sku);
+  });
+}
+
+/** One colour's row in the picker: the swatch and the sizes it opens. */
+export interface StoreVariantColorGroup {
+  color_key: string;
+  color_ar: string | null;
+  color_en: string | null;
+  color_hex: string | null;
+  variants: StoreVariant[];
+}
+
+/**
+ * Group a product's combinations by colour for the picker: one row of swatches,
+ * each opening the numeric sizes of that colour. A size-only product yields one
+ * group with an empty colour key; a colour-only product yields one variant per
+ * group.
+ */
+export function colorGroupsOf(variants: readonly StoreVariant[]): StoreVariantColorGroup[] {
+  const groups = new Map<string, StoreVariantColorGroup>();
+  for (const variant of sortStoreVariants(variants)) {
+    const existing = groups.get(variant.color_key);
+    if (existing) {
+      existing.variants.push(variant);
+    } else {
+      groups.set(variant.color_key, {
+        color_key: variant.color_key,
+        color_ar: variant.color_ar,
+        color_en: variant.color_en,
+        color_hex: variant.color_hex,
+        variants: [variant],
+      });
+    }
+  }
+  return [...groups.values()];
 }
 
 // ── coupons ─────────────────────────────────────────────────────────────────
@@ -304,6 +407,14 @@ export interface PriceCartItem {
   list_price: number;
   quantity: number;
   category_id?: string | null;
+  /**
+   * Phase 43: the combination being priced, and the price it is fixed at when it
+   * has its own override. A priced line for a variant product carries both; a
+   * legacy line carries neither.
+   */
+  variant_id?: string | null;
+  /** Non-null → the line prices at exactly this, campaigns never applied. */
+  fixed_price?: number | null;
 }
 
 /**
@@ -326,11 +437,17 @@ export function priceCart(input: {
   const now = input.now ?? new Date();
 
   const lines: PricedLine[] = input.items.map((item) => {
-    const campaign = campaignFor(item.product_id, input.campaigns, now);
-    const unitPrice = unitPriceOf(item.list_price, campaign);
+    // A combination with its own price is priced by that override and nothing
+    // else — the same decision `place_online_order` makes.
+    const fixed = item.fixed_price !== null && item.fixed_price !== undefined;
+    const campaign = fixed ? null : campaignFor(item.product_id, input.campaigns, now);
+    const unitPrice = fixed
+      ? round2(Math.max(item.fixed_price as number, 0))
+      : unitPriceOf(item.list_price, campaign);
     const quantity = Math.max(Math.trunc(item.quantity) || 0, 0);
     return {
       product_id: item.product_id,
+      variant_id: item.variant_id ?? null,
       quantity,
       list_price: round2(item.list_price),
       unit_price: unitPrice,

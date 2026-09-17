@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { PageHeader } from "@/components/layout/AppShell";
@@ -33,12 +33,15 @@ import { StockStatusBadge } from "../components/StockStatusBadge";
 import { StockAdjustmentModal } from "../components/StockAdjustmentModal";
 import { ROLE_LABEL } from "../permissions";
 import type { StockStatus } from "@/modules/products/types";
+import type { ProductVariant } from "@/modules/products/variants";
+import { sizeLabelOf } from "@/modules/products/variants";
 
 export function InventoryPage() {
   const { t, pick, num, date } = useI18n();
   const {
     products,
     movements,
+    variantsByProduct,
     loading,
     error,
     refresh,
@@ -228,6 +231,7 @@ export function InventoryPage() {
             lastMovementOf={lastMovement}
             onAdjust={(id) => setAdjusting(id)}
             canAdjust={canAdjust}
+            variantsByProduct={variantsByProduct}
             empty={
               <Card>
                 <EmptyState
@@ -313,6 +317,8 @@ interface InventoryTableProps {
   lastMovementOf: (id: string) => { created_at: string } | undefined;
   onAdjust: (id: string) => void;
   canAdjust: boolean;
+  /** Phase 43: the combinations behind a variant product's rollup. */
+  variantsByProduct: Map<string, ProductVariant[]>;
   empty: React.ReactNode;
 }
 
@@ -322,9 +328,12 @@ function InventoryStockTable({
   lastMovementOf,
   onAdjust,
   canAdjust,
+  variantsByProduct,
   empty,
 }: InventoryTableProps) {
   const { t, pick, num, date } = useI18n();
+  // One breakdown open at a time: the screen is a count, not a maze.
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   if (products.length === 0) return <>{empty}</>;
 
   return (
@@ -349,8 +358,11 @@ function InventoryStockTable({
                 ? deriveStatus(product)
                 : ("none" as StockStatus);
               const last = lastMovementOf(product.id);
+              const variants = variantsByProduct.get(product.id) ?? [];
+              const expanded = expandedId === product.id;
               return (
-                <tr key={product.id} className="border-b border-slate-50 last:border-0 hover:bg-slate-50/60">
+                <Fragment key={product.id}>
+                <tr className="border-b border-slate-50 last:border-0 hover:bg-slate-50/60">
                   <td className="px-4 py-3">
                     <p className="font-medium text-slate-900">
                       {pick(product.name_ar, product.name_en)}
@@ -378,6 +390,19 @@ function InventoryStockTable({
                     <span className="block text-[11px] font-medium text-slate-500">
                       {last ? date(last.created_at) : "—"}
                     </span>
+                    {variants.length > 0 ? (
+                      <button
+                        type="button"
+                        data-testid={`variant-breakdown-toggle-${product.sku}`}
+                        aria-expanded={expanded}
+                        onClick={() => setExpandedId(expanded ? null : product.id)}
+                        className="mt-0.5 text-[10px] font-bold text-indigo-600 hover:underline"
+                      >
+                        {expanded
+                          ? t("inventory.variants.hide")
+                          : t("inventory.variants.show", { count: variants.length })}
+                      </button>
+                    ) : null}
                   </td>
                   <td className="px-3 py-3 text-end font-medium text-slate-700 tabular-nums">
                     {num(product.low_stock_level, 0)}
@@ -396,6 +421,48 @@ function InventoryStockTable({
                     </Button>
                   </td>
                 </tr>
+                {/* The breakdown: one row per combination, its OWN shelf. The
+                    product line above is the sum; this is where a missing size
+                    is actually found. */}
+                {expanded && variants.length > 0 ? (
+                  <tr className="border-b border-slate-100 bg-indigo-50/40">
+                    <td colSpan={8} className="px-4 py-2">
+                      <ul className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3" data-testid={`variant-breakdown-${product.sku}`}>
+                        {variants.map((variant) => (
+                          <li
+                            key={variant.id}
+                            className="flex items-center justify-between gap-2 rounded-lg bg-white px-2.5 py-1.5 text-[11px] shadow-sm"
+                          >
+                            <span className="min-w-0 truncate font-semibold text-slate-800">
+                              {pick(variant.color_ar, variant.color_en) || t("store.variants.defaultColor")}
+                              {" / "}
+                              <span className="tabular-nums">
+                                {sizeLabelOf(variant.size, variant.size_label)}
+                              </span>
+                              {!variant.active ? (
+                                <span className="ms-1 text-slate-400">· {t("products.variants.statusArchived")}</span>
+                              ) : null}
+                            </span>
+                            <span
+                              className={`shrink-0 font-bold tabular-nums ${
+                                !variant.active
+                                  ? "text-slate-400"
+                                  : variant.stock_quantity <= 0
+                                    ? "text-rose-600"
+                                    : variant.low_stock_level > 0 && variant.stock_quantity <= variant.low_stock_level
+                                      ? "text-amber-600"
+                                      : "text-emerald-700"
+                              }`}
+                            >
+                              {num(variant.stock_quantity, 0)}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </td>
+                  </tr>
+                ) : null}
+                </Fragment>
               );
             })}
           </tbody>

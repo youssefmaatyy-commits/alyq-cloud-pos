@@ -64,8 +64,6 @@ export function StoreCartPage() {
     );
   }
 
-  const problemFor = (productId: string) => problems.find((problem) => problem.product_id === productId);
-
   return (
     <div className="mx-auto w-full max-w-[var(--store-max-width,72rem)] px-4 py-6 sm:px-6">
       <h1 className="text-2xl font-black tracking-tight text-[var(--store-text)]">{t("store.cart.title")}</h1>
@@ -82,10 +80,18 @@ export function StoreCartPage() {
       <div className="mt-5 grid gap-6 lg:grid-cols-[1fr_20rem]">
         <div className="flex flex-col gap-3">
           {entries.map((entry) => {
-            const problem = problemFor(entry.product.id);
+            // Phase 43: a line IS a combination — the key and every operation
+            // name product + variant, so Gold / 17 and Silver / 17 are two
+            // rows that never merge and never reach into each other's shelf.
+            const lineKey = `${entry.product.id}::${entry.variant?.id ?? ""}`;
+            const problem = problems.find(
+              (candidate) =>
+                candidate.product_id === entry.product.id &&
+                (candidate.variant_id ?? null) === (entry.variant?.id ?? null),
+            );
             return (
               <article
-                key={entry.product.id}
+                key={lineKey}
                 className="flex gap-3 border border-[var(--store-border)] bg-[var(--store-surface)] p-3"
                 style={{ borderRadius: "var(--store-radius)" }}
               >
@@ -109,7 +115,7 @@ export function StoreCartPage() {
                     </Link>
                     <button
                       type="button"
-                      onClick={() => remove(entry.product.id)}
+                      onClick={() => remove(entry.product.id, entry.variant?.id ?? null)}
                       className="shrink-0 text-xs font-bold text-[var(--store-muted)] hover:text-rose-600"
                       aria-label={t("store.cart.remove")}
                     >
@@ -117,8 +123,17 @@ export function StoreCartPage() {
                     </button>
                   </div>
 
+                  {entry.variantLabel ? (
+                    <p
+                      className="text-xs font-black text-[var(--store-text)]"
+                      data-testid="cart-line-variant"
+                    >
+                      {entry.variantLabel}
+                    </p>
+                  ) : null}
+
                   <p className="text-[11px] font-semibold text-[var(--store-muted)]">
-                    {entry.product.sku}
+                    {entry.variant?.sku ?? entry.product.sku}
                     {entry.content?.brand_en || entry.content?.brand_ar
                       ? ` · ${pick(entry.content?.brand_ar ?? null, entry.content?.brand_en ?? null)}`
                       : ""}
@@ -128,7 +143,7 @@ export function StoreCartPage() {
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
-                        onClick={() => decrease(entry.product.id)}
+                        onClick={() => decrease(entry.product.id, entry.variant?.id ?? null)}
                         className="grid h-8 w-8 place-items-center rounded-lg border border-[var(--store-border)] font-bold text-[var(--store-muted)]"
                         aria-label={t("store.cart.decrease")}
                       >
@@ -139,7 +154,7 @@ export function StoreCartPage() {
                       </span>
                       <button
                         type="button"
-                        onClick={() => increase(entry.product.id)}
+                        onClick={() => increase(entry.product.id, entry.variant?.id ?? null)}
                         disabled={entry.available !== null && entry.quantity >= entry.available}
                         className="grid h-8 w-8 place-items-center rounded-lg border border-[var(--store-border)] font-bold text-[var(--store-primary)] disabled:opacity-40"
                         aria-label={t("store.cart.increase")}

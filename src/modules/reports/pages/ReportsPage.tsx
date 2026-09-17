@@ -23,6 +23,7 @@ import { withinDateRange } from "@/lib/export";
 import { useCatalog } from "@/modules/products/hooks/CatalogProvider";
 import { categoryNameIndex } from "@/modules/products/services/categoryTree";
 import { buildProductsSheets } from "@/modules/products/services/productsExport";
+import { buildVariantsSheet } from "@/modules/products/services/variantsExport";
 import { useInventory } from "@/modules/inventory/hooks/InventoryProvider";
 import { EMPTY_INVENTORY_FILTERS, queryInventory } from "@/modules/inventory/services/inventoryQuery";
 import { buildInventorySheets } from "@/modules/inventory/services/inventoryExport";
@@ -78,7 +79,7 @@ import {
 export function ReportsPage() {
   const { t, pick, money, lang } = useI18n();
   const navigate = useNavigate();
-  const { products: catalogProducts, categories } = useCatalog();
+  const { products: catalogProducts, categories, variants: catalogVariants } = useCatalog();
   const { products: inventoryProducts, movements, loading: inventoryLoading } = useInventory();
   const { sales, salesLoading, repository } = usePos();
   const { customers, loading: customersLoading } = useCustomers();
@@ -474,6 +475,28 @@ export function ReportsPage() {
                   }
                 />
               </ExportRow>
+
+              {catalogVariants.length > 0 ? (
+                <ExportRow
+                  icon={<BoxIcon />}
+                  title={t("export.sheet.variants")}
+                  hint={`${catalogVariants.length} ${t("export.col.variantSku").toLowerCase()}`}
+                >
+                  <ExportButton
+                    name="variants"
+                    size="sm"
+                    count={catalogVariants.length}
+                    build={() =>
+                      buildVariantsSheet({
+                        variants: catalogVariants,
+                        products: catalogProducts,
+                        t,
+                        pick,
+                      })
+                    }
+                  />
+                </ExportRow>
+              ) : null}
 
               <ExportRow
                 icon={<UsersIcon />}

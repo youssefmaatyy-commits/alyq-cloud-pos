@@ -18,6 +18,7 @@
 
 import { getSupabaseClient, isSupabaseConfigured } from "@/lib/supabase/client";
 import type { Product, Category } from "@/modules/products/types";
+import type { StoreVariant } from "@/modules/online/services/pricing";
 import { getDemoRepository } from "@/modules/products/data/demoRepository";
 
 /**
@@ -44,40 +45,83 @@ const toProduct = (row: StorefrontProductRow): Product => ({
 export async function fetchStorefrontCatalog(): Promise<{
   products: Product[];
   categories: Category[];
+  /**
+   * Phase 43: the published combinations of the published variant products.
+   * Empty for a shop that sells nothing by variant — the pages render exactly
+   * as they did before this existed.
+   */
+  variants: StoreVariant[];
   mode: "supabase" | "demo";
 }> {
   if (isSupabaseConfigured) {
     const client = getSupabaseClient();
     if (!client) throw new Error("Supabase client unavailable");
 
-    // Both functions filter and order for the shop window: featured first, then
-    // by name; categories by their sort order. The two calls are independent,
-    // so they travel together.
-    const [productResult, categoryResult] = await Promise.all([
+    // The three reads are independent, so they travel together. The variant one
+    // goes through `storefront_product_variants()` (0043) for the same reason
+    // the other two go through their functions: the shape of the answer is
+    // decided in the database, and it is the public shape — colour, size,
+    // swatch, price override, stock on hand — never cost, never a threshold,
+    // never an unpublished product or an archived combination.
+    const [productResult, categoryResult, variantResult] = await Promise.all([
       client.rpc("storefront_catalogue"),
       client.rpc("storefront_categories"),
+      client.rpc("storefront_product_variants"),
     ]);
 
     if (productResult.error) throw productResult.error;
     if (categoryResult.error) throw categoryResult.error;
+    // A shop upgraded before 0043 has no such function yet; an empty shelf of
+    // combinations is the honest answer, not a broken storefront.
+    if (variantResult.error) {
+      console.warn("[storefront] variant list unavailable", variantResult.error.message);
+    }
 
     return {
       products: ((productResult.data ?? []) as StorefrontProductRow[]).map(toProduct),
       categories: (categoryResult.data ?? []) as StorefrontCategoryRow[],
+      variants: (variantResult.error ? [] : (variantResult.data ?? [])) as StoreVariant[],
       mode: "supabase",
     };
   }
 
-  // Demo mode — filter the demo seed for website-visible products.
+  // Demo mode — filter the demo seed for website-visible products, and the
+  // combinations down to those of the visible variant products, shaped as the
+  // live RPC shapes them: no cost, no threshold. The storefront has no use for
+  // either, and demo should not render one either.
   const repo = getDemoRepository();
-  const [allProducts, allCategories] = await Promise.all([
+  const [allProducts, allCategories, allVariants] = await Promise.all([
     repo.listProducts(),
     repo.listCategories(),
+    repo.listVariants(),
   ]);
+
+  const visible = new Set(
+    allProducts.filter((p) => p.active && p.show_on_website && p.variants_enabled).map((p) => p.id),
+  );
+  const variants: StoreVariant[] = allVariants
+    .filter((v) => visible.has(v.product_id) && v.active)
+    .map((v) => ({
+      id: v.id,
+      product_id: v.product_id,
+      sku: v.sku,
+      color_key: v.color_key,
+      color_ar: v.color_ar,
+      color_en: v.color_en,
+      color_hex: v.color_hex,
+      size: v.size,
+      size_label: v.size_label,
+      image_url: v.image_url,
+      price_override: v.price_override,
+      stock_quantity: v.stock_quantity,
+      active: v.active,
+      sort_order: v.sort_order,
+    }));
 
   return {
     products: allProducts.filter((p) => p.active && p.show_on_website),
     categories: allCategories.filter((c) => c.active),
+    variants,
     mode: "demo",
   };
 }

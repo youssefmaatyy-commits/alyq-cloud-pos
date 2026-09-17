@@ -62,13 +62,14 @@ import { ProductReportTab } from "../components/tabs/ProductReportTab";
 import { CustomerReportTab } from "../components/tabs/CustomerReportTab";
 import { ExpenseReportTab } from "../components/tabs/ExpenseReportTab";
 import { ShiftReportTab } from "../components/tabs/ShiftReportTab";
+import { VariantReportTab } from "../components/tabs/VariantReportTab";
 import type { ReportTabProps } from "../components/tabs/types";
 
-type TabId = "sales" | "products" | "customers" | "expenses" | "shifts" | "financial";
+type TabId = "sales" | "products" | "variants" | "customers" | "expenses" | "shifts" | "financial";
 
 export function AdvancedReportsPage() {
   const { t, money, num, lang } = useI18n();
-  const { products } = useCatalog();
+  const { products, variants } = useCatalog();
   const { sales, salesLoading } = usePos();
   const { customers, loading: customersLoading } = useCustomers();
   const { expenses } = useExpenses();
@@ -90,6 +91,8 @@ export function AdvancedReportsPage() {
       range: exportRange,
       sales,
       products,
+      variants,
+      returns: returnsList,
       customers,
       expenses,
       shifts,
@@ -97,7 +100,7 @@ export function AdvancedReportsPage() {
       pick: (arabic: string | null | undefined, english: string | null | undefined) =>
         lang === "ar" ? arabic || english || "" : english || arabic || "",
     }),
-    [exportRange, sales, products, customers, expenses, shifts, summaryFor, lang],
+    [exportRange, sales, products, variants, returnsList, customers, expenses, shifts, summaryFor, lang],
   );
 
   // The financial picture, from the hub's own totals — including what the
@@ -210,6 +213,7 @@ export function AdvancedReportsPage() {
               tabs={[
                 { id: "sales", label: t("reports.adv.tabSales"), count: sales.length },
                 { id: "products", label: t("reports.adv.tabProducts"), count: products.length },
+                { id: "variants", label: t("reports.adv.tabVariants"), count: variants.length },
                 { id: "customers", label: t("reports.adv.tabCustomers"), count: customers.length },
                 { id: "expenses", label: t("reports.adv.tabExpenses"), count: expenses.length },
                 { id: "shifts", label: t("reports.adv.tabShifts"), count: shifts.length },
@@ -220,6 +224,7 @@ export function AdvancedReportsPage() {
 
           {tab === "sales" ? <SalesReportTab {...tabProps} /> : null}
           {tab === "products" ? <ProductReportTab {...tabProps} /> : null}
+          {tab === "variants" ? <VariantReportTab {...tabProps} /> : null}
           {tab === "customers" ? <CustomerReportTab {...tabProps} /> : null}
           {tab === "expenses" ? <ExpenseReportTab {...tabProps} /> : null}
           {tab === "shifts" ? <ShiftReportTab {...tabProps} /> : null}

@@ -25,13 +25,13 @@ import type { ReportTabProps } from "./types";
 const BEST_LIMIT = 10;
 const SLOW_LIMIT = 10;
 
-export function ProductReportTab({ sales, products, range, pick }: ReportTabProps) {
+export function ProductReportTab({ sales, products, variants, range, pick }: ReportTabProps) {
   const { t, money, num } = useI18n();
 
   const ranged = useMemo(() => buildSalesAnalytics({ sales, shifts: [], range }).sales, [sales, range]);
   const rows = useMemo(() => productPerformance(ranged, products), [ranged, products]);
   const margin = useMemo(() => marginSummary(ranged, products, rows), [ranged, products, rows]);
-  const stock = useMemo(() => stockValueTotals(products), [products]);
+  const stock = useMemo(() => stockValueTotals(products, variants ?? []), [products, variants]);
   const best = useMemo(() => bestSellers(rows, BEST_LIMIT), [rows]);
   const slow = useMemo(() => slowMovers(products, rows, SLOW_LIMIT), [products, rows]);
 

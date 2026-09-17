@@ -43,6 +43,15 @@ export {
   expensesByDay,
   expensesInRange,
 } from "./services/expenseAnalytics";
+
+// Phase 43: the per-combination read — the database RPC first, the browser
+// arithmetic as the fallback both modes agree with.
+export {
+  computeVariantPerformance,
+  fetchVariantPerformance,
+  type ComputeVariantPerformanceInput,
+  type VariantPerformanceRow,
+} from "./services/variantPerformance";
 export type {
   ExpenseBreakdownRow,
   ExpenseDayRow,

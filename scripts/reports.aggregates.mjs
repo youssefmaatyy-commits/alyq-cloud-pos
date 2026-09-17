@@ -482,6 +482,8 @@ const productsRaw = await q(`select id, sku, barcode, name_ar, name_en, category
        product_type::text as product_type, selling_price, cost_price, tax_rate,
        stock_tracking_enabled, stock_quantity, low_stock_level, show_on_website, is_featured, active
     from public.products order by name_en`);
+const variantsRaw = await q(`select id, product_id, sku, active, stock_quantity, low_stock_level
+    from public.product_variants`);
 const expensesRaw = await q(`select id, expense_number, name, category, amount,
        payment_method::text as payment_method, spent_at, notes, attachment_url, attachment_name,
        branch, shift_id, user_id, user_name from public.expenses order by spent_at desc, id`);
@@ -573,6 +575,15 @@ const PRODUCTS = productsRaw.map((p) => ({
   images: [],
   created_at: "",
   updated_at: "",
+}));
+
+const VARIANTS = variantsRaw.map((v) => ({
+  id: v.id,
+  product_id: v.product_id,
+  sku: v.sku,
+  active: Boolean(v.active),
+  stock_quantity: num(v.stock_quantity),
+  low_stock_level: num(v.low_stock_level),
 }));
 
 const EXPENSES = expensesRaw.map((e) => ({
@@ -763,7 +774,7 @@ for (const { label, range } of RANGES) {
         ["inventory", `select public.reports_inventory_summary() as reports`, []],
       ])
     ).inventory;
-    agree("inventory: the whole shelf, valued", TS.stockValueTotals(PRODUCTS), inv);
+    agree("inventory: the whole shelf, valued", TS.stockValueTotals(PRODUCTS, VARIANTS), inv);
   }
 }
 

@@ -36,6 +36,7 @@ import { useOnlineNotificationState } from "../hooks/OnlineNotificationsProvider
 import { OrderDetailModal } from "../components/OrderDetailModal";
 import { buildOnlineOrderSheets } from "../services/onlineOrdersExport";
 import { ONLINE_ORDER_STATUSES, ONLINE_PAYMENT_STATUSES, type OnlineOrder } from "../types";
+import { variantLabelOf } from "../services/variantLabel";
 
 const STATUS_TONE: Record<OnlineOrder["status"], "neutral" | "success" | "danger" | "info" | "warning"> = {
   pending: "warning",
@@ -54,7 +55,7 @@ const PAYMENT_TONE: Record<OnlineOrder["payment_status"], "neutral" | "success" 
 };
 
 export function OnlineOrdersPage() {
-  const { t, pick, num, date, money } = useI18n();
+  const { t, pick, num, date, money, lang } = useI18n();
   const {
     orders,
     loading,
@@ -405,6 +406,27 @@ export function OnlineOrdersPage() {
                     </td>
                     <td className="px-3 py-3 text-end text-xs tabular-nums">
                       {num(order.items.reduce((sum, item) => sum + item.quantity, 0), 0)}
+                      {/* Phase 43: the queue names the shelf without a click —
+                          the same frozen snapshot the detail modal reads. */}
+                      {order.items.some((item) => item.variant_id) ? (
+                        <span className="mt-0.5 block text-[10px] font-semibold text-indigo-600" dir="ltr">
+                          {order.items
+                            .filter((item) => item.variant_id)
+                            .map(
+                              (item) =>
+                                `${item.quantity} × ${variantLabelOf(
+                                  {
+                                    color_ar: item.variant_color_ar,
+                                    color_en: item.variant_color_en,
+                                    size: item.variant_size,
+                                    size_label: item.variant_size_label,
+                                  },
+                                  lang,
+                                )}`,
+                            )
+                            .join(", ")}
+                        </span>
+                      ) : null}
                     </td>
                     <td className="px-3 py-3 text-end text-sm font-bold tabular-nums text-slate-900">
                       {money(order.total)}

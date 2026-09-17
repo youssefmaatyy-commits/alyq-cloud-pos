@@ -5,6 +5,12 @@ import { round2 } from "@/modules/pos/services/posMath";
 export interface ItemReturnValidation {
   sale_item_id: string;
   product_id: string;
+  /** The exact combination that was sold (Phase 43), copied off the sale line. */
+  variant_id: string | null;
+  variant_color_ar: string | null;
+  variant_color_en: string | null;
+  variant_size: number | null;
+  variant_size_label: string | null;
   name_ar: string;
   name_en: string;
   sku: string;
@@ -124,6 +130,13 @@ export function validateReturnDraft(
     itemValidations.push({
       sale_item_id: saleItem.id,
       product_id: saleItem.product_id,
+      // Straight off the sold line: the variant being returned is a fact about
+      // the sale, not a choice made at the counter today.
+      variant_id: saleItem.variant_id ?? null,
+      variant_color_ar: saleItem.variant_color_ar ?? null,
+      variant_color_en: saleItem.variant_color_en ?? null,
+      variant_size: saleItem.variant_size ?? null,
+      variant_size_label: saleItem.variant_size_label ?? null,
       name_ar: saleItem.name_ar,
       name_en: saleItem.name_en,
       sku: saleItem.sku,

@@ -94,6 +94,16 @@ const VERDICT_TONE: Record<ReservationVerdict, "neutral" | "success" | "danger" 
   unresolved: "info",
 };
 
+/** "Gold / 17" from a row's frozen combination, or null for a product-level hold. */
+function variantLabelOf(
+  variant: NonNullable<ReservationReviewRow["variant"]>,
+  pick: (ar: string | null, en: string | null) => string,
+): string {
+  const colour = pick(variant.colorAr, variant.colorEn);
+  const size = variant.size !== null ? String(variant.size) : (variant.sizeLabel ?? "");
+  return [colour, size].filter(Boolean).join(" / ");
+}
+
 const ORDER_STATUSES: OnlineOrder["status"][] = [
   "pending",
   "approved",
@@ -586,6 +596,14 @@ export function StockHoldsPage() {
                         <p className="font-medium text-slate-900">
                           {row.product ? pick(row.product.nameAr, row.product.nameEn) : "—"}
                         </p>
+                        {row.variant ? (
+                          <p
+                            className="text-[11px] font-semibold text-indigo-600"
+                            data-testid={`hold-variant-${row.key}`}
+                          >
+                            {variantLabelOf(row.variant, pick)}
+                          </p>
+                        ) : null}
                         <p className="text-[11px] text-slate-500">{row.product?.sku ?? "—"}</p>
                       </td>
                       <td className="px-3 py-2.5 text-end font-bold tabular-nums text-slate-900">
@@ -689,7 +707,9 @@ export function StockHoldsPage() {
             {pending.slice(0, 12).map((row) => (
               <li key={row.key} className="flex items-center justify-between gap-2">
                 <span className="truncate">
-                  {row.orderNumber} · {row.product ? pick(row.product.nameAr, row.product.nameEn) : "—"}
+                  {row.orderNumber} ·{" "}
+                  {row.product ? pick(row.product.nameAr, row.product.nameEn) : "—"}
+                  {row.variant ? ` · ${variantLabelOf(row.variant, pick)}` : ""}
                 </span>
                 <span className="shrink-0 font-semibold">
                   {t(`holds.action.${row.action ?? "release"}` as Parameters<typeof t>[0])}

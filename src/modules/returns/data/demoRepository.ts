@@ -151,6 +151,11 @@ export class DemoReturnRepository implements ReturnRepository {
         return_id: returnId,
         sale_item_id: validItem.sale_item_id,
         product_id: validItem.product_id,
+        variant_id: validItem.variant_id,
+        variant_color_ar: validItem.variant_color_ar,
+        variant_color_en: validItem.variant_color_en,
+        variant_size: validItem.variant_size,
+        variant_size_label: validItem.variant_size_label,
         name_ar: validItem.name_ar,
         name_en: validItem.name_en,
         sku: validItem.sku,
@@ -166,6 +171,8 @@ export class DemoReturnRepository implements ReturnRepository {
       await applyDemoAdjustment(
         {
           productId: validItem.product_id,
+          // The exact shelf the goods left — never a sibling size or colour.
+          variantId: validItem.variant_id,
           type: "adjustment_in",
           reason: "customer_return",
           quantity: validItem.requested_quantity,

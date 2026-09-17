@@ -27,6 +27,15 @@ import {
   EMPTY_CATALOG_FILTERS,
 } from "../services/catalogQuery";
 import {
+  campaignFor,
+  colorGroupsOf,
+  variantUnitPriceOf,
+  type StoreVariant,
+} from "../services/pricing";
+import { variantAvailableToPromise } from "../services/availability";
+import { variantLabelOf } from "../services/variantLabel";
+import { VariantPicker } from "../components/storefront/VariantPicker";
+import {
   applyDocumentMeta,
   applyJsonLd,
   clearDocumentMeta,
@@ -55,6 +64,7 @@ export function StoreProductPage() {
     campaigns,
     reviews,
     settings,
+    variantsOf,
   } = useStorefront();
   const { add, setQuantity, lines } = useStoreCart();
   const { inWishlist, toggleWishlist, customer } = useStoreAccount();
@@ -68,6 +78,55 @@ export function StoreProductPage() {
   const [zoom, setZoom] = useState<{ x: number; y: number } | null>(null);
   const [quantity, setLocalQuantity] = useState(1);
   const [copied, setCopied] = useState(false);
+
+  // ── the combination (Phase 43) ────────────────────────────────────────────
+  // Published combinations of this product, display order; the picker starts
+  // with NOTHING selected, because a silent default is the web's version of
+  // the register picking a colour for the cashier — the customer says which
+  // one they want, and the label follows them into the cart.
+  const publishedVariants = useMemo(
+    () => (product ? variantsOf(product.id) : []),
+    [product, variantsOf],
+  );
+  const colorGroups = useMemo(() => colorGroupsOf(publishedVariants), [publishedVariants]);
+  const [chosenColorKey, setChosenColorKey] = useState<string | null>(null);
+  const [chosenVariantId, setChosenVariantId] = useState<string | null>(null);
+
+  // A different product routed in resets the choice, not the page.
+  useEffect(() => {
+    setChosenColorKey(null);
+    setChosenVariantId(null);
+    setLocalQuantity(1);
+    setImageIndex(0);
+  }, [product?.id]);
+
+  const chosenVariant = useMemo(
+    () => publishedVariants.find((variant) => variant.id === chosenVariantId) ?? null,
+    [chosenVariantId, publishedVariants],
+  );
+
+  /** Available-to-promise of one combination (its own holds subtracted). */
+  const variantAvailable = useCallback(
+    (variant: StoreVariant) =>
+      product?.stock_tracking_enabled
+        ? variantAvailableToPromise(variant, catalogContext.reservedVariant?.get(variant.id) ?? 0)
+        : null,
+    [catalogContext.reservedVariant, product],
+  );
+
+  const pickColor = (colorKey: string) => {
+    setChosenColorKey(colorKey);
+    // The size of a colour just opened falls back to unselected: the customer
+    // re-chooses rather than inheriting the previous colour's size.
+    const group = colorGroups.find((candidate) => candidate.color_key === colorKey) ?? null;
+    const stillValid = group?.variants.some((variant) => variant.id === chosenVariantId) ?? false;
+    if (!stillValid) setChosenVariantId(null);
+  };
+
+  const selectVariant = (variant: StoreVariant) => {
+    setChosenColorKey(variant.color_key);
+    setChosenVariantId(variant.id);
+  };
 
   const content = product ? contentByProduct.get(product.id) ?? null : null;
   const entry = useMemo(
@@ -103,7 +162,14 @@ export function StoreProductPage() {
     [product, reviews],
   );
 
-  const inCart = product ? lines.find((line) => line.product_id === product.id)?.quantity ?? 0 : 0;
+  // Phase 43: "already in the cart" is asked of THIS combination's line, not of
+  // the product — Gold / 17 in the cart says nothing about Silver / 17.
+  const inCart = product
+    ? lines.find(
+        (line) =>
+          line.product_id === product.id && (line.variant_id ?? null) === (chosenVariant?.id ?? null),
+      )?.quantity ?? 0
+    : 0;
 
   // Search and share metadata, per product, cleaned up on the way out.
   useEffect(() => {
@@ -187,9 +253,37 @@ export function StoreProductPage() {
   const specs = content?.specs ?? [];
   const brand = pick(content?.brand_ar ?? null, content?.brand_en ?? null);
   const badgeText = campaignBadgeText(product.id, campaigns, (arabic, english) => pick(arabic, english));
-  const available = entry.available;
-  const maxQuantity = available === null ? 99 : Math.max(available, 0);
   const wished = inWishlist(product.id);
+
+  // What THIS shelf promises. A variant product answers from the chosen
+  // combination — its own stock minus its own holds — and refuses to sell
+  // before one is chosen; a plain product answers from the rollup, exactly as
+  // it always has.
+  const needsChoice = entry.needsVariantChoice;
+  const shelfPrice = chosenVariant
+    ? variantUnitPriceOf(chosenVariant, product.selling_price, campaignFor(product.id, campaigns))
+    : entry.price;
+  const shelfAvailable = chosenVariant ? variantAvailable(chosenVariant) : entry.available;
+  const shelfInStock = needsChoice
+    ? chosenVariant !== null && (shelfAvailable === null || shelfAvailable > 0)
+    : entry.inStock;
+  const maxQuantity =
+    shelfAvailable === null ? 99 : Math.max(shelfAvailable, 0);
+
+  const addToCart = () => {
+    if (needsChoice && !chosenVariant) return;
+    if (!shelfInStock) return;
+    const already = lines.find(
+      (line) =>
+        line.product_id === product.id &&
+        (line.variant_id ?? null) === (chosenVariant?.id ?? null),
+    )?.quantity ?? 0;
+    if (already > 0) {
+      setQuantity(product.id, chosenVariant?.id ?? null, Math.min(already + quantity, maxQuantity));
+    } else {
+      add(product, quantity, chosenVariant);
+    }
+  };
 
   return (
     <div className="mx-auto w-full max-w-[var(--store-max-width,72rem)] px-4 py-6 sm:px-6">
@@ -296,8 +390,10 @@ export function StoreProductPage() {
           </div>
 
           <div className="mt-4 flex flex-wrap items-baseline gap-3">
-            <Money value={entry.price} className="text-3xl font-black text-[var(--store-text)]" />
-            {entry.onSale ? (
+            <span data-testid="product-price">
+              <Money value={shelfPrice} className="text-3xl font-black text-[var(--store-text)]" />
+            </span>
+            {chosenVariant === null && entry.onSale ? (
               <>
                 <Money value={entry.listPrice} strike className="text-base" />
                 <span
@@ -311,20 +407,39 @@ export function StoreProductPage() {
           </div>
           <p className="mt-1 text-[11px] font-medium text-[var(--store-muted)]">{t("store.product.taxIncluded")}</p>
 
+          {/* The combination's own selector, before any buying control: colour
+              first, then that colour's NUMERIC sizes (16 → 16.5 → 17), each
+              showing exactly what its shelf holds. Sold out stays visible but
+              unbuyable — a customer should see the shop ran out, not that the
+              option quietly vanished. */}
+          {needsChoice ? (
+            <VariantPicker
+              groups={colorGroups}
+              chosenColorKey={chosenColorKey}
+              chosenVariantId={chosenVariantId}
+              availableOf={variantAvailable}
+              onColor={pickColor}
+              onVariant={selectVariant}
+            />
+          ) : null}
+
           <p
             className={cn(
               "mt-4 inline-block px-3 py-1.5 text-xs font-black",
-              entry.inStock ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700",
+              shelfInStock ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700",
             )}
             style={{ borderRadius: "var(--store-radius-button)" }}
+            data-testid="product-stock-line"
           >
             {!product.stock_tracking_enabled
               ? t("store.product.alwaysAvailable")
-              : entry.inStock
-                ? available !== null && available <= 5
-                  ? t("store.product.onlyLeft", { count: available })
-                  : t("store.product.inStock")
-                : t("store.product.outOfStock")}
+              : !shelfInStock
+                ? needsChoice && !chosenVariant
+                  ? t("store.variants.choosePrompt")
+                  : t("store.product.outOfStock")
+                : shelfAvailable !== null && shelfAvailable <= 5
+                  ? t("store.product.onlyLeft", { count: shelfAvailable })
+                  : t("store.product.inStock")}
           </p>
 
           {description ? (
@@ -343,38 +458,42 @@ export function StoreProductPage() {
             <QuantityStepper
               value={quantity}
               onChange={setLocalQuantity}
-              max={entry.inStock ? maxQuantity : 0}
+              max={shelfInStock ? maxQuantity : 0}
             />
             <button
               type="button"
-              disabled={!entry.inStock}
-              onClick={() => {
-                const already = lines.find((line) => line.product_id === product.id)?.quantity ?? 0;
-                if (already > 0) setQuantity(product.id, already + quantity);
-                else add(product, quantity);
-              }}
+              disabled={!shelfInStock}
+              data-testid="product-add-to-cart"
+              onClick={addToCart}
               className="flex-1 bg-[var(--store-primary)] px-6 py-3 text-sm font-black text-[var(--store-on-primary)] transition hover:bg-[var(--store-primary-hover)] disabled:cursor-not-allowed disabled:bg-[var(--store-border)] disabled:text-[var(--store-muted)] sm:flex-none"
               style={{ borderRadius: "var(--store-radius-button)" }}
             >
-              {!entry.inStock
-                ? t("store.product.unavailable")
+              {!shelfInStock
+                ? needsChoice && !chosenVariant
+                  ? t("store.variants.choosePrompt")
+                  : t("store.product.unavailable")
                 : inCart > 0
                   ? t("store.product.addToCartAgain", { count: inCart })
                   : t("store.product.addToCart")}
             </button>
             <Link
-              to={entry.inStock ? "/store/checkout" : "#"}
+              to={shelfInStock ? "/store/checkout" : "#"}
+              data-testid="product-buy-now"
               onClick={(event) => {
-                if (!entry.inStock) {
+                if (!shelfInStock) {
                   event.preventDefault();
                   return;
                 }
-                const already = lines.find((line) => line.product_id === product.id)?.quantity ?? 0;
-                if (already === 0) add(product, quantity);
+                const already = lines.find(
+                  (line) =>
+                    line.product_id === product.id &&
+                    (line.variant_id ?? null) === (chosenVariant?.id ?? null),
+                )?.quantity ?? 0;
+                if (already === 0) add(product, quantity, chosenVariant);
               }}
               className={cn(
                 "border px-5 py-3 text-sm font-black transition",
-                entry.inStock
+                shelfInStock
                   ? "border-[var(--store-primary)] text-[var(--store-primary)] hover:bg-[var(--store-primary-soft)]"
                   : "pointer-events-none border-[var(--store-border)] text-[var(--store-muted)]",
               )}
@@ -383,6 +502,15 @@ export function StoreProductPage() {
               {t("store.product.buyNow")}
             </Link>
           </div>
+
+          {chosenVariant ? (
+            <p className="text-xs font-bold text-[var(--store-muted)]" data-testid="product-chosen-variant">
+              {t("store.variants.chosen")}:{" "}
+              <span className="text-[var(--store-text)]">
+                {variantLabelOf(chosenVariant, lang)}
+              </span>
+            </p>
+          ) : null}
 
           <div className="mt-4 flex flex-wrap gap-2">
             <button

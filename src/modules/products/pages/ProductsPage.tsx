@@ -16,6 +16,7 @@ import {
   useToast,
 } from "@/components/ui";
 import { buildProductsSheets } from "../services/productsExport";
+import { buildVariantsSheet } from "../services/variantsExport";
 import { ProductFilters, EMPTY_FILTERS, type ProductFiltersValue } from "../components/ProductFilters";
 import { ProductTable } from "../components/ProductTable";
 import { useCatalog } from "../hooks/CatalogProvider";
@@ -35,6 +36,7 @@ export function ProductsPage() {
   const {
     products,
     categories,
+    variants,
     productReferences,
     loading,
     error,
@@ -147,6 +149,17 @@ export function ProductsPage() {
               count={results.length}
               build={() => buildProductsSheets({ products: results, categories, t, pick })}
             />
+            {/* The combinations behind the rollups — hidden entirely when the
+                catalogue holds none, so the button never exports an empty file. */}
+            {variants.length > 0 ? (
+              <ExportButton
+                name="variants"
+                count={variants.length}
+                build={() =>
+                  buildVariantsSheet({ variants, products, t, pick })
+                }
+              />
+            ) : null}
             <Link
               to="/products/new"
               className="alyq-btn-primary alyq-cta h-10 gap-2 rounded-xl px-4 text-sm"

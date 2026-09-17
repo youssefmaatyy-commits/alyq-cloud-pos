@@ -7,12 +7,16 @@ import type {
   Product,
   ProductPatch,
 } from "../types";
+import { colorKeyOf, type NewProductVariant, type ProductVariant, type ProductVariantPatch } from "../variants";
 import {
   AppError,
   toAppError,
   type CatalogRepository,
   type ProductReferenceCounts,
   type ProductReferenceMap,
+  type VariantActor,
+  type VariantOpening,
+  type VariantReferenceMap,
 } from "./repository";
 
 /** Row shape as returned by Supabase (defensive: numeric columns may arrive as strings). */
@@ -30,6 +34,7 @@ interface ProductRow {
   cost_price: number | string;
   tax_rate: number | string;
   stock_tracking_enabled: boolean;
+  variants_enabled?: boolean | null;
   stock_quantity: number | string | null;
   low_stock_level: number | string | null;
   show_on_website: boolean;
@@ -73,6 +78,7 @@ function mapProduct(row: ProductRow): Product {
     cost_price: toNumber(row.cost_price),
     tax_rate: toNumber(row.tax_rate),
     stock_tracking_enabled: Boolean(row.stock_tracking_enabled),
+    variants_enabled: Boolean(row.variants_enabled),
     stock_quantity: toNumber(row.stock_quantity),
     low_stock_level: toNumber(row.low_stock_level),
     show_on_website: row.show_on_website ?? true,
@@ -100,8 +106,61 @@ function mapCategory(row: CategoryRow): Category {
   };
 }
 
+interface VariantRow {
+  id: string;
+  product_id: string;
+  sku: string;
+  barcode: string | null;
+  color_key: string | null;
+  color_ar: string | null;
+  color_en: string | null;
+  color_hex: string | null;
+  size: number | string | null;
+  size_label: string | null;
+  image_url: string | null;
+  price_override: number | string | null;
+  cost_override: number | string | null;
+  stock_quantity: number | string | null;
+  low_stock_level: number | string | null;
+  active: boolean;
+  sort_order: number | string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+function toNullableNumber(value: number | string | null | undefined): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function mapVariant(row: VariantRow): ProductVariant {
+  return {
+    id: row.id,
+    product_id: row.product_id,
+    sku: row.sku ?? "",
+    barcode: row.barcode ?? null,
+    color_key: row.color_key ?? "",
+    color_ar: row.color_ar ?? null,
+    color_en: row.color_en ?? null,
+    color_hex: row.color_hex ?? null,
+    size: toNullableNumber(row.size),
+    size_label: row.size_label ?? null,
+    image_url: row.image_url ?? null,
+    price_override: toNullableNumber(row.price_override),
+    cost_override: toNullableNumber(row.cost_override),
+    stock_quantity: toNumber(row.stock_quantity),
+    low_stock_level: toNumber(row.low_stock_level),
+    active: row.active ?? true,
+    sort_order: toNumber(row.sort_order),
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
 const PRODUCTS_SELECT = "*";
 const CATEGORIES_SELECT = "*";
+const VARIANTS_SELECT = "*";
 
 /**
  * Live Supabase repository. Any unexpected error is normalised into an
@@ -264,6 +323,195 @@ export class SupabaseRepository implements CatalogRepository {
     } catch (error) {
       this.rethrowLifecycle(error);
     }
+  }
+
+  // ── variants (Phase 43) ────────────────────────────────────────────────
+  //
+  // The live half is thin on purpose: the rules live in the database (RLS, the
+  // identity trigger, the rollup trigger, the four functions), so a caller that
+  // skips this repository entirely still gets them. What this layer does is
+  // translate the refusals into codes the screens can act on, and never invent a
+  // variant of its own: an ambiguous lookup is an error, not a guess.
+
+  /**
+   * Variant refusals, mapped from the SQLSTATE the database raises:
+   *   42501 insufficient_privilege → FORBIDDEN
+   *   23001 restrict_violation     → VARIANT_IN_USE (history names it)
+   *   23505 unique_violation       → DUPLICATE_SKU / DUPLICATE_BARCODE
+   *   23514 check_violation        → depends on the sentence:
+   *      · "conversion must neither create nor destroy" → VARIANTS_STOCK_MISMATCH
+   *      · "sells by variant"                            → VARIANT_STOCK_READONLY
+   *      · "no longer sold"                              → VARIANT_UNAVAILABLE
+   *      · "must keep at least one"                      → VARIANT_REQUIRED
+   *      · anything else about stock/units                → VARIANT_STOCK_INSUFFICIENT
+   */
+  private rethrowVariant(error: unknown): never {
+    const err = error as { code?: string; message?: string } | null;
+    const pgCode = err?.code;
+    const message = err?.message ?? "Unknown database error";
+
+    if (pgCode === "42501") throw new AppError("FORBIDDEN", message, undefined, pgCode);
+    if (pgCode === "23001") throw new AppError("VARIANT_IN_USE", message, undefined, pgCode);
+    if (pgCode === "23505") {
+      if (/barcode/i.test(message)) throw new AppError("DUPLICATE_BARCODE", message, "barcode", pgCode);
+      throw new AppError("DUPLICATE_SKU", message, "sku", pgCode);
+    }
+    if (pgCode === "23514" || pgCode === "P0001") {
+      if (/must neither create nor destroy/i.test(message)) {
+        throw new AppError("VARIANTS_STOCK_MISMATCH", message, undefined, pgCode);
+      }
+      if (/sells by variant/i.test(message)) {
+        throw new AppError("VARIANT_STOCK_READONLY", message, "stock_quantity", pgCode);
+      }
+      if (/is no longer sold/i.test(message)) {
+        throw new AppError("VARIANT_UNAVAILABLE", message, undefined, pgCode);
+      }
+      if (/must keep at least one/i.test(message)) {
+        throw new AppError("VARIANT_REQUIRED", message, undefined, pgCode);
+      }
+      throw new AppError("VARIANT_STOCK_INSUFFICIENT", message, undefined, pgCode);
+    }
+    if (pgCode === "23503") {
+      if (/not found/i.test(message)) throw new AppError("VARIANT_NOT_FOUND", message, undefined, pgCode);
+      throw new AppError("VARIANT_IN_USE", message, undefined, pgCode);
+    }
+    throw toAppError(error);
+  }
+
+  async listVariants(): Promise<ProductVariant[]> {
+    try {
+      const { data, error } = await this.require()
+        .from("product_variants")
+        .select(VARIANTS_SELECT)
+        .order("product_id", { ascending: true })
+        .order("color_key", { ascending: true })
+        .order("size", { ascending: true, nullsFirst: false });
+      if (error) this.rethrowVariant(error);
+      return (data as VariantRow[] | null ?? []).map(mapVariant);
+    } catch (error) {
+      this.rethrowVariant(error);
+    }
+  }
+
+  async createVariant(input: NewProductVariant): Promise<ProductVariant> {
+    try {
+      // `color_key` is sent when the caller derived it; the database fills it
+      // from the label when it is absent, and never rewrites it afterwards.
+      const payload = {
+        ...input,
+        color_key: input.color_key?.trim() || colorKeyOf(input),
+      };
+      const { data, error } = await this.require()
+        .from("product_variants")
+        .insert(payload)
+        .select(VARIANTS_SELECT)
+        .single();
+      if (error) this.rethrowVariant(error);
+      return mapVariant(data as VariantRow);
+    } catch (error) {
+      this.rethrowVariant(error);
+    }
+  }
+
+  async updateVariant(id: string, patch: ProductVariantPatch): Promise<ProductVariant> {
+    try {
+      if (patch.stock_quantity !== undefined) {
+        // The database refuses this too (variant stock is a shelf, not a field);
+        // refusing here keeps the message the same in both modes.
+        throw new AppError(
+          "VARIANT_STOCK_READONLY",
+          "Variant stock changes through a stock adjustment, so the movement ledger records it",
+          "stock_quantity",
+          "23514",
+        );
+      }
+      const { data, error } = await this.require()
+        .from("product_variants")
+        .update(patch)
+        .eq("id", id)
+        .select(VARIANTS_SELECT)
+        .single();
+      if (error) this.rethrowVariant(error);
+      return mapVariant(data as VariantRow);
+    } catch (error) {
+      this.rethrowVariant(error);
+    }
+  }
+
+  async deleteVariant(id: string): Promise<void> {
+    try {
+      const { error } = await this.require().rpc("delete_variant", { p_variant_id: id });
+      if (error) this.rethrowVariant(error);
+    } catch (error) {
+      this.rethrowVariant(error);
+    }
+  }
+
+  async listVariantReferences(): Promise<VariantReferenceMap> {
+    try {
+      const { data, error } = await this.require().rpc("variant_reference_counts", {
+        p_variant_id: null,
+      });
+      if (error) this.rethrowVariant(error);
+      const map: VariantReferenceMap = {};
+      for (const row of (data as { variant_id: string; total: number | string }[] | null) ?? []) {
+        map[row.variant_id] = toNumber(row.total);
+      }
+      return map;
+    } catch (error) {
+      this.rethrowVariant(error);
+    }
+  }
+
+  async enableProductVariants(
+    productId: string,
+    opening: readonly VariantOpening[],
+    actor: VariantActor,
+  ): Promise<Product> {
+    try {
+      const distribution: Record<string, number> = {};
+      for (const entry of opening) distribution[entry.variantId] = Math.trunc(entry.quantity);
+      const { error } = await this.require().rpc("enable_product_variants", {
+        p_product_id: productId,
+        p_opening: distribution,
+        p_user_id: actor.userId,
+        p_user_name: actor.userName,
+      });
+      if (error) this.rethrowVariant(error);
+      return await this.productById(productId);
+    } catch (error) {
+      this.rethrowVariant(error);
+    }
+  }
+
+  async disableProductVariants(
+    productId: string,
+    consolidatedStock: number,
+    actor: VariantActor,
+  ): Promise<Product> {
+    try {
+      const { error } = await this.require().rpc("disable_product_variants", {
+        p_product_id: productId,
+        p_consolidated_stock: consolidatedStock,
+        p_user_id: actor.userId,
+        p_user_name: actor.userName,
+      });
+      if (error) this.rethrowVariant(error);
+      return await this.productById(productId);
+    } catch (error) {
+      this.rethrowVariant(error);
+    }
+  }
+
+  /** Re-read one product — the functions answer with a summary, not the row. */
+  private async productById(id: string): Promise<Product> {
+    const { data, error } = await this.require()
+      .from("products")
+      .select(PRODUCTS_SELECT)
+      .eq("id", id)
+      .single();
+    if (error) this.rethrow(error);
+    return mapProduct(data as ProductRow);
   }
 
   // ── categories ─────────────────────────────────────────────────────────

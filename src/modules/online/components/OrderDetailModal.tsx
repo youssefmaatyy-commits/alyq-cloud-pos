@@ -225,6 +225,18 @@ export function OrderDetailModal({ order, onClose }: { order: OnlineOrder | null
                       <tr key={item.id} className="border-b border-slate-50 last:border-0">
                         <td className="px-3 py-2">
                           <p className="font-semibold text-slate-900">{pick(item.name_ar, item.name_en)}</p>
+                          {/* The frozen combination — what the customer actually
+                              ordered, still readable after any rename. */}
+                          {item.variant_id ? (
+                            <p className="text-[11px] font-bold text-slate-700" data-testid="order-line-variant">
+                              {pick(item.variant_color_ar, item.variant_color_en)}
+                              {item.variant_size !== null
+                                ? ` / ${Math.round(item.variant_size * 100) / 100}`
+                                : item.variant_size_label
+                                  ? ` / ${item.variant_size_label}`
+                                  : ""}
+                            </p>
+                          ) : null}
                           {product ? (
                             <p className="text-[11px] text-slate-500">
                               {t("online.orders.stockNow", { count: num(product.stock_quantity, 0) })}

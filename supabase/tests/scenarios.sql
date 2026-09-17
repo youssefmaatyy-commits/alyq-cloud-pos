@@ -2901,8 +2901,12 @@ begin
   end if;
 
   select public.reports_inventory_summary() into v_inv;
+  -- Phase 43 added the variant counts beside the product totals. They are
+  -- additive: the product keys keep their meaning, and the variant keys answer
+  -- what a product total cannot ("3 of 6 combinations are low").
   v_shape := pg_temp.report_shape(v_inv, array[
-    'products','tracked','units','atCost','atRetail','potentialMargin','lowStock','outOfStock']);
+    'products','tracked','units','atCost','atRetail','potentialMargin','lowStock','outOfStock',
+    'variantProducts','variants','activeVariants','lowVariants','soldOutVariants']);
   if v_shape <> '|' then
     raise exception 'the inventory summary changed shape (unexpected|missing): %', v_shape;
   end if;
@@ -3782,16 +3786,38 @@ begin
   if v_count <> 5 then
     raise exception 'the five history tables do not all RESTRICT product deletion (% found)', v_count;
   end if;
-  if exists (
-    select 1
+  -- Phase 43 sharpens the same rule instead of just listing allowed names: a
+  -- cascading child is fine only while it is catalogue dressing. What must never
+  -- happen is a cascade that can REACH history — so this walks the cascade graph
+  -- from products, through however many levels, and fails if any of the five
+  -- history tables is anywhere in it. `product_variants` and `catalogue_codes`
+  -- may cascade (they are the product's own shape, like product_content), but
+  -- their own foreign keys back into the five tables are RESTRICT, which this
+  -- proves rather than assumes.
+  with recursive cascade_tree as (
+    select c.conrelid as rel
       from pg_constraint c
-      join pg_class t on t.oid = c.conrelid
      where c.contype = 'f'
        and c.confrelid = 'public.products'::regclass
        and c.confdeltype = 'c'
-       and t.relname <> all (array['product_content', 'store_reviews'])
-  ) then
-    raise exception 'an ON DELETE CASCADE points from products at history';
+    union all
+    select c.conrelid
+      from pg_constraint c
+      join cascade_tree t on c.confrelid = t.rel
+     where c.contype = 'f'
+       and c.confdeltype = 'c'
+  )
+  select count(*) into v_count
+    from cascade_tree t
+   where t.rel = any (array[
+     'public.sale_items'::regclass,
+     'public.return_items'::regclass,
+     'public.stock_movements'::regclass,
+     'public.online_order_items'::regclass,
+     'public.stock_reservations'::regclass
+   ]);
+  if v_count > 0 then
+    raise exception 'a cascade from products can reach a history table';
   end if;
   if not exists (select 1 from public.products where id = v_used) then
     raise exception 'a referenced product disappeared';
@@ -4578,6 +4604,312 @@ begin
   if v_row.total < 30.00 then null; end if;
 
   raise notice 'rejected-return parity — the pending unit is held, the rejection mirrors the status and writes the unit back out (with trail), the released quantity returns once and only once, and the refundable balance never moved on a rejection';
+end
+$$;
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Phase 43 — product variants: the shelf is the truth (0043)
+-- ═══════════════════════════════════════════════════════════════════════════
+-- The acceptance example, locked at the database: a ring in two combinations
+-- (Gold/17, Silver/17), each shelf holding 2 while the product's rollup reads 4.
+-- Selling Gold/17 ×3 must fail; selling ×2 must land on Gold's OWN shelf; the
+-- conversion that created the shelves must neither create nor destroy a unit;
+-- and an inventory clerk with adjust_stock but no edit_product can still move a
+-- shelf. Drafting the combinations must not touch the product figure, or the
+-- conversion would have nothing left to distribute.
+do $$
+declare
+  v_admin   uuid := '00000000-0000-4000-8000-0000000000a1';
+  v_cashier uuid := '00000000-0000-4000-8000-0000000000c1';
+  v_clerk   uuid;
+  v_cat     uuid := '00000000-0000-4000-8000-0000000000f1';
+  v_product uuid := '00000000-0000-4000-8000-0000000000f5';
+  v_gold    uuid := '00000000-0000-4000-8000-0000000000f6';
+  v_silver  uuid := '00000000-0000-4000-8000-0000000000f7';
+  v_result  jsonb;
+  v_sale    jsonb;
+  v_sale_id uuid;
+  v_stock   integer;
+  v_rows    integer;
+  v_revenue numeric;
+  v_units   integer;
+begin
+  perform pg_temp.become(v_admin, 'authenticated');
+
+  -- the fixture: a tracked product holding FOUR units, on the website
+  insert into public.products (
+    id, sku, barcode, name_ar, name_en, category_id,
+    selling_price, cost_price, stock_quantity, low_stock_level,
+    active, show_on_website
+  ) values (
+    v_product, 'SCN-VAR', '6291000000042', 'خاتم', 'Scenario Ring',
+    v_cat, 200.00, 100.00, 4, 1, true, true
+  )
+  on conflict (id) do update
+    set stock_quantity = 4, variants_enabled = false, active = true, show_on_website = true;
+
+  -- the DRAFT combinations — empty shelves, added before the conversion
+  insert into public.product_variants (
+    id, product_id, sku, color_key, color_ar, color_en, color_hex,
+    size, size_label, stock_quantity, low_stock_level, active, sort_order
+  ) values
+    (v_gold,   v_product, 'SCN-VAR-GOLD-17',   'gold',   'ذهبي', 'Gold',   '#d4af37', 17, null, 0, 1, true, 1),
+    (v_silver, v_product, 'SCN-VAR-SILVER-17', 'silver', 'فضي',  'Silver', '#c0c0c0', 17, null, 0, 1, true, 2)
+  on conflict (id) do update set active = true, stock_quantity = 0;
+
+  -- 1. drafting combinations must not zero the product the conversion splits
+  select stock_quantity into v_stock from public.products where id = v_product;
+  if v_stock <> 4 then
+    raise exception 'drafting two empty combinations moved the product rollup (%)', v_stock;
+  end if;
+
+  -- 2. the conversion is refused unless the distribution adds up exactly
+  begin
+    perform public.enable_product_variants(
+      v_product,
+      jsonb_build_object(v_gold::text, 3, v_silver::text, 2),
+      v_admin::text, 'Amina Admin');
+    raise exception 'an unbalanced opening distribution was accepted';
+  exception when check_violation then
+    null;
+  end;
+
+  -- 3. the balanced conversion: 2 + 2, nothing created or destroyed
+  v_result := public.enable_product_variants(
+    v_product,
+    jsonb_build_object(v_gold::text, 2, v_silver::text, 2),
+    v_admin::text, 'Amina Admin');
+  if (v_result->>'changed')::boolean is not true then
+    raise exception 'the balanced conversion did not report a change';
+  end if;
+  if (select stock_quantity from public.products where id = v_product) <> 4 then
+    raise exception 'the conversion changed the total it was given';
+  end if;
+  select stock_quantity into v_stock from public.product_variants where id = v_gold;
+  if v_stock <> 2 then
+    raise exception 'Gold / 17 did not open with its two units (%)', v_stock;
+  end if;
+
+  -- re-running the same conversion is a no-op, not a failure
+  v_result := public.enable_product_variants(
+    v_product,
+    jsonb_build_object(v_gold::text, 2, v_silver::text, 2),
+    v_admin::text, 'Amina Admin');
+  if (v_result->>'changed')::boolean is not false then
+    raise exception 'a repeated conversion wrote a second one';
+  end if;
+
+  -- the conversion is on the audit trail
+  if not exists (select 1 from public.audit_log
+                 where action = 'product.variants_enabled' and entity_id = v_product::text) then
+    raise exception 'the conversion left no audit row';
+  end if;
+
+  -- 4. the rollup is derived: nobody writes the product total directly
+  begin
+    update public.products set stock_quantity = 9 where id = v_product;
+    raise exception 'the rollup accepted a direct write';
+  exception when check_violation then
+    null;
+  end;
+
+  -- 5. the storefront answers with combinations only while the mode is on
+  perform pg_temp.become(v_cashier, 'authenticated');
+  select count(*) into v_rows
+    from public.storefront_product_variants() where product_id = v_product;
+  if v_rows <> 2 then
+    raise exception 'the storefront shows % combination(s), not 2', v_rows;
+  end if;
+
+  -- 6. THE ACCEPTANCE: Gold / 17 ×3 fails even though the product reads 4
+  perform pg_temp.ensure_open_shift();
+  begin
+    perform public.pos_complete_sale(jsonb_build_object(
+      'client_ref', 'scn-p43-oversell',
+      'user_id',    v_cashier::text,
+      'user_name',  'Karim Cashier',
+      'payments',   jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', 600.00, 'cash_received', 600.00)),
+      'lines',      jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 3, 'variant_id', v_gold::text))
+    ));
+    raise exception 'selling three of a two-shelf combination was accepted';
+  exception when check_violation then
+    null;
+  end;
+  if exists (select 1 from public.sales where client_ref = 'scn-p43-oversell') then
+    raise exception 'the refused oversell was written anyway';
+  end if;
+
+  -- 7. ×2 sells, lands on Gold's shelf, and freezes the combination on the line
+  v_sale := public.pos_complete_sale(jsonb_build_object(
+    'client_ref', 'scn-p43-gold-sale',
+    'user_id',    v_cashier::text,
+    'user_name',  'Karim Cashier',
+    'payments',   jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', 400.00, 'cash_received', 500.00)),
+    'lines',      jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 2, 'variant_id', v_gold::text))
+  ));
+  v_sale_id := (v_sale->>'sale_id')::uuid;
+  select stock_quantity into v_stock from public.product_variants where id = v_gold;
+  if v_stock <> 0 then
+    raise exception 'the sale did not empty Gold / 17 (%)', v_stock;
+  end if;
+  select stock_quantity into v_stock from public.product_variants where id = v_silver;
+  if v_stock <> 2 then
+    raise exception 'the Gold sale moved Silver / 17 (%)', v_stock;
+  end if;
+  select stock_quantity into v_stock from public.products where id = v_product;
+  if v_stock <> 2 then
+    raise exception 'the rollup did not follow the shelves (%)', v_stock;
+  end if;
+  if not exists (
+    select 1 from public.sale_items
+     where sale_id = v_sale_id and variant_id = v_gold
+       and variant_color_en = 'Gold' and variant_size = 17 and sku = 'SCN-VAR-GOLD-17'
+  ) then
+    raise exception 'the sale line does not name the combination it sold';
+  end if;
+  if not exists (
+    select 1 from public.stock_movements
+     where variant_id = v_gold and delta = 2 and type = 'issue'
+       and quantity_before = 2 and quantity_after = 0
+  ) then
+    raise exception 'the sale left no per-shelf ledger row';
+  end if;
+
+  -- 8. the OTHER shelf still sells while Gold is empty — the shelf, not the
+  --    rollup, is what a line is judged against
+  begin
+    perform public.pos_complete_sale(jsonb_build_object(
+      'client_ref', 'scn-p43-gold-empty',
+      'user_id',    v_cashier::text,
+      'user_name',  'Karim Cashier',
+      'payments',   jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', 200.00, 'cash_received', 200.00)),
+      'lines',      jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 1, 'variant_id', v_gold::text))
+    ));
+    raise exception 'an empty shelf sold because the rollup still held units';
+  exception when check_violation then
+    null;
+  end;
+
+  -- 9. an adjust_stock-only seat moves a SHELF, and the rollup follows —
+  --    without edit_product (that is why the rollup trigger is definer)
+  perform pg_temp.become(v_admin);
+  select p.id into v_clerk from public.profiles p
+   where p.role::text = 'inventory_clerk' and p.active
+   limit 1;
+  if v_clerk is null then
+    raise exception 'no active inventory_clerk profile to test the shelf with';
+  end if;
+  -- The role matrix gives every working tier edit_product and delete_product
+  -- too, so the seat is narrowed to exactly what the shelf needs: adjust_stock
+  -- with the catalogue-writing capabilities denied — the same per-user denial
+  -- the price trigger is tested through.
+  perform public.admin_set_user_exceptions(v_clerk, null, array['edit_product', 'delete_product']);
+  perform pg_temp.become(v_clerk);
+
+  if public.can('edit_product') then
+    raise exception 'the denial did not remove edit_product';
+  end if;
+  if not public.can('adjust_stock') then
+    raise exception 'the seat lost adjust_stock with it';
+  end if;
+  update public.product_variants
+     set stock_quantity = stock_quantity + 1
+   where id = v_silver;
+  get diagnostics v_rows = row_count;
+  if v_rows <> 1 then
+    raise exception 'an adjust_stock-only seat could not move a shelf';
+  end if;
+  select stock_quantity into v_stock from public.products where id = v_product;
+  if v_stock <> 3 then
+    raise exception 'the shelf move did not roll up (product reads %)', v_stock;
+  end if;
+
+  -- …but the same seat authors and deletes nothing, and cannot flip the mode
+  begin
+    perform public.delete_variant(v_silver);
+    raise exception 'an adjust_stock-only seat deleted a combination';
+  exception when insufficient_privilege then
+    null;
+  end;
+  begin
+    perform public.enable_product_variants(v_product, '{}'::jsonb, v_clerk::text, 'Clerk');
+    raise exception 'an adjust_stock-only seat flipped the variant mode';
+  exception when insufficient_privilege then
+    null;
+  end;
+  delete from public.product_variants where id = v_gold;
+  get diagnostics v_rows = row_count;
+  if v_rows <> 0 then
+    raise exception 'RLS let an adjust_stock-only seat delete a combination';
+  end if;
+
+  -- the denial is lifted, exactly as it was put in place
+  perform pg_temp.become(v_admin);
+  perform public.admin_set_user_exceptions(v_clerk, null, null);
+
+  -- 10. archiving stops a combination being sold, and the storefront with it
+  perform pg_temp.become(v_admin);
+  perform public.set_variant_active(v_silver, false);
+  perform pg_temp.become(v_cashier);
+  begin
+    perform public.pos_complete_sale(jsonb_build_object(
+      'client_ref', 'scn-p43-archived',
+      'user_id',    v_cashier::text,
+      'user_name',  'Karim Cashier',
+      'payments',   jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', 200.00, 'cash_received', 200.00)),
+      'lines',      jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 1, 'variant_id', v_silver::text))
+    ));
+    raise exception 'an archived combination was sold';
+  exception when check_violation then
+    null;
+  end;
+  select count(*) into v_rows
+    from public.storefront_product_variants() where product_id = v_product;
+  if v_rows <> 1 then
+    raise exception 'the archived combination is still on the storefront (% row(s))', v_rows;
+  end if;
+  perform pg_temp.become(v_admin);
+  perform public.set_variant_active(v_silver, true);
+
+  -- 11. history keeps the mode: a named combination cannot be deleted, and a
+  --     product with a named combination cannot leave variant mode
+  begin
+    perform public.delete_variant(v_gold);
+    raise exception 'a sold combination was deleted';
+  exception when restrict_violation then
+    null;
+  end;
+  begin
+    perform public.disable_product_variants(v_product, 3, v_admin::text, 'Amina Admin');
+    raise exception 'a product with a named combination left variant mode';
+  exception when restrict_violation then
+    null;
+  end;
+
+  -- 12. the report reads per combination, and only for view_reports. Every
+  --     shipped tier holds that capability, so the refusal is proven the way
+  --     the layer actually refuses: a per-user denial, which is what a custom
+  --     role would arrive with.
+  perform public.admin_set_user_exceptions(v_cashier, null, array['view_reports']);
+  perform pg_temp.become(v_cashier);
+  begin
+    perform public.reports_variant_performance();
+    raise exception 'a seat without view_reports read the variant performance report';
+  exception when insufficient_privilege then
+    null;
+  end;
+  perform pg_temp.become(v_admin);
+  perform public.admin_set_user_exceptions(v_cashier, null, null);
+  perform pg_temp.become(v_admin);
+  select coalesce(sum((row->>'revenue')::numeric), 0), coalesce(sum((row->>'units')::integer), 0)
+    into v_revenue, v_units
+    from (select jsonb_array_elements(public.reports_variant_performance()) as row) r
+   where r.row->>'variantId' = v_gold::text;
+  if v_revenue <> 400.00 or v_units <> 2 then
+    raise exception 'the report read the Gold shelf as % units / % revenue', v_units, v_revenue;
+  end if;
+
+  raise notice 'variant shelves (0043) — drafting moves nothing, the conversion splits exactly, Gold/17 ×3 fails while ×2 empties its own shelf, the clerk seat moves a shelf but authors nothing, archive stops the sale, history keeps the mode, and the report reads per combination';
 end
 $$;
 

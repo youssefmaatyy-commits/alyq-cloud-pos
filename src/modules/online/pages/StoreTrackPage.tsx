@@ -217,6 +217,16 @@ export function StoreTrackPage() {
                     <span className="block truncate text-sm font-bold text-[var(--store-text)]">
                       {pick(item.name_ar, item.name_en)}
                     </span>
+                    {item.variant_id ? (
+                      <span className="block text-xs font-bold text-[var(--store-text)]">
+                        {pick(item.variant_color_ar, item.variant_color_en)}
+                        {item.variant_size !== null
+                          ? ` / ${Math.round(item.variant_size * 100) / 100}`
+                          : item.variant_size_label
+                            ? ` / ${item.variant_size_label}`
+                            : ""}
+                      </span>
+                    ) : null}
                     <span className="block text-xs text-[var(--store-muted)]">
                       {t("store.checkout.quantityTimes", { count: item.quantity })} · {item.sku}
                     </span>

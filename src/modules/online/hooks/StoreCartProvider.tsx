@@ -1,14 +1,22 @@
 /**
  * The storefront cart, its coupon, and checkout.
  *
- * The cart is a list of `{product_id, quantity}` and nothing else. Prices are
- * looked up from the catalogue on every render, which is what keeps a tab that
- * was open overnight from checking out at yesterday's price — and it matches what
- * the server does, so the number on the confirmation screen is the number the
- * order was written with, not a stale copy of it.
+ * The cart is a list of `{product_id, variant_id, quantity}` and nothing else.
+ * Prices are looked up from the catalogue on every render, which is what keeps a
+ * tab that was open overnight from checking out at yesterday's price — and it
+ * matches what the server does, so the number on the confirmation screen is the
+ * number the order was written with, not a stale copy of it.
  *
- * The cart survives a reload (localStorage), and lines whose product has gone off
- * the website are dropped on load rather than failing at checkout.
+ * Phase 43: the exact combination is part of a line's IDENTITY — Gold / 17 and
+ * Silver / 17 are two lines of one product that never merge, because merging
+ * them would let the customer be promised a unit of a combination that does not
+ * exist. A line's price and its availability are the combination's own: an
+ * override prices that size and nothing else, and the holds shadow it, not the
+ * product rollup.
+ *
+ * The cart survives a reload (localStorage), and lines whose product has gone
+ * off the website — or whose combination no longer exists — are dropped on load
+ * rather than failing at checkout.
  *
  * Coupons are checked against the server, not against a local copy: in live mode
  * the code list is staff-only, so the cart asks `check_storefront_coupon` about
@@ -50,11 +58,20 @@ import {
   freeDeliveryProgress,
   normalizeCouponCode,
   round2,
-  unitPriceOf,
+  variantUnitPriceOf,
   type CartTotals,
+  type StoreVariant,
 } from "../services/pricing";
-import { availableToPromise, findOversell, type OversellLine } from "../services/availability";
+import {
+  availableToPromise,
+  findOversell,
+  reservedOf,
+  variantAvailableToPromise,
+  type OversellLine,
+} from "../services/availability";
+import { variantLabelOf } from "../services/variantLabel";
 import type { CouponCheckReason } from "../data/repository";
+import { useI18n } from "@/lib/i18n/I18nProvider";
 import { useStorefront } from "./StorefrontProvider";
 import { useStoreAccount } from "./StoreAccountProvider";
 
@@ -62,16 +79,38 @@ const CART_KEY = "alyq.store.cart.v2";
 
 export interface CartLine {
   product_id: string;
+  /**
+   * Phase 43: the exact combination this line is, when the product sells by
+   * variant. Null for a product sold as a whole — never for a line the shopper
+   * was asked to choose a colour or a size for.
+   */
+  variant_id: string | null;
   quantity: number;
   added_at: string;
 }
 
+/** The identity of a cart line: product + exact combination. */
+export function storeLineKey(productId: string, variantId: string | null): string {
+  return `${productId}::${variantId ?? ""}`;
+}
+
+/**
+ * "Gold / 17" for a cart line, from the combination as published — the same
+ * wording the order will carry after checkout. Re-exported so screens reach it
+ * beside the cart types they already import.
+ */
+export { variantLabelOf };
+
 /** A cart line resolved against the catalogue — what the cart screen renders. */
 export interface CartEntry {
   product: Product;
+  /** The exact combination, when the line names one. */
+  variant: StoreVariant | null;
+  /** "Gold / 17" in the reader's language; null on a product-level line. */
+  variantLabel: string | null;
   content: ProductContent | null;
   quantity: number;
-  /** Unit price after any live campaign. */
+  /** Unit price after any live campaign (or the combination's own override). */
   price: number;
   listPrice: number;
   lineTotal: number;
@@ -117,6 +156,9 @@ function readStoredCart(): StoredCart {
             )
             .map((line) => ({
               product_id: line.product_id,
+              // A cart saved before variants carries no combination; that is a
+              // product-level line, exactly as it always was.
+              variant_id: typeof line.variant_id === "string" ? line.variant_id : null,
               quantity: Math.max(1, Math.trunc(Number(line.quantity)) || 1),
               added_at: typeof line.added_at === "string" ? line.added_at : new Date().toISOString(),
             }))
@@ -136,14 +178,19 @@ export interface StoreCartContextValue {
   unitCount: number;
   isEmpty: boolean;
 
-  add: (product: Product, quantity?: number) => boolean;
-  setQuantity: (productId: string, quantity: number) => void;
-  increase: (productId: string) => void;
-  decrease: (productId: string) => void;
-  remove: (productId: string) => void;
+  /**
+   * Add one line. A product that sells by variant REFUSES without an exact
+   * combination — the storefront never picks a colour or a size silently, for
+   * the same reason the register does not.
+   */
+  add: (product: Product, quantity?: number, variant?: StoreVariant | null) => boolean;
+  setQuantity: (productId: string, variantId: string | null, quantity: number) => void;
+  increase: (productId: string, variantId: string | null) => void;
+  decrease: (productId: string, variantId: string | null) => void;
+  remove: (productId: string, variantId: string | null) => void;
   clear: () => void;
   /** Add every line of a past order again — "reorder". */
-  addMany: (lines: { product_id: string; quantity: number }[]) => number;
+  addMany: (lines: { product_id: string; variant_id?: string | null; quantity: number }[]) => number;
 
   totals: CartTotals;
   /** Lines the cart cannot actually fulfil right now. */
@@ -186,8 +233,15 @@ export function useStoreCart(): StoreCartContextValue {
 }
 
 export function StoreCartProvider({ children }: { children: ReactNode }) {
-  const { products, campaigns, catalogContext, settings, checkCoupon: verifyCode } =
-    useStorefront();
+  const { lang } = useI18n();
+  const {
+    products,
+    variants: publishedVariants,
+    campaigns,
+    catalogContext,
+    settings,
+    checkCoupon: verifyCode,
+  } = useStorefront();
   const { customer } = useStoreAccount();
   const orders = useMemo(() => getOnlineOrdersRepository(), []);
 
@@ -213,10 +267,17 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
   const productsById = useMemo(() => new Map(products.map((product) => [product.id, product])), [
     products,
   ]);
+  const variantsById = useMemo(
+    () => new Map(publishedVariants.map((variant) => [variant.id, variant])),
+    [publishedVariants],
+  );
 
-  // Drop lines whose product has gone off the website: a cart that cannot be
-  // checked out is worse than a cart with one item missing, and the customer is
-  // told on the cart screen rather than at the last step.
+  // Drop lines whose product has gone off the website, and lines that name a
+  // combination that is no longer published (archived, or the product left
+  // variant mode): a cart that cannot be checked out is worse than a cart with
+  // one item missing, and the customer is told on the cart screen rather than
+  // at the last step. A variant-product line without a combination is dropped
+  // too — it can no longer be checked out, because the server refuses it.
   const pruned = useRef(false);
   useEffect(() => {
     if (pruned.current || products.length === 0) return;
@@ -224,10 +285,12 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
     setLines((current) =>
       current.filter((line) => {
         const product = productsById.get(line.product_id);
-        return product ? product.active && product.show_on_website : false;
+        if (!product || !product.active || !product.show_on_website) return false;
+        if (line.variant_id) return variantsById.has(line.variant_id);
+        return !product.variants_enabled;
       }),
     );
-  }, [products.length, productsById]);
+  }, [products.length, productsById, variantsById]);
 
   // Persist.
   useEffect(() => {
@@ -246,26 +309,39 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
     return lines.flatMap((line) => {
       const product = productsById.get(line.product_id);
       if (!product) return [];
+      const variant = line.variant_id ? variantsById.get(line.variant_id) ?? null : null;
+      // A line whose combination vanished between renders (refresh race) shows
+      // as nothing rather than as the product at the wrong price.
+      if (line.variant_id && !variant) return [];
+
       const campaign = campaignFor(product.id, campaigns, now);
-      const price = unitPriceOf(product.selling_price, campaign);
-      const available = availableToPromise(
-        product,
-        catalogContext.reserved.get(product.id) ?? 0,
-      );
+      const price = variant
+        ? variantUnitPriceOf(variant, product.selling_price, campaign)
+        : variantUnitPriceOf({ price_override: null }, product.selling_price, campaign);
+      const available = variant
+        ? product.stock_tracking_enabled
+          ? variantAvailableToPromise(
+              variant,
+              catalogContext.reservedVariant?.get(variant.id) ?? 0,
+            )
+          : null
+        : availableToPromise(product, reservedOf(catalogContext.reserved, product.id));
       return [
         {
           product,
+          variant,
+          variantLabel: variant ? variantLabelOf(variant, lang) : null,
           content: catalogContext.contents.get(product.id) ?? null,
           quantity: line.quantity,
           price,
-          listPrice: Math.max(product.selling_price, 0),
+          listPrice: Math.max(variant?.price_override ?? product.selling_price, 0),
           lineTotal: round2(price * line.quantity),
           available,
           inStock: available === null || available > 0,
         },
       ];
     });
-  }, [campaigns, catalogContext.contents, catalogContext.reserved, lines, productsById]);
+  }, [campaigns, catalogContext.contents, catalogContext.reserved, catalogContext.reservedVariant, lang, lines, productsById, variantsById]);
 
   const subtotal = useMemo(
     () => round2(entries.reduce((sum, entry) => sum + entry.lineTotal, 0)),
@@ -278,6 +354,7 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
     () => ({
       lines: entries.map((entry) => ({
         product_id: entry.product.id,
+        variant_id: entry.variant?.id ?? null,
         quantity: entry.quantity,
         list_price: entry.listPrice,
         unit_price: entry.price,
@@ -302,11 +379,13 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
   const problems = useMemo(
     () =>
       findOversell(
-        lines.map((line) => ({ product_id: line.product_id, quantity: line.quantity })),
+        lines,
         products,
         catalogContext.reserved,
+        publishedVariants,
+        catalogContext.reservedVariant ?? new Map(),
       ),
-    [catalogContext.reserved, lines, products],
+    [catalogContext.reserved, catalogContext.reservedVariant, lines, products, publishedVariants],
   );
 
   const unitCount = totals.unit_count;
@@ -315,22 +394,33 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
   // ── cart operations ───────────────────────────────────────────────────────
 
   const add = useCallback(
-    (product: Product, quantity = 1): boolean => {
+    (product: Product, quantity = 1, variant: StoreVariant | null = null): boolean => {
       const wanted = Math.max(1, Math.trunc(quantity) || 1);
+      // A variant product is never added as a whole: the combination IS the
+      // thing being sold, and a line without one could not be checked out.
+      if (product.variants_enabled && !variant) return false;
+      if (variant && variant.product_id !== product.id) return false;
       let added = false;
       setLines((current) => {
-        const existing = current.find((line) => line.product_id === product.id);
+        const key = storeLineKey(product.id, variant?.id ?? null);
+        const existing = current.find(
+          (line) => storeLineKey(line.product_id, line.variant_id) === key,
+        );
         const nextQuantity = (existing?.quantity ?? 0) + wanted;
         // Do not add more than can be promised; the button says why.
-        const available = availableToPromise(
-          product,
-          catalogContext.reserved.get(product.id) ?? 0,
-        );
+        const available = variant
+          ? product.stock_tracking_enabled
+            ? variantAvailableToPromise(
+                variant,
+                catalogContext.reservedVariant?.get(variant.id) ?? 0,
+              )
+            : null
+          : availableToPromise(product, reservedOf(catalogContext.reserved, product.id));
         if (available !== null && nextQuantity > available) return current;
         added = true;
         if (existing) {
           return current.map((line) =>
-            line.product_id === product.id
+            storeLineKey(line.product_id, line.variant_id) === key
               ? { ...line, quantity: nextQuantity, added_at: new Date().toISOString() }
               : line,
           );
@@ -339,6 +429,7 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
           ...current,
           {
             product_id: product.id,
+            variant_id: variant?.id ?? null,
             quantity: wanted,
             added_at: new Date().toISOString(),
           },
@@ -346,48 +437,63 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
       });
       return added;
     },
-    [catalogContext.reserved],
+    [catalogContext.reserved, catalogContext.reservedVariant],
   );
 
   const setQuantity = useCallback(
-    (productId: string, quantity: number) => {
+    (productId: string, variantId: string | null, quantity: number) => {
       const wanted = Math.max(0, Math.trunc(quantity) || 0);
       setLines((current) => {
-        if (wanted === 0) return current.filter((line) => line.product_id !== productId);
+        const key = storeLineKey(productId, variantId);
+        if (wanted === 0) {
+          return current.filter((line) => storeLineKey(line.product_id, line.variant_id) !== key);
+        }
         const product = productsById.get(productId);
+        const variant = variantId ? variantsById.get(variantId) : undefined;
         if (product) {
-          const available = availableToPromise(
-            product,
-            catalogContext.reserved.get(productId) ?? 0,
-          );
+          const available = variant
+            ? product.stock_tracking_enabled
+              ? variantAvailableToPromise(
+                  variant,
+                  catalogContext.reservedVariant?.get(variant.id) ?? 0,
+                )
+              : availableToPromise(product, reservedOf(catalogContext.reserved, productId))
+            : availableToPromise(product, reservedOf(catalogContext.reserved, productId));
           if (available !== null && wanted > available) return current;
         }
         return current.map((line) =>
-          line.product_id === productId ? { ...line, quantity: wanted } : line,
+          storeLineKey(line.product_id, line.variant_id) === key ? { ...line, quantity: wanted } : line,
         );
       });
     },
-    [catalogContext.reserved, productsById],
+    [catalogContext.reserved, catalogContext.reservedVariant, productsById, variantsById],
   );
 
   const increase = useCallback(
-    (productId: string) => {
-      const line = lines.find((candidate) => candidate.product_id === productId);
-      setQuantity(productId, (line?.quantity ?? 0) + 1);
+    (productId: string, variantId: string | null) => {
+      const line = lines.find(
+        (candidate) => storeLineKey(candidate.product_id, candidate.variant_id) === storeLineKey(productId, variantId),
+      );
+      setQuantity(productId, variantId, (line?.quantity ?? 0) + 1);
     },
     [lines, setQuantity],
   );
 
   const decrease = useCallback(
-    (productId: string) => {
-      const line = lines.find((candidate) => candidate.product_id === productId);
-      setQuantity(productId, (line?.quantity ?? 0) - 1);
+    (productId: string, variantId: string | null) => {
+      const line = lines.find(
+        (candidate) => storeLineKey(candidate.product_id, candidate.variant_id) === storeLineKey(productId, variantId),
+      );
+      setQuantity(productId, variantId, (line?.quantity ?? 0) - 1);
     },
     [lines, setQuantity],
   );
 
-  const remove = useCallback((productId: string) => {
-    setLines((current) => current.filter((line) => line.product_id !== productId));
+  const remove = useCallback((productId: string, variantId: string | null) => {
+    const key = storeLineKey(productId, variantId);
+    setLines((current) =>
+      current.filter((line) => storeLineKey(line.product_id, line.variant_id) !== key),
+    );
   }, []);
 
   const clear = useCallback(() => {
@@ -398,16 +504,19 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const addMany = useCallback(
-    (requested: { product_id: string; quantity: number }[]): number => {
+    (requested: { product_id: string; variant_id?: string | null; quantity: number }[]): number => {
       let count = 0;
       for (const line of requested) {
         const product = productsById.get(line.product_id);
         if (!product || !product.active || !product.show_on_website) continue;
-        if (add(product, line.quantity)) count += 1;
+        const variant = line.variant_id ? variantsById.get(line.variant_id) ?? null : null;
+        if (line.variant_id && !variant) continue;
+        if (product.variants_enabled && !variant) continue;
+        if (add(product, line.quantity, variant)) count += 1;
       }
       return count;
     },
-    [add, productsById],
+    [add, productsById, variantsById],
   );
 
   // ── coupons ───────────────────────────────────────────────────────────────
@@ -517,6 +626,9 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
           lines: lines.map((line) => ({
             product_id: line.product_id,
             qty: line.quantity,
+            // The exact combination travels with the line; the server re-reads
+            // the price and the shelf anyway and refuses a line that names none.
+            variant_id: line.variant_id,
           })),
           coupon_code: couponCode,
           payment_method: paymentMethod,

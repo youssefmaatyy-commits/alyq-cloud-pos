@@ -170,6 +170,7 @@ function makeProduct(overrides: Partial<Product> = {}): Product {
   return {
     id: "prd-1",
     sku: "SKU-1",
+    variants_enabled: false,
     barcode: "6221000000017",
     name_ar: "أقراط",
     name_en: "Earrings",
@@ -298,6 +299,7 @@ function makeReservation(overrides: Partial<StockReservation> = {}): StockReserv
     id: "res-1",
     online_order_id: "ord-1",
     product_id: "prd-1",
+    variant_id: null,
     quantity: 2,
     status: "reserved",
     created_at: "2026-05-01T09:00:00.000Z",
@@ -684,9 +686,40 @@ test("oversell is reported for every line, and duplicate lines add up", () => {
     reserved,
   );
 
+  // Phase 43: every line also names the shelf it is short on — null for a
+  // product-level line, the combination for a variant one.
   assert.deepEqual(problems, [
-    { product_id: "prd-1", sku: "SKU-1", requested: 4, available: 3 },
-    { product_id: "prd-2", sku: "SKU-2", requested: 3, available: 1 },
+    { product_id: "prd-1", sku: "SKU-1", requested: 4, available: 3, variant_id: null },
+    { product_id: "prd-2", sku: "SKU-2", requested: 3, available: 1, variant_id: null },
+  ]);
+});
+
+test("oversell of a combination is judged on ITS shelf, not the product rollup", () => {
+  const products = [
+    makeProduct({ id: "prd-1", sku: "SKU-1", stock_quantity: 4, variants_enabled: true }),
+  ];
+  const variants = [
+    { id: "var-g17", product_id: "prd-1", sku: "SKU-1-G17", active: true, stock_quantity: 2 },
+    { id: "var-s17", product_id: "prd-1", sku: "SKU-1-S17", active: true, stock_quantity: 2 },
+  ];
+  const reserved = new Map<string, number>();
+  const reservedVariant = new Map<string, number>([["var-g17", 1]]);
+
+  // Gold / 17 can promise 1. Silver / 17 can still promise both of its own —
+  // neither borrows from the other, and the product's rollup (4) never enters.
+  const problems = findOversell(
+    [
+      { product_id: "prd-1", variant_id: "var-g17", quantity: 2 },
+      { product_id: "prd-1", variant_id: "var-s17", quantity: 2 },
+    ],
+    products,
+    reserved,
+    variants,
+    reservedVariant,
+  );
+
+  assert.deepEqual(problems, [
+    { product_id: "prd-1", sku: "SKU-1-G17", requested: 2, available: 1, variant_id: "var-g17" },
   ]);
 });
 
@@ -921,6 +954,12 @@ function itemStub(productId: string) {
     id: `itm-${productId}`,
     order_id: "ord-1",
     product_id: productId,
+    // Phase 43: legacy lines name no combination — null across the board.
+    variant_id: null,
+    variant_color_ar: null,
+    variant_color_en: null,
+    variant_size: null,
+    variant_size_label: null,
     name_ar: "صنف",
     name_en: "Item",
     sku: `SKU-${productId}`,

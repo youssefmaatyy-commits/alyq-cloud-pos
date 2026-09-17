@@ -36,6 +36,16 @@ export interface ReturnItem {
   return_id: string;
   sale_item_id: string;
   product_id: string;
+  /**
+   * Phase 43: the exact combination that came back. Copied from the SOLD line,
+   * never from the caller — a return restores the shelf the goods actually left,
+   * so returning a Gold/17 cannot put stock on Gold/16.
+   */
+  variant_id: string | null;
+  variant_color_ar: string | null;
+  variant_color_en: string | null;
+  variant_size: number | null;
+  variant_size_label: string | null;
   name_ar: string;
   name_en: string;
   sku: string;

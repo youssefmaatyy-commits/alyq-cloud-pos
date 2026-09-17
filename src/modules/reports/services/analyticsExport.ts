@@ -38,6 +38,7 @@ import {
 import { EXPENSE_CATEGORIES, EXPENSE_PAYMENT_METHODS, type Expense } from "@/modules/expenses/types";
 import type { Customer } from "@/modules/customers/types";
 import type { Product } from "@/modules/products/types";
+import type { ProductVariant } from "@/modules/products/variants";
 import type { Sale } from "@/modules/pos/types";
 import type { Shift } from "@/modules/shifts/types";
 import { rangeLabelOf, type DateRange } from "./financialExport";
@@ -241,6 +242,8 @@ export function buildSalesAnalyticsSheets(input: SalesAnalyticsExportInput): Bui
 export interface ProductAnalyticsExportInput {
   sales: readonly Sale[];
   products: readonly Product[];
+  /** Phase 43: the catalogue's combinations, for the stock summary tiles. */
+  variants?: readonly ProductVariant[];
   range: DateRange;
   t: Translate;
   pick: PickBilingual;
@@ -251,7 +254,7 @@ export function buildProductAnalyticsSheets(input: ProductAnalyticsExportInput):
   const sales = buildSalesAnalytics({ sales: input.sales, shifts: [], range }).sales;
   const rows = productPerformance(sales, input.products);
   const margin = marginSummary(sales, input.products, rows);
-  const stock = stockValueTotals(input.products);
+  const stock = stockValueTotals(input.products, input.variants ?? []);
   const notes = [rangeNote(range, t), t("export.note.costIsCurrent")];
 
   const summary = metricSheet(

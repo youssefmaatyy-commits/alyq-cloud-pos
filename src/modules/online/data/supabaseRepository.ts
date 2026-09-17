@@ -119,6 +119,11 @@ interface OnlineOrderItemRow {
   id: string;
   order_id: string;
   product_id: string;
+  variant_id?: string | null;
+  variant_color_ar?: string | null;
+  variant_color_en?: string | null;
+  variant_size?: Numeric | null;
+  variant_size_label?: string | null;
   name_ar: string;
   name_en: string;
   sku: string;
@@ -142,6 +147,7 @@ interface StockReservationRow {
   id: string;
   online_order_id: string;
   product_id: string;
+  variant_id?: string | null;
   quantity: number;
   status: StockReservation["status"];
   created_at: string;
@@ -289,6 +295,12 @@ function mapItem(row: OnlineOrderItemRow): OnlineOrderItem {
     id: row.id,
     order_id: row.order_id,
     product_id: row.product_id,
+    variant_id: row.variant_id ?? null,
+    variant_color_ar: row.variant_color_ar ?? null,
+    variant_color_en: row.variant_color_en ?? null,
+    variant_size:
+      row.variant_size === null || row.variant_size === undefined ? null : toNumber(row.variant_size),
+    variant_size_label: row.variant_size_label ?? null,
     name_ar: row.name_ar,
     name_en: row.name_en,
     sku: row.sku,
@@ -393,6 +405,7 @@ function mapReservation(row: StockReservationRow): StockReservation {
     id: row.id,
     online_order_id: row.online_order_id,
     product_id: row.product_id,
+    variant_id: row.variant_id ?? null,
     quantity: row.quantity,
     status: row.status,
     created_at: row.created_at,
@@ -649,6 +662,9 @@ export class SupabaseOnlineRepository
         p_reason: input.reason,
         p_user_id: input.user_id,
         p_user_name: input.user_name,
+        // Phase 43: the exact combination the hold covers. The RPC's 9-argument
+        // form names it; null keeps the product-level meaning.
+        p_variant_id: input.variant_id ?? null,
       });
       if (error) throw toOnlineError(error);
       return repairResultOf(data).reservation;

@@ -24,7 +24,16 @@ import type { Category, Product } from "../types";
  */
 
 type SeedCategory = Omit<Category, "id" | "created_at" | "updated_at"> & { id: string };
-type SeedProduct = Omit<Product, "id" | "created_at" | "updated_at"> & { id: string };
+/**
+ * `variants_enabled` is filled in by `buildDemoProducts`: the shipped range is a
+ * plain-stock range on purpose (it is what the storefront, the register and the
+ * dashboards were built against), and a variant product is created the way a
+ * shop would create one — through the catalogue, which the variants suite does.
+ */
+type SeedProduct = Omit<Product, "id" | "created_at" | "updated_at" | "variants_enabled"> & {
+  id: string;
+  variants_enabled?: boolean;
+};
 
 const SEED_TIME = "2026-01-06T09:00:00.000Z";
 
@@ -259,6 +268,7 @@ export function buildDemoCategories(): Category[] {
 export function buildDemoProducts(): Product[] {
   return P.map((p, i) => ({
     ...p,
+    variants_enabled: p.variants_enabled ?? false,
     created_at: new Date(Date.parse(SEED_TIME) - i * 36e5 * 9).toISOString(),
     updated_at: new Date(Date.parse(SEED_TIME) - i * 36e5 * 4).toISOString(),
   }));

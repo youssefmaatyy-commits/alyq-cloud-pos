@@ -21,8 +21,14 @@
 import type { Category, Product } from "@/modules/products/types";
 import { normalizeText } from "@/modules/products/services/productQuery";
 import type { Campaign, ProductContent } from "../types";
-import { availableToPromise, reservedOf } from "./availability";
-import { campaignFor, unitPriceOf } from "./pricing";
+import { availableToPromise, reservedOf, variantAvailableToPromise } from "./availability";
+import {
+  campaignFor,
+  sortStoreVariants,
+  unitPriceOf,
+  variantUnitPriceOf,
+  type StoreVariant,
+} from "./pricing";
 import { isNewArrival, productBadges, type ProductBadge } from "./badges";
 
 export const STOREFRONT_SORTS = [
@@ -77,6 +83,10 @@ export interface CatalogContext {
   contents: ReadonlyMap<string, ProductContent>;
   /** Product id → units held by pending orders. */
   reserved: ReadonlyMap<string, number>;
+  /** Phase 43: product id → its published combinations, display order. */
+  variants?: ReadonlyMap<string, StoreVariant[]>;
+  /** Phase 43: variant id → units held by pending orders. */
+  reservedVariant?: ReadonlyMap<string, number>;
   now?: Date;
   newArrivalDays?: number;
 }
@@ -86,6 +96,8 @@ export const EMPTY_CATALOG_CONTEXT: CatalogContext = {
   units: new Map(),
   contents: new Map(),
   reserved: new Map(),
+  variants: new Map(),
+  reservedVariant: new Map(),
 };
 
 /** A product with everything the storefront renders about it, resolved once. */
@@ -106,6 +118,15 @@ export interface CatalogProduct {
   inStock: boolean;
   isNew: boolean;
   unitsSold: number;
+  /**
+   * Phase 43: the combinations a shopper may actually buy right now — active
+   * with stock left — display order. Empty for a product that sells whole.
+   */
+  variants: StoreVariant[];
+  /** True when the product sells by variant and has combinations published. */
+  needsVariantChoice: boolean;
+  /** The lowest price across the combinations (overrides included), when any. */
+  priceFrom: number | null;
 }
 
 /** The brand a product is sold under, normalized for grouping. */
@@ -120,8 +141,37 @@ function toCatalogProduct(product: Product, context: CatalogContext): CatalogPro
   const campaign = campaignFor(product.id, context.campaigns, now);
   const price = unitPriceOf(product.selling_price, campaign);
   const listPrice = Math.max(product.selling_price, 0);
-  const available = availableToPromise(product, reservedOf(context.reserved, product.id));
   const unitsSold = context.units.get(product.id) ?? 0;
+
+  // Phase 43: a variant product's shelf is its combinations, not the rollup.
+  const published = context.variants?.get(product.id) ?? [];
+  const sellable = published.filter((variant) => {
+    if (!variant.active) return false;
+    const reservedOn = context.reservedVariant?.get(variant.id) ?? 0;
+    return variantAvailableToPromise(variant, reservedOn) > 0;
+  });
+  const ordered = sortStoreVariants(sellable);
+  const variantPrices = ordered.map((variant) =>
+    variantUnitPriceOf(variant, product.selling_price, campaignFor(product.id, context.campaigns, now)),
+  );
+  const priceFrom = variantPrices.length > 0 ? Math.min(...variantPrices) : null;
+
+  // Availability answers "can I buy this at all": for a variant product that is
+  // "is any combination on the shelf", for a plain product the rollup rule.
+  const variantUnits = ordered.reduce(
+    (sum, variant) =>
+      sum + variantAvailableToPromise(variant, context.reservedVariant?.get(variant.id) ?? 0),
+    0,
+  );
+  const rollupAvailable = availableToPromise(product, reservedOf(context.reserved, product.id));
+  const available =
+    product.variants_enabled && ordered.length > 0
+      ? variantUnits
+      : rollupAvailable;
+  const inStock =
+    product.variants_enabled && ordered.length > 0
+      ? ordered.length > 0
+      : rollupAvailable === null || rollupAvailable > 0;
 
   return {
     product,
@@ -140,9 +190,12 @@ function toCatalogProduct(product: Product, context: CatalogContext): CatalogPro
     }),
     brand: brandKey(content),
     available,
-    inStock: available === null || available > 0,
+    inStock,
     isNew: isNewArrival(product.created_at, now, context.newArrivalDays),
     unitsSold,
+    variants: ordered,
+    needsVariantChoice: product.variants_enabled && published.length > 0,
+    priceFrom,
   };
 }
 
@@ -333,9 +386,24 @@ export function priceRangeOf(
   let min = Number.POSITIVE_INFINITY;
   let max = Number.NEGATIVE_INFINITY;
   for (const product of storefrontProducts(products)) {
-    const price = unitPriceOf(product.selling_price, campaignFor(product.id, context.campaigns));
-    if (price < min) min = price;
-    if (price > max) max = price;
+    // A combination's own price is a price the customer can actually pay, so it
+    // widens the slider the same way a cheap product would — a size marked down
+    // must not sit outside the filter that would find it.
+    const prices = [unitPriceOf(product.selling_price, campaignFor(product.id, context.campaigns))];
+    for (const variant of context.variants?.get(product.id) ?? []) {
+      if (!variant.active) continue;
+      prices.push(
+        variantUnitPriceOf(
+          variant,
+          product.selling_price,
+          campaignFor(product.id, context.campaigns),
+        ),
+      );
+    }
+    for (const price of prices) {
+      if (price < min) min = price;
+      if (price > max) max = price;
+    }
   }
   if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
   return { min: Math.floor(min), max: Math.ceil(max) };

@@ -2,7 +2,9 @@
 import type { PickBilingual } from "@/lib/export";
 import type { Sale } from "@/modules/pos/types";
 import type { Product } from "@/modules/products/types";
+import type { ProductVariant } from "@/modules/products/variants";
 import type { Customer } from "@/modules/customers/types";
+import type { SalesReturn } from "@/modules/returns/types";
 import type { Expense } from "@/modules/expenses/types";
 import type { Shift } from "@/modules/shifts/types";
 import type { DateRange } from "../../services/financialExport";
@@ -30,4 +32,16 @@ export interface ReportTabProps {
   shifts: readonly Shift[];
   summaryFor: ShiftSummarizer;
   pick: PickBilingual;
+  /**
+   * Phase 43: the catalogue's combinations, for the stock tiles that read the
+   * shelves. Optional so a caller that has not loaded them still compiles —
+   * the tiles then report a catalogue that never sells by variant.
+   */
+  variants?: readonly ProductVariant[];
+  /**
+   * Phase 43: settled returns, for the per-combination report's returned
+   * columns. Optional like `variants` — a caller without them reports no
+   * returns, which is exactly what it knows.
+   */
+  returns?: readonly SalesReturn[];
 }

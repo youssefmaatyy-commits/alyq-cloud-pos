@@ -151,11 +151,21 @@ function fakeProduct(id: string, tracked = true): Product {
   } as Product;
 }
 
-function fakeItem(orderId: string, productId: string, quantity: number): OnlineOrderItem {
+function fakeItem(
+  orderId: string,
+  productId: string,
+  quantity: number,
+  variant?: { id: string; colorEn: string; colorAr: string; size: number | null; sizeLabel: string | null },
+): OnlineOrderItem {
   return {
     id: `${orderId}-${productId}`,
     order_id: orderId,
     product_id: productId,
+    variant_id: variant?.id ?? null,
+    variant_color_en: variant?.colorEn ?? null,
+    variant_color_ar: variant?.colorAr ?? null,
+    variant_size: variant?.size ?? null,
+    variant_size_label: variant?.sizeLabel ?? null,
     quantity,
     name_en: `Product ${productId}`,
     name_ar: `منتج ${productId}`,
@@ -391,6 +401,62 @@ test("two open holds on one order line need a person, not a guess", () => {
   assert.equal(reviewed.heldUnits, 6, "both rows still hide units — which is the problem");
 });
 
+test("holds on two variants of one product are two healthy shelves, not a duplicate", () => {
+  const products = [fakeProduct("p1")];
+  const gold = { id: "v-gold", colorEn: "Gold", colorAr: "ذهبي", size: 17, sizeLabel: null };
+  const silver = { id: "v-silver", colorEn: "Silver", colorAr: "فضي", size: 17, sizeLabel: null };
+  const orders = [
+    fakeOrder({
+      id: "o1",
+      items: [fakeItem("o1", "p1", 2, gold), fakeItem("o1", "p1", 2, silver)],
+    }),
+  ];
+  const reservations = [
+    fakeReservation({ id: "r1", online_order_id: "o1", product_id: "p1", variant_id: "v-gold", quantity: 2 }),
+    fakeReservation({ id: "r2", online_order_id: "o1", product_id: "p1", variant_id: "v-silver", quantity: 2 }),
+  ];
+
+  const reviewed = review({ reservations, orders, products });
+  assert.equal(reviewed.rows.length, 2, "each shelf gets exactly its own row");
+  const [goldRow, silverRow] = reviewed.rows;
+  assert.equal(goldRow.verdict, "valid", "Gold / 17 holds what its line asks");
+  assert.equal(silverRow.verdict, "valid", "Silver / 17 holds what its line asks");
+  assert.equal(goldRow.expected, 2, "the expected quantity is per shelf, never the product sum");
+  assert.equal(goldRow.variant?.colorEn, "Gold", "the row names the combination it holds");
+  assert.equal(reviewed.findings.length, 0);
+  assert.equal(reviewed.heldUnits, 4);
+});
+
+test("a hold on one variant is judged against that shelf's own line, not the product's other lines", () => {
+  const products = [fakeProduct("p1")];
+  const gold = { id: "v-gold", colorEn: "Gold", colorAr: "ذهبي", size: 17, sizeLabel: null };
+  const silver = { id: "v-silver", colorEn: "Silver", colorAr: "فضي", size: 17, sizeLabel: null };
+  const orders = [
+    fakeOrder({
+      id: "o1",
+      items: [fakeItem("o1", "p1", 2, gold), fakeItem("o1", "p1", 1, silver)],
+    }),
+  ];
+  // The hold claims 3 — the product's total across lines — but only Gold / 17
+  // was ordered twice. The old product-level arithmetic would have called this
+  // a match; per shelf it is off by one.
+  const reservations = [
+    fakeReservation({ id: "r1", online_order_id: "o1", product_id: "p1", variant_id: "v-gold", quantity: 3 }),
+  ];
+
+  const reviewed = review({ reservations, orders, products });
+  const [row] = reviewed.rows;
+  assert.equal(row.verdict, "quantity_mismatch");
+  assert.equal(row.expected, 2, "only the Gold / 17 line counts");
+  assert.equal(row.unitsFreed, 1, "a reconcile frees the shelf's difference");
+  // The other shelf's line is now the missing half.
+  assert.equal(reviewed.byVerdict.missing_hold, 1, "Silver / 17 has no hold at all");
+  const missing = reviewed.rows.find((candidate) => candidate.verdict === "missing_hold");
+  assert.ok(missing, "the missing shelf is reported");
+  assert.equal(missing?.variant?.colorEn, "Silver");
+  assert.equal(missing?.expected, 1);
+});
+
 test("a hold settled without a timestamp is unresolved, and one settled against the ledger needs a person", () => {
   const products = [fakeProduct("p1")];
   const orders = [
@@ -457,7 +523,7 @@ test("a pending order holding nothing is a missing hold — for tracked lines on
   assert.equal(missing.held, 0);
   assert.equal(missing.expected, 2, "the quantity is the order line's own");
   assert.equal(missing.unitsFreed, 2);
-  assert.equal(missing.key, "missing:o1:p1");
+  assert.equal(missing.key, "missing:o1:p1:");
   assert.equal(missing.ageDays, 9, "a missing hold ages with its order");
   assert.equal(missing.severity, "danger");
 
@@ -1127,7 +1193,7 @@ test("the holds table narrows by text, verdict, order status, product, age and d
   const reviewed = filterFixture();
   assert.deepEqual(
     reviewed.rows.map((row) => row.key),
-    ["r1", "r3", "missing:o2:p2"],
+    ["r1", "r3", "missing:o2:p2:"],
     "two holds, then the one that should exist and does not",
   );
   assert.equal(reviewed.findings.length, 2);
@@ -1140,34 +1206,34 @@ test("the holds table narrows by text, verdict, order status, product, age and d
       (row) => row.key,
     );
 
-  assert.deepEqual(narrow({}), ["r3", "missing:o2:p2"], "the default view is only problems");
+  assert.deepEqual(narrow({}), ["r3", "missing:o2:p2:"], "the default view is only problems");
   assert.deepEqual(
     narrow({ scope: "all" }),
-    ["r1", "r3", "missing:o2:p2"],
+    ["r1", "r3", "missing:o2:p2:"],
     "…and every hold is one switch away",
   );
 
   assert.deepEqual(narrow({ scope: "all", search: "web-o1" }), ["r1"], "search ignores case");
-  assert.deepEqual(narrow({ scope: "all", search: "SKU-P2" }), ["missing:o2:p2"], "and reaches the SKU");
+  assert.deepEqual(narrow({ scope: "all", search: "SKU-P2" }), ["missing:o2:p2:"], "and reaches the SKU");
   assert.deepEqual(
     narrow({ scope: "all", search: "منتج p2" }),
-    ["missing:o2:p2"],
+    ["missing:o2:p2:"],
     "and the Arabic product name",
   );
-  assert.deepEqual(narrow({ scope: "all", search: "  " }), ["r1", "r3", "missing:o2:p2"], "whitespace searches nothing");
+  assert.deepEqual(narrow({ scope: "all", search: "  " }), ["r1", "r3", "missing:o2:p2:"], "whitespace searches nothing");
 
   assert.deepEqual(narrow({ scope: "all", verdict: "valid" }), ["r1"]);
   assert.deepEqual(narrow({ verdict: "valid" }), [], "a verdict the scope excludes stays excluded");
   assert.deepEqual(
     narrow({ scope: "all", verdict: ["stale", "missing_hold"] }),
-    ["r3", "missing:o2:p2"],
+    ["r3", "missing:o2:p2:"],
     "an alert's Show narrows to several verdicts at once",
   );
 
-  assert.deepEqual(narrow({ scope: "all", orderStatus: "pending" }), ["r1", "missing:o2:p2"]);
+  assert.deepEqual(narrow({ scope: "all", orderStatus: "pending" }), ["r1", "missing:o2:p2:"]);
   assert.deepEqual(narrow({ scope: "all", orderStatus: "approved" }), ["r3"]);
   assert.deepEqual(narrow({ scope: "all", orderStatus: "missing" }), [], "no hold here has lost its order");
-  assert.deepEqual(narrow({ scope: "all", productId: "p2" }), ["missing:o2:p2"]);
+  assert.deepEqual(narrow({ scope: "all", productId: "p2" }), ["missing:o2:p2:"]);
 
   assert.deepEqual(
     narrow({ scope: "all", minAgeDays: AGING_HOLD_DAYS }),
@@ -1178,7 +1244,7 @@ test("the holds table narrows by text, verdict, order status, product, age and d
 
   assert.deepEqual(
     narrow({ scope: "all", from: "2026-05-01" }),
-    ["r3", "missing:o2:p2"],
+    ["r3", "missing:o2:p2:"],
     "the window is inclusive…",
   );
   assert.deepEqual(narrow({ scope: "all", to: "2026-04-30" }), ["r1"], "…on both ends");

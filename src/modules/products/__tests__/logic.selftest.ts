@@ -49,6 +49,7 @@ const cat = (
 
 const prod = (over: Partial<Product> & { id: string; sku: string }): Product => ({
   barcode: null,
+  variants_enabled: false,
   name_ar: "منتج",
   name_en: "Product " + over.sku,
   description_ar: null,

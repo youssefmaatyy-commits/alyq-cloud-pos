@@ -9,6 +9,8 @@ import {
 } from "react";
 import type { AppError } from "@/modules/products/data/repository";
 import { stockStatus, type Product, type StockStatus } from "@/modules/products/types";
+import type { ProductVariant } from "@/modules/products/variants";
+import { compareVariants } from "@/modules/products/variants";
 import { getInventoryMode, getInventoryRepository } from "../data";
 import type { InventoryRepository } from "../data/repository";
 import {
@@ -26,11 +28,16 @@ export interface InventoryContextValue {
   repository: InventoryRepository;
   products: Product[];
   movements: StockMovement[];
+  /** Phase 43: every combination, display order — the breakdown rows. */
+  variants: ProductVariant[];
+  variantsByProduct: Map<string, ProductVariant[]>;
   loading: boolean;
   error: AppError | null;
   refresh: (options?: { silent?: boolean }) => Promise<void>;
   adjustStock: (args: {
     productId: string;
+    /** The exact combination being corrected, when the product sells by variant. */
+    variantId?: string | null;
     type: StockMovementType;
     reason: StockReason;
     quantity: number;
@@ -55,6 +62,7 @@ const InventoryContext = createContext<InventoryContextValue | null>(null);
 export function InventoryProvider({ children }: { children: ReactNode }) {
   const [products, setProducts] = useState<Product[]>([]);
   const [movements, setMovements] = useState<StockMovement[]>([]);
+  const [variants, setVariants] = useState<ProductVariant[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<AppError | null>(null);
   const { user: authUser } = useAuth();
@@ -77,6 +85,7 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
       const snapshot = await loadInventory();
       setProducts(snapshot.products);
       setMovements(snapshot.movements);
+      setVariants(snapshot.variants);
     } catch (err) {
       setError(err as AppError);
     } finally {
@@ -97,6 +106,7 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
   const adjustStock = useCallback(
     async (args: {
       productId: string;
+      variantId?: string | null;
       type: StockMovementType;
       reason: StockReason;
       quantity: number;
@@ -110,6 +120,12 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
       setProducts((prev) =>
         prev.map((p) => (p.id === result.product.id ? result.product : p)),
       );
+      if (result.variant) {
+        // The combination's own row moves too, so the breakdown is current.
+        setVariants((prev) =>
+          prev.map((v) => (v.id === result.variant!.id ? result.variant! : v)),
+        );
+      }
       setMovements((prev) => [result.movement, ...prev]);
       return result;
     },
@@ -135,12 +151,27 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
     [products],
   );
 
+  const variantsByProduct = useMemo(() => {
+    const grouped = new Map<string, ProductVariant[]>();
+    for (const variant of variants) {
+      const list = grouped.get(variant.product_id);
+      if (list) list.push(variant);
+      else grouped.set(variant.product_id, [variant]);
+    }
+    // Display order at the point of grouping, so every consumer renders the
+    // same sequence: colour, then NUMERIC size.
+    for (const list of grouped.values()) list.sort(compareVariants);
+    return grouped;
+  }, [variants]);
+
   const value = useMemo<InventoryContextValue>(
     () => ({
       mode,
       repository,
       products,
       movements,
+      variants,
+      variantsByProduct,
       loading,
       error,
       refresh,
@@ -151,7 +182,7 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
       canAdjust: canAdjustStock(user),
       statusOf,
     }),
-    [mode, repository, products, movements, loading, error, refresh, adjustStock, productById, movementsForProduct, user, statusOf],
+    [mode, repository, products, movements, variants, variantsByProduct, loading, error, refresh, adjustStock, productById, movementsForProduct, user, statusOf],
   );
 
   return <InventoryContext.Provider value={value}>{children}</InventoryContext.Provider>;

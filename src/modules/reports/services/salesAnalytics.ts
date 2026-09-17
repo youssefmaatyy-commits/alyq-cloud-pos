@@ -38,6 +38,7 @@ import { PAYMENT_METHODS, type PaymentMethod, type Sale } from "@/modules/pos/ty
 import type { Product } from "@/modules/products/types";
 import type { Customer } from "@/modules/customers/types";
 import type { Shift } from "@/modules/shifts/types";
+import type { ProductVariant } from "@/modules/products/variants";
 import { paymentTotals, totalQuantity } from "@/modules/pos/services/salesExport";
 import { customerPurchaseStats } from "@/modules/customers/services/customersExport";
 import {
@@ -469,23 +470,90 @@ export interface StockValueTotals {
   potentialMargin: number;
   lowStock: number;
   outOfStock: number;
+  /**
+   * Phase 43 — what the product-level numbers cannot say. A variant product's
+   * health is its ACTIVE variants' (a sold-out best-seller must not hide behind
+   * a stocked-out sibling), so low/out read the shelves, and the counts answer
+   * "how much of the catalogue sells by combination".
+   */
+  variantProducts: number;
+  /** Combinations of every variant product, archived ones included. */
+  variants: number;
+  activeVariants: number;
+  /** Active combinations on their low level but not yet empty. */
+  lowVariants: number;
+  /** Active combinations with nothing left to sell. */
+  soldOutVariants: number;
 }
 
-/** The whole shelf, valued the way the stock screen values one product. */
-export function stockValueTotals(products: readonly Product[]): StockValueTotals {
+/**
+ * The whole shelf, valued the way the stock screen values one product.
+ *
+ * `variants` is every combination of the catalogue — the same rows
+ * `CatalogProvider` holds. It is optional so the historical callers keep
+ * compiling, but the report RPC (`reports_inventory_summary`, 0043) computes
+ * these numbers from the shelves, and a caller that omits them reports a
+ * catalogue that never sells by variant.
+ */
+export function stockValueTotals(
+  products: readonly Product[],
+  variants: readonly ProductVariant[] = [],
+): StockValueTotals {
   const tracked = products.filter((product) => product.stock_tracking_enabled);
+  const shelves = new Map<string, ProductVariant[]>();
+  for (const variant of variants) {
+    const list = shelves.get(variant.product_id);
+    if (list) list.push(variant);
+    else shelves.set(variant.product_id, [variant]);
+  }
+
   let units = 0;
   let atCost = 0;
   let atRetail = 0;
   let lowStock = 0;
   let outOfStock = 0;
+  let variantProducts = 0;
+  let variantCount = 0;
+  let activeVariants = 0;
+  let lowVariants = 0;
+  let soldOutVariants = 0;
 
   for (const product of tracked) {
     units += product.stock_quantity;
     atCost += stockValueAtCost(product);
     atRetail += stockValueAtRetail(product);
-    if (product.stock_quantity <= 0) outOfStock += 1;
-    else if (product.stock_quantity <= product.low_stock_level) lowStock += 1;
+
+    const own = shelves.get(product.id);
+    if (product.variants_enabled) {
+      // The combination's own shelf decides: out when NOTHING active is
+      // sellable, low when something sells but a shelf is empty or low.
+      const active = (own ?? []).filter((variant) => variant.active);
+      const sellable = active.filter((variant) => variant.stock_quantity > 0);
+      const low = active.filter(
+        (variant) => variant.stock_quantity > 0 && variant.stock_quantity <= variant.low_stock_level,
+      );
+      const soldOut = active.filter((variant) => variant.stock_quantity <= 0);
+      if (sellable.length === 0) outOfStock += 1;
+      else if (low.length > 0 || soldOut.length > 0) lowStock += 1;
+    } else if (product.stock_quantity <= 0) {
+      outOfStock += 1;
+    } else if (product.stock_quantity <= product.low_stock_level) {
+      lowStock += 1;
+    }
+  }
+
+  // The variant counts answer for EVERY variant product, tracked or not —
+  // matching `reports_inventory_summary`, which filters only on the flag.
+  for (const product of products) {
+    const own = shelves.get(product.id) ?? [];
+    if (!product.variants_enabled) continue;
+    variantProducts += 1;
+    variantCount += own.length;
+    activeVariants += own.filter((variant) => variant.active).length;
+    lowVariants += own.filter(
+      (variant) => variant.active && variant.stock_quantity > 0 && variant.stock_quantity <= variant.low_stock_level,
+    ).length;
+    soldOutVariants += own.filter((variant) => variant.active && variant.stock_quantity <= 0).length;
   }
 
   return {
@@ -497,6 +565,11 @@ export function stockValueTotals(products: readonly Product[]): StockValueTotals
     potentialMargin: roundMoney(atRetail - atCost),
     lowStock,
     outOfStock,
+    variantProducts,
+    variants: variantCount,
+    activeVariants,
+    lowVariants,
+    soldOutVariants,
   };
 }
 

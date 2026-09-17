@@ -48,7 +48,7 @@ import type {
 } from "../types";
 import { resolveSettings } from "../services/settingsDefaults";
 import { unitsSold } from "../services/badges";
-import { brandsOf, type BrandEntry } from "../services/pricing";
+import { brandsOf, sortStoreVariants, type BrandEntry, type StoreVariant } from "../services/pricing";
 import {
   brandFacet,
   categoryFacet,
@@ -71,6 +71,13 @@ export interface StorefrontContextValue {
 
   products: Product[];
   categories: Category[];
+  /**
+   * Phase 43: every published combination of every published variant product,
+   * in display order. Empty for a catalogue that sells nothing by variant.
+   */
+  variants: StoreVariant[];
+  /** The combinations of one product, display order. */
+  variantsOf: (productId: string) => StoreVariant[];
   contents: ProductContent[];
   contentByProduct: Map<string, ProductContent>;
   faqs: StoreFaq[];
@@ -142,9 +149,10 @@ export function StorefrontProvider({ children }: { children: ReactNode }) {
   });
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [variants, setVariants] = useState<StoreVariant[]>([]);
   const [bestSellers, setBestSellers] = useState<{ product_id: string; units: number }[]>([]);
   const [reservedList, setReservedList] = useState<
-    { product_id: string; quantity: number; status: string }[]
+    { product_id: string; variant_id: string | null; quantity: number; status: string }[]
   >([]);
 
   const load = useCallback(async () => {
@@ -155,6 +163,7 @@ export function StorefrontProvider({ children }: { children: ReactNode }) {
         website.getSnapshot(),
         website.bestSellers(8),
       ]);
+      setVariants(sortStoreVariants(catalog.variants));
 
       // Reservations are staff rows in live mode; asking for them as a visitor
       // would be refused, so only demo mode reads them.
@@ -225,6 +234,7 @@ export function StorefrontProvider({ children }: { children: ReactNode }) {
           id: row.product_id,
           online_order_id: "",
           product_id: row.product_id,
+          variant_id: null,
           quantity: row.quantity,
           status: row.status as "reserved",
           created_at: "",
@@ -234,14 +244,43 @@ export function StorefrontProvider({ children }: { children: ReactNode }) {
     [reservedList],
   );
 
+  // The same holds, per exact combination: what a pending order is holding of
+  // Gold / 17 specifically. Demo mode again — live visitors cannot read holds,
+  // and checkout re-checks them server-side either way.
+  const reservedVariant = useMemo(() => {
+    const totals = new Map<string, number>();
+    for (const row of reservedList) {
+      if (row.status !== "reserved" || !row.variant_id) continue;
+      totals.set(row.variant_id, (totals.get(row.variant_id) ?? 0) + row.quantity);
+    }
+    return totals;
+  }, [reservedList]);
+
+  const variantsByProduct = useMemo(() => {
+    const grouped = new Map<string, StoreVariant[]>();
+    for (const variant of variants) {
+      const list = grouped.get(variant.product_id);
+      if (list) list.push(variant);
+      else grouped.set(variant.product_id, [variant]);
+    }
+    return grouped;
+  }, [variants]);
+
+  const variantsOf = useCallback(
+    (productId: string) => variantsByProduct.get(productId) ?? [],
+    [variantsByProduct],
+  );
+
   const catalogContext = useMemo<CatalogContext>(
     () => ({
       campaigns: snapshot.campaigns,
       units,
       contents: contentByProduct,
       reserved,
+      variants: variantsByProduct,
+      reservedVariant,
     }),
-    [snapshot.campaigns, units, contentByProduct, reserved],
+    [snapshot.campaigns, units, contentByProduct, reserved, variantsByProduct, reservedVariant],
   );
 
   const sections = useMemo(() => visibleSections(settings), [settings]);
@@ -303,6 +342,8 @@ export function StorefrontProvider({ children }: { children: ReactNode }) {
       meta: snapshot.meta,
       products,
       categories,
+      variants,
+      variantsOf,
       contents: snapshot.contents,
       contentByProduct,
       faqs: snapshot.faqs,
@@ -331,10 +372,13 @@ export function StorefrontProvider({ children }: { children: ReactNode }) {
       snapshot,
       products,
       categories,
+      variants,
+      variantsOf,
       contentByProduct,
       bestSellers,
       units,
       reserved,
+      reservedVariant,
       catalogContext,
       sections,
       brands,

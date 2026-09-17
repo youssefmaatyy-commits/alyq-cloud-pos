@@ -68,7 +68,15 @@ import {
   priceCart,
   round2,
 } from "../services/pricing";
-import { availableToPromise, holdsReservation, reservedByProduct } from "../services/availability";
+import {
+  availableToPromise,
+  holdsReservation,
+  reservedByProduct,
+  reservedByVariant,
+  variantAvailableToPromise,
+} from "../services/availability";
+import { variantLabelOf } from "../services/variantLabel";
+import type { ProductVariant } from "@/modules/products/variants";
 import { unitsSold } from "../services/badges";
 import { checkAction, initialPaymentStatus, requiresReason } from "../services/orderWorkflow";
 import { slugifyAscii } from "../services/seo";
@@ -129,11 +137,19 @@ function nowIso(): string {
 }
 
 /** Units an order's lines ask for of one product, or `null` when it is not in the order. */
-function orderedQuantity(order: OnlineOrder, productId: string): number | null {
+function orderedQuantity(
+  order: OnlineOrder,
+  productId: string,
+  variantId: string | null = null,
+): number | null {
   let total = 0;
   let found = false;
   for (const item of order.items) {
     if (item.product_id !== productId) continue;
+    // Phase 43: a hold names a shelf — product AND combination. A hold for
+    // Gold / 17 reconciles against the Gold / 17 lines only, and a legacy
+    // product-level hold against the lines that name no combination.
+    if ((item.variant_id ?? null) !== (variantId ?? null)) continue;
     found = true;
     total += Math.max(0, Math.trunc(item.quantity));
   }
@@ -558,12 +574,12 @@ export class DemoOnlineRepository
           { detail: { id, order_status: order.status },
         });
       }
-      const expected = orderedQuantity(order, current.product_id);
+      const expected = orderedQuantity(order, current.product_id, current.variant_id);
       if (expected === null) {
         throw new OnlineError(
           "workflow_refused",
-          "The order has no line for this product — release the hold instead",
-          { detail: { id, product_id: current.product_id } },
+          "The order has no line for this shelf — release the hold instead",
+          { detail: { id, product_id: current.product_id, variant_id: current.variant_id } },
         );
       }
       if (input.quantity != null && Math.trunc(input.quantity) !== expected) {
@@ -631,10 +647,11 @@ export class DemoOnlineRepository
         { detail: { order_status: order.status } },
       );
     }
-    const expected = orderedQuantity(order, input.product_id);
+    const variantId = input.variant_id ?? null;
+    const expected = orderedQuantity(order, input.product_id, variantId);
     if (expected === null || expected <= 0) {
-      throw new OnlineError("workflow_refused", "The order has no line for this product", {
-        detail: { product_id: input.product_id },
+      throw new OnlineError("workflow_refused", "The order has no line for this shelf", {
+        detail: { product_id: input.product_id, variant_id: variantId },
       });
     }
     if (input.quantity != null && Math.trunc(input.quantity) !== expected) {
@@ -648,6 +665,7 @@ export class DemoOnlineRepository
       (reservation) =>
         reservation.online_order_id === order.id &&
         reservation.product_id === input.product_id &&
+        (reservation.variant_id ?? null) === variantId &&
         reservation.status === "reserved",
     );
     if (existing) return delay(existing);
@@ -656,6 +674,7 @@ export class DemoOnlineRepository
       id: newId("rsv"),
       online_order_id: order.id,
       product_id: input.product_id,
+      variant_id: variantId,
       quantity: expected,
       status: "reserved",
       created_at: nowIso(),
@@ -777,9 +796,23 @@ export class DemoOnlineRepository
       const products = await getDemoRepository().listProducts();
       const byId = new Map(products.map((product) => [product.id, product]));
 
-      // Aggregate quantities per product: the same piece added twice must not be
-      // promised the last unit twice.
+      // Phase 43: every combination of every variant product, so a line that
+      // names a combination can be validated against THAT shelf — its own
+      // stock, its own holds, its own price. The same reads the SQL does.
+      const variants = await getDemoRepository().listVariants();
+      // Active combinations only — an archived one stopped being sold, and the
+      // SQL refuses it at the same point.
+      const variantById = new Map<string, ProductVariant>(
+        variants.filter((variant) => variant.active).map((variant) => [variant.id, variant]),
+      );
+
+      // Aggregate quantities per SHELF: two lines of the same product add up,
+      // and so do two lines of the same combination — the same piece added
+      // twice must not be promised the last unit twice.
       const wanted = new Map<string, number>();
+      const lineVariant = new Map<string, string | null>();
+      const shelfKey = (productId: string, variantId: string | null) =>
+        `${productId}::${variantId ?? ""}`;
       for (const line of input.lines) {
         const quantity = Math.trunc(line.qty);
         if (!Number.isFinite(quantity) || quantity <= 0) {
@@ -805,15 +838,82 @@ export class DemoOnlineRepository
             detail: { sku: product.sku },
           });
         }
-        wanted.set(product.id, (wanted.get(product.id) ?? 0) + quantity);
+
+        // ── which combination, exactly ──
+        // A variant-product line names one; the storefront never picks a
+        // colour or a size for the customer, and neither does this function.
+        let variantId: string | null = null;
+        if (product.variants_enabled) {
+          const raw = line.variant_id ?? null;
+          variantId = raw && variantById.has(raw) ? raw : null;
+          if (!raw || !variantId) {
+            throw new OnlineError(
+              "variant_required",
+              `Choose the colour and the size for ${product.sku}`,
+              { field: "lines", detail: { sku: product.sku } },
+            );
+          }
+          const variant = variantById.get(variantId) as ProductVariant;
+          if (variant.product_id !== product.id) {
+            throw new OnlineError(
+              "variant_mismatch",
+              `That colour and size does not belong to ${product.sku}`,
+              { field: "lines", detail: { sku: product.sku } },
+            );
+          }
+        } else if (line.variant_id) {
+          // A combination named on a product that sells whole is junk, not a
+          // hint — refusing keeps the order line honest.
+          throw new OnlineError(
+            "variant_mismatch",
+            `${product.sku} does not sell by colour and size`,
+            { field: "lines", detail: { sku: product.sku } },
+          );
+        }
+
+        const key = shelfKey(product.id, variantId);
+        wanted.set(key, (wanted.get(key) ?? 0) + quantity);
+        lineVariant.set(key, variantId);
       }
 
-      // Availability is stock minus what pending orders are already holding.
+      // Availability is stock minus what pending orders are already holding —
+      // per combination for a variant line, per product otherwise.
       const reserved = reservedByProduct(this.reservations);
-      for (const [productId, quantity] of wanted) {
+      const reservedVariant = reservedByVariant(this.reservations);
+      const shelfSku = new Map<string, string>();
+      const shelfAvailable = new Map<string, number | null>();
+      for (const [key, quantity] of wanted) {
+        const [productId, variantId] = key.split("::");
         const product = byId.get(productId);
         if (!product) continue;
+        const variant = variantId ? variantById.get(variantId) : undefined;
+        if (variant) {
+          shelfSku.set(key, variant.sku);
+          const available = variantAvailableToPromise(
+            variant,
+            reservedVariant.get(variant.id) ?? 0,
+          );
+          shelfAvailable.set(key, available);
+          if (quantity > available) {
+            throw new OnlineError(
+              "insufficient_stock",
+              `Only ${available} of ${variantLabelOf(variant)} available`,
+              {
+                field: "lines",
+                detail: {
+                  sku: product.sku,
+                  variant_id: variant.id,
+                  requested: quantity,
+                  available,
+                },
+              },
+            );
+          }
+          continue;
+        }
+        shelfSku.set(key, product.sku);
         const available = availableToPromise(product, reserved.get(productId) ?? 0);
+        shelfAvailable.set(key, available);
         if (available !== null && quantity > available) {
           throw new OnlineError(
             "insufficient_stock",
@@ -839,13 +939,20 @@ export class DemoOnlineRepository
       }
 
       const totals = priceCart({
-        items: [...wanted.entries()].map(([productId, quantity]) => {
+        items: [...wanted.entries()].map(([key, quantity]) => {
+          const [productId, variantId] = key.split("::");
           const product = byId.get(productId) as Product;
+          const variant = variantId ? (variantById.get(variantId) as ProductVariant) : null;
           return {
             product_id: productId,
             quantity,
             list_price: product.selling_price,
             category_id: product.category_id,
+            // The priced line keeps its combination, and a combination with
+            // its own override prices at exactly that — campaigns never stack
+            // on top, the same rule `place_online_order` applies.
+            variant_id: variantId || null,
+            fixed_price: variant?.price_override ?? null,
           };
         }),
         campaigns: this.campaigns,
@@ -911,14 +1018,25 @@ export class DemoOnlineRepository
 
       const items: OnlineOrderItem[] = totals.lines.map((line) => {
         const product = byId.get(line.product_id) as Product;
+        // The snapshot names the COMBINATION's own code — the invoice and the
+        // pick list say "ALYQ-G17", not the product's — frozen beside the
+        // colour and size, exactly like `SaleItem` and like the SQL writes.
+        const variant = line.variant_id
+          ? (variantById.get(line.variant_id) as ProductVariant)
+          : null;
         return {
           id: newId("oli"),
           order_id: orderId,
           product_id: product.id,
+          variant_id: variant?.id ?? null,
+          variant_color_ar: variant?.color_ar ?? null,
+          variant_color_en: variant?.color_en ?? null,
+          variant_size: variant?.size ?? null,
+          variant_size_label: variant?.size_label ?? null,
           name_ar: product.name_ar,
           name_en: product.name_en,
-          sku: product.sku,
-          barcode: product.barcode,
+          sku: variant?.sku ?? product.sku,
+          barcode: variant?.barcode ?? product.barcode,
           unit_price: line.unit_price,
           quantity: line.quantity,
           line_total: line.line_total,
@@ -975,12 +1093,27 @@ export class DemoOnlineRepository
         ],
       };
 
-      // Reservations: the units this order is holding while it waits.
+      // Reservations: the units this order is holding while it waits — per
+      // SHELF, so a hold on Gold / 17 shadows Gold / 17 only. Same order, same
+      // product, same combination → the holds add up instead of hiding the
+      // same units twice behind a duplicate row.
       for (const item of items) {
+        const existing = this.reservations.find(
+          (reservation) =>
+            reservation.online_order_id === orderId &&
+            reservation.product_id === item.product_id &&
+            (reservation.variant_id ?? null) === (item.variant_id ?? null) &&
+            reservation.status === "reserved",
+        );
+        if (existing) {
+          existing.quantity += item.quantity;
+          continue;
+        }
         this.reservations.push({
           id: newId("res"),
           online_order_id: orderId,
           product_id: item.product_id,
+          variant_id: item.variant_id ?? null,
           quantity: item.quantity,
           status: "reserved",
           created_at: at,
@@ -1148,15 +1281,25 @@ export class DemoOnlineRepository
         case "approve": {
           const products = await getDemoRepository().listProducts();
           const byId = new Map(products.map((product) => [product.id, product]));
+          // Phase 43: the sale carries the order's exact combinations, so the
+          // deduction lands on the right shelf and the invoice reads the same
+          // colour and size the customer chose.
+          const variants = await getDemoRepository().listVariants();
+          const variantById = new Map(variants.map((variant) => [variant.id, variant]));
 
           // The sale's lines come out at catalogue price, so everything that
           // lowered them at checkout — a flash sale, a coupon, both — travels
           // across as one fixed discount. Otherwise the register books more
-          // revenue than the customer paid.
+          // revenue than the customer paid. A combination's own override IS a
+          // catalogue price, so it counts at that, not at the product's.
           const listTotal = round2(
             order.items.reduce((sum, item) => {
               const product = byId.get(item.product_id);
-              const unit = product?.selling_price ?? item.unit_price;
+              const variant = item.variant_id
+                ? variantById.get(item.variant_id) ?? null
+                : null;
+              const unit =
+                variant?.price_override ?? product?.selling_price ?? item.unit_price;
               return sum + unit * item.quantity;
             }, 0),
           );
@@ -1169,6 +1312,7 @@ export class DemoOnlineRepository
             lines: order.items.map((item) => ({
               product_id: item.product_id,
               qty: item.quantity,
+              variant_id: item.variant_id,
             })),
             discount_type: saleDiscount > 0 ? "fixed" : "none",
             discount_value: saleDiscount,

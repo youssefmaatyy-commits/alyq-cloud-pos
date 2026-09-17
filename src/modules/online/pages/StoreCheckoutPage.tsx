@@ -155,8 +155,16 @@ export function StoreCheckoutPage() {
     }
   }, [deliveryType, paymentMethod, setDeliveryType, setPaymentMethod, settings.delivery]);
 
-  const problemsByProduct = useMemo(
-    () => new Map(problems.map((problem) => [problem.product_id, problem])),
+  // Phase 43: a shortage is a shelf's, keyed product + combination — Gold / 17
+  // being short must not grey out Silver / 17 sitting in the same cart.
+  const problemsByLine = useMemo(
+    () =>
+      new Map(
+        problems.map((problem) => [
+          `${problem.product_id}::${problem.variant_id ?? ""}`,
+          problem,
+        ]),
+      ),
     [problems],
   );
 
@@ -593,13 +601,23 @@ export function StoreCheckoutPage() {
 
             <ul className="mt-3 flex flex-col gap-2">
               {entries.map((entry) => {
-                const problem = problemsByProduct.get(entry.product.id);
+                const problem = problemsByLine.get(
+                  `${entry.product.id}::${entry.variant?.id ?? ""}`,
+                );
                 return (
-                  <li key={entry.product.id} className="flex items-start justify-between gap-2 text-xs">
+                  <li
+                    key={`${entry.product.id}::${entry.variant?.id ?? ""}`}
+                    className="flex items-start justify-between gap-2 text-xs"
+                  >
                     <span className="min-w-0">
                       <span className="block truncate font-bold text-[var(--store-text)]">
                         {pick(entry.product.name_ar, entry.product.name_en)}
                       </span>
+                      {entry.variantLabel ? (
+                        <span className="block font-bold text-[var(--store-text)]" data-testid="checkout-line-variant">
+                          {entry.variantLabel}
+                        </span>
+                      ) : null}
                       <span className="text-[var(--store-muted)]">
                         {t("store.checkout.quantityTimes", { count: entry.quantity })}
                       </span>

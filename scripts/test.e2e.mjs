@@ -39,6 +39,11 @@ const SUITES = [
     file: "scripts/lifecycle.flow.mjs",
     title: "Product lifecycle (unused delete, referenced block, archive → hidden, reactivate, audit)",
   },
+  {
+    id: "variants",
+    file: "scripts/variants.flow.mjs",
+    title: "Variant Test Ring (generate, balanced enable, per-shelf sale + refusal, breakdown, disable block)",
+  },
   { id: "backup", file: "scripts/backup.flow.mjs", title: "Backup & recovery flow (snapshot, download, health, schedule, restore, permissions)" },
   { id: "crash", file: "scripts/crash.flow.mjs", title: "Crash recovery (ErrorBoundary: the screen, no leaked detail, the sibling survives)" },
   {

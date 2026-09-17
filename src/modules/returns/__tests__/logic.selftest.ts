@@ -411,8 +411,8 @@ await (async () => {
       refund_amount: 100, refund_method: "cash", refund_status: "completed",
       user_id: "u1", user_name: "Cashier",
       items: [
-        { id: "i1", return_id: "r1", sale_item_id: "si1", product_id: "p1", name_ar: "", name_en: "Earrings", sku: "C-1", barcode: null, unit_price: 10, quantity: 3, line_total: 30 },
-        { id: "i2", return_id: "r1", sale_item_id: "si2", product_id: "p2", name_ar: "", name_en: "Tea", sku: "T-1", barcode: null, unit_price: 5, quantity: 1, line_total: 5 },
+        { id: "i1", return_id: "r1", sale_item_id: "si1", product_id: "p1", variant_id: null, variant_color_ar: null, variant_color_en: null, variant_size: null, variant_size_label: null, name_ar: "", name_en: "Earrings", sku: "C-1", barcode: null, unit_price: 10, quantity: 3, line_total: 30 },
+        { id: "i2", return_id: "r1", sale_item_id: "si2", product_id: "p2", variant_id: null, variant_color_ar: null, variant_color_en: null, variant_size: null, variant_size_label: null, name_ar: "", name_en: "Tea", sku: "T-1", barcode: null, unit_price: 5, quantity: 1, line_total: 5 },
       ],
       created_at: "2026-09-10T12:00:00Z",
     }];
@@ -682,7 +682,10 @@ test("the pure rules: rejected rows hold neither quantity nor refundable balance
     user_name: "Tester",
     items: [
       {
-        id: "i1", sale_id: "s1", product_id: "p1", name_ar: "ق", name_en: "Q",
+        id: "i1", sale_id: "s1", product_id: "p1",
+        variant_id: null, variant_color_ar: null, variant_color_en: null,
+        variant_size: null, variant_size_label: null,
+        name_ar: "ق", name_en: "Q",
         sku: "Q-1", barcode: null, unit_price: 100, quantity: 1, line_total: 100,
       },
     ],
@@ -712,7 +715,7 @@ test("the pure rules: rejected rows hold neither quantity nor refundable balance
     refund_status: status,
     user_id: "u1",
     user_name: "Tester",
-    items: [{
+    items: [{ variant_id: null, variant_color_ar: null, variant_color_en: null, variant_size: null, variant_size_label: null,
       id: `ri-${status}`, return_id: `r-${status}`, sale_item_id: "i1", product_id: "p1",
       name_ar: "ق", name_en: "Q", sku: "Q-1", barcode: null, unit_price: 100,
       quantity: 1, line_total: 100,

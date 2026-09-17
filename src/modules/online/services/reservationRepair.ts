@@ -123,6 +123,17 @@ export interface ReservationReviewRow {
   orderNumber: string;
   orderStatus: OnlineOrderStatus | "missing";
   product: { id: string; sku: string; nameEn: string; nameAr: string; tracked: boolean } | null;
+  /**
+   * Phase 43: the exact combination held, frozen from the order line — null for
+   * a product-level hold. Two holds on one product can be perfectly healthy
+   * when they hold different shelves; the screen must say which is which.
+   */
+  variant: {
+    colorEn: string | null;
+    colorAr: string | null;
+    size: number | null;
+    sizeLabel: string | null;
+  } | null;
   /** Units the hold keeps out of the pool right now (0 for a missing hold). */
   held: number;
   /** Units the order line asks for — what the hold should say. */
@@ -181,16 +192,45 @@ function emptyVerdictCounts(): Record<ReservationVerdict, number> {
   >;
 }
 
-/** Units of one product an order's lines ask for, or `null` when it is not in the order. */
-function orderedQuantity(order: OnlineOrder, productId: string): number | null {
+/**
+ * Units of one shelf — one (product, variant) pair — an order's lines ask for,
+ * or `null` when no line matches. Since variants, a product line names a
+ * combination: Gold / 17 and Silver / 17 on one order are two different pools,
+ * and summing them would report an expected quantity no hold can match.
+ */
+function orderedQuantity(
+  order: OnlineOrder,
+  productId: string,
+  variantId: string | null,
+): number | null {
   let total = 0;
   let found = false;
   for (const item of order.items ?? []) {
     if (item.product_id !== productId) continue;
+    if ((item.variant_id ?? null) !== variantId) continue;
     found = true;
     total += Math.max(0, Math.trunc(item.quantity ?? 0));
   }
   return found ? total : null;
+}
+
+/** The frozen combination of the first matching order line, or null. */
+function orderedVariant(
+  order: OnlineOrder,
+  productId: string,
+  variantId: string | null,
+): ReservationReviewRow["variant"] {
+  for (const item of order.items ?? []) {
+    if (item.product_id !== productId) continue;
+    if ((item.variant_id ?? null) !== variantId) continue;
+    return {
+      colorEn: item.variant_color_en,
+      colorAr: item.variant_color_ar,
+      size: item.variant_size,
+      sizeLabel: item.variant_size_label,
+    };
+  }
+  return null;
 }
 
 function productOf(
@@ -249,11 +289,14 @@ export function reviewReservations(input: ReservationReviewInput): ReservationRe
 
   // Order lines that already carry an open hold, in input order: the first hold
   // on a line is judged on its own merits and any later one is the anomaly.
+  // The key names the shelf, not just the product — Gold / 17 and Silver / 17
+  // held by one order are two healthy holds, not a duplicate.
   const openLines = new Set<string>();
 
   for (const reservation of input.reservations) {
     const order = ordersById.get(reservation.online_order_id) ?? null;
-    const expected = order ? orderedQuantity(order, reservation.product_id) : null;
+    const variantId = reservation.variant_id ?? null;
+    const expected = order ? orderedQuantity(order, reservation.product_id, variantId) : null;
     const resolved = reservation.status !== "reserved";
     const created = reservation.created_at ? new Date(reservation.created_at) : null;
     const ageDays =
@@ -277,7 +320,7 @@ export function reviewReservations(input: ReservationReviewInput): ReservationRe
       verdict = reservation.status === "reserved" ? "orphaned" : "valid";
       action = verdict === "orphaned" ? "release" : null;
     } else if (reservation.status === "reserved") {
-      const line = `${reservation.online_order_id}:${reservation.product_id}`;
+      const line = `${reservation.online_order_id}:${reservation.product_id}:${variantId ?? ""}`;
       if (staleIds.has(reservation.id) || !holdsReservation(order.status)) {
         // The order moved on. Whether the units were taken is decided by whether
         // it became a sale and was not then cancelled: a cancelled order's sale is
@@ -333,6 +376,7 @@ export function reviewReservations(input: ReservationReviewInput): ReservationRe
       orderNumber: order?.order_number ?? "—",
       orderStatus: order?.status ?? "missing",
       product: productOf(input.products, reservation.product_id),
+      variant: order ? orderedVariant(order, reservation.product_id, variantId) : null,
       held: reservation.status === "reserved" ? reservation.quantity : 0,
       expected: expected ?? 0,
       status: reservation.status,
@@ -355,7 +399,10 @@ export function reviewReservations(input: ReservationReviewInput): ReservationRe
   const openHolds = new Set(
     input.reservations
       .filter((reservation) => reservation.status === "reserved")
-      .map((reservation) => `${reservation.online_order_id}:${reservation.product_id}`),
+      .map(
+        (reservation) =>
+          `${reservation.online_order_id}:${reservation.product_id}:${reservation.variant_id ?? ""}`,
+      ),
   );
   const tracked = new Set(
     input.products
@@ -370,26 +417,54 @@ export function reviewReservations(input: ReservationReviewInput): ReservationRe
     // lines. A review that reported only the first would ask for fewer units than
     // the repair then holds, and the operator would see a number the store never
     // writes.
-    const wanted = new Map<string, number>();
+    // Per shelf, not per line: lines for the same product but different
+    // variants draw on different pools, so each (product, variant) pair gets its
+    // own wanted total and its own missing-hold finding.
+    const wanted = new Map<
+      string,
+      {
+        productId: string;
+        variantId: string | null;
+        quantity: number;
+        variant: ReservationReviewRow["variant"];
+      }
+    >();
     for (const item of order.items ?? []) {
       if (!tracked.has(item.product_id)) continue;
       const quantity = Math.max(0, Math.trunc(item.quantity ?? 0));
       if (quantity <= 0) continue;
-      wanted.set(item.product_id, (wanted.get(item.product_id) ?? 0) + quantity);
+      const shelfKey = `${item.product_id}:${item.variant_id ?? ""}`;
+      const entry = wanted.get(shelfKey) ?? {
+        productId: item.product_id,
+        variantId: item.variant_id ?? null,
+        quantity: 0,
+        variant: null,
+      };
+      entry.quantity += quantity;
+      if (!entry.variant) {
+        entry.variant = {
+          colorEn: item.variant_color_en,
+          colorAr: item.variant_color_ar,
+          size: item.variant_size,
+          sizeLabel: item.variant_size_label,
+        };
+      }
+      wanted.set(shelfKey, entry);
     }
-    for (const [productId, quantity] of wanted) {
-      // One finding per order line: an existing open hold already covers it, and
+    for (const [shelfKey, entry] of wanted) {
+      // One finding per order shelf: an existing open hold already covers it, and
       // two identical rows would repair the same thing twice.
-      if (openHolds.has(`${order.id}:${productId}`)) continue;
+      if (openHolds.has(`${order.id}:${shelfKey}`)) continue;
       rows.push({
-        key: `missing:${order.id}:${productId}`,
+        key: `missing:${order.id}:${shelfKey}`,
         reservation: null,
         order,
         orderNumber: order.order_number,
         orderStatus: order.status,
-        product: productOf(input.products, productId),
+        product: productOf(input.products, entry.productId),
+        variant: entry.variant,
         held: 0,
-        expected: quantity,
+        expected: entry.quantity,
         status: "missing",
         createdAt: order.created_at ?? null,
         resolvedAt: null,
@@ -400,7 +475,7 @@ export function reviewReservations(input: ReservationReviewInput): ReservationRe
         verdict: "missing_hold",
         severity: SEVERITY.missing_hold,
         action: "hold",
-        unitsFreed: quantity,
+        unitsFreed: entry.quantity,
       });
       byVerdict.missing_hold += 1;
     }

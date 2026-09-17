@@ -10,6 +10,8 @@ import {
 import { getCatalogMode, getCatalogRepository } from "../data";
 import type { AppError, CatalogRepository, ProductReferenceMap } from "../data/repository";
 import type { Category, CategoryNode, Product } from "../types";
+import type { ProductVariant } from "../variants";
+import { summarizeVariants } from "../variants";
 import {
   assertCategoryDeletable,
   deleteCategory as deleteCategoryService,
@@ -29,6 +31,13 @@ export interface CatalogContextValue {
   repository: CatalogRepository;
   products: Product[];
   categories: Category[];
+  /**
+   * Phase 43: every combination in the catalogue, display order, with the
+   * per-product summary attached to each product row (so tables and detail
+   * pages can say "3 variants · 1 low" without a second read each).
+   */
+  variants: ProductVariant[];
+  variantsByProduct: Map<string, ProductVariant[]>;
   tree: CategoryNode[];
   /**
    * product id → how much preserved history it has (empty unless the acting
@@ -61,6 +70,7 @@ const CatalogContext = createContext<CatalogContextValue | null>(null);
 export function CatalogProvider({ children }: { children: ReactNode }) {
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [variants, setVariants] = useState<ProductVariant[]>([]);
   const [productReferences, setProductReferences] = useState<ProductReferenceMap>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<AppError | null>(null);
@@ -72,8 +82,27 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
     setLoading(true);
     setError(null);
     try {
-      const snapshot = await loadCatalog();
-      setProducts(snapshot.products);
+      const [snapshot, combinations] = await Promise.all([
+        loadCatalog(),
+        repository.listVariants().catch(() => []),
+      ]);
+      setVariants(combinations);
+      // A variant product's tiles and badges answer from its ACTIVE variants
+      // (stockStatus), never from the rollup alone.
+      const grouped = new Map<string, ProductVariant[]>();
+      for (const variant of combinations) {
+        const list = grouped.get(variant.product_id);
+        if (list) list.push(variant);
+        else grouped.set(variant.product_id, [variant]);
+      }
+      setProducts(
+        snapshot.products.map((product) => {
+          const own = grouped.get(product.id);
+          return own && own.length > 0
+            ? { ...product, variant_summary: summarizeVariants(own) }
+            : product;
+        }),
+      );
       setCategories(snapshot.categories);
       // Reference counts only matter to a seat that could delete — asking for
       // them without the capability would turn a working catalogue load into a
@@ -183,12 +212,24 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
 
   const tree = useMemo(() => buildCategoryTree(categories, products), [categories, products]);
 
+  const variantsByProduct = useMemo(() => {
+    const grouped = new Map<string, ProductVariant[]>();
+    for (const variant of variants) {
+      const list = grouped.get(variant.product_id);
+      if (list) list.push(variant);
+      else grouped.set(variant.product_id, [variant]);
+    }
+    return grouped;
+  }, [variants]);
+
   const value = useMemo<CatalogContextValue>(
     () => ({
       mode,
       repository,
       products,
       categories,
+      variants,
+      variantsByProduct,
       tree,
       productReferences,
       loading,
@@ -207,6 +248,8 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
       repository,
       products,
       categories,
+      variants,
+      variantsByProduct,
       tree,
       productReferences,
       loading,

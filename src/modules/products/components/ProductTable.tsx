@@ -60,6 +60,19 @@ function StockCell({ product }: { product: Product }) {
         {num(product.stock_quantity, 0)}
       </span>
       <StockBadge status={status} />
+      {/* Phase 43: a variant product says so, and repeats its own health — the
+          rollup alone would hide a sold-out colour inside a healthy total. */}
+      {product.variants_enabled && product.variant_summary && product.variant_summary.total > 0 ? (
+        <span
+          className="block text-[10px] font-semibold text-slate-500"
+          data-testid={`variant-chip-${product.sku}`}
+        >
+          {t("products.variantsTableChip", {
+            count: product.variant_summary.total,
+            low: product.variant_summary.low + product.variant_summary.out,
+          })}
+        </span>
+      ) : null}
     </div>
   );
 }

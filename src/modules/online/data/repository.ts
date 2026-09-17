@@ -55,6 +55,10 @@ export const ONLINE_ERROR_CODES = [
   "empty_cart",
   "insufficient_stock",
   "invalid_quantity",
+  /** Phase 43: a variant-product line arrived without its exact combination. */
+  "variant_required",
+  /** Phase 43: the combination named does not belong to the product (or it). */
+  "variant_mismatch",
   "product_unavailable",
   "product_not_found",
   "product_not_online",

@@ -58,6 +58,11 @@ interface SaleItemRow {
   id: string;
   sale_id: string;
   product_id: string;
+  variant_id: string | null;
+  variant_color_ar: string | null;
+  variant_color_en: string | null;
+  variant_size: number | string | null;
+  variant_size_label?: string | null;
   name_ar: string;
   name_en: string;
   sku: string;
@@ -107,6 +112,14 @@ function mapSale(row: SaleRow, items: SaleItemRow[] = [], payments: SalePaymentR
       id: i.id,
       sale_id: i.sale_id,
       product_id: i.product_id,
+      // Phase 43: the exact combination sold, with the colour and size frozen at
+      // sale time — a renamed or archived variant still reads on this invoice.
+      variant_id: i.variant_id ?? null,
+      variant_color_ar: i.variant_color_ar ?? null,
+      variant_color_en: i.variant_color_en ?? null,
+      variant_size:
+        i.variant_size === null || i.variant_size === undefined ? null : toNumber(i.variant_size),
+      variant_size_label: i.variant_size_label ?? null,
       name_ar: i.name_ar,
       name_en: i.name_en,
       sku: i.sku,

@@ -114,6 +114,16 @@ export interface OnlineOrderItem {
   id: string;
   order_id: string;
   product_id: string;
+  /**
+   * Phase 43: the exact combination ordered. Null on every legacy line — those
+   * keep rendering from the product snapshot alone.
+   */
+  variant_id: string | null;
+  /** Frozen colour and size, exactly like `SaleItem` — rename-proof. */
+  variant_color_ar: string | null;
+  variant_color_en: string | null;
+  variant_size: number | null;
+  variant_size_label: string | null;
   /** Snapshot of the product at order time, exactly like `SaleItem`. */
   name_ar: string;
   name_en: string;
@@ -201,6 +211,12 @@ export interface StockReservation {
   id: string;
   online_order_id: string;
   product_id: string;
+  /**
+   * Phase 43: the exact combination being held, when the product sells by
+   * variant. Available-to-promise is per combination — a hold on Gold / 17
+   * must not shadow Silver / 17.
+   */
+  variant_id: string | null;
   quantity: number;
   status: ReservationStatus;
   created_at: string;
@@ -245,6 +261,12 @@ export interface ReservationRepairInput {
 export interface ReservationHoldInput {
   online_order_id: string;
   product_id: string;
+  /**
+   * Phase 43: the exact combination the hold covers, when the product sells by
+   * variant. Omitted (null) for a product-level hold — the meaning the 8-argument
+   * repair function has always had.
+   */
+  variant_id?: string | null;
   /** Ignored unless it matches the order line — see `ReservationRepairInput.quantity`. */
   quantity?: number | null;
   reason: string;
@@ -273,7 +295,12 @@ export interface PlaceOrderInput {
   store_customer_id?: string | null;
   delivery_type: DeliveryType;
   address: OrderAddress | null;
-  lines: { product_id: string; qty: number }[];
+  /**
+   * Phase 43: a line for a product that sells by variant names the exact
+   * combination. The server refuses a variant-product line that names none —
+   * the storefront never picks a colour or a size for the customer.
+   */
+  lines: { product_id: string; qty: number; variant_id?: string | null }[];
   coupon_code?: string | null;
   payment_method: OnlinePaymentMethod;
   notes?: string | null;
