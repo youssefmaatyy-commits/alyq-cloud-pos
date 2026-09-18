@@ -211,6 +211,7 @@ export function SystemSettingsPage() {
       <PageHeader
         title={t("dz.title")}
         subtitle={t("dz.subtitle")}
+        crumbs={[{ label: t("home.breadcrumb.settings"), to: "/settings" }, { label: t("dz.title") }]}
         backTo="/settings"
         backLabel={t("common.back")}
       />

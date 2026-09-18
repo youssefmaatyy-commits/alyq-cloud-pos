@@ -319,14 +319,20 @@ await step(1, "The panel is behind a permission", async () => {
   if (!app.denied()) throw new Error("a cashier reached the backup panel");
   out.push("cashier → no sidebar link, and the route itself refuses");
 
-  // An admin holds all five: the link is in the Settings section and the panel
-  // renders, saying which mode it is in.
+  // An admin holds all five: the door is the Settings module (Phase 49 put the
+  // rooms behind the grouped home, not the sidebar) and the panel renders,
+  // saying which mode it is in.
   await app.signOut();
   await app.signIn("admin");
-  if (!app.navHrefs().some((href) => href.includes("/settings/backup"))) {
-    throw new Error("the sidebar does not offer the backup panel to an admin");
+  if (!app.navHrefs().some((href) => href === "#/settings")) {
+    throw new Error("the sidebar does not offer the Settings module to an admin");
   }
-  await app.openPanel();
+  await app.navigate("#/settings");
+  await app.waitFor(() => app.dom.window.document.querySelector('[data-testid="settings-card-backup"]'), { what: "the backup card on the settings home" });
+  await app.dom.window.document.querySelector('[data-testid="settings-card-backup"]').dispatchEvent(
+    new app.dom.window.MouseEvent("click", { bubbles: true, cancelable: true }),
+  );
+  await sleep(400);
   for (const expected of ["Backup & recovery", "Offline mode", "Snapshots"]) {
     if (!app.bodyText().includes(expected)) throw new Error(`the panel does not say "${expected}"`);
   }

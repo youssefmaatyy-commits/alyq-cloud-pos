@@ -96,6 +96,7 @@ export function AuditLogPage() {
   return (
     <div>
       <PageHeader
+        crumbs={[{ label: t("home.breadcrumb.settings"), to: "/settings" }, { label: t("audit.title") }]}
         title={t("audit.title")}
         subtitle={t("audit.subtitle")}
         actions={

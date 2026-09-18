@@ -80,6 +80,7 @@ export function MovementsPage() {
   return (
     <div>
       <PageHeader
+        crumbs={[{ label: t("home.breadcrumb.inventory"), to: "/inventory" }, { label: t("nav.movements") }]}
         title={t("inventory.history")}
         subtitle={t("inventory.history.subtitle")}
         actions={
@@ -88,7 +89,7 @@ export function MovementsPage() {
               ⟳
             </Button>
             <Link
-              to="/inventory"
+              to="/inventory/stock"
               className="inline-flex h-10 items-center gap-2 rounded-xl bg-white px-4 text-sm font-semibold text-slate-800 ring-1 ring-slate-300 transition-colors hover:bg-slate-50"
             >
               <WarehouseIcon />
@@ -184,7 +185,7 @@ export function MovementsPage() {
             action={
               canAdjust ? (
                 <Link
-                  to="/inventory"
+                  to="/inventory/stock"
                   className="inline-flex h-10 items-center gap-2 rounded-xl bg-indigo-600 px-4 text-sm font-medium text-white hover:bg-indigo-700"
                 >
                   {t("inventory.adjust")}

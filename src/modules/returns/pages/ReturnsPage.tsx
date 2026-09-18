@@ -62,6 +62,7 @@ export function ReturnsPage({ initialTab = "returns" }: { initialTab?: "returns"
   return (
     <div>
       <PageHeader
+        crumbs={[{ label: t("home.breadcrumb.sales"), to: "/sales" }, { label: t("nav.returns") }]}
         title={t("returns.title")}
         subtitle={t("returns.subtitle")}
         actions={

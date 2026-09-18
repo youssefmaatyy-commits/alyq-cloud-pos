@@ -88,6 +88,7 @@ export function ApprovalRulesPage() {
     <div>
       <PageHeader
         title={t("approvals.rulesTitle")}
+        crumbs={[{ label: t("home.breadcrumb.settings"), to: "/settings" }, { label: t("approvals.rulesTitle") }]}
         subtitle={t("approvals.rulesSubtitle")}
         backTo="/settings"
         backLabel={t("settings.title")}

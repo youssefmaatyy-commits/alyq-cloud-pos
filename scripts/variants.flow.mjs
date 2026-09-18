@@ -403,7 +403,7 @@ async function main() {
   console.log("  ✓ sale completed: Gold/17 → 0, Silver/17 → 2, rollup → 2");
 
   // 7 ─ inventory: the breakdown, then a per-shelf adjustment
-  await navigate("#/inventory");
+  await navigate("#/inventory/stock");
   await waitFor(
     () => [...document.querySelectorAll("input")].find((i) => (i.placeholder ?? "").includes("SKU or barcode")),
     { label: "the inventory screen" },

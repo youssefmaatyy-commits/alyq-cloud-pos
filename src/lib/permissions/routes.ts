@@ -31,6 +31,9 @@ export const ROUTE_CAPABILITIES: ReadonlyArray<readonly [string, Capability]> = 
   ["/inventory", "view_inventory"],
   ["/pos/sales", "sell"],
   ["/pos", "sell"],
+  // Phase 49: the Sales module landing opens with the same capability as the
+  // invoice list it fronts — a module door must never be wider than its rooms.
+  ["/sales", "sell"],
   ["/returns", "process_return"],
   ["/refunds", "process_refund"],
   ["/shifts/history", "view_shifts"],
@@ -70,6 +73,10 @@ export const ROUTE_CAPABILITIES: ReadonlyArray<readonly [string, Capability]> = 
   // (appearance, sections, campaigns, coupons, product content) can repaint the
   // storefront for every customer and change what they pay, so it uses
   // `manage_website`, which only managers and admins hold.
+  // Phase 49: the Online module landing. Working the queue (orders, holds,
+  // reports) is `manage_online_orders`; the shop-window cards beneath it are
+  // `manage_website` and hide per-card on the landing itself.
+  ["/online", "manage_online_orders"],
   ["/online/orders", "manage_online_orders"],
   // Stock holds (Phase 15). Reading what the website has reserved is part of
   // working the queue, so it opens with the same capability. *Settling* a hold
@@ -104,7 +111,16 @@ export const ROUTE_CAPABILITIES: ReadonlyArray<readonly [string, Capability]> = 
   // Phase 47: the Danger Zone — the strongest gate in the table, and the only
   // one an ordinary oversight role is deliberately denied.
   ["/settings/system", "manage_system_reset"],
-  ["/settings", "manage_settings"],
+  // Approval thresholds: changing them is `manage_settings` work (the same
+  // capability that has always owned system-wide configuration), so the child
+  // names its own gate explicitly.
+  ["/settings/approvals", "manage_settings"],
+  // Phase 49: the settings INDEX is the grouped directory, and a directory
+  // gate must never be wider than its widest room — the manager who may read
+  // the audit trail and the backups could not previously open the very page
+  // listing them. Every room keeps (and states) its own capability; the home
+  // hides what the role may not open and shows a locked empty state when
+  // nothing remains, so the index itself carries no capability of its own.
 ];
 
 /**

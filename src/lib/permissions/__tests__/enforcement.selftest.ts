@@ -511,12 +511,15 @@ test("the reservation monitoring surfaces are gated by the capabilities they act
 
   // The sidebar badge sits on the nav row the route table already gates, so a
   // count never appears for somebody who could not open the screen behind it.
+  // Phase 49: the holds count rides the Online MODULE door — the module opens
+  // with `manage_online_orders` (or the website capability), the same authority
+  // the reservations row carried; a role with neither sees no badge at all.
   const shell = read("src/components/layout/AppShell.tsx");
   assert.ok(
-    /to="\/online\/reservations"[\s\S]{0,300}?visible=\{canOpen\("\/online\/reservations"\)\}[\s\S]{0,300}?badge=\{online\.holdAlertCount\}/.test(
+    /to="\/online"[\s\S]{0,400}?visible=\{canOpen\("\/online\/orders"\) \|\| canManageWebsite\}[\s\S]{0,400}?badge=\{online\.counts\.pending\}/.test(
       shell,
     ),
-    "the holds badge is on the gated nav row, not beside it",
+    "the online badge is on the capability-gated module door, not beside it",
   );
 
   // The alerts come from the queue provider, which loads nothing at all for a

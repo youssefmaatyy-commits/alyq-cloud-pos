@@ -194,6 +194,9 @@ export interface ResolvedSlide {
   subtitle: string;
   ctaLabel: string;
   ctaHref: string;
+  /** Phase 49: the quieter second call to action; empty when not configured. */
+  secondaryCtaLabel: string;
+  secondaryCtaHref: string;
   align: HeroSlide["align"];
   /** Phase 45 presentation: phone image, scrim strength, copy corner, height. */
   mobileImageUrl: string | null;
@@ -220,6 +223,8 @@ export function resolvedSlides(
       subtitle: pick(slide.subtitle_ar, slide.subtitle_en).trim(),
       ctaLabel: pick(slide.cta_label_ar, slide.cta_label_en).trim(),
       ctaHref: slide.cta_href.trim(),
+      secondaryCtaLabel: pick(slide.secondary_cta_label_ar ?? "", slide.secondary_cta_label_en ?? "").trim(),
+      secondaryCtaHref: (slide.secondary_cta_href ?? "").trim(),
       align: slide.align,
       mobileImageUrl: slide.mobile_image_url ?? null,
       overlay: typeof slide.overlay === "number" ? Math.min(100, Math.max(0, Math.round(slide.overlay))) : null,

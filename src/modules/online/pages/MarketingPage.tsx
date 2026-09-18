@@ -180,6 +180,7 @@ export function MarketingPage() {
     <div>
       <PageHeader
         title={t("online.marketing.title")}
+        crumbs={[{ label: t("home.breadcrumb.online"), to: "/online" }, { label: t("nav.marketing") }]}
         subtitle={t("online.marketing.subtitle")}
         actions={
           <>

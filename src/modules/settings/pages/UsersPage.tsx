@@ -168,6 +168,7 @@ export function UsersPage() {
     <div>
       <PageHeader
         title={t("settings.users.title")}
+        crumbs={[{ label: t("home.breadcrumb.settings"), to: "/settings" }, { label: t("settings.users.title") }]}
         subtitle={t("settings.users.subtitle")}
         actions={
           <>

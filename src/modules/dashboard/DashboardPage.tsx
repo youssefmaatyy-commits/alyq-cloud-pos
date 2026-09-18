@@ -255,7 +255,7 @@ export function DashboardPage() {
           </Link>
         ) : null}
         {mayOpenInventory ? (
-          <Link to="/inventory">
+          <Link to="/inventory/stock">
             <Button variant="secondary" size="sm" data-testid="dash-qa-stock">
               <WarehouseIcon /> {t("dashboard.qaStock")}
             </Button>
@@ -297,7 +297,7 @@ export function DashboardPage() {
           tone="warning"
           icon={<WarehouseIcon />}
           hint={`${inventoryAlerts.outCount} ${t("dashboard.outOfStock").toLowerCase()}`}
-          to={mayOpenInventory ? "/inventory?status=low" : undefined}
+          to={mayOpenInventory ? "/inventory/stock?status=low" : undefined}
           testId="kpi-low-stock"
         />
         <KpiTile
@@ -500,14 +500,14 @@ export function DashboardPage() {
               value={String(inventoryAlerts.outCount)}
               tone={inventoryAlerts.outCount > 0 ? "danger" : "success"}
               hint={t("dashboard.webStockHint")}
-              to={mayOpenInventory ? "/inventory?status=out" : undefined}
+              to={mayOpenInventory ? "/inventory/stock?status=out" : undefined}
               testId="web-kpi-out-of-stock"
             />
             <KpiTile
               label={t("dashboard.webLowStock")}
               value={String(inventoryAlerts.lowCount)}
               tone={inventoryAlerts.lowCount > 0 ? "warning" : "success"}
-              to={mayOpenInventory ? "/inventory?status=low" : undefined}
+              to={mayOpenInventory ? "/inventory/stock?status=low" : undefined}
               testId="web-kpi-low-stock"
             />
           </div>
@@ -747,7 +747,7 @@ export function DashboardPage() {
         <Card className="mt-4" testId="dash-stock-alerts">
           <div className="mb-2 flex items-center justify-between">
             <h2 className="text-base font-black text-stone-900">{t("dashboard.alertsTitle")}</h2>
-            <Link to="/inventory?status=low" className="text-xs font-bold text-stone-600 hover:text-stone-900">
+            <Link to="/inventory/stock?status=low" className="text-xs font-bold text-stone-600 hover:text-stone-900">
               {t("nav.inventory")} →
             </Link>
           </div>

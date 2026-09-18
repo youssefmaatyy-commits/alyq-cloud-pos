@@ -238,7 +238,7 @@ async function main() {
 
   // The inventory provider mounted before the ring existed — the same manual
   // sync a clerk does when the shelf and the ledger disagree.
-  await navigate("#/inventory", 700);
+  await navigate("#/inventory/stock", 700);
   const invRetry = [...document.querySelectorAll("button[title]")].find((b) =>
     (b.getAttribute("title") ?? "").toLowerCase().includes("retry"),
   );

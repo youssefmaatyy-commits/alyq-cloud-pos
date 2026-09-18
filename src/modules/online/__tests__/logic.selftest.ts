@@ -1139,9 +1139,11 @@ test("hiding a section removes it from the storefront but keeps its place in the
 test("sections can be reordered, retitled and re-limited", () => {
   const document = settings();
   const moved = moveSection(document, 0, 2);
+  // Phase 49: the default rhythm is hero → categories → newArrivals → …, so
+  // moving the first section two slots down yields categories, newArrivals, hero.
   assert.deepEqual(
     moved.slice(0, 3).map((section) => section.key),
-    ["categories", "featured", "hero"],
+    ["categories", "newArrivals", "hero"],
   );
 
   document.sections = setSectionTitle(document, "faq", { ar: "أسئلة", en: "Questions" });

@@ -125,7 +125,7 @@ export function themeVariables(settings: WebsiteSettings): Record<string, string
   const theme = settings.theme;
   const primary = safeColor(theme.primary_color, "#4338ca");
   const secondary = safeColor(theme.secondary_color, "#0f172a");
-  const accent = safeColor(theme.accent_color, "#f59e0b");
+  const accent = safeColor(theme.accent_color, "#b08d57");
   const dark = theme.dark_mode;
 
   const background = safeColor(

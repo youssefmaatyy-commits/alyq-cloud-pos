@@ -159,6 +159,7 @@ export function RolesPage() {
     <div>
       <PageHeader
         title={t("settings.roles.title")}
+        crumbs={[{ label: t("home.breadcrumb.settings"), to: "/settings" }, { label: t("settings.roles.title") }]}
         subtitle={t("settings.roles.subtitle")}
         actions={
           <>

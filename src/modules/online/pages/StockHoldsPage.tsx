@@ -276,6 +276,7 @@ export function StockHoldsPage() {
     <div>
       <PageHeader
         title={t("holds.title")}
+        crumbs={[{ label: t("home.breadcrumb.online"), to: "/online" }, { label: t("nav.stockHolds") }]}
         subtitle={t("holds.subtitle")}
         actions={
           <>

@@ -344,6 +344,7 @@ export function BackupPage() {
       <PageHeader
         title={t("backup.title")}
         subtitle={t("backup.subtitle")}
+        crumbs={[{ label: t("home.breadcrumb.settings"), to: "/settings" }, { label: t("backup.title") }]}
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <Badge tone={mode === "supabase" ? "info" : "neutral"}>

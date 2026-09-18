@@ -56,6 +56,7 @@ import { BackupPage } from "@/modules/backup";
 import { BrandingPage } from "@/modules/settings/pages/BrandingPage";
 import { SettingsHomePage } from "@/modules/settings/pages/SettingsHomePage";
 import { SystemSettingsPage } from "@/modules/settings/pages/SystemSettingsPage";
+import { SalesHome, CatalogHome, InventoryHome, OnlineHome } from "./components/layout/moduleHomes";
 
 import {
   MarketingPage,
@@ -252,8 +253,14 @@ function AuthenticatedApp() {
                             <Route path="/products/new" element={<ProductFormPage mode="create" />} />
                             <Route path="/products/:id" element={<ProductDetailPage />} />
                             <Route path="/products/:id/edit" element={<ProductFormPage mode="edit" />} />
+                            {/* Phase 49: the Catalog module landing. */}
+                            <Route path="/catalog" element={<CatalogHome />} />
                             <Route path="/categories" element={<CategoriesPage />} />
-                            <Route path="/inventory" element={<InventoryPage />} />
+                            {/* Phase 49: /inventory is the module landing; the
+                                stock list itself lives one step deeper, with its
+                                ?status= pre-filters intact. */}
+                            <Route path="/inventory" element={<InventoryHome />} />
+                            <Route path="/inventory/stock" element={<InventoryPage />} />
                             <Route path="/inventory/movements" element={<MovementsPage />} />
                             {/* The till is the one screen where a blank page stops trade, so it
                                 gets a boundary of its own inside the shell: the crash is contained,
@@ -264,6 +271,10 @@ function AuthenticatedApp() {
                                 <PosPage />
                               </ErrorBoundary>
                             } />
+                            {/* Phase 49: the Sales module landing — invoices,
+                                returns, refunds, shifts, expenses and the
+                                approvals inbox behind one door. */}
+                            <Route path="/sales" element={<SalesHome />} />
                             <Route path="/pos/sales" element={<SalesHistoryPage />} />
                             <Route path="/pos/sales/:id" element={<SaleDetailPage />} />
                             <Route path="/customers" element={<CustomersPage />} />
@@ -288,6 +299,10 @@ function AuthenticatedApp() {
                                 longest-prefix — but it renders the analysis
                                 instead of the raw extracts. */}
                             <Route path="/reports/advanced" element={<AdvancedReportsPage />} />
+                            {/* Phase 49: the Online module landing — the queue,
+                                the shop window and the marketing tools behind
+                                one door; each card keeps its own capability. */}
+                            <Route path="/online" element={<OnlineHome />} />
                             <Route path="/online/orders" element={<OnlineOrdersPage />} />
                             <Route path="/online/reservations" element={<StockHoldsPage />} />
                             <Route path="/online/website" element={<WebsiteSettingsPage />} />

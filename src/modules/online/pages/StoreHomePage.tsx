@@ -218,11 +218,21 @@ export function StoreHomePage() {
               : "items-center justify-center text-center";
         const ctaHref =
           internalHref(slide.ctaHref)?.slice(1) ?? externalHref(slide.ctaHref) ?? "/store/products";
+        const secondaryLabel = slide.secondaryCtaLabel;
+        const secondaryHref = slide.secondaryCtaHref
+          ? internalHref(slide.secondaryCtaHref)?.slice(1) ?? externalHref(slide.secondaryCtaHref)
+          : null;
         return (
           <section
             key="hero"
             aria-label={slide.title || storeName}
-            className="relative overflow-hidden bg-[var(--store-secondary)]"
+            // Without imagery the stage falls back to the admin's own colours —
+            // a quiet gradient from the secondary into the primary. Never a
+            // colour the shop did not choose.
+            className="relative overflow-hidden"
+            style={{
+              backgroundImage: "linear-gradient(140deg, var(--store-secondary) 0%, var(--store-primary) 100%)",
+            }}
             onMouseEnter={() => setPaused(true)}
             onMouseLeave={() => setPaused(false)}
             onFocus={() => setPaused(true)}
@@ -276,18 +286,31 @@ export function StoreHomePage() {
                     {slide.subtitle}
                   </p>
                 ) : null}
-                {slide.ctaLabel ? (
-                  <Link
-                    // The CTA target is admin-typed: an in-app "#/…" route or a
-                    // safe absolute http(s) URL. Anything else — including the
-                    // "#javascript:…" slice bypass — falls back to the shop's
-                    // own products route rather than rendering an unsafe href.
-                    to={ctaHref}
-                    className="mt-8 inline-block bg-white px-7 py-3 text-xs font-black uppercase tracking-[0.18em] text-[var(--store-text)] transition hover:bg-[var(--store-secondary)] hover:text-[var(--store-on-secondary)]"
-                    style={{ borderRadius: "var(--store-radius-button)" }}
-                  >
-                    {slide.ctaLabel}
-                  </Link>
+                {slide.ctaLabel || (secondaryLabel && secondaryHref) ? (
+                  <div className="mt-8 flex flex-wrap items-center gap-3">
+                    {slide.ctaLabel ? (
+                      <Link
+                        // The CTA target is admin-typed: an in-app "#/…" route or a
+                        // safe absolute http(s) URL. Anything else — including the
+                        // "#javascript:…" slice bypass — falls back to the shop's
+                        // own products route rather than rendering an unsafe href.
+                        to={ctaHref}
+                        className="inline-block bg-white px-7 py-3 text-xs font-black uppercase tracking-[0.18em] text-[var(--store-text)] transition hover:bg-[var(--store-secondary)] hover:text-[var(--store-on-secondary)]"
+                        style={{ borderRadius: "var(--store-radius-button)" }}
+                      >
+                        {slide.ctaLabel}
+                      </Link>
+                    ) : null}
+                    {secondaryLabel && secondaryHref ? (
+                      <Link
+                        to={secondaryHref}
+                        className="inline-block border border-white/60 px-7 py-3 text-xs font-bold uppercase tracking-[0.18em] text-white/90 transition hover:border-white hover:bg-white/10 hover:text-white"
+                        style={{ borderRadius: "var(--store-radius-button)" }}
+                      >
+                        {secondaryLabel}
+                      </Link>
+                    ) : null}
+                  </div>
                 ) : null}
               </div>
             </div>
@@ -335,7 +358,7 @@ export function StoreHomePage() {
           )
           .slice(0, ids.length > 0 ? ids.length : sectionLimit(section));
         if (list.length === 0) return null;
-        const layout = section.layout ?? "tiles";
+        const layout = section.layout ?? "editorial";
         const seeAll = <StoreLink href="#/store/products">{t("store.section.seeAll")}</StoreLink>;
         const tile = (row: (typeof list)[number]) => {
           const label = pick(

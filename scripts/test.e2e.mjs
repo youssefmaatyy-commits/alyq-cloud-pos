@@ -66,6 +66,16 @@ const SUITES = [
     title: "Final integrated flow (Phase 48): login → shift → customer → variant ring → POS → return → storefront → delivery/COD/InstaPay → settle → category → KPIs → reports → Danger Zone preview → permissions → audit",
   },
   {
+    id: "storepolish",
+    file: "scripts/storepolish.flow.mjs",
+    title: "Storefront polish (Phase 49): gold-on-ivory palette, hero CTAs + fallback, slim header, editorial rhythm, quiet quick-add, Phase 43 variant proof, cart/checkout hierarchy, RTL, footer",
+  },
+  {
+    id: "nav",
+    file: "scripts/nav.flow.mjs",
+    title: "Admin navigation (Phase 49): nine module doors, grouped settings, module homes, breadcrumbs, deep links, permissions, Arabic drawer",
+  },
+  {
     id: "dangerzone",
     file: "scripts/dangerzone.flow.mjs",
     title: "Danger Zone (Phase 47): admin-only cards, wizard gates, preview, re-auth, phrase, operational clear, factory reset, audit survival",

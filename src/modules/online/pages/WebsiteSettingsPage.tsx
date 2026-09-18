@@ -19,6 +19,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { canActAs } from "@/lib/permissions/enforce";
 import { openStorefrontRoute } from "@/lib/storefront/storefrontLink";
 import { useI18n } from "@/lib/i18n/I18nProvider";
+import type { TranslationKey } from "@/lib/i18n/dictionary";
 import { useAuth } from "@/lib/auth";
 import { getCurrentUser } from "@/modules/inventory/permissions";
 import { useCatalog } from "@/modules/products";
@@ -142,6 +143,87 @@ const emptyBanner = (): PromoBanner => ({
   badge_ar: "",
   badge_en: "",
 });
+
+/**
+ * Phase 49 theme presets. Each writes only fields the theme tab already edits
+ * — the seven colours, the type stack, the button/header shapes, the corner
+ * radius and the dark flag — so a preset is a starting point, never a new
+ * mechanism. Values are literals; nothing is computed from the user's data.
+ */
+const THEME_PRESETS: ReadonlyArray<{
+  key: string;
+  labelKey: TranslationKey;
+  theme: Pick<
+    WebsiteSettings["theme"],
+    | "primary_color"
+    | "secondary_color"
+    | "accent_color"
+    | "background_color"
+    | "surface_color"
+    | "text_color"
+    | "muted_text_color"
+    | "font_stack"
+    | "button_style"
+    | "header_style"
+    | "corner_radius"
+    | "dark_mode"
+  >;
+}> = [
+  {
+    key: "ivory",
+    labelKey: "online.settings.preset.ivory",
+    theme: {
+      primary_color: "#1c1917",
+      secondary_color: "#44403c",
+      accent_color: "#b08d57",
+      background_color: "#faf7f2",
+      surface_color: "#fffdfb",
+      text_color: "#1c1917",
+      muted_text_color: "#78716c",
+      font_stack: "system",
+      button_style: "rounded",
+      header_style: "solid",
+      corner_radius: 4,
+      dark_mode: false,
+    },
+  },
+  {
+    key: "dark",
+    labelKey: "online.settings.preset.dark",
+    theme: {
+      primary_color: "#e7ddcf",
+      secondary_color: "#292524",
+      accent_color: "#c8a76a",
+      background_color: "#12100e",
+      surface_color: "#1c1917",
+      text_color: "#ece7df",
+      muted_text_color: "#a8a29e",
+      font_stack: "system",
+      button_style: "rounded",
+      header_style: "solid",
+      corner_radius: 4,
+      dark_mode: true,
+    },
+  },
+  {
+    key: "editorial",
+    labelKey: "online.settings.preset.editorial",
+    theme: {
+      primary_color: "#1a1613",
+      secondary_color: "#3f3a34",
+      accent_color: "#9a7b4f",
+      background_color: "#f6f1e7",
+      surface_color: "#fdfbf6",
+      text_color: "#1a1613",
+      muted_text_color: "#6f675e",
+      font_stack: "classic",
+      button_style: "square",
+      header_style: "solid",
+      corner_radius: 2,
+      dark_mode: false,
+    },
+  },
+];
 
 export function WebsiteSettingsPage() {
   const { t, date } = useI18n();
@@ -274,6 +356,7 @@ export function WebsiteSettingsPage() {
     <div>
       <PageHeader
         title={t("online.settings.title")}
+        crumbs={[{ label: t("home.breadcrumb.online"), to: "/online" }, { label: t("online.settings.title") }]}
         subtitle={t("online.settings.subtitle")}
         actions={
           <>
@@ -331,6 +414,39 @@ export function WebsiteSettingsPage() {
         <div className="space-y-4">
           {tab === "theme" ? (
             <>
+              {/* Phase 49: three safe starting points. A preset writes only the
+                  fields this page already owns — the palette, the type, the
+                  shapes — so it cannot carry a surprise, and every field stays
+                  editable underneath it. Nothing saves until Save is pressed. */}
+              <Card className="space-y-3">
+                <div>
+                  <h2 className="text-sm font-bold text-slate-900">{t("online.settings.presets")}</h2>
+                  <p className="mt-1 text-xs leading-relaxed text-slate-500">{t("online.settings.presetsHint")}</p>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-3" data-testid="theme-presets">
+                  {THEME_PRESETS.map((preset) => (
+                    <button
+                      key={preset.key}
+                      type="button"
+                      data-testid={`theme-preset-${preset.key}`}
+                      onClick={() => patch((current) => ({ ...current, theme: { ...current.theme, ...preset.theme } }))}
+                      className="group flex items-center gap-3 rounded-xl border border-stone-200 p-3 text-start transition hover:border-stone-900"
+                    >
+                      <span
+                        aria-hidden
+                        className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-black/10"
+                        style={{ background: `linear-gradient(135deg, ${preset.theme.background_color}, ${preset.theme.accent_color})` }}
+                      >
+                        <span className="h-3.5 w-3.5 rounded-full" style={{ backgroundColor: preset.theme.primary_color }} />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block truncate text-xs font-black text-stone-900">{t(preset.labelKey)}</span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </Card>
+
               <Card className="space-y-3">
                 <h2 className="text-sm font-bold text-slate-900">{t("online.settings.branding")}</h2>
                 <div className="grid gap-3 sm:grid-cols-2">
@@ -1395,6 +1511,32 @@ function SlideEditor({
           className="h-9 text-xs"
           onChange={(event) => onChange({ ...slide, cta_href: event.target.value })}
           aria-label={t("online.settings.slideCtaHref")}
+        />
+        {/* Phase 49: the quieter second call to action — optional, and when
+            either half is empty nothing renders beside the primary button. */}
+        <TextInput
+          value={slide.secondary_cta_label_ar ?? ""}
+          dir="rtl"
+          placeholder={t("online.settings.slideCta2Ar")}
+          className="h-9 text-xs"
+          onChange={(event) => onChange({ ...slide, secondary_cta_label_ar: event.target.value })}
+          aria-label={t("online.settings.slideCta2Ar")}
+        />
+        <TextInput
+          value={slide.secondary_cta_label_en ?? ""}
+          dir="ltr"
+          placeholder={t("online.settings.slideCta2En")}
+          className="h-9 text-xs"
+          onChange={(event) => onChange({ ...slide, secondary_cta_label_en: event.target.value })}
+          aria-label={t("online.settings.slideCta2En")}
+        />
+        <TextInput
+          value={slide.secondary_cta_href ?? ""}
+          dir="ltr"
+          placeholder="#/store/about"
+          className="h-9 text-xs"
+          onChange={(event) => onChange({ ...slide, secondary_cta_href: event.target.value })}
+          aria-label={t("online.settings.slideCta2Href")}
         />
         <SelectInput
           value={slide.align}

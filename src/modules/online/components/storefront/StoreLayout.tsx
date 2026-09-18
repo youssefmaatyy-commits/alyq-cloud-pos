@@ -313,8 +313,11 @@ function Header({
       )}
     >
       <div className="mx-auto flex w-full max-w-[var(--store-max-width)] items-center gap-1 px-4 py-2.5 sm:px-6">
-        {/* left: hamburger + search (mobile) */}
-        <div className="flex flex-1 items-center gap-0.5">
+        {/* Phase 49, the slim editorial header: one row at every width. On
+            phones the left cluster is the hamburger and the search glass; on
+            desktop it IS the navigation — the categories and the house pages
+            sit left of a centred wordmark, with the utilities right. */}
+        <div className="flex min-w-0 flex-1 items-center gap-0.5">
           <button
             type="button"
             onClick={onMenu}
@@ -326,22 +329,45 @@ function Header({
               <path fill="currentColor" d="M4 6h16v1.8H4V6Zm0 5.1h16v1.8H4v-1.8ZM4 16.2h16V18H4v-1.8Z" />
             </svg>
           </button>
-          {settings.header.search_enabled ? (
-            <button
-              type="button"
-              onClick={() => setSearchOpen((open) => !open)}
-              aria-label={t("store.search.label")}
-              aria-expanded={searchOpen}
-              className={cn(iconButton, "md:hidden")}
+          <nav
+            aria-label={t("store.nav.menu")}
+            className="hidden min-w-0 items-center gap-x-5 lg:flex"
+          >
+            {categoryNav.slice(0, 4).map((link) => (
+              <NavLink
+                key={link.id}
+                to={link.to}
+                className={({ isActive }) =>
+                  cn(
+                    "whitespace-nowrap text-[11px] font-bold uppercase tracking-[0.16em] transition",
+                    isActive
+                      ? "text-[var(--store-text)]"
+                      : "text-[var(--store-muted)] hover:text-[var(--store-text)]",
+                  )
+                }
+              >
+                {link.label}
+              </NavLink>
+            ))}
+            <Link
+              to="/store/products"
+              className="whitespace-nowrap text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--store-muted)] transition hover:text-[var(--store-text)]"
             >
-              <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden>
-                <path
-                  fill="currentColor"
-                  d="M10.5 4a6.5 6.5 0 0 1 5.1 10.5l4.2 4.2-1.4 1.4-4.2-4.2A6.5 6.5 0 1 1 10.5 4Zm0 2a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9Z"
-                />
-              </svg>
-            </button>
-          ) : null}
+              {t("store.nav.products")}
+            </Link>
+            <Link
+              to="/store/about"
+              className="whitespace-nowrap text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--store-muted)] transition hover:text-[var(--store-text)]"
+            >
+              {t("store.nav.about")}
+            </Link>
+            <Link
+              to="/store/contact"
+              className="whitespace-nowrap text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--store-muted)] transition hover:text-[var(--store-text)]"
+            >
+              {t("store.nav.contact")}
+            </Link>
+          </nav>
         </div>
 
         {/* centre: the wordmark */}
@@ -369,8 +395,24 @@ function Header({
           )}
         </Link>
 
-        {/* right: account + cart */}
+        {/* right: search + account + cart (+ language) */}
         <div className="flex flex-1 items-center justify-end gap-0.5">
+          {settings.header.search_enabled ? (
+            <button
+              type="button"
+              onClick={() => setSearchOpen((open) => !open)}
+              aria-label={t("store.search.label")}
+              aria-expanded={searchOpen}
+              className={iconButton}
+            >
+              <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden>
+                <path
+                  fill="currentColor"
+                  d="M10.5 4a6.5 6.5 0 0 1 5.1 10.5l4.2 4.2-1.4 1.4-4.2-4.2A6.5 6.5 0 1 1 10.5 4Zm0 2a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9Z"
+                />
+              </svg>
+            </button>
+          ) : null}
           {settings.header.account_enabled ? (
             <Link
               to="/store/account"
@@ -416,12 +458,12 @@ function Header({
         </div>
       </div>
 
-      {/* expanding search row (mobile) */}
+      {/* expanding search row — the glass opens it at every width */}
       {searchOpen && settings.header.search_enabled ? (
         <form
           onSubmit={submitSearch}
           role="search"
-          className="border-t border-[var(--store-hairline)] px-4 py-2.5 md:hidden"
+          className="border-t border-[var(--store-hairline)] px-4 py-2.5 sm:px-6"
         >
           <input
             // The row exists to be typed into the moment it opens.
@@ -435,71 +477,6 @@ function Header({
           />
         </form>
       ) : null}
-
-      {/* desktop search + navigation */}
-      <div className="hidden md:block">
-        {settings.header.search_enabled ? (
-          <form
-            onSubmit={submitSearch}
-            role="search"
-            className="mx-auto flex w-full max-w-[var(--store-max-width)] justify-center px-6 pb-2"
-          >
-            <input
-              type="search"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder={t("store.search.placeholder")}
-              aria-label={t("store.search.label")}
-              className="w-full max-w-md border-0 border-b border-[var(--store-hairline)] bg-transparent px-1 py-1.5 text-center text-sm tracking-wide text-[var(--store-text)] outline-none transition placeholder:text-[var(--store-muted)] focus:border-[var(--store-text)]"
-            />
-          </form>
-        ) : null}
-        <nav
-          aria-label={t("store.nav.menu")}
-          className="mx-auto flex w-full max-w-[var(--store-max-width)] flex-wrap items-center justify-center gap-x-7 gap-y-1 px-6 pb-3"
-        >
-          {categoryNav.map((link) => (
-            <NavLink
-              key={link.id}
-              to={link.to}
-              className={({ isActive }) =>
-                cn(
-                  "text-[11px] font-bold uppercase tracking-[0.18em] transition",
-                  isActive
-                    ? "text-[var(--store-text)]"
-                    : "text-[var(--store-muted)] hover:text-[var(--store-text)]",
-                )
-              }
-            >
-              {link.label}
-            </NavLink>
-          ))}
-          <Link
-            to="/store/products"
-            className="text-[11px] font-bold uppercase tracking-[0.18em] text-[var(--store-muted)] transition hover:text-[var(--store-text)]"
-          >
-            {t("store.nav.products")}
-          </Link>
-          <Link
-            to="/store/products?sort=newest"
-            className="text-[11px] font-bold uppercase tracking-[0.18em] text-[var(--store-muted)] transition hover:text-[var(--store-text)]"
-          >
-            {t("store.nav.new")}
-          </Link>
-          <Link
-            to="/store/about"
-            className="text-[11px] font-bold uppercase tracking-[0.18em] text-[var(--store-muted)] transition hover:text-[var(--store-text)]"
-          >
-            {t("store.nav.about")}
-          </Link>
-          <Link
-            to="/store/contact"
-            className="text-[11px] font-bold uppercase tracking-[0.18em] text-[var(--store-muted)] transition hover:text-[var(--store-text)]"
-          >
-            {t("store.nav.contact")}
-          </Link>
-        </nav>
-      </div>
     </header>
   );
 }

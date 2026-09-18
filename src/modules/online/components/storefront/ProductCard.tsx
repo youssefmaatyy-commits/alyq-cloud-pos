@@ -241,8 +241,10 @@ export function ProductCard({
               disabled={!inStock}
               data-testid="card-quick-add"
               className={cn(
-                "w-full px-3 py-2 text-[11px] font-bold tracking-wide text-[var(--store-on-primary)] transition disabled:cursor-not-allowed disabled:bg-[var(--store-border)] disabled:text-[var(--store-muted)]",
-                inStock ? "bg-[var(--store-primary)] hover:bg-[var(--store-primary-hover)]" : "",
+                "w-full border px-3 py-2 text-[11px] font-bold tracking-wide transition disabled:cursor-not-allowed",
+                inStock
+                  ? "border-[var(--store-hairline)] bg-transparent text-[var(--store-text)] hover:border-[var(--store-primary)] hover:bg-[var(--store-primary)] hover:text-[var(--store-on-primary)]"
+                  : "border-[var(--store-border)] bg-transparent text-[var(--store-muted)]",
               )}
               style={{ borderRadius: "var(--store-radius-button)" }}
             >
@@ -255,8 +257,10 @@ export function ProductCard({
               disabled={!inStock}
               data-testid="card-add"
               className={cn(
-                "w-full px-3 py-2 text-[11px] font-bold tracking-wide text-[var(--store-on-primary)] transition disabled:cursor-not-allowed disabled:bg-[var(--store-border)] disabled:text-[var(--store-muted)]",
-                inStock ? "bg-[var(--store-primary)] hover:bg-[var(--store-primary-hover)]" : "",
+                "w-full border px-3 py-2 text-[11px] font-bold tracking-wide transition disabled:cursor-not-allowed",
+                inStock
+                  ? "border-[var(--store-hairline)] bg-transparent text-[var(--store-text)] hover:border-[var(--store-primary)] hover:bg-[var(--store-primary)] hover:text-[var(--store-on-primary)]"
+                  : "border-[var(--store-border)] bg-transparent text-[var(--store-muted)]",
               )}
               style={{ borderRadius: "var(--store-radius-button)" }}
             >

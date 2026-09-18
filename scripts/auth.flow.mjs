@@ -426,7 +426,7 @@ await step(6, "Try unauthorized action and confirm it is blocked", async () => {
   if (complete) throw new Error("a viewer was offered the Complete sale control");
   out.push("register denied outright — no cart, no Complete sale control");
 
-  await app.navigate("#/inventory");
+  await app.navigate("#/inventory/stock");
   await sleep(600);
   const adjust = [...app.document.querySelectorAll("main button")].find(
     (b) => (b.textContent ?? "").trim() === "Adjust stock",

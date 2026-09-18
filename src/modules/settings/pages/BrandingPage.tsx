@@ -155,6 +155,7 @@ export function BrandingPage() {
       <PageHeader
         title={t("admin.branding.title")}
         subtitle={t("admin.branding.subtitle")}
+        crumbs={[{ label: t("home.breadcrumb.settings"), to: "/settings" }, { label: t("admin.branding.title") }]}
         actions={
           <Button variant="primary" onClick={() => void save()} disabled={!dirty || saving} data-testid="branding-save">
             {saving ? t("common.saving") : t("common.save")}

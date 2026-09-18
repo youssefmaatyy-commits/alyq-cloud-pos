@@ -527,6 +527,14 @@ export interface HeroSlide {
   content_position?: "start" | "center" | "end";
   /** Preset heights; `editorial` is the tall, image-led default. */
   height?: "compact" | "classic" | "editorial";
+  /**
+   * Phase 49: an optional second, quieter call to action beside the primary
+   * one — the fashion-house "Shop now / Our story" pair. Absent fields render
+   * nothing, so every slide saved before this phase is unchanged.
+   */
+  secondary_cta_label_ar?: string;
+  secondary_cta_label_en?: string;
+  secondary_cta_href?: string;
 }
 
 export const HERO_HEIGHTS = ["compact", "classic", "editorial"] as const;
@@ -578,22 +586,26 @@ export interface StoreTheme {
 export const HOMEPAGE_SECTIONS = [
   "hero",
   "categories",
-  "featured",
-  "bestSellers",
+  // Phase 49: the default rhythm is the editorial one — a shop window, then
+  // what just landed, then the house's voice, then what everyone wants, the
+  // lookbook, the curated collection, the reasons to trust, and the invitation
+  // to stay in touch. The admin reorders every one of these in the builder;
+  // this list is only what a brand-new shop opens with.
   "newArrivals",
-  "promoBanners",
-  // Phase 45: appended after the shipped keys so an existing document keeps its
-  // arrangement; `repairSections` places new keys at the end, visible.
+  "editorial",
+  "bestSellers",
+  "lookbook",
   "collection",
+  "trustStrip",
+  "newsletter",
+  // The rest, in their shipped order.
+  "featured",
+  "promoBanners",
   "sale",
   "campaigns",
-  "editorial",
-  "lookbook",
   "aboutPreview",
-  "trustStrip",
   "socialGallery",
   "textImage",
-  "newsletter",
   "brands",
   "reviews",
   "faq",

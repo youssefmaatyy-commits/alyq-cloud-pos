@@ -50,6 +50,9 @@ export const DEFAULT_HERO_SLIDES: HeroSlide[] = [
     cta_label_ar: "تسوق الآن",
     cta_label_en: "Shop now",
     cta_href: "#/store/products",
+    secondary_cta_label_ar: "قصتنا",
+    secondary_cta_label_en: "Our story",
+    secondary_cta_href: "#/store/about",
     align: "start",
   },
   {
@@ -742,6 +745,9 @@ export function sanitizeSettings(input: unknown): WebsiteSettings {
       cta_label_ar: str(slide.cta_label_ar, 40),
       cta_label_en: str(slide.cta_label_en, 40),
       cta_href: safeUrlField(slide.cta_href),
+      secondary_cta_label_ar: str(slide.secondary_cta_label_ar ?? "", 40),
+      secondary_cta_label_en: str(slide.secondary_cta_label_en ?? "", 40),
+      secondary_cta_href: safeUrlField(slide.secondary_cta_href ?? ""),
       align: enumOf(slide.align, ["start", "center", "end"] as const, "start"),
       overlay: clampInt(slide.overlay ?? 35, 0, 100, 35),
       content_position: enumOf(slide.content_position, ["start", "center", "end"] as const, "center"),
@@ -888,7 +894,7 @@ export function sanitizeSettings(input: unknown): WebsiteSettings {
     ...(Array.isArray(section.product_ids)
       ? { product_ids: section.product_ids.filter((id) => typeof id === "string").slice(0, 24) }
       : {}),
-    ...(section.layout ? { layout: oneOf(section.layout, ["tiles", "carousel", "editorial"] as const, "tiles") } : {}),
+    ...(section.layout ? { layout: oneOf(section.layout, ["tiles", "carousel", "editorial"] as const, "editorial") } : {}),
     body_ar: str(section.body_ar ?? "", 2000),
     body_en: str(section.body_en ?? "", 2000),
     image_url: section.image_url ? safeImageField(section.image_url) : null,

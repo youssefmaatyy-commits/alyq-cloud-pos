@@ -198,6 +198,7 @@ export function SaleDetailPage() {
     <div>
       <PageHeader
         title={t("pos.receiptTitle")}
+        crumbs={[{ label: t("home.breadcrumb.sales"), to: "/sales" }, { label: t("nav.sales"), to: "/pos/sales" }, { label: sale.sale_number }]}
         subtitle={sale.sale_number}
         backTo="/pos/sales"
         backLabel={t("pos.salesTitle")}

@@ -142,6 +142,7 @@ export function ProductDetailPage() {
         backTo="/products"
         backLabel={t("common.back")}
         title={pick(product.name_ar, product.name_en)}
+        crumbs={[{ label: t("home.breadcrumb.catalog"), to: "/catalog" }, { label: t("nav.products"), to: "/products" }, { label: pick(product.name_ar, product.name_en) }]}
         subtitle={`${product.sku} · ${categoryName(product.category_id)}`}
         actions={
           <Link
@@ -282,7 +283,7 @@ export function ProductDetailPage() {
           <Card>
             <div className="mb-2 flex items-center justify-between">
               <SectionTitle>{t("inventory.history")}</SectionTitle>
-              <Link to="/inventory">
+              <Link to="/inventory/stock">
                 <Button variant="secondary" size="sm">{t("inventory.adjust")}</Button>
               </Link>
             </div>

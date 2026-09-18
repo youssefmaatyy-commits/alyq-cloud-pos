@@ -493,8 +493,15 @@ async function main() {
   // ── 6 · the order reaches the POS ─────────────────────────────────────────
   await navigate("#/", 700);
   await signInAs("admin");
+  // Phase 49: the sidebar offers the Online MODULE; its queue lives on the
+  // module home as the first card, reached on the next line.
   const navHrefs = [...document.querySelectorAll("aside nav a")].map((a) => a.getAttribute("href") ?? "");
-  assert.ok(navHrefs.includes("#/online/orders"), "the POS sidebar offers Online Orders");
+  assert.ok(navHrefs.includes("#/online"), "the POS sidebar offers the Online module");
+  await navigate("#/online", 600);
+  await waitFor(
+    () => document.querySelector('[data-testid="module-card-orders"]'),
+    { label: "the Online home's orders card" },
+  );
 
   await navigate("#/online/orders", 900);
   await waitFor(() => bodyText().includes(codNumber), { label: "the order to appear in the POS" });
@@ -503,9 +510,9 @@ async function main() {
   assert.ok(bodyText().includes("Verification") || bodyText().includes("Cash on delivery"),
     "the payment is described on the row");
 
-  // The notification badge counts what needs a decision.
-  const badge = document.querySelector('aside nav a[href="#/online/orders"] span');
-  assert.ok(badge, "the Online Orders entry carries a count badge");
+  // The notification badge counts what needs a decision — it rides the module door.
+  const badge = document.querySelector('aside nav a[href="#/online"] span');
+  assert.ok(badge, "the Online module door carries a count badge");
 
   // Approve it: this is the mandatory website → till step.
   clickAria("View");
@@ -752,10 +759,21 @@ async function main() {
   await waitFor(() => bodyText().includes("Stock holds & reconciliation"), {
     label: "the stock-holds screen",
   });
-  assert.ok(
-    document.querySelector('a[href="#/online/reservations"]'),
-    "the sidebar links to it — a reconciliation tool nobody can find is a tool nobody uses",
+  // Phase 49: holds live on the Online module home — one card, not a sidebar
+  // leaf. The card is proven, then the screen itself is opened as the card does.
+  await navigate("#/online", 600);
+  await waitFor(
+    () => document.querySelector('[data-testid="module-card-holds"]'),
+    { label: "the Online home's holds card" },
   );
+  assert.ok(
+    document.querySelector('[data-testid="module-card-holds"]'),
+    "the Online home links to holds — a reconciliation tool nobody can find is a tool nobody uses",
+  );
+  await navigate("#/online/reservations", 900);
+  await waitFor(() => bodyText().includes("A pending website order holds its stock"), {
+    label: "the holds screen copy",
+  });
   assert.ok(
     bodyText().includes("A pending website order holds its stock"),
     "the screen says what a hold is: whoever reads it may never have seen one",

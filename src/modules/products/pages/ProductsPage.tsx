@@ -149,6 +149,7 @@ export function ProductsPage() {
   return (
     <div>
       <PageHeader
+        crumbs={[{ label: t("home.breadcrumb.catalog"), to: "/catalog" }, { label: t("nav.products") }]}
         title={t("products.title")}
         subtitle={t("products.subtitle")}
         actions={

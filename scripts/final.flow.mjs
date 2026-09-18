@@ -491,7 +491,7 @@ await waitFor(() => testid("dash-kpi-row"), { label: "the KPI row" });
 console.log("  ✓ 17 · KPIs: 3 sales today, 2 web orders — the same facts the ledger holds");
 
 // ── 18 · the reports reconcile ──────────────────────────────────────────────
-await navigate("#/sales", 900);
+await navigate("#/pos/sales", 900);
 await sleep(700);
 assert.ok(bodyText().includes(tillSaleNumber), "the ledger lists the till invoice");
 assert.ok(bodyText().includes("300"), "with its 300.00 total");

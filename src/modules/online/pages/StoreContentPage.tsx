@@ -292,6 +292,7 @@ export function StoreContentPage() {
     <div>
       <PageHeader
         title={t("online.content.title")}
+        crumbs={[{ label: t("home.breadcrumb.online"), to: "/online" }, { label: t("nav.websiteContent") }]}
         subtitle={t("online.content.subtitle")}
         actions={
           <>

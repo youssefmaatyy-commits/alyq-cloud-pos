@@ -747,7 +747,7 @@ async function main() {
   console.log("  ✓ excel import: update mode rewrites existing products instead of duplicating them");
 
   // ── Phase 3 · Inventory module ──
-  await navigate("#/inventory");
+  await navigate("#/inventory/stock");
   assert.ok(bodyText().includes("Inventory dashboard"), "inventory dashboard loads");
   assert.ok(bodyText().includes("ALYQ-1001"), "stock list shows demo products");
   console.log("  ✓ inventory dashboard + current stock list");
@@ -792,8 +792,8 @@ async function main() {
   selectOption('select[aria-label="Stock"]', (o) => o.value === "all");
   await sleep(150);
 
-  // Back to dashboard, then decrease ALYQ-1010 (currently 0) by 1 → blocked
-  await navigate("#/inventory");
+  // Back to the stock table, then decrease ALYQ-1010 (currently 0) by 1 → blocked
+  await navigate("#/inventory/stock");
   setField('input[type="search"]', "ALYQ-1010");
   await sleep(200);
   const adjustOutBtn = [...document.querySelectorAll("main button")].find((b) =>
@@ -873,7 +873,7 @@ async function main() {
 
   // Permission: a viewer signs in — the acting role comes from the session.
   await signInAs("viewer");
-  await navigate("#/inventory");
+  await navigate("#/inventory/stock");
   for (let i = 0; i < 15 && !bodyText().includes("Viewing as"); i += 1) await sleep(300);
   assert.ok(bodyText().includes("Viewing as Viewer"), "viewer sees the read-only banner");
   const viewerAdjust = [...document.querySelectorAll("main button")].find(
@@ -888,7 +888,7 @@ async function main() {
 
   // Back to admin for the remaining inventory checks.
   await signInAs("admin");
-  await navigate("#/inventory");
+  await navigate("#/inventory/stock");
   await sleep(300);
 
   // Validation: empty quantity
@@ -2202,7 +2202,9 @@ async function main() {
   for (let i = 0; i < 30 && !bodyText().includes("Advanced reports"); i += 1) await sleep(300);
   const mainEl = () => document.querySelector("main") ?? document;
   assert.ok(bodyText().includes("Advanced reports"), "the advanced reports screen renders");
-  assert.ok(navHrefs().includes("#/reports/advanced"), "and the sidebar offers it");
+  // Phase 49: the sidebar carries the Reports module; the advanced screen is
+  // its own route (bookmarked URLs still resolve — proven by this navigate).
+  assert.ok(navHrefs().includes("#/reports"), "and the sidebar offers the Reports module");
   assert.ok(bodyText().includes("Date range"), "with the one window every tab reads");
   assert.ok(bodyText().includes("Sales by employee"), "the sales analysis leads the screen");
   /** Rows on screen — the analysis is tables, so "has data" means "has rows". */
@@ -2370,7 +2372,11 @@ async function main() {
   console.log("  ✓ audit log is blocked for viewers (nav hidden + route denied)");
 
   await signInAs("manager");
-  assert.ok(navHrefs().includes("#/audit"), "manager sees the audit log entry");
+  // Phase 49: the trail is reached from the Settings home's System group.
+  assert.ok(navHrefs().includes("#/settings"), "manager sees the Settings door");
+  await navigate("#/settings");
+  for (let i = 0; i < 12 && !document.querySelector('[data-testid="settings-card-audit"]'); i += 1) await sleep(300);
+  assert.ok(document.querySelector('[data-testid="settings-card-audit"]'), "manager sees the audit log entry on the settings home");
   await navigate("#/audit");
   for (let i = 0; i < 12 && !bodyText().includes("Shift closed"); i += 1) await sleep(300);
   assert.ok(bodyText().includes("Shift closed"), "manager can read the audit trail");
@@ -2447,8 +2453,14 @@ async function main() {
   assert.ok(isSignedIn(), "cashier signed in");
   const cashierNav = navHrefs();
   assert.ok(cashierNav.includes("#/pos"), "cashier sees the register");
-  assert.ok(cashierNav.includes("#/returns"), "cashier sees returns");
-  assert.ok(cashierNav.includes("#/refunds"), "cashier sees refunds");
+  // Phase 49: returns and refunds hang off the Sales module home — the cashier
+  // sees the door; the rooms are its cards, each route still its own gate.
+  assert.ok(cashierNav.includes("#/sales"), "cashier sees the Sales door");
+  assert.ok(!cashierNav.includes("#/returns") && !cashierNav.includes("#/refunds"), "no returns/refunds leaves in the sidebar");
+  await navigate("#/sales");
+  for (let i = 0; i < 12 && !document.querySelector('[data-testid="module-card-returns"]'); i += 1) await sleep(300);
+  assert.ok(document.querySelector('[data-testid="module-card-returns"]'), "cashier sees returns on the Sales home");
+  assert.ok(document.querySelector('[data-testid="module-card-refunds"]'), "cashier sees refunds on the Sales home");
   assert.ok(!cashierNav.includes("#/audit"), "cashier does not see the audit log");
   await navigate("#/pos");
   for (let i = 0; i < 12 && !bodyText().includes("ALYQ-1001"); i += 1) await sleep(300);
@@ -2457,7 +2469,7 @@ async function main() {
   await navigate("#/audit");
   await sleep(400);
   assert.ok(bodyText().includes("Audit log is restricted"), "cashier is denied the audit trail");
-  await navigate("#/inventory");
+  await navigate("#/inventory/stock");
   for (let i = 0; i < 12 && !bodyText().includes("Viewing as"); i += 1) await sleep(300);
   assert.ok(
     bodyText().includes("Viewing as Cashier"),
@@ -2487,7 +2499,7 @@ async function main() {
   await navigate("#/pos");
   await sleep(400);
   assert.ok(!bodyText().includes("ALYQ-1001"), "no POS data leaks into the viewer's denial");
-  await navigate("#/inventory");
+  await navigate("#/inventory/stock");
   await sleep(500);
   assert.ok(!denied(), "viewer can still read inventory");
   console.log("  ✓ viewer: read-only screens only, till and refunds denied");
@@ -2538,7 +2550,8 @@ async function main() {
   console.log("  ✓ session persistence: tab-scoped by default, localStorage when remembered");
 
   await signInAs("admin");
-  assert.ok(navHrefs().includes("#/audit"), "admin restored the oversight entry");
+  // Phase 49: oversight screens live behind the Settings home — the door, not the leaf.
+  assert.ok(navHrefs().includes("#/settings"), "admin restored the oversight door");
   console.log("  ✓ role changes are driven by the signed-in session, not a demo switcher");
 
   // ── Explicit Sidebar Navigation Verification ──
@@ -2552,26 +2565,28 @@ async function main() {
   assert.ok(dom.window.location.hash.includes("/customers"), "sidebar navigates to Customers page");
   assert.ok(bodyText().includes("Customer name") || bodyText().includes("Customers"), "Customers UI rendered from sidebar");
 
-  // Click Returns sidebar item
-  const returnsNav = [...document.querySelectorAll("aside nav a")].find((a) =>
-    (a.textContent ?? "").includes("Returns") || (a.getAttribute("href") ?? "") === "#/returns"
-  );
-  assert.ok(returnsNav, "Returns nav link exists in sidebar");
-  returnsNav.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
-  await sleep(350);
-  assert.ok(dom.window.location.hash.includes("/returns"), "sidebar navigates to Returns page");
-  assert.ok(bodyText().includes("Returns") || bodyText().includes("Refunds"), "Returns UI rendered from sidebar");
+  // Returns and Refunds: cards on the Sales module home (Phase 49) — the rooms
+  // render through the home's cards, their URLs unchanged.
+  const salesNav = [...document.querySelectorAll("aside nav a")].find((a) => (a.getAttribute("href") ?? "") === "#/sales");
+  assert.ok(salesNav, "Sales nav door exists in sidebar");
+  salesNav.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  await sleep(500);
+  const returnsCard = [...document.querySelectorAll('[data-testid="module-card-returns"]')][0];
+  assert.ok(returnsCard, "Sales home offers the Returns card");
+  returnsCard.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  await sleep(400);
+  assert.ok(dom.window.location.hash.includes("/returns"), "the Sales home navigates to Returns");
+  assert.ok(bodyText().includes("Returns") || bodyText().includes("Refunds"), "Returns UI rendered");
 
-  // Click Refunds sidebar item
-  const refundsNav = [...document.querySelectorAll("aside nav a")].find((a) =>
-    (a.textContent ?? "").includes("Refunds") || (a.getAttribute("href") ?? "") === "#/refunds"
-  );
-  assert.ok(refundsNav, "Refunds nav link exists in sidebar");
-  refundsNav.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
-  await sleep(350);
-  assert.ok(dom.window.location.hash.includes("/refunds"), "sidebar navigates to Refunds page");
-  assert.ok(bodyText().includes("Refund #") || bodyText().includes("Refunds"), "Refunds UI rendered from sidebar");
-  console.log("  ✓ sidebar menu items: Customers, Returns, and Refunds verified");
+  await navigate("#/sales");
+  await sleep(400);
+  const refundsCard = [...document.querySelectorAll('[data-testid="module-card-refunds"]')][0];
+  assert.ok(refundsCard, "Sales home offers the Refunds card");
+  refundsCard.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  await sleep(400);
+  assert.ok(dom.window.location.hash.includes("/refunds"), "the Sales home navigates to Refunds");
+  assert.ok(bodyText().includes("Refund #") || bodyText().includes("Refunds"), "Refunds UI rendered");
+  console.log("  ✓ module navigation: Customers door, Sales home → Returns and Refunds verified");
 
   // 13 ─ bilingual RTL/LTR (including the POS screens)
   click("العربية");

@@ -37,6 +37,7 @@ const {
   setField,
   setInputValue,
   signInAs,
+  signOut,
 } = ux;
 const { document } = dom.window;
 
@@ -85,12 +86,45 @@ const checks = [
     },
   },
   {
-    path: "#/inventory",
-    name: "Inventory",
+    path: "#/inventory/stock",
+    name: "Inventory stock",
     check: () => {
       assert.ok(document.querySelector('select[aria-label="Status"]'), "inventory: the status filter renders");
       assert.ok([...document.querySelectorAll("th")].some((th) => (th.textContent ?? "").includes("Quantity")),
         "inventory: the stock table renders");
+    },
+  },
+  {
+    // Phase 49: the module landing — the card grid is the screen.
+    path: "#/inventory",
+    name: "Inventory home",
+    check: () => {
+      assert.ok(testid("module-inventory"), "inventory home: the module page renders");
+      assert.ok(testid("module-card-overview"), "inventory home: the stock-overview card is first");
+    },
+  },
+  {
+    path: "#/sales",
+    name: "Sales home",
+    check: () => {
+      assert.ok(testid("module-sales"), "sales home: the module page renders");
+      assert.ok(testid("module-card-invoices"), "sales home: the invoices card leads");
+    },
+  },
+  {
+    path: "#/catalog",
+    name: "Catalog home",
+    check: () => {
+      assert.ok(testid("module-catalog"), "catalog home: the module page renders");
+      assert.ok(testid("module-card-products"), "catalog home: the products card leads");
+    },
+  },
+  {
+    path: "#/online",
+    name: "Online home",
+    check: () => {
+      assert.ok(testid("module-online"), "online home: the module page renders");
+      assert.ok(testid("module-card-orders"), "online home: the orders card leads");
     },
   },
   {
@@ -229,6 +263,91 @@ for (const { path, name, check } of checks) {
   clickExact("English");
   await sleep(300);
   console.log(`  ✓ ${name}: title, primary action, shared tokens, RTL`);
+}
+
+// ── the storefront pass — 8 screens, the shopper's shell standard ───────────
+{
+  await signOut();
+  const assertShopShell = (screen) => {
+    const header = document.querySelector("header");
+    assert.ok(header, `${screen}: the storefront header renders`);
+    assert.ok(header.querySelector("a"), `${screen}: the wordmark links home`);
+    assert.ok(document.querySelector("footer"), `${screen}: the footer renders`);
+    assert.ok(["ltr", "rtl"].includes(document.documentElement.getAttribute("dir") ?? "ltr"),
+      `${screen}: dir is explicit`);
+  };
+  const shopChecks = [
+    ["#/store", "Store home", () => {
+      assert.ok(document.querySelector("main section#categories"), "store home: the categories band renders");
+    }],
+    ["#/store/products", "Shop grid", () => {
+      assert.ok(document.querySelector("[data-testid='product-grid']"), "shop: the product grid renders");
+    }],
+    ["#/store/cart", "Cart", () => {
+      assert.ok(bodyText().length > 100, "cart: the page renders (empty state or lines)");
+    }],
+    ["#/store/about", "About", () => {
+      assert.ok(bodyText().length > 200, "about: the editorial page renders");
+    }],
+    ["#/store/contact", "Contact", () => {
+      assert.ok(bodyText().length > 100, "contact: the page renders");
+    }],
+    ["#/store/track", "Track order", () => {
+      assert.ok(bodyText().length > 50, "track: the page renders");
+    }],
+  ];
+  for (const [path, name, check] of shopChecks) {
+    await navigate(path, 800);
+    assertShopShell(name);
+    check();
+    clickExact("عربي");
+    await sleep(400);
+    assert.ok(document.documentElement.getAttribute("dir") === "rtl", `${name}: Arabic mirrors the storefront`);
+    clickExact("EN");
+    await sleep(300);
+    console.log(`  ✓ ${name}: header, footer, shared tokens, RTL`);
+  }
+  // product detail + checkout need data and a cart line — the seeded shop and
+  // the sale above provide both: PDP for the first demo product, checkout with
+  // one quick-added unit.
+  await navigate("#/store/products", 700);
+  await waitFor(() => document.querySelectorAll("article a").length > 0, { label: "the shop grid" });
+  const firstShopCard = [...document.querySelectorAll("article")][0];
+  const detailLink = firstShopCard?.querySelector("a");
+  await navigate(detailLink.getAttribute("href").startsWith("#") ? detailLink.getAttribute("href").slice(1) : detailLink.getAttribute("href"), 800);
+  await sleep(400);
+  assertShopShell("Product detail");
+  clickExact("عربي");
+  await sleep(400);
+  assert.ok(document.documentElement.getAttribute("dir") === "rtl", "Product detail: Arabic mirrors");
+  clickExact("EN");
+  await sleep(300);
+  console.log("  ✓ Product detail: header, footer, shared tokens, RTL");
+  // checkout: drop one unit in the cart from the card, then visit
+  await navigate("#/store/products", 700);
+  await waitFor(() => document.querySelector("[data-testid='product-grid']"), { label: "the shop grid" });
+  const addable = [...document.querySelectorAll("button")].find(
+    (b) => (b.getAttribute("data-testid") ?? "") === "card-add" && !b.disabled,
+  );
+  if (addable) {
+    clickEl(addable);
+    await sleep(400);
+    await navigate("#/store/checkout", 800);
+    await sleep(500);
+    assertShopShell("Checkout");
+    clickExact("عربي");
+    await sleep(400);
+    assert.ok(document.documentElement.getAttribute("dir") === "rtl", "Checkout: Arabic mirrors");
+    clickExact("EN");
+    await sleep(300);
+    console.log("  ✓ Checkout: header, footer, shared tokens, RTL");
+  } else {
+    console.log("  ✓ Checkout: (no instantly-addable product — covered in the storefront + polish suites)");
+  }
+  // back to the back office: an unauthenticated shopper reaches the admin
+  // login by opening any admin route.
+  await navigate("#/", 600);
+  await signInAs("admin");
 }
 
 // contrast/typography sanity on the design tokens themselves

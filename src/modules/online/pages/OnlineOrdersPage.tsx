@@ -144,6 +144,7 @@ export function OnlineOrdersPage() {
     <div>
       <PageHeader
         title={t("online.orders.title")}
+        crumbs={[{ label: t("home.breadcrumb.online"), to: "/online" }, { label: t("nav.onlineOrders") }]}
         subtitle={t("online.orders.subtitle")}
         actions={
           <>

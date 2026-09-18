@@ -21,20 +21,12 @@ import {
   CloseIcon,
   GlobeIcon,
   GridIcon,
-  HistoryIcon,
-  LayersIcon,
   MenuIcon,
   ReceiptIcon,
-  RotateCcwIcon,
   ShoppingCartIcon,
   UsersIcon,
   WarehouseIcon,
-  WalletIcon,
-  ClockIcon,
-  ClipboardIcon,
   ReportIcon,
-  EditIcon,
-  PlusCircleIcon,
 } from "@/components/ui";
 
 /**
@@ -146,15 +138,6 @@ function NavItem({
         </>
       )}
     </NavLink>
-  );
-}
-
-function GroupLabel({ children, collapsed }: { children: React.ReactNode; collapsed: boolean }) {
-  if (collapsed) return <div aria-hidden className="mx-auto my-2 h-px w-8 bg-white/10" />;
-  return (
-    <p className="px-3 pb-1 pt-4 text-[10px] font-bold uppercase tracking-widest text-stone-500">
-      {children}
-    </p>
   );
 }
 
@@ -316,23 +299,33 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </div>
 
       <nav className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto" aria-label={t("nav.menu")}>
-        <GroupLabel collapsed={collapsed}>{t("nav.groupOperate")}</GroupLabel>
+        {/*
+          Phase 49 — the sidebar is the MAIN MODULES and nothing else.
+          Nine doors, each opening a module landing that holds its own
+          sub-screens (Sales, Catalog, Inventory, Online) or already is the
+          hub (Dashboard, POS, Customers, Reports, Settings). Sub-pages are
+          reached from a module's cards, its tabs or a breadcrumb — never
+          from this list. Every door hides behind the same capability table
+          the route guard reads, and every old route still resolves.
+        */}
         <NavItem to="/" icon={<GridIcon />} label={t("nav.dashboard")} end collapsed={collapsed} />
         <NavItem to="/pos" icon={<ShoppingCartIcon />} label={t("nav.register")} visible={canOpen("/pos")} collapsed={collapsed} />
-
-        <GroupLabel collapsed={collapsed}>{t("nav.catalog")}</GroupLabel>
-        <NavItem to="/products" icon={<BoxIcon />} label={t("nav.products")} visible={canOpen("/products")} collapsed={collapsed} />
-        <NavItem to="/categories" icon={<LayersIcon />} label={t("nav.categories")} visible={canOpen("/categories")} collapsed={collapsed} />
-        <NavItem to="/inventory" icon={<WarehouseIcon />} label={t("nav.inventory")} visible={canOpen("/inventory")} collapsed={collapsed} />
-        <NavItem to="/inventory/movements" icon={<HistoryIcon />} label={t("nav.movements")} visible={canOpen("/inventory/movements")} collapsed={collapsed} />
-
-        <GroupLabel collapsed={collapsed}>{t("nav.groupSelling")}</GroupLabel>
-        <NavItem to="/pos/sales" icon={<ReceiptIcon />} label={t("nav.sales")} visible={canOpen("/pos/sales")} collapsed={collapsed} />
         <NavItem
-          to="/online/orders"
+          to="/sales"
+          icon={<ReceiptIcon />}
+          label={t("nav.sales")}
+          visible={canOpen("/sales")}
+          badge={pendingApprovals}
+          badgeLabel={t("approvals.pendingHint")}
+          collapsed={collapsed}
+        />
+        <NavItem to="/catalog" icon={<BoxIcon />} label={t("home.breadcrumb.catalog")} collapsed={collapsed} />
+        <NavItem to="/inventory" icon={<WarehouseIcon />} label={t("nav.inventory")} visible={canOpen("/inventory")} collapsed={collapsed} />
+        <NavItem
+          to="/online"
           icon={<GlobeIcon />}
-          label={t("nav.onlineOrders")}
-          visible={canOpen("/online/orders")}
+          label={t("home.breadcrumb.online")}
+          visible={canOpen("/online/orders") || canManageWebsite}
           badge={online.counts.pending}
           badgeLabel={
             online.counts.needs_payment > 0
@@ -341,175 +334,54 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           }
           collapsed={collapsed}
         />
-        <NavItem
-          to="/online/reservations"
-          icon={<LayersIcon />}
-          label={t("nav.stockHolds")}
-          visible={canOpen("/online/reservations")}
-          // Stuck holds are stock nobody can sell, so they earn a badge of
-          // their own rather than being folded into the pending-orders count.
-          badge={online.holdAlertCount}
-          badgeLabel={t("nav.stockHoldsBadge", { count: online.holdAlertCount })}
-          collapsed={collapsed}
-        />
         <NavItem to="/customers" icon={<UsersIcon />} label={t("nav.customers")} visible={canOpen("/customers")} collapsed={collapsed} />
-        <NavItem to="/returns" icon={<RotateCcwIcon />} label={t("nav.returns")} visible={canOpen("/returns")} collapsed={collapsed} />
-        <NavItem to="/refunds" icon={<RotateCcwIcon />} label={t("nav.refunds")} visible={canOpen("/refunds")} collapsed={collapsed} />
-
-        <GroupLabel collapsed={collapsed}>{t("nav.groupMoney")}</GroupLabel>
-        <NavItem to="/shifts" icon={<WalletIcon />} label={t("nav.shiftDashboard")} end visible={canOpen("/shifts")} collapsed={collapsed} />
-        <NavItem to="/shifts/history" icon={<ClockIcon />} label={t("nav.shiftHistory")} visible={canOpen("/shifts/history")} collapsed={collapsed} />
-        <NavItem to="/expenses" icon={<ReceiptIcon />} label={t("nav.expenses")} visible={canOpen("/expenses")} collapsed={collapsed} />
-
-        <GroupLabel collapsed={collapsed}>{t("nav.groupInsights")}</GroupLabel>
         <NavItem to="/reports" icon={<ReportIcon />} label={t("nav.reports")} visible={canOpen("/reports")} collapsed={collapsed} />
-        <NavItem
-          to="/reports/advanced"
-          icon={<LayersIcon />}
-          label={t("nav.advancedReports")}
-          visible={canOpen("/reports/advanced")}
-          collapsed={collapsed}
-        />
-        <NavItem to="/audit" icon={<ClipboardIcon />} label={t("nav.audit")} visible={canOpen("/audit")} collapsed={collapsed} />
-        {/* Every signed-in role may open the inbox: an approver decides from it,
-            a requester watches their own ask. Deciding is asserted in the
-            service, not by hiding the screen. */}
-        <NavItem
-          to="/approvals"
-          icon={<ClipboardIcon />}
-          label={t("nav.approvals")}
-          badge={pendingApprovals}
-          badgeLabel={t("approvals.pendingHint")}
-          collapsed={collapsed}
-        />
-
-        {canManageOnline || canManageWebsite ? (
-          <>
-            <GroupLabel collapsed={collapsed}>{t("nav.groupWebsite")}</GroupLabel>
-            <NavItem
-              to="/online/reports"
-              icon={<ReportIcon />}
-              label={t("nav.onlineReports")}
-              visible={canOpen("/online/reports")}
-              collapsed={collapsed}
-            />
-            <NavItem
-              to="/online/website"
-              icon={<EditIcon />}
-              label={t("nav.websiteSettings")}
-              visible={canOpen("/online/website")}
-              collapsed={collapsed}
-            />
-            <NavItem
-              to="/online/marketing"
-              icon={<PlusCircleIcon />}
-              label={t("nav.marketing")}
-              visible={canOpen("/online/marketing")}
-              collapsed={collapsed}
-            />
-            <NavItem
-              to="/online/content"
-              icon={<ClipboardIcon />}
-              label={t("nav.websiteContent")}
-              visible={canOpen("/online/content")}
-              collapsed={collapsed}
-            />
-            {/* Not a screen: the shop itself, offered in a new tab so configuring
-                it and looking at it can happen side by side. The new tab is a
-                preference, not a requirement: an embedded host or a popup
-                blocker swallows target="_blank" without a word, which made this
-                a dead button — the one labelled "View website" that the POS
-                screen inherits from the shell. The click is taken over and falls
-                back to this tab; target stays for middle-click and ctrl-click. */}
-            {/* Not a screen: the shop itself, offered in a new tab so configuring
-                it and looking at it can happen side by side. The new tab is a
-                preference, not a requirement: an embedded host or a popup
-                blocker swallows target="_blank" without a word, which made this
-                a dead button — the one labelled "View website" that the POS
-                screen inherits from the shell. The click is taken over and falls
-                back to this tab; target stays for middle-click and ctrl-click. */}
-            <a
-              href="#/store"
-              target="_blank"
-              rel="noopener noreferrer"
-              data-testid="nav-open-website"
-              onClick={(event) => {
-                event.preventDefault();
-                openStorefrontRoute();
-              }}
-              className={cn(
-                "flex w-full items-center gap-3 rounded-xl text-sm font-medium text-stone-400 transition-colors hover:bg-white/5 hover:text-stone-100",
-                collapsed ? "justify-center px-0 py-2.5" : "px-3 py-2.5",
-              )}
-            >
-              <span aria-hidden className="shrink-0">
-                <ShoppingCartIcon />
-              </span>
-              {!collapsed ? (
-                <span className="truncate">{t("nav.viewStore")}</span>
-              ) : (
-                <span className="sr-only">{t("nav.viewStore")}</span>
-              )}
-              {!collapsed ? (
-                <span aria-hidden className="ms-auto text-[10px] text-stone-500">
-                  ↗
-                </span>
-              ) : null}
-            </a>
-          </>
+        {canManageUsers || canManageRoles || canManageSettings || canOpen("/settings/backup") || canManageWebsite ? (
+          <NavItem
+            to="/settings"
+            icon={<ArchiveIcon />}
+            label={t("nav.settings")}
+            end
+            visible
+            collapsed={collapsed}
+          />
         ) : null}
 
-        {/* Settings (Phase 10, grouped in 46). Each entry behind its own
-            capability: managing accounts, managing the permission model,
-            branding the installation and custody of backups are different
-            authorities, and a role may hold any one without the others. */}
-        {canManageUsers || canManageRoles || canManageSettings || canOpen("/settings/backup") || canManageWebsite ? (
-          <>
-            <GroupLabel collapsed={collapsed}>{t("nav.settings")}</GroupLabel>
-            <NavItem
-              to="/settings"
-              icon={<GridIcon />}
-              label={t("nav.settingsHome")}
-              end
-              visible={canManageSettings || canManageUsers || canManageRoles || canManageWebsite}
-              collapsed={collapsed}
-            />
-            <NavItem
-              to="/settings/branding"
-              icon={<EditIcon />}
-              label={t("nav.settingsBranding")}
-              visible={canManageWebsite}
-              collapsed={collapsed}
-            />
-            <NavItem
-              to="/settings/users"
-              icon={<UsersIcon />}
-              label={t("nav.settingsUsers")}
-              visible={canOpen("/settings/users")}
-              collapsed={collapsed}
-            />
-            <NavItem
-              to="/settings/roles"
-              icon={<ClipboardIcon />}
-              label={t("nav.settingsRoles")}
-              visible={canOpen("/settings/roles")}
-              collapsed={collapsed}
-            />
-            <NavItem
-              to="/settings/backup"
-              icon={<ArchiveIcon />}
-              label={t("nav.settingsBackup")}
-              visible={canOpen("/settings/backup")}
-              collapsed={collapsed}
-            />
-            <NavItem
-              to="/settings/approvals"
-              icon={<ReportIcon />}
-              label={t("approvals.rules")}
-              visible={canOpen("/settings/approvals") && canManageSettings}
-              collapsed={collapsed}
-            />
-          </>
+        {/* Not a screen: the shop itself, offered in a new tab so configuring
+            it and looking at it can happen side by side. The new tab is a
+            preference, not a requirement: an embedded host or a popup blocker
+            swallows target="_blank" without a word, which made this a dead
+            button — the click is taken over and falls back to this tab;
+            target stays for middle-click and ctrl-click. */}
+        {canManageOnline || canManageWebsite ? (
+          <a
+            href="#/store"
+            target="_blank"
+            rel="noopener noreferrer"
+            data-testid="nav-open-website"
+            onClick={(event) => {
+              event.preventDefault();
+              openStorefrontRoute();
+            }}
+            className={cn(
+              "mt-2 flex w-full items-center gap-3 rounded-xl border-t border-white/10 pt-3 text-sm font-medium text-stone-400 transition-colors hover:bg-white/5 hover:text-stone-100",
+              collapsed ? "justify-center px-0 py-2.5" : "px-3 py-2.5",
+            )}
+          >
+            <span aria-hidden className="shrink-0">
+              <GlobeIcon />
+            </span>
+            {!collapsed ? (
+              <span className="truncate">{t("nav.viewStore")}</span>
+            ) : (
+              <span className="sr-only">{t("nav.viewStore")}</span>
+            )}
+            {!collapsed ? (
+              <span aria-hidden className="ms-auto text-[10px] text-stone-500">
+                ↗
+              </span>
+            ) : null}
+          </a>
         ) : null}
       </nav>
 
@@ -774,15 +646,38 @@ export function PageHeader({
   actions,
   backTo,
   backLabel,
+  crumbs,
 }: {
   title: string;
   subtitle?: string;
   actions?: React.ReactNode;
   backTo?: string;
   backLabel?: string;
+  /** Phase 49: the trail above the title — "Catalog / Products / Gold Ring".
+      Last crumb is where you are, so it renders as plain text, not a link. */
+  crumbs?: { label: string; to?: string }[];
 }) {
   return (
     <div className="mb-5 space-y-3">
+      {crumbs && crumbs.length > 0 ? (
+        <nav aria-label="Breadcrumb" data-testid="breadcrumbs" className="flex flex-wrap items-center gap-1.5 text-[11px] font-bold uppercase tracking-widest text-stone-400">
+          {crumbs.map((crumb, index) => {
+            const last = index === crumbs.length - 1;
+            return (
+              <span key={`${crumb.label}-${index}`} className="flex items-center gap-1.5">
+                {crumb.to && !last ? (
+                  <Link to={crumb.to} className="transition hover:text-stone-700">
+                    {crumb.label}
+                  </Link>
+                ) : (
+                  <span className={last ? "text-stone-600" : undefined}>{crumb.label}</span>
+                )}
+                {!last ? <span aria-hidden>/</span> : null}
+              </span>
+            );
+          })}
+        </nav>
+      ) : null}
       {backTo ? (
         <Link
           to={backTo}
