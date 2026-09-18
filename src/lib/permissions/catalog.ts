@@ -108,6 +108,10 @@ export const CAPABILITY_GROUPS: readonly CapabilityGroup[] = [
       "restore_backup",
       "export_backup",
       "run_health_check",
+      // Phase 47: the Danger Zone sits beside the backups because both are
+      // custody of the whole installation — but this one is the act the backups
+      // exist to protect against, admin-only by construction.
+      "manage_system_reset",
     ],
   },
 ] as const;
@@ -260,6 +264,8 @@ export const CAPABILITY_ACTIONS: Record<Capability, PermissionAction> = {
   manage_users: "manage",
   manage_roles: "manage",
   manage_settings: "manage",
+  // Phase 47: the Danger Zone
+  manage_system_reset: "manage",
   view_audit_log: "view",
   // Data safety (Phase 18). Restore is `manage` rather than `delete` because it
   // does both: every table is emptied and filled again from a snapshot. The verb

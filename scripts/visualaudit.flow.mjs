@@ -165,7 +165,10 @@ const checks = [
       const text = document.body.textContent ?? "";
       assert.ok(text.includes("Branding"), "settings: the Branding group is listed");
       assert.ok(text.includes("Users"), "settings: Users & Roles listed");
-      assert.ok(!/Danger/i.test(text), "settings: no Danger Zone (Phase 47)");
+      assert.ok(
+        !document.body.textContent.includes("Factory Reset"),
+        "settings: the factory card never leaks onto the group list",
+      );
     },
   },
 ];

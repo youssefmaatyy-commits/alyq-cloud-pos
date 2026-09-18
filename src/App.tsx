@@ -55,6 +55,7 @@ import { RolesPage, SettingsProvider, UsersPage } from "@/modules/settings";
 import { BackupPage } from "@/modules/backup";
 import { BrandingPage } from "@/modules/settings/pages/BrandingPage";
 import { SettingsHomePage } from "@/modules/settings/pages/SettingsHomePage";
+import { SystemSettingsPage } from "@/modules/settings/pages/SystemSettingsPage";
 
 import {
   MarketingPage,
@@ -360,6 +361,10 @@ function SettingsArea() {
             shell, login, dashboard and receipts, stored in the website
             settings document the storefront already reads. */}
         <Route path="branding" element={<BrandingPage />} />
+        {/* Danger Zone (Phase 47). Its own screen, its own wizard, the
+            strongest capability in the table; the route guard has already
+            refused every other role before this renders. */}
+        <Route path="system" element={<SystemSettingsPage />} />
         <Route path="*" element={<Navigate to="/settings" replace />} />
       </Routes>
     </SettingsProvider>

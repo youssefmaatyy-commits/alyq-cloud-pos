@@ -70,6 +70,16 @@ export function SettingsHomePage() {
       descKey: "admin.settings.card.backup.desc",
       testId: "settings-card-backup",
     },
+    {
+      // Phase 47: the Danger Zone lives last and reads differently on purpose —
+      // a card for the acts you must never reach by accident.
+      to: "/settings/system",
+      capability: "manage_system_reset",
+      icon: "⚠",
+      titleKey: "admin.settings.card.system.title",
+      descKey: "admin.settings.card.system.desc",
+      testId: "settings-card-system",
+    },
   ];
 
   const visible = cards.filter((card) => card.capability === null || canActAs(user, card.capability));

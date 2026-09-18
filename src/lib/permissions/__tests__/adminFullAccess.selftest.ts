@@ -223,7 +223,14 @@ test("admin is a superset of every other role, and the admin-only set is exact",
   const onlyAdmin = CAPABILITIES.filter((capability) => rolesWithCapability(capability).join() === "admin").sort();
   assert.deepEqual(
     onlyAdmin,
-    ["export_backup", "manage_roles", "manage_settings", "manage_users", "restore_backup"],
+    [
+      "export_backup",
+      "manage_roles",
+      "manage_settings",
+      "manage_system_reset",
+      "manage_users",
+      "restore_backup",
+    ],
   );
 });
 

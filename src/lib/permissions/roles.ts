@@ -133,6 +133,14 @@ export const CAPABILITIES = [
    */
   "manage_website",
 
+  // ── Phase 47: the Danger Zone. Clearing operational data or factory-
+  // resetting the installation is the single most destructive act the system
+  // can perform, so it gets the narrowest capability in the model: admin only,
+  // never assignable to a working seat, checked server-side by the 0047 RPCs.
+  // It is deliberately NOT part of the Phase 10 granular set below — a custom
+  // role cannot be handed the reset switch.
+  "manage_system_reset",
+
   // ── Phase 10: the granular permissions a custom role can be built from ──
   //
   // Every one of these existed as *behaviour* before it existed as a
@@ -305,9 +313,10 @@ export type Capability = (typeof CAPABILITIES)[number];
  */
 export const ROLE_CAPABILITIES: Record<AppRole, readonly Capability[]> = {
   admin: CAPABILITIES,
-  // Manager holds everything except the three capabilities that decide who
-  // holds capabilities. That is the first real difference between the two
-  // oversight roles, and it is what `manage_users` exists to express.
+  // Manager holds everything except the capabilities that decide who holds
+  // capabilities — the three oversight grants — and, since Phase 47, the
+  // Danger Zone: clearing operational data or factory-resetting the
+  // installation is the one act reserved to the admin role alone.
   manager: [
     "view_inventory",
     "adjust_stock",

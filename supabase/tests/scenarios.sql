@@ -5209,6 +5209,372 @@ begin
 end
 $$;
 
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Phase 47: the Danger Zone — 0047's RPCs against the real policies.
+--
+-- Proves, as the roles the browser actually gets:
+--   · a cashier's forged call to every destructive RPC is refused;
+--   · the phrase, the freshness window and unknown option keys are refused;
+--   · the preview reads real counts and changes nothing;
+--   · Clear Operational Data clears the sale/order/return/shift trees while
+--     products, variants, categories, profiles and settings survive; the
+--     variant inventory reset zeroes the SHELF OF RECORD and the 0043 trigger
+--     produces the rollup — with a recount movement keeping the ledger true;
+--   · Factory Reset removes catalogue + website content safely, keeps the
+--     Super Admin, the auth linkage, the schema and the branding block it was
+--     told to keep, restarts the numbering, and leaves no orphans;
+--   · a forced failure mid-reset rolls EVERYTHING back (no partial deletion);
+--   · the reset's own audit rows survive, and no password ever reaches them.
+-- ═══════════════════════════════════════════════════════════════════════════
+do $dz$
+declare
+  v_admin    uuid := '00000000-0000-4000-8000-0000000000a1';
+  v_cashier  uuid := '00000000-0000-4000-8000-0000000000c1';
+  v_cat      uuid := '00000000-0000-4000-8000-00000000d100';
+  v_plain    uuid := '00000000-0000-4000-8000-00000000d110';
+  v_varprod  uuid := '00000000-0000-4000-8000-00000000d120';
+  v_gold     uuid := '00000000-0000-4000-8000-00000000d121';
+  v_silver   uuid := '00000000-0000-4000-8000-00000000d122';
+  v_cust     uuid := '00000000-0000-4000-8000-00000000d130';
+  v_sale     jsonb;
+  v_sale_id  uuid;
+  v_line_id  uuid;
+  v_summary  jsonb;
+  v_preview  jsonb;
+  v_n        integer;
+  v_n2       integer;
+  v_audit    integer;
+  v_settings jsonb;
+begin
+  perform pg_temp.become(v_admin, 'authenticated');
+
+  -- ── seed: category, a plain product, a variant product with 2+2 ──────────
+  insert into public.categories (id, name_ar, name_en)
+  values (v_cat, 'اختبار الخطر', 'Danger fixtures')
+  on conflict (id) do nothing;
+
+  insert into public.products (
+    id, sku, name_ar, name_en, category_id, selling_price, cost_price,
+    stock_quantity, active, show_on_website, stock_tracking_enabled
+  ) values (
+    v_plain, 'DZ-PLAIN', 'عادي', 'DZ Plain', v_cat,
+    10.00, 5.00, 5, true, true, true
+  ) on conflict (id) do update set stock_quantity = 5, active = true, show_on_website = true;
+
+  insert into public.products (
+    id, sku, name_ar, name_en, category_id, selling_price, cost_price,
+    stock_quantity, active, variants_enabled, stock_tracking_enabled
+  ) values (
+    v_varprod, 'DZ-VAR', 'متغير', 'DZ Variant', v_cat,
+    20.00, 8.00, 4, true, false, true
+  ) on conflict (id) do update set stock_quantity = 4, variants_enabled = false, active = true;
+
+  insert into public.product_variants (id, product_id, sku, color_en, color_ar, size, stock_quantity, active)
+  values
+    (v_gold,   v_varprod, 'DZ-GOLD',   'Gold',   'ذهبي',   17, 0, true),
+    (v_silver, v_varprod, 'DZ-SILVER', 'Silver', 'فضي', 17, 0, true)
+  on conflict (id) do update set stock_quantity = 0, active = true;
+
+  perform public.enable_product_variants(
+    v_varprod,
+    jsonb_build_object(v_gold::text, 2, v_silver::text, 2),
+    v_admin::text, 'Amina Admin'
+  );
+  if (select stock_quantity from public.products where id = v_varprod) <> 4 then
+    raise exception 'the variant rollup did not follow the opening (expected 4)';
+  end if;
+
+  -- a customer, an open shift, a till sale, a return of it, a website order
+  insert into public.customers (id, name, phone) values (v_cust, 'Déjà Customer', '01000000001')
+  on conflict (id) do nothing;
+
+  perform pg_temp.ensure_open_shift();
+  v_sale := public.pos_complete_sale(jsonb_build_object(
+    'client_ref', 'scn-dz-sale-1',
+    'user_id',    v_admin::text,
+    'user_name',  'Amina Admin',
+    'payments',   jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', 20.00)),
+    'lines',      jsonb_build_array(jsonb_build_object('product_id', v_plain::text, 'qty', 2))
+  ));
+  v_sale_id := (v_sale->>'sale_id')::uuid;
+  select id into v_line_id from public.sale_items where sale_id = v_sale_id limit 1;
+
+  perform public.pos_process_return(jsonb_build_object(
+    'sale_id',       v_sale_id::text,
+    'reason',        'Danger Zone fixture',
+    'refund_method', 'cash',
+    'refund_status', 'pending',
+    'user_id',       v_admin::text,
+    'user_name',     'Amina Admin',
+    'items',         jsonb_build_array(jsonb_build_object('sale_item_id', v_line_id::text, 'quantity', 1))
+  ));
+
+  perform public.place_online_order(jsonb_build_object(
+    'client_ref',     'scn-dz-order-1',
+    'customer_name',  'Déjà Customer',
+    'customer_phone', '01000000001',
+    'delivery_type',  'pickup',
+    'address',        '{}'::jsonb,
+    'lines',          jsonb_build_array(jsonb_build_object('product_id', v_plain::text, 'qty', 1)),
+    'payment_method', 'cod'
+  ));
+
+  select count(*) into v_n from public.sales;
+  if v_n < 1 then raise exception 'the Danger Zone seed produced no sale'; end if;
+
+  -- ── forged calls: an ordinary seat can light no fuse ──────────────────────
+  perform pg_temp.become(v_cashier, 'authenticated');
+  begin
+    perform public.system_reset_preview('operational', '{"sales": true}'::jsonb);
+    raise exception 'a cashier read the reset preview';
+  exception when insufficient_privilege then null; end;
+  begin
+    perform public.system_clear_operational_data(
+      '{"sales": true}'::jsonb, 'DELETE OPERATIONAL DATA', now() + interval '1 minute');
+    raise exception 'a cashier cleared operational data';
+  exception when insufficient_privilege then null; end;
+  begin
+    perform public.system_factory_reset(
+      '{"products": true}'::jsonb, 'DELETE ALL DATA', now() + interval '1 minute');
+    raise exception 'a cashier ran a factory reset';
+  exception when insufficient_privilege then null; end;
+
+  -- ── the phrase is not authorization alone, and neither is the UI ─────────
+  perform pg_temp.become(v_admin, 'authenticated');
+  begin
+    perform public.system_clear_operational_data(
+      '{"sales": true}'::jsonb, 'delete operational data ', now() + interval '1 minute');
+    raise exception 'a wrong phrase passed (case/trim must be normalized)';
+  exception when others then
+    if sqlerrm not like 'RESET_PHRASE_MISMATCH:%' then
+      raise exception 'wrong phrase failed with the wrong error: %', sqlerrm;
+    end if;
+  end;
+
+  -- stale re-authentication window
+  begin
+    perform public.system_clear_operational_data(
+      '{"sales": true}'::jsonb, 'DELETE OPERATIONAL DATA', now() - interval '20 minutes');
+    raise exception 'a stale re-authentication window passed';
+  exception when others then
+    if sqlerrm not like 'RESET_REAUTH_REQUIRED:%' then
+      raise exception 'stale window failed with the wrong error: %', sqlerrm;
+    end if;
+  end;
+
+  -- far-future (forged) freshness stamp
+  begin
+    perform public.system_clear_operational_data(
+      '{"sales": true}'::jsonb, 'DELETE OPERATIONAL DATA', now() + interval '1 hour');
+    raise exception 'a forged future freshness stamp passed';
+  exception when others then
+    if sqlerrm not like 'RESET_REAUTH_REQUIRED:%' then
+      raise exception 'future stamp failed with the wrong error: %', sqlerrm;
+    end if;
+  end;
+
+  -- unknown option key: abort, never silently do less
+  begin
+    perform public.system_clear_operational_data(
+      '{"sales": true, "explode": true}'::jsonb, 'DELETE OPERATIONAL DATA', now() + interval '1 minute');
+    raise exception 'an unknown option key passed';
+  exception when others then
+    if sqlerrm not like 'RESET_BAD_OPTIONS:%' then
+      raise exception 'unknown key failed with the wrong error: %', sqlerrm;
+    end if;
+  end;
+
+  -- ── preview: server counts, zero mutation ─────────────────────────────────
+  select count(*) into v_n from public.sales;
+  v_preview := public.system_reset_preview('operational',
+    '{"sales": true, "orders": true, "shifts": true, "quantities": true}'::jsonb);
+  if (v_preview->'effective_options'->>'returns')::boolean is not true then
+    raise exception 'the preview did not carry sales → returns';
+  end if;
+  if (v_preview->'protected_admin'->>'username') is distinct from 'admin' then
+    raise exception 'the preview did not name the protected Super Admin';
+  end if;
+  if not exists (
+    select 1 from jsonb_array_elements(v_preview->'delete') del
+    where del->>'group' = 'sales' and (del->>'count')::integer >= 1
+  ) then
+    raise exception 'the preview did not count the seeded sale';
+  end if;
+  select count(*) into v_n2 from public.sales;
+  if v_n2 <> v_n then
+    raise exception 'the preview mutated the data (% → %)', v_n, v_n2;
+  end if;
+
+  -- ── Mode 1: clear operational data (sales, orders, shifts, quantities) ───
+  v_summary := public.system_clear_operational_data(
+    '{"sales": true, "orders": true, "shifts": true, "quantities": true}'::jsonb,
+    'DELETE OPERATIONAL DATA',
+    now() + interval '1 minute'
+  );
+
+  select count(*) into v_n from public.sales;
+  if v_n <> 0 then raise exception 'operational clear left % sale(s)', v_n; end if;
+  select count(*) into v_n from public.online_orders;
+  if v_n <> 0 then raise exception 'operational clear left % online order(s)', v_n; end if;
+  select count(*) into v_n from public.sales_returns;
+  if v_n <> 0 then raise exception 'operational clear left % return(s)', v_n; end if;
+  select count(*) into v_n from public.refund_records;
+  if v_n <> 0 then raise exception 'operational clear left % refund(s)', v_n; end if;
+  select count(*) into v_n from public.shifts;
+  if v_n <> 0 then raise exception 'operational clear left % shift(s)', v_n; end if;
+  select count(*) into v_n from public.stock_reservations;
+  if v_n <> 0 then raise exception 'operational clear left % reservation(s)', v_n; end if;
+
+  -- preserved: catalogue, settings, profiles
+  select count(*) into v_n from public.products where id in (v_plain, v_varprod);
+  if v_n <> 2 then raise exception 'operational clear deleted products'; end if;
+  select count(*) into v_n from public.product_variants where id in (v_gold, v_silver);
+  if v_n <> 2 then raise exception 'operational clear deleted variants'; end if;
+  select count(*) into v_n from public.categories where id = v_cat;
+  if v_n <> 1 then raise exception 'operational clear deleted the category'; end if;
+  select count(*) into v_n from public.profiles where role = 'admin' and active;
+  if v_n < 1 then raise exception 'operational clear disturbed the Super Admin'; end if;
+
+  -- inventory reset: shelves of record at zero, rollup by trigger, ledger true
+  if (select stock_quantity from public.product_variants where id = v_gold) <> 0
+     or (select stock_quantity from public.product_variants where id = v_silver) <> 0 then
+    raise exception 'the variant shelves were not zeroed';
+  end if;
+  if (select stock_quantity from public.products where id = v_varprod) <> 0 then
+    raise exception 'the variant rollup did not follow the reset (must be the trigger''s sum)';
+  end if;
+  if (select stock_quantity from public.products where id = v_plain) <> 0 then
+    raise exception 'the plain product was not zeroed';
+  end if;
+  select count(*) into v_n from public.stock_movements
+   where reason = 'recount' and notes = 'Danger Zone inventory reset';
+  if v_n < 3 then
+    raise exception 'the recount ledger rows are missing (% written)', v_n;
+  end if;
+
+  -- the reset's own audit survived (append-only trail)
+  select count(*) into v_audit from public.audit_log
+   where action in ('system.reset.started', 'system.reset.succeeded')
+     and entity_id = 'operational';
+  if v_audit <> 2 then
+    raise exception 'the operational reset left % audit rows, expected 2', v_audit;
+  end if;
+  if exists (select 1 from public.audit_log where details::text ilike '%password%') then
+    raise exception 'a password-shaped string reached the audit trail';
+  end if;
+
+  -- ── seed again, then Mode 2: factory reset with branding preserved ───────
+  -- the operational clear zeroed the shelves; restock the plain product so a
+  -- fresh till sale can exist (a plain product's stock is directly writable)
+  update public.products set stock_quantity = 5 where id = v_plain;
+  perform pg_temp.ensure_open_shift();
+  -- the shift helper stamps the cashier's claim; put the admin back before
+  -- anything below calls a guarded RPC
+  perform pg_temp.become(v_admin, 'authenticated');
+  perform public.pos_complete_sale(jsonb_build_object(
+    'client_ref', 'scn-dz-sale-2',
+    'user_id',    v_admin::text,
+    'user_name',  'Amina Admin',
+    'payments',   jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', 10.00)),
+    'lines',      jsonb_build_array(jsonb_build_object('product_id', v_plain::text, 'qty', 1))
+  ));
+
+  update public.website_settings set settings = jsonb_build_object(
+    'brand', jsonb_build_object('display_name_en', 'ALYQ Atelier', 'display_name_ar', 'الياقوت أتيليه'),
+    'images', jsonb_build_object('logo_url', 'https://cdn.example/logo.png'),
+    'sections', jsonb_build_array(jsonb_build_object('key', 'categories', 'category_ids',
+                      jsonb_build_array(v_cat::text))),
+    'delivery', jsonb_build_object('flat_fee', 30)
+  ) where id = 1;
+
+  -- rollback: a forced failure after the deletes must leave EVERYTHING intact.
+  -- The interruption point inside 0047 arms only through a transaction-local
+  -- custom GUC — something PostgREST cannot set from a request, so this is a
+  -- fixture with no shipped switch (see the migration's comment).
+  perform set_config('dz.force_failure', 'factory', true);
+
+  begin
+    perform public.system_factory_reset(
+      '{"products": true, "categories": true, "customers": true, "website": true, "branding": false}'::jsonb,
+      'DELETE ALL DATA',
+      now() + interval '1 minute'
+    );
+    raise exception 'the forced failure did not fire';
+  exception when others then
+    if sqlerrm not like 'DZ_TEST_INTERRUPT%' then
+      raise exception 'the forced failure surfaced the wrong error: %', sqlerrm;
+    end if;
+  end;
+  perform set_config('dz.force_failure', 'off', true);
+
+  select count(*) into v_n from public.sales;
+  if v_n <> 1 then
+    raise exception 'the rolled-back reset left % sale(s) — the transaction was not atomic', v_n;
+  end if;
+  select count(*) into v_n from public.products where id in (v_plain, v_varprod);
+  if v_n <> 2 then raise exception 'the rolled-back reset deleted products'; end if;
+  select count(*) into v_n from public.website_settings
+   where coalesce(settings->'brand'->>'display_name_en', '') is distinct from 'ALYQ Atelier';
+  if v_n <> 0 then raise exception 'the rolled-back reset touched the settings document'; end if;
+  select count(*) into v_n from public.website_settings
+   where coalesce(settings->'images'->>'logo_url', '') is distinct from 'https://cdn.example/logo.png';
+  if v_n <> 0 then raise exception 'the rolled-back reset touched the logo'; end if;
+
+  -- the real factory reset
+  v_summary := public.system_factory_reset(
+    '{"products": true, "categories": true, "customers": true, "website": true, "delivery_payment": false, "branding": false}'::jsonb,
+    'DELETE ALL DATA',
+    now() + interval '1 minute'
+  );
+
+  select count(*) into v_n from public.products;
+  if v_n <> 0 then raise exception 'the factory reset left % product(s)', v_n; end if;
+  select count(*) into v_n from public.product_variants;
+  if v_n <> 0 then raise exception 'the factory reset left % variant(s)', v_n; end if;
+  select count(*) into v_n from public.categories where id = v_cat;
+  if v_n <> 0 then raise exception 'the factory reset left the category'; end if;
+  select count(*) into v_n from public.customers where id = v_cust;
+  if v_n <> 0 then raise exception 'the factory reset left the customer'; end if;
+  select count(*) into v_n from public.sales;
+  if v_n <> 0 then raise exception 'the factory reset left % sale(s)', v_n; end if;
+  select count(*) into v_n from public.product_content;
+  if v_n <> 0 then raise exception 'the factory reset left % product-content row(s)', v_n; end if;
+
+  select settings into v_settings from public.website_settings where id = 1;
+  if coalesce(v_settings->'brand'->>'display_name_en', '') <> 'ALYQ Atelier' then
+    raise exception 'the factory reset dropped the branding it was told to keep';
+  end if;
+  if v_settings ? 'sections' then
+    raise exception 'the factory reset kept the customization it was told to reset';
+  end if;
+
+  -- numbering restarts; the Super Admin and the schema survive; audit intact
+  if (select next_value from public.sale_counters) <> 1 then
+    raise exception 'the factory reset did not restart the sale numbering';
+  end if;
+  select count(*) into v_n from public.profiles where role = 'admin' and active;
+  if v_n < 1 then raise exception 'the factory reset disturbed the Super Admin'; end if;
+  if (v_summary->'preserved'->>'super_admin') is distinct from 'admin' then
+    raise exception 'the factory summary did not name the surviving Super Admin';
+  end if;
+  select count(*) into v_n from public.audit_log
+   where action = 'system.reset.succeeded' and entity_id = 'factory';
+  if v_n <> 1 then
+    raise exception 'the factory reset left % success audit row(s), expected 1', v_n;
+  end if;
+
+  -- a customer's browser cannot forge the failure report either
+  perform pg_temp.become(v_cashier, 'authenticated');
+  begin
+    perform public.system_reset_report_failure('factory', 'probe', 'forged');
+    raise exception 'a cashier wrote a forged failure report';
+  exception when insufficient_privilege then null; end;
+
+  raise notice 'danger zone (0047) — forged calls refused at every door, phrase/freshness/options enforced, preview counted without touching, operational clear emptied the sale/order/return/shift trees while the catalogue and settings survived, the variant shelves zeroed through their trigger with a true recount ledger, the forced failure rolled back completely, the factory reset cleared catalogue + website + customers and kept the Super Admin and the branding block, numbering restarted, and the reset''s own audit rows survived without ever seeing a password';
+end
+$dz$;
+
 do $$
 begin
   perform set_config('request.jwt.claim.sub', '', true);

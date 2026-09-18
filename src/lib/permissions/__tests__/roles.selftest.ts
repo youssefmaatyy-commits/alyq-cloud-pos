@@ -376,6 +376,9 @@ test("manager differs from admin only by what admin keeps to itself", () => {
     "export_backup",
     "manage_roles",
     "manage_settings",
+    // Phase 47: the Danger Zone — the one act that must never reach an
+    // ordinary oversight seat.
+    "manage_system_reset",
     "manage_users",
     "restore_backup",
   ]);

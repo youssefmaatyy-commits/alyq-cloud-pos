@@ -101,6 +101,9 @@ export const ROUTE_CAPABILITIES: ReadonlyArray<readonly [string, Capability]> = 
   // route asks for the same capability the write enforces through RLS —
   // `manage_website`, not a new one. The screen re-checks it itself.
   ["/settings/branding", "manage_website"],
+  // Phase 47: the Danger Zone — the strongest gate in the table, and the only
+  // one an ordinary oversight role is deliberately denied.
+  ["/settings/system", "manage_system_reset"],
   ["/settings", "manage_settings"],
 ];
 

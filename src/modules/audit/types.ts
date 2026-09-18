@@ -23,6 +23,13 @@ export const AUDIT_ACTIONS = [
   "refund.created",
   "refund.settled",
   "refund.rejected",
+  // Phase 47: the Danger Zone. Written by the 0047 RPCs live (and by the demo
+  // system service in demo mode): a reset announces it started, and either
+  // succeeds with its counts or is reported failed by the follow-up call. The
+  // trail itself is append-only, so the reset's own record always survives.
+  "system.reset.started",
+  "system.reset.succeeded",
+  "system.reset.failed",
   // Phase 13: the return itself, written by the returns service in both modes
   // (no database function writes it), while the settlement rows above are
   // written by `pos_settle_refund` live and by the service in demo mode.
@@ -192,6 +199,8 @@ export const AUDIT_ENTITIES = [
    * against it.
    */
   "backup",
+  /** Phase 47: the Danger Zone — the installation itself (a reset event). */
+  "system",
 ] as const;
 export type AuditEntity = (typeof AUDIT_ENTITIES)[number];
 

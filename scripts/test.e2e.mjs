@@ -61,6 +61,11 @@ const SUITES = [
     title: "Dashboard / Admin UX (Phase 46): KPI routing, website split, variant-aware alerts, mobile drawer, RTL, permissions",
   },
   {
+    id: "dangerzone",
+    file: "scripts/dangerzone.flow.mjs",
+    title: "Danger Zone (Phase 47): admin-only cards, wizard gates, preview, re-auth, phrase, operational clear, factory reset, audit survival",
+  },
+  {
     id: "branding",
     file: "scripts/branding.flow.mjs",
     title: "Branding (Phase 46): one shared source — set/save, live sidebar, dashboard, receipt logo, login, ALYQ fallback, cashier refused",
