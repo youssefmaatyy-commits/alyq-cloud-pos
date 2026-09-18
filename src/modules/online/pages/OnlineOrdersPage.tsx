@@ -11,8 +11,8 @@
  * the counts above it come from the same query the sidebar badge uses, so the
  * number on the badge and the number of rows here cannot disagree.
  */
-import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { PageHeader } from "@/components/layout/AppShell";
 import {
@@ -26,6 +26,7 @@ import {
   LoadingBlock,
   SearchIcon,
   SelectInput,
+  SegmentedTabs,
   StatTile,
   TextInput,
   ToggleSwitch,
@@ -35,7 +36,8 @@ import { POLL_CHOICES, SAFETY_NET_POLL_MS } from "../hooks/useOnlineNotification
 import { useOnlineNotificationState } from "../hooks/OnlineNotificationsProvider";
 import { OrderDetailModal } from "../components/OrderDetailModal";
 import { buildOnlineOrderSheets } from "../services/onlineOrdersExport";
-import { ONLINE_ORDER_STATUSES, ONLINE_PAYMENT_STATUSES, type OnlineOrder } from "../types";
+import { ONLINE_ORDER_STATUSES, ONLINE_PAYMENT_STATUSES, type OnlineOrder, type OnlineOrderStatus, type OnlinePaymentStatus } from "../types";
+import type { OnlineOrderFilter } from "../data/repository";
 import { variantLabelOf } from "../services/variantLabel";
 
 const STATUS_TONE: Record<OnlineOrder["status"], "neutral" | "success" | "danger" | "info" | "warning"> = {
@@ -78,6 +80,40 @@ export function OnlineOrdersPage() {
   const [statusDraft, setStatusDraft] = useState(filter.status);
   const [paymentDraft, setPaymentDraft] = useState(filter.paymentStatus);
   const [searchDraft, setSearchDraft] = useState(filter.search);
+
+  // Phase 46: the dashboard (and the shell's notifications) route here with the
+  // filter in the URL (`?status=pending`, `?payment=verification_required`,
+  // `?search=WEB-…`). The params hydrate the filter once, then leave the URL so
+  // a manual reload is a clean screen rather than a silently re-filtered one.
+  // Unknown values are ignored — a hand-typed URL must not invent a state.
+  const [params, setParams] = useSearchParams();
+  const hydrated = useRef(false);
+  useEffect(() => {
+    if (hydrated.current) return;
+    hydrated.current = true;
+    const status = params.get("status");
+    const payment = params.get("payment");
+    const search = params.get("search");
+    const patch: Partial<OnlineOrderFilter> = {};
+    if (status && (ONLINE_ORDER_STATUSES as readonly string[]).includes(status)) {
+      patch.status = status as OnlineOrderStatus;
+      setStatusDraft(status as OnlineOrderStatus);
+    }
+    if (payment && (ONLINE_PAYMENT_STATUSES as readonly string[]).includes(payment)) {
+      patch.paymentStatus = payment as OnlinePaymentStatus;
+      setPaymentDraft(payment as OnlinePaymentStatus);
+    }
+    if (search) {
+      patch.search = search;
+      setSearchDraft(search);
+    }
+    if (Object.keys(patch).length > 0) {
+      setFilter(patch);
+      setParams({}, { replace: true });
+    }
+    // Once, on mount: the provider's own filter state is the source afterwards.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const activeFilters = useMemo(
     () =>
@@ -202,6 +238,31 @@ export function OnlineOrdersPage() {
       </div>
 
       <Card className="mb-4 space-y-3">
+        {/* Phase 46: the lifecycle as tabs — the queue's main axis is a click,
+            not a dropdown. Same filter, same server-side query. */}
+        <SegmentedTabs<OnlineOrderStatus | "all">
+          ariaLabel={t("online.orders.filterStatus")}
+          testId="orders-tabs"
+          value={statusDraft}
+          onChange={(key) => {
+            setStatusDraft(key);
+            setFilter({ status: key });
+          }}
+          tabs={[
+            { key: "all", label: t("online.orders.allStatuses") },
+            {
+              key: "pending",
+              label: t("online.status.pending"),
+              count: counts.pending,
+              tone: "warning",
+            },
+            { key: "approved", label: t("online.status.approved") },
+            { key: "processing", label: t("online.status.processing") },
+            { key: "ready", label: t("online.status.ready") },
+            { key: "completed", label: t("online.status.completed"), tone: "success" },
+            { key: "cancelled", label: t("online.status.cancelled"), tone: "danger" },
+          ]}
+        />
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <TextInput
             value={searchDraft}
@@ -264,7 +325,7 @@ export function OnlineOrdersPage() {
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <p className="text-xs font-semibold text-slate-600">
+          <p className="text-xs font-semibold text-stone-600">
             {t("online.orders.resultCount", { count: num(orders.length, 0) })}
             {activeFilters > 0 ? ` · ${t("online.orders.activeFilters", { count: activeFilters })}` : ""}
             {mode === "demo" ? ` · ${t("online.orders.demoMode")}` : ""}
@@ -362,7 +423,7 @@ export function OnlineOrdersPage() {
           <div className="alyq-card hidden overflow-x-auto md:block">
             <table className="w-full border-collapse text-sm">
               <thead>
-                <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-bold uppercase tracking-wider text-slate-600">
+                <tr className="border-b border-stone-200 bg-stone-50 text-[11px] font-bold uppercase tracking-wider text-stone-600">
                   <th className="px-4 py-3 text-start font-semibold">{t("export.col.orderNumber")}</th>
                   <th className="px-3 py-3 text-start font-semibold">{t("export.col.customer")}</th>
                   <th className="px-3 py-3 text-start font-semibold">{t("pos.cols.date")}</th>
@@ -378,30 +439,30 @@ export function OnlineOrdersPage() {
                 {orders.map((order) => (
                   <tr
                     key={order.id}
-                    className="border-b border-slate-50 transition-colors last:border-0 hover:bg-slate-50/60"
+                    className="border-b border-stone-50 transition-colors last:border-0 hover:bg-slate-50/60"
                   >
                     <td className="px-4 py-3">
                       <button
                         type="button"
                         onClick={() => void select(order.id)}
-                        className="font-mono text-xs font-bold text-indigo-700 hover:underline"
+                        className="font-mono text-xs font-bold text-[#9a7a49] hover:underline"
                         dir="ltr"
                       >
                         {order.order_number}
                       </button>
                       {order.sale_number ? (
-                        <span className="ms-2 text-[10px] font-semibold text-slate-500" dir="ltr">
+                        <span className="ms-2 text-[10px] font-semibold text-stone-500" dir="ltr">
                           {order.sale_number}
                         </span>
                       ) : null}
                     </td>
-                    <td className="px-3 py-3 text-xs text-slate-700">
+                    <td className="px-3 py-3 text-xs text-stone-700">
                       {order.customer_name}
-                      <span className="block text-[11px] text-slate-500" dir="ltr">
+                      <span className="block text-[11px] text-stone-500" dir="ltr">
                         {order.customer_phone}
                       </span>
                     </td>
-                    <td className="px-3 py-3 text-xs text-slate-500" dir="ltr">
+                    <td className="px-3 py-3 text-xs text-stone-500" dir="ltr">
                       {date(order.created_at)}
                     </td>
                     <td className="px-3 py-3 text-end text-xs tabular-nums">
@@ -409,7 +470,7 @@ export function OnlineOrdersPage() {
                       {/* Phase 43: the queue names the shelf without a click —
                           the same frozen snapshot the detail modal reads. */}
                       {order.items.some((item) => item.variant_id) ? (
-                        <span className="mt-0.5 block text-[10px] font-semibold text-indigo-600" dir="ltr">
+                        <span className="mt-0.5 block text-[10px] font-semibold text-[#b08d57]" dir="ltr">
                           {order.items
                             .filter((item) => item.variant_id)
                             .map(
@@ -428,14 +489,14 @@ export function OnlineOrdersPage() {
                         </span>
                       ) : null}
                     </td>
-                    <td className="px-3 py-3 text-end text-sm font-bold tabular-nums text-slate-900">
+                    <td className="px-3 py-3 text-end text-sm font-bold tabular-nums text-stone-900">
                       {money(order.total)}
                     </td>
                     <td className="px-3 py-3 text-xs">
                       <Badge tone={order.payment_method === "instapay" ? "info" : "neutral"}>
                         {t(`online.paymentMethod.${order.payment_method}`)}
                       </Badge>
-                      <span className="mt-1 block text-[10px] font-semibold text-slate-500">
+                      <span className="mt-1 block text-[10px] font-semibold text-stone-500">
                         {t(`online.deliveryType.${order.delivery_type}`)}
                       </span>
                     </td>
@@ -451,7 +512,7 @@ export function OnlineOrdersPage() {
                       <button
                         type="button"
                         onClick={() => void select(order.id)}
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-600 hover:bg-slate-100"
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-stone-600 hover:bg-stone-100"
                         title={t("common.view")}
                         aria-label={t("common.view")}
                       >
@@ -474,21 +535,21 @@ export function OnlineOrdersPage() {
                 className="alyq-card w-full space-y-2 p-4 text-start"
               >
                 <div className="flex items-start justify-between gap-2">
-                  <span className="font-mono text-xs font-bold text-indigo-700" dir="ltr">
+                  <span className="font-mono text-xs font-bold text-[#9a7a49]" dir="ltr">
                     {order.order_number}
                   </span>
                   <Badge tone={STATUS_TONE[order.status]}>{t(`online.status.${order.status}`)}</Badge>
                 </div>
-                <p className="text-sm font-semibold text-slate-900">{order.customer_name}</p>
-                <p className="text-xs text-slate-500" dir="ltr">
+                <p className="text-sm font-semibold text-stone-900">{order.customer_name}</p>
+                <p className="text-xs text-stone-500" dir="ltr">
                   {order.customer_phone} · {date(order.created_at)}
                 </p>
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs text-slate-600">
+                  <span className="text-xs text-stone-600">
                     {num(order.items.reduce((sum, item) => sum + item.quantity, 0), 0)}{" "}
                     {t("export.col.itemsCount")}
                   </span>
-                  <span className="text-sm font-black tabular-nums text-slate-900">{money(order.total)}</span>
+                  <span className="text-sm font-black tabular-nums text-stone-900">{money(order.total)}</span>
                 </div>
                 <div className="flex flex-wrap gap-1.5">
                   <Badge tone={PAYMENT_TONE[order.payment_status]}>

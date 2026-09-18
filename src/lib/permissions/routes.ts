@@ -97,6 +97,10 @@ export const ROUTE_CAPABILITIES: ReadonlyArray<readonly [string, Capability]> = 
   ["/settings/backup", "view_backups"],
   ["/settings/users", "manage_users"],
   ["/settings/roles", "manage_roles"],
+  // Branding (Phase 46) writes the shared website settings document, so the
+  // route asks for the same capability the write enforces through RLS —
+  // `manage_website`, not a new one. The screen re-checks it itself.
+  ["/settings/branding", "manage_website"],
   ["/settings", "manage_settings"],
 ];
 

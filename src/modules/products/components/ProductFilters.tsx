@@ -18,6 +18,8 @@ export interface ProductFiltersValue {
   status: StatusFilter;
   type: ProductType | "all";
   stock: StockFilter;
+  /** Phase 46: what the storefront shows (independent of active/archived). */
+  visibility: "all" | "visible" | "hidden";
   featured: boolean;
   sort: SortKey;
 }
@@ -28,6 +30,7 @@ export const EMPTY_FILTERS: ProductFiltersValue = {
   status: "all",
   type: "all",
   stock: "all",
+  visibility: "all",
   featured: false,
   sort: "name",
 };
@@ -50,6 +53,7 @@ export function ProductFilters({ value, onChange, resultCount }: ProductFiltersP
     value.status !== EMPTY_FILTERS.status ||
     value.type !== EMPTY_FILTERS.type ||
     value.stock !== EMPTY_FILTERS.stock ||
+    value.visibility !== EMPTY_FILTERS.visibility ||
     value.featured !== EMPTY_FILTERS.featured ||
     value.sort !== EMPTY_FILTERS.sort;
 
@@ -126,6 +130,19 @@ export function ProductFilters({ value, onChange, resultCount }: ProductFiltersP
             <option value="in">{t("products.inStock")}</option>
             <option value="low">{t("products.lowStockBadge")}</option>
             <option value="out">{t("products.outOfStock")}</option>
+          </SelectInput>
+          <SelectInput
+            value={value.visibility}
+            onChange={(event) =>
+              onChange({ ...value, visibility: event.target.value as ProductFiltersValue["visibility"] })
+            }
+            className="h-9 w-auto min-w-40 py-1.5 text-xs font-semibold"
+            aria-label={t("products.visibilityFilter")}
+            data-testid="products-visibility-filter"
+          >
+            <option value="all">{`${t("products.visibilityFilter")}: ${t("common.all")}`}</option>
+            <option value="visible">{t("products.visibilityVisible")}</option>
+            <option value="hidden">{t("products.visibilityHidden")}</option>
           </SelectInput>
           <SelectInput
             value={value.sort}

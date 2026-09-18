@@ -3,6 +3,7 @@ import { Button, Modal, useToast } from "@/components/ui";
 import { usePos } from "../hooks/PosProvider";
 import { buildReceiptHtml, customerInfoIssue, printHtmlDocument } from "../services/receipt";
 import { salesReceiptStrings } from "../services/receiptStrings";
+import { loadBrand } from "@/lib/branding/brand";
 
 /**
  * Shown after a successful sale: the sale number, totals and a print action.
@@ -17,7 +18,7 @@ export function SaleCompletedModal() {
 
   if (!completedSale) return null;
 
-  const printReceipt = () => {
+  const printReceipt = async () => {
     if (!completedSale.sale_number || !completedSale.items?.length) {
       console.error("[receipt-print] abort: no completed sale / receipt data", { completedSale });
       toast.error(t("pos.printFailed"));
@@ -51,10 +52,14 @@ export function SaleCompletedModal() {
     const isRTL = document.documentElement.getAttribute("dir") === "rtl";
     let html: string;
     try {
+      // Phase 46: print the shared brand logo when enabled (Settings →
+      // Branding); the load is cached and degrades to the shipped asset.
+      const brand = await loadBrand();
       html = buildReceiptHtml({
         sale: completedSale,
         direction: isRTL ? "rtl" : "ltr",
         strings: salesReceiptStrings(t),
+        logo_url: brand.receiptLogoEnabled ? brand.logoUrl : null,
       });
     } catch (err) {
       console.error("[receipt-print] failed to build receipt html", {
@@ -93,17 +98,17 @@ export function SaleCompletedModal() {
           ✓
         </div>
         <div>
-          <p className="text-lg font-extrabold tracking-wide text-slate-900">
+          <p className="text-lg font-extrabold tracking-wide text-stone-900">
             {completedSale.sale_number}
           </p>
-          <p className="mt-1 text-2xl font-extrabold tabular-nums text-slate-900">
+          <p className="mt-1 text-2xl font-extrabold tabular-nums text-stone-900">
             {num(completedSale.total, 2)}
           </p>
           <div className="mt-2 flex flex-wrap items-center justify-center gap-1.5">
             {completedSale.payments.map((p) => (
               <span
                 key={p.id}
-                className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-700"
+                className="inline-flex items-center gap-1 rounded-full bg-stone-100 px-2 py-0.5 text-[11px] font-semibold text-stone-700"
               >
                 {t(`pos.payment.${p.method}`)} · {num(p.amount, 2)}
                 {p.method === "instapay" && p.status === "pending"
@@ -113,7 +118,7 @@ export function SaleCompletedModal() {
             ))}
           </div>
           {completedSale.change != null ? (
-            <p className="mt-1 text-xs font-semibold text-slate-500">
+            <p className="mt-1 text-xs font-semibold text-stone-500">
               {t("pos.change")}: {num(completedSale.change, 2)}
             </p>
           ) : null}

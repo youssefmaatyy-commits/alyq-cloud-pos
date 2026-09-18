@@ -58,6 +58,9 @@ export function queryProducts(
 
     if (filters.stock !== "all" && stockStatus(product) !== filters.stock) return false;
 
+    if (filters.visibility === "visible" && !product.show_on_website) return false;
+    if (filters.visibility === "hidden" && product.show_on_website) return false;
+
     if (filters.categoryId === UNCATEGORIZED_ID) {
       if (product.category_id) return false;
     } else if (filters.categoryId !== "all" && product.category_id !== filters.categoryId) {

@@ -8,6 +8,7 @@ import {
   ErrorState,
   LoadingBlock,
   PlusIcon,
+  SegmentedTabs,
   StatTile,
 } from "@/components/ui";
 import { CategoryFormModal } from "../components/CategoryFormModal";
@@ -102,26 +103,20 @@ export function CategoriesPage() {
       ) : (
         <div className="grid gap-4 lg:grid-cols-3">
           <div className="alyq-card p-2 lg:col-span-2">
-            <div
-              className="flex flex-wrap items-center gap-1 px-2 pt-2"
-              role="tablist"
-              aria-label={t("common.filters")}
-            >
-              {viewTabs.map((tab) => (
-                <button
-                  key={tab.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={view === tab.id}
-                  onClick={() => setView(tab.id)}
-                  className={cnView(view === tab.id)}
-                >
-                  {tab.label}
-                  <span className="ms-1 rounded-full bg-slate-200/80 px-1.5 text-[11px] font-bold tabular-nums text-slate-700">
-                    {tab.count}
-                  </span>
-                </button>
-              ))}
+            <div className="px-2 pt-2">
+              {/* Phase 46: the shared tab row — same tabs, one visual system. */}
+              <SegmentedTabs
+                ariaLabel={t("common.filters")}
+                testId="categories-tabs"
+                value={view}
+                onChange={setView}
+                tabs={viewTabs.map((tab) => ({
+                  key: tab.id,
+                  label: tab.label,
+                  count: tab.count,
+                  tone: tab.id === "archived" ? ("warning" as const) : undefined,
+                }))}
+              />
             </div>
             <CategoryTree view={view} />
           </div>
@@ -173,14 +168,4 @@ export function CategoriesPage() {
       <CategoryFormModal open={modal.open} onClose={() => setModal({ open: false })} />
     </div>
   );
-}
-
-/** Small local helper for the view tabs' active styling. */
-function cnView(active: boolean): string {
-  return [
-    "rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors",
-    active
-      ? "bg-indigo-600 text-white"
-      : "bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-900",
-  ].join(" ");
 }

@@ -421,7 +421,12 @@ async function main() {
   );
   assert.ok(target, "product row link present");
   await navigate(target.getAttribute("href"));
-  assert.ok(bodyText().includes("Product details"), "detail view opened");
+  // Phase 46: the detail page now leads with the PRODUCT's name; the six-tab
+  // shell is the stable identity of the screen.
+  for (let i = 0; i < 20 && !document.querySelector('[data-testid="product-detail-tabs"]'); i += 1) {
+    await sleep(250);
+  }
+  assert.ok(document.querySelector('[data-testid="product-detail-tabs"]'), "detail view opened");
   assert.ok(bodyText().includes("Low stock"), "low-stock badge shown on detail");
   assert.ok(document.querySelector('img[src^="data:image"]'), "uploaded cover image rendered from storage");
   assert.ok(bodyText().includes("Product images"), "gallery section present");

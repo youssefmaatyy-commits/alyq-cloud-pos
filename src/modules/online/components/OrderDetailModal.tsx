@@ -98,8 +98,8 @@ export function OrderDetailModal({ order, onClose }: { order: OnlineOrder | null
 
   const wa = whatsappHref(order.customer_phone, t("online.orders.whatsappMessage", { number: order.order_number }));
 
-  const label = "text-[11px] font-bold uppercase tracking-wide text-slate-500";
-  const value = "text-sm font-semibold text-slate-900";
+  const label = "text-[11px] font-bold uppercase tracking-wide text-stone-500";
+  const value = "text-sm font-semibold text-stone-900";
 
   return (
     <>
@@ -109,7 +109,7 @@ export function OrderDetailModal({ order, onClose }: { order: OnlineOrder | null
         size="lg"
         title={
           <span className="flex flex-wrap items-center gap-2">
-            <span className="font-mono text-sm font-bold text-indigo-700" dir="ltr">
+            <span className="font-mono text-sm font-bold text-[#9a7a49]" dir="ltr">
               {order.order_number}
             </span>
             <Badge tone={STATUS_TONE[order.status]}>{t(`online.status.${order.status}`)}</Badge>
@@ -168,8 +168,8 @@ export function OrderDetailModal({ order, onClose }: { order: OnlineOrder | null
             <div className="space-y-1.5">
               <p className={label}>{t("online.orders.customer")}</p>
               <p className={value}>{order.customer_name}</p>
-              <p className="text-xs text-slate-600" dir="ltr">
-                <a href={`tel:${order.customer_phone}`} className="font-semibold text-indigo-700 hover:underline">
+              <p className="text-xs text-stone-600" dir="ltr">
+                <a href={`tel:${order.customer_phone}`} className="font-semibold text-[#9a7a49] hover:underline">
                   {order.customer_phone}
                 </a>
                 {wa ? (
@@ -183,8 +183,8 @@ export function OrderDetailModal({ order, onClose }: { order: OnlineOrder | null
                   </a>
                 ) : null}
               </p>
-              {order.customer_email ? <p className="text-xs text-slate-600">{order.customer_email}</p> : null}
-              <p className="text-xs text-slate-500">{date(order.created_at)}</p>
+              {order.customer_email ? <p className="text-xs text-stone-600">{order.customer_email}</p> : null}
+              <p className="text-xs text-stone-500">{date(order.created_at)}</p>
             </div>
 
             <div className="space-y-1.5">
@@ -194,7 +194,7 @@ export function OrderDetailModal({ order, onClose }: { order: OnlineOrder | null
                   : t("online.deliveryType.delivery")}
               </p>
               <p className={value}>{address || t("online.orders.noAddress")}</p>
-              {order.address?.notes ? <p className="text-xs text-slate-600">{order.address.notes}</p> : null}
+              {order.address?.notes ? <p className="text-xs text-stone-600">{order.address.notes}</p> : null}
               {order.notes ? (
                 <p className="rounded-lg bg-amber-50 px-2 py-1.5 text-xs font-semibold text-amber-900">
                   {t("online.orders.customerNote")}: {order.notes}
@@ -206,10 +206,10 @@ export function OrderDetailModal({ order, onClose }: { order: OnlineOrder | null
           {/* items */}
           <section>
             <p className={label}>{t("online.orders.items")}</p>
-            <div className="mt-2 overflow-x-auto rounded-xl border border-slate-200">
+            <div className="mt-2 overflow-x-auto rounded-xl border border-stone-200">
               <table className="w-full border-collapse text-sm">
                 <thead>
-                  <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-bold uppercase tracking-wider text-slate-600">
+                  <tr className="border-b border-stone-200 bg-stone-50 text-[11px] font-bold uppercase tracking-wider text-stone-600">
                     <th className="px-3 py-2 text-start font-semibold">{t("export.col.product")}</th>
                     <th className="px-3 py-2 text-start font-semibold">{t("export.col.sku")}</th>
                     <th className="px-3 py-2 text-end font-semibold">{t("export.col.quantity")}</th>
@@ -222,13 +222,13 @@ export function OrderDetailModal({ order, onClose }: { order: OnlineOrder | null
                     const product = products.find((candidate) => candidate.id === item.product_id);
                     const held = reservedByProduct.get(item.product_id) ?? 0;
                     return (
-                      <tr key={item.id} className="border-b border-slate-50 last:border-0">
+                      <tr key={item.id} className="border-b border-stone-50 last:border-0">
                         <td className="px-3 py-2">
-                          <p className="font-semibold text-slate-900">{pick(item.name_ar, item.name_en)}</p>
+                          <p className="font-semibold text-stone-900">{pick(item.name_ar, item.name_en)}</p>
                           {/* The frozen combination — what the customer actually
                               ordered, still readable after any rename. */}
                           {item.variant_id ? (
-                            <p className="text-[11px] font-bold text-slate-700" data-testid="order-line-variant">
+                            <p className="text-[11px] font-bold text-stone-700" data-testid="order-line-variant">
                               {pick(item.variant_color_ar, item.variant_color_en)}
                               {item.variant_size !== null
                                 ? ` / ${Math.round(item.variant_size * 100) / 100}`
@@ -238,7 +238,7 @@ export function OrderDetailModal({ order, onClose }: { order: OnlineOrder | null
                             </p>
                           ) : null}
                           {product ? (
-                            <p className="text-[11px] text-slate-500">
+                            <p className="text-[11px] text-stone-500">
                               {t("online.orders.stockNow", { count: num(product.stock_quantity, 0) })}
                               {held > 0 ? ` · ${t("online.orders.heldByPending", { count: num(held, 0) })}` : ""}
                             </p>
@@ -248,7 +248,7 @@ export function OrderDetailModal({ order, onClose }: { order: OnlineOrder | null
                             </p>
                           )}
                         </td>
-                        <td className="px-3 py-2 font-mono text-xs text-slate-600">{item.sku}</td>
+                        <td className="px-3 py-2 font-mono text-xs text-stone-600">{item.sku}</td>
                         <td className="px-3 py-2 text-end font-bold tabular-nums">{num(item.quantity, 0)}</td>
                         <td className="px-3 py-2 text-end tabular-nums">{money(item.unit_price)}</td>
                         <td className="px-3 py-2 text-end font-bold tabular-nums">{money(item.line_total)}</td>
@@ -262,11 +262,11 @@ export function OrderDetailModal({ order, onClose }: { order: OnlineOrder | null
 
           {/* money + payment */}
           <section className="grid gap-3 sm:grid-cols-2">
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <div className="rounded-xl border border-stone-200 bg-stone-50 p-3">
               <p className={label}>{t("online.orders.money")}</p>
               <dl className="mt-2 space-y-1 text-sm">
                 <div className="flex justify-between gap-2">
-                  <dt className="text-slate-600">{t("export.col.subtotal")}</dt>
+                  <dt className="text-stone-600">{t("export.col.subtotal")}</dt>
                   <dd className="font-semibold tabular-nums">{money(order.subtotal)}</dd>
                 </div>
                 {order.discount_amount > 0 ? (
@@ -280,29 +280,29 @@ export function OrderDetailModal({ order, onClose }: { order: OnlineOrder | null
                 ) : null}
                 {order.delivery_fee > 0 ? (
                   <div className="flex justify-between gap-2">
-                    <dt className="text-slate-600">{t("export.col.deliveryFee")}</dt>
+                    <dt className="text-stone-600">{t("export.col.deliveryFee")}</dt>
                     <dd className="font-semibold tabular-nums">{money(order.delivery_fee)}</dd>
                   </div>
                 ) : null}
-                <div className="flex justify-between gap-2 border-t border-slate-200 pt-1 text-base">
-                  <dt className="font-bold text-slate-900">{t("export.col.total")}</dt>
-                  <dd className="font-black tabular-nums text-slate-900">{money(order.total)}</dd>
+                <div className="flex justify-between gap-2 border-t border-stone-200 pt-1 text-base">
+                  <dt className="font-bold text-stone-900">{t("export.col.total")}</dt>
+                  <dd className="font-black tabular-nums text-stone-900">{money(order.total)}</dd>
                 </div>
               </dl>
-              <p className="mt-2 text-[11px] leading-relaxed text-slate-500">
+              <p className="mt-2 text-[11px] leading-relaxed text-stone-500">
                 {t("online.orders.deliveryFeeNotInSale")}
               </p>
             </div>
 
-            <div className="rounded-xl border border-slate-200 p-3">
+            <div className="rounded-xl border border-stone-200 p-3">
               <p className={label}>{t("online.orders.payment")}</p>
               <dl className="mt-2 space-y-1 text-sm">
                 <div className="flex justify-between gap-2">
-                  <dt className="text-slate-600">{t("export.col.paymentMethod")}</dt>
+                  <dt className="text-stone-600">{t("export.col.paymentMethod")}</dt>
                   <dd className="font-semibold">{t(`online.paymentMethod.${order.payment_method}`)}</dd>
                 </div>
                 <div className="flex justify-between gap-2">
-                  <dt className="text-slate-600">{t("export.col.paymentStatus")}</dt>
+                  <dt className="text-stone-600">{t("export.col.paymentStatus")}</dt>
                   <dd>
                     <Badge tone={PAYMENT_TONE[order.payment_status]}>
                       {t(`online.paymentStatus.${order.payment_status}`)}
@@ -311,7 +311,7 @@ export function OrderDetailModal({ order, onClose }: { order: OnlineOrder | null
                 </div>
                 {order.payment_reference ? (
                   <div className="flex justify-between gap-2">
-                    <dt className="text-slate-600">{t("export.col.paymentReference")}</dt>
+                    <dt className="text-stone-600">{t("export.col.paymentReference")}</dt>
                     <dd className="font-mono text-xs font-semibold" dir="ltr">
                       {order.payment_reference}
                     </dd>
@@ -319,13 +319,13 @@ export function OrderDetailModal({ order, onClose }: { order: OnlineOrder | null
                 ) : null}
                 {order.payment_submitted_at ? (
                   <div className="flex justify-between gap-2">
-                    <dt className="text-slate-600">{t("online.orders.proofSubmittedAt")}</dt>
+                    <dt className="text-stone-600">{t("online.orders.proofSubmittedAt")}</dt>
                     <dd className="text-xs font-semibold">{date(order.payment_submitted_at)}</dd>
                   </div>
                 ) : null}
                 {order.payment_verified_by_name ? (
                   <div className="flex justify-between gap-2">
-                    <dt className="text-slate-600">{t("online.orders.verifiedBy")}</dt>
+                    <dt className="text-stone-600">{t("online.orders.verifiedBy")}</dt>
                     <dd className="text-xs font-semibold">
                       {order.payment_verified_by_name}
                       {order.payment_verified_at ? ` · ${date(order.payment_verified_at)}` : ""}
@@ -346,9 +346,9 @@ export function OrderDetailModal({ order, onClose }: { order: OnlineOrder | null
                     alt={t("online.orders.proofImage")}
                     loading="lazy"
                     decoding="async"
-                    className="h-32 w-full rounded-lg border border-slate-200 bg-white object-contain"
+                    className="h-32 w-full rounded-lg border border-stone-200 bg-white object-contain"
                   />
-                  <span className="mt-1 block text-[11px] font-bold text-indigo-700 hover:underline">
+                  <span className="mt-1 block text-[11px] font-bold text-[#9a7a49] hover:underline">
                     {t("online.orders.openProof")}
                   </span>
                 </a>
@@ -365,7 +365,7 @@ export function OrderDetailModal({ order, onClose }: { order: OnlineOrder | null
               ) : null}
 
               {order.payment_status === "verification_required" && !canVerifyPayment ? (
-                <p className="mt-2 text-[11px] font-semibold text-slate-500">
+                <p className="mt-2 text-[11px] font-semibold text-stone-500">
                   {t("online.orders.needsVerifier")}
                 </p>
               ) : null}
@@ -373,36 +373,36 @@ export function OrderDetailModal({ order, onClose }: { order: OnlineOrder | null
           </section>
 
           {/* provenance */}
-          <section className="rounded-xl border border-slate-200 p-3">
+          <section className="rounded-xl border border-stone-200 p-3">
             <p className={label}>{t("online.orders.provenance")}</p>
             <div className="mt-2 grid gap-2 text-xs sm:grid-cols-2">
               {order.approved_by_name ? (
-                <p className="text-slate-700">
+                <p className="text-stone-700">
                   <span className="font-bold">{t("online.orders.approvedBy")}</span>{" "}
                   {order.approved_by_name}
                   {order.approved_at ? ` · ${date(order.approved_at)}` : ""}
                 </p>
               ) : null}
               {order.cancelled_by_name ? (
-                <p className="text-slate-700">
+                <p className="text-stone-700">
                   <span className="font-bold">{t("online.orders.cancelledBy")}</span>{" "}
                   {order.cancelled_by_name}
                   {order.cancelled_at ? ` · ${date(order.cancelled_at)}` : ""}
                 </p>
               ) : null}
               {order.cancellation_reason ? (
-                <p className="text-slate-700 sm:col-span-2">
+                <p className="text-stone-700 sm:col-span-2">
                   <span className="font-bold">{t("export.col.voidReason")}</span>{" "}
                   {order.cancellation_reason}
                 </p>
               ) : null}
               {sale ? (
-                <p className="text-slate-700 sm:col-span-2">
+                <p className="text-stone-700 sm:col-span-2">
                   <span className="font-bold">{t("export.col.saleNumber")}</span>{" "}
-                  <Link to={`/pos/sales/${sale.id}`} className="font-mono text-indigo-700 hover:underline" dir="ltr">
+                  <Link to={`/pos/sales/${sale.id}`} className="font-mono text-[#9a7a49] hover:underline" dir="ltr">
                     {sale.sale_number}
                   </Link>
-                  <span className="ms-2 text-slate-500">{t("online.orders.sourceOnline")}</span>
+                  <span className="ms-2 text-stone-500">{t("online.orders.sourceOnline")}</span>
                 </p>
               ) : null}
             </div>
@@ -419,13 +419,13 @@ export function OrderDetailModal({ order, onClose }: { order: OnlineOrder | null
                   .map((event) => (
                     <li key={event.id} className="flex items-start justify-between gap-3 text-xs">
                       <span>
-                        <span className="font-bold text-slate-800">
+                        <span className="font-bold text-stone-800">
                           {t(`online.event.${event.kind}`)}
                         </span>
-                        {event.user_name ? <span className="text-slate-500"> · {event.user_name}</span> : null}
-                        {event.note ? <span className="block text-slate-600">{event.note}</span> : null}
+                        {event.user_name ? <span className="text-stone-500"> · {event.user_name}</span> : null}
+                        {event.note ? <span className="block text-stone-600">{event.note}</span> : null}
                       </span>
-                      <span className="shrink-0 text-slate-500">{date(event.created_at)}</span>
+                      <span className="shrink-0 text-stone-500">{date(event.created_at)}</span>
                     </li>
                   ))}
               </ol>
@@ -456,7 +456,7 @@ export function OrderDetailModal({ order, onClose }: { order: OnlineOrder | null
           </>
         }
       >
-        <p className="text-sm leading-relaxed text-slate-600">
+        <p className="text-sm leading-relaxed text-stone-600">
           {reasonFor === "cancel" ? t("online.orders.cancelPrompt") : t("online.orders.rejectPrompt")}
         </p>
         <TextArea
@@ -467,7 +467,7 @@ export function OrderDetailModal({ order, onClose }: { order: OnlineOrder | null
           placeholder={t("online.orders.reasonPlaceholder")}
           aria-label={t("online.orders.reasonLabel")}
         />
-        <p className="mt-2 text-[11px] leading-relaxed text-slate-500">
+        <p className="mt-2 text-[11px] leading-relaxed text-stone-500">
           {reasonFor === "cancel" ? t("online.orders.cancelConsequence") : t("online.orders.rejectConsequence")}
         </p>
       </Modal>

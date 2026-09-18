@@ -40,10 +40,10 @@ export function CartPanel() {
     // often decides what gets rung up, so the selection is made before the
     // first line — and it carries into the first sale when lines appear.
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-slate-300 bg-white p-6 text-center">
+      <div className="flex h-full flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-stone-300 bg-white p-6 text-center">
         <span aria-hidden className="text-3xl">🧾</span>
-        <p className="text-sm font-bold text-slate-900">{t("pos.emptyCart")}</p>
-        <p className="text-xs font-medium text-slate-500">{t("pos.emptyCartHint")}</p>
+        <p className="text-sm font-bold text-stone-900">{t("pos.emptyCart")}</p>
+        <p className="text-xs font-medium text-stone-500">{t("pos.emptyCartHint")}</p>
         <div className="w-full max-w-xs">
           <CustomerSearchSelect
             selectedCustomerId={selectedCustomer?.id ?? null}
@@ -55,15 +55,15 @@ export function CartPanel() {
   }
 
   return (
-    <div className="flex h-full flex-col gap-3 overflow-hidden rounded-2xl border border-slate-200 bg-white">
-      <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
-        <p className="text-sm font-bold text-slate-900">{t("pos.cart")}</p>
-        <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-bold text-indigo-800 ring-1 ring-inset ring-indigo-200">
+    <div className="flex h-full flex-col gap-3 overflow-hidden rounded-2xl border border-stone-200 bg-white">
+      <div className="flex items-center justify-between border-b border-stone-100 px-4 py-3">
+        <p className="text-sm font-bold text-stone-900">{t("pos.cart")}</p>
+        <span className="rounded-full bg-[#faf5ec] px-2 py-0.5 text-xs font-bold text-[#8a6a3d] ring-1 ring-inset ring-[#e5d5b8]">
           {lines.reduce((s, l) => s + l.qty, 0)}
         </span>
       </div>
 
-      <div className="border-b border-slate-100 px-4 py-2.5">
+      <div className="border-b border-stone-100 px-4 py-2.5">
         <CustomerSearchSelect
           selectedCustomerId={selectedCustomer?.id ?? null}
           onSelect={(c) => setSelectedCustomer(c)}
@@ -71,24 +71,24 @@ export function CartPanel() {
       </div>
 
       {/* lines */}
-      <ul className="flex-1 divide-y divide-slate-100 overflow-y-auto px-2">
+      <ul className="flex-1 divide-y divide-stone-100 overflow-y-auto px-2">
         {lines.map((line) => (
-          <li key={lineKey(line)} className="flex items-center gap-2 px-2 py-2.5">
+          <li key={lineKey(line)} data-testid={`cart-line-${lineKey(line)}`} className="flex items-center gap-2 px-2 py-2.5">
             <div className="min-w-0 flex-1">
-              <p className="truncate text-xs font-semibold text-slate-900">
+              <p className="truncate text-xs font-semibold text-stone-900">
                 {line.name_en || line.name_ar}
               </p>
               {/* The exact combination, frozen onto the line: colour then size.
                   Two sizes of one product are two lines and read as such. */}
               {line.variant_id ? (
-                <p className="mt-0.5 truncate text-[10px] font-semibold text-indigo-600">
+                <p className="mt-0.5 truncate text-[10px] font-semibold text-[#b08d57]">
                   {line.color_en || line.color_ar}
                   {line.size !== null || line.size_label
                     ? ` / ${sizeText(line.size, line.size_label)}`
                     : ""}
                 </p>
               ) : null}
-              <p className="mt-0.5 flex items-center gap-2 font-mono text-[10px] text-slate-500">
+              <p className="mt-0.5 flex items-center gap-2 font-mono text-[10px] text-stone-500">
                 <span>{line.sku}</span>
                 <span className="tabular-nums">{num(line.unit_price, 2)}</span>
               </p>
@@ -105,7 +105,7 @@ export function CartPanel() {
               >
                 −
               </Button>
-              <span className="w-8 text-center text-sm font-bold tabular-nums text-slate-900">
+              <span className="w-8 text-center text-sm font-bold tabular-nums text-stone-900">
                 {line.qty}
               </span>
               <Button
@@ -121,7 +121,7 @@ export function CartPanel() {
             </div>
 
             <div className="w-20 text-end">
-              <p className="text-xs font-bold tabular-nums text-slate-900">
+              <p className="text-xs font-bold tabular-nums text-stone-900">
                 {num(line.unit_price * line.qty, 2)}
               </p>
               {line.qty >= line.max_qty ? (
@@ -135,7 +135,7 @@ export function CartPanel() {
               type="button"
               onClick={() => removeLine(lineKey(line))}
               aria-label="×"
-              className="flex h-6 w-6 items-center justify-center rounded-md text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
+              className="flex h-6 w-6 items-center justify-center rounded-md text-stone-400 transition hover:bg-rose-50 hover:text-rose-600"
             >
               ×
             </button>
@@ -144,9 +144,9 @@ export function CartPanel() {
       </ul>
 
       {/* discount */}
-      <div className="border-t border-slate-100 px-4 py-3">
+      <div className="border-t border-stone-100 px-4 py-3">
         <div className="mb-2 flex items-center gap-2">
-          <p className="text-[11px] font-bold uppercase tracking-wider text-slate-600">
+          <p className="text-[11px] font-bold uppercase tracking-wider text-stone-600">
             {t("pos.discount")}
           </p>
           {!canDiscount ? (
@@ -190,16 +190,16 @@ export function CartPanel() {
       </div>
 
       {/* totals */}
-      <div className="border-t border-slate-100 px-4 py-3 text-sm">
-        <div className="flex items-center justify-between text-slate-600">
+      <div className="border-t border-stone-100 px-4 py-3 text-sm">
+        <div className="flex items-center justify-between text-stone-600">
           <span>{t("pos.subtotal")}</span>
           <span className="tabular-nums">{num(totals.subtotal, 2)}</span>
         </div>
-        <div className="mt-1 flex items-center justify-between text-slate-600">
+        <div className="mt-1 flex items-center justify-between text-stone-600">
           <span>{t("pos.discount")}</span>
           <span className="tabular-nums text-rose-600">−{num(totals.discountAmount, 2)}</span>
         </div>
-        <div className="mt-2 flex items-center justify-between border-t border-slate-200 pt-2 text-base font-extrabold text-slate-900">
+        <div className="mt-2 flex items-center justify-between border-t border-stone-200 pt-2 text-base font-extrabold text-stone-900">
           <span>{t("pos.total")}</span>
           <span className="tabular-nums">{num(totals.total, 2)}</span>
         </div>

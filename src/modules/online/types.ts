@@ -886,6 +886,29 @@ export interface ConfirmationCopySettings {
 }
 
 /**
+ * Phase 46: the shared brand identity, stored once in the same settings
+ * document the storefront already reads.
+ *
+ * There is deliberately ONE brand source. The primary logo is the storefront's
+ * existing `images.logo_url` (the store header, login, receipts and the admin
+ * shell all read it); this group carries only what the primary logo cannot
+ * express. Nothing here is ever injected as raw SVG/HTML — every URL is a
+ * media URL validated like the rest of the images group.
+ */
+export interface BrandSettings {
+  /** Display name override in Arabic. Empty → the ALYQ wordmark default. */
+  display_name_ar: string;
+  /** Display name override in English. Empty → the ALYQ wordmark default. */
+  display_name_en: string;
+  /** Compact mark for the collapsed sidebar and tight spots. */
+  mark_url: string | null;
+  /** Logo tuned for dark surfaces (the admin sidebar). Null → light logo. */
+  logo_dark_url: string | null;
+  /** Print the brand logo on POS and return receipts. */
+  receipt_logo_enabled: boolean;
+}
+
+/**
  * An editorial campaign block: an image, words, a CTA and a window. Pure
  * presentation — it sells nothing by itself, so its schedule is a rendering
  * rule (who sees it when), not a pricing rule; every price stays
@@ -999,6 +1022,8 @@ export interface WebsiteSettings {
   confirmation: ConfirmationCopySettings;
   campaigns: EditorialCampaign[];
   social_links: SocialLinkConfig[];
+  /** Phase 46: shared brand identity (see {@link BrandSettings}). */
+  brand: BrandSettings;
 }
 
 /** Who changed the settings — shown next to "last saved". */

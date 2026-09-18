@@ -329,11 +329,11 @@ test("search matches SKU, barcode, bilingual names and category names", () => {
     }
     return parts.join(" ");
   };
-  assert.equal(queryProducts(products, { search: "alyq-2", categoryId: "all", status: "all", type: "all", stock: "all", featured: false, sort: "name" }, nameOf).length, 1);
-  assert.equal(queryProducts(products, { search: "200", categoryId: "all", status: "all", type: "all", stock: "all", featured: false, sort: "name" }, nameOf)[0].id, "p2");
-  assert.equal(queryProducts(products, { search: "أقراط", categoryId: "all", status: "all", type: "all", stock: "all", featured: false, sort: "name" }, nameOf)[0].id, "p1");
-  assert.equal(queryProducts(products, { search: "earrings", categoryId: "all", status: "all", type: "all", stock: "all", featured: false, sort: "name" }, nameOf)[0].id, "p1");
-  assert.equal(queryProducts(products, { search: "beverages", categoryId: "all", status: "all", type: "all", stock: "all", featured: false, sort: "name" }, nameOf)[0].id, "p1");
+  assert.equal(queryProducts(products, { search: "alyq-2", categoryId: "all", status: "all", type: "all", stock: "all", visibility: "all", featured: false, sort: "name" }, nameOf).length, 1);
+  assert.equal(queryProducts(products, { search: "200", categoryId: "all", status: "all", type: "all", stock: "all", visibility: "all", featured: false, sort: "name" }, nameOf)[0].id, "p2");
+  assert.equal(queryProducts(products, { search: "أقراط", categoryId: "all", status: "all", type: "all", stock: "all", visibility: "all", featured: false, sort: "name" }, nameOf)[0].id, "p1");
+  assert.equal(queryProducts(products, { search: "earrings", categoryId: "all", status: "all", type: "all", stock: "all", visibility: "all", featured: false, sort: "name" }, nameOf)[0].id, "p1");
+  assert.equal(queryProducts(products, { search: "beverages", categoryId: "all", status: "all", type: "all", stock: "all", visibility: "all", featured: false, sort: "name" }, nameOf)[0].id, "p1");
 });
 
 test("status, category, uncategorized and type filters compose", () => {
@@ -341,7 +341,7 @@ test("status, category, uncategorized and type filters compose", () => {
   const run = (over: Partial<Parameters<typeof queryProducts>[1]>) =>
     queryProducts(
       products,
-      { search: "", categoryId: "all", status: "all", type: "all", stock: "all", featured: false, sort: "name", ...over },
+      { search: "", categoryId: "all", status: "all", type: "all", stock: "all", visibility: "all", featured: false, sort: "name", ...over },
       nameOf,
     ).map((p) => p.id);
 
@@ -355,7 +355,7 @@ test("status, category, uncategorized and type filters compose", () => {
 test("sorting by price and update time works", () => {
   const sorted = queryProducts(
     products,
-    { search: "", categoryId: "all", status: "all", type: "all", stock: "all", featured: false, sort: "price_desc" },
+    { search: "", categoryId: "all", status: "all", type: "all", stock: "all", visibility: "all", featured: false, sort: "price_desc" },
     () => "",
   );
   assert.deepEqual(sorted.map((p) => p.selling_price).sort((a, b) => b - a), sorted.map((p) => p.selling_price));
@@ -382,12 +382,12 @@ test("stock and featured filters work", () => {
   const nameOf = () => "";
   const lowIds = products.filter((p) => stockStatus(p) === "low").map((p) => p.id);
   assert.deepEqual(
-    queryProducts(products, { search: "", categoryId: "all", status: "all", type: "all", stock: "low", featured: false, sort: "name" }, nameOf).map((p) => p.id),
+    queryProducts(products, { search: "", categoryId: "all", status: "all", type: "all", stock: "low", visibility: "all", featured: false, sort: "name" }, nameOf).map((p) => p.id),
     lowIds,
   );
   const featuredIds = products.filter((p) => p.is_featured).map((p) => p.id);
   assert.deepEqual(
-    queryProducts(products, { search: "", categoryId: "all", status: "all", type: "all", stock: "all", featured: true, sort: "name" }, nameOf).map((p) => p.id),
+    queryProducts(products, { search: "", categoryId: "all", status: "all", type: "all", stock: "all", visibility: "all", featured: true, sort: "name" }, nameOf).map((p) => p.id),
     featuredIds,
   );
 });

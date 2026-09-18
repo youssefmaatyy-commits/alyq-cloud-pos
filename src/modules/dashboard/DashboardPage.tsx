@@ -5,10 +5,12 @@ import { PageHeader } from "@/components/layout/AppShell";
 import {
   Badge,
   BoxIcon,
+  Button,
   Card,
   ClipboardIcon,
   ClockIcon,
   GlobeIcon,
+  KpiTile,
   LayersIcon,
   LoadingBlock,
   ReceiptIcon,
@@ -20,6 +22,8 @@ import {
   WarehouseIcon,
 } from "@/components/ui";
 import { cn } from "@/utils/cn";
+import { canAct } from "@/lib/permissions/enforce";
+import { capabilityForPath } from "@/lib/permissions/routes";
 import { useOptionalApprovals } from "@/modules/approvals";
 import { ReservationSummaryCard, useOnlineOrders } from "@/modules/online";
 import { mayViewReports } from "@/modules/reports/services/reportAccess";
@@ -39,6 +43,14 @@ import { useCustomers } from "@/modules/customers/hooks/CustomerProvider";
 import { useReturns } from "@/modules/returns/hooks/ReturnProvider";
 import { useExpenses } from "@/modules/expenses/hooks/ExpenseProvider";
 import { useShifts } from "@/modules/shifts/hooks/ShiftProvider";
+import { brandDisplayName, useBrand } from "@/lib/branding/brand";
+import {
+  computeInventoryAlerts,
+  computeOnlineKpis,
+  computeTopOnlineCategories,
+  computeTopOnlineProducts,
+  inventoryAlertLine,
+} from "./onlineDashboard";
 import {
   DASHBOARD_TREND_DAYS,
   buildDashboardSnapshot,
@@ -55,33 +67,32 @@ import { fetchFinancialSummary } from "@/modules/reports/services/reportAggregat
 import type { FinancialTotals } from "@/modules/reports/services/financialExport";
 
 /**
- * Operations dashboard — read-only view over live module data.
+ * The command centre (Phase 46 edition).
  *
- * All numbers come from existing providers (sales, inventory, customers,
- * returns, expenses, shifts). No mock data, no new API calls. The page is
- * purely additive: the catalog tiles from Phase 1 remain, with sales,
- * inventory health, returns, expenses and shift status layered on top.
+ * The rules that made this page honest in Phase 14 are kept and extended:
  *
- * Phase 14 layers a performance section on top of that — month-to-date sales,
- * profit and expenses, the two approval queues, and four charts. Two rules kept
- * it honest:
- *
- *   · Every figure is read from the reports' analytics (`computeFinancialTotals`,
- *     `salesTrend`, `productPerformance`, `salesByPaymentMethod`,
- *     `expensesByDay`), so the dashboard cannot show a number that contradicts
- *     the report for the same window. The charts draw those numbers; they do not
- *     compute anything.
- *   · The section is gated on `mayViewReports()` — the same read authority the
- *     reports screen uses. A cashier sees exactly the dashboard they saw before;
- *     a manager sees the analysis. The approval and online-order tiles read their
- *     own providers, which already limit themselves to what the signed-in user
- *     may act on.
+ *   · Every figure is derived from providers the shell already mounts — sales,
+ *     catalog, inventory (with variants), customers, returns, expenses, shifts,
+ *     approvals and the online queue. The reports-derived figures still come
+ *     from the reports' analytics, so the dashboard cannot contradict the
+ *     Reports hub. Nothing is fetched specially for this page except the same
+ *     month summary the performance section always loaded.
+ *   · A KPI tile without a destination renders inert rather than fake, and a
+ *     destination the signed-in role cannot open is not rendered at all.
+ *     Routing goes through the modules' own filters (URL params the screens
+ *     hydrate), never through a simulated click.
+ *   · Inventory alerts are variant-aware: an alert names the exact combination
+ *     ("Gold Ring · Gold / 17 · Out of stock"), and a product is never called
+ *     out of stock while one of its combinations still has units.
+ *   · The website section appears only for people who work the website queue,
+ *     reading the same orders the Online Orders screen shows.
  */
 export function DashboardPage() {
-  const { t, money, num, date, pick } = useI18n();
-  const { mode } = useCatalog();
+  const { t, money, num, date, pick, lang } = useI18n();
+  const { mode, categories } = useCatalog();
+  const brand = useBrand();
   const { sales, salesLoading } = usePos();
-  const { products, loading: inventoryLoading } = useInventory();
+  const { products, loading: inventoryLoading, variantsByProduct } = useInventory();
   const { customers, loading: customersLoading } = useCustomers();
   const { returnsList, refundsList, loading: returnsLoading } = useReturns();
   const { expenses } = useExpenses();
@@ -90,8 +101,16 @@ export function DashboardPage() {
   // approvals returns what this person may decide, online orders only counts
   // when `canManage` is true. The tiles below add no authority of their own.
   const approvals = useOptionalApprovals();
-  const { counts: onlineCounts, canManage: canManageOnline } = useOnlineOrders();
+  const { orders: onlineOrders, counts: onlineCounts, canManage: canManageOnline } = useOnlineOrders();
   const maySeePerformance = mayViewReports();
+  const canSeeWebsite = canManageOnline || (canActWebsite());
+  const mayOpenSales = canActRoute("/pos/sales");
+  const mayOpenProducts = canActRoute("/products");
+  const mayOpenInventory = canActRoute("/inventory");
+  const mayOpenReturns = canActRoute("/returns");
+  const mayOpenShifts = canActRoute("/shifts");
+  const mayOpenCustomers = canActRoute("/customers");
+  const mayOpenOrders = canManageOnline && canActRoute("/online/orders");
 
   const loading = salesLoading || inventoryLoading || customersLoading || returnsLoading;
 
@@ -109,6 +128,40 @@ export function DashboardPage() {
       }),
     [sales, products, returnsList, refundsList, expenses, customers, openShift, currentSummary],
   );
+
+  // ── the website half ───────────────────────────────────────────────────────
+  const onlineKpis = useMemo(() => computeOnlineKpis(onlineOrders), [onlineOrders]);
+  const inventoryAlerts = useMemo(
+    () => computeInventoryAlerts(products, variantsByProduct, lang),
+    [products, variantsByProduct, lang],
+  );
+  const categoryNameById = useMemo(
+    () => new Map(categories.map((category) => [category.id, pick(category.name_ar, category.name_en)])),
+    [categories, pick],
+  );
+  const productById = useMemo(() => new Map(products.map((p) => [p.id, p])), [products]);
+  const topOnline = useMemo(() => computeTopOnlineProducts(onlineOrders, 5), [onlineOrders]);
+  const topOnlineCategories = useMemo(
+    () => computeTopOnlineCategories(onlineOrders, productById, categoryNameById, 5),
+    [onlineOrders, productById, categoryNameById],
+  );
+  const websiteVisible = useMemo(
+    () => ({
+      visible: products.filter((p) => p.show_on_website && p.active).length,
+      hidden: products.filter((p) => !p.show_on_website || !p.active).length,
+    }),
+    [products],
+  );
+  const recentWebOrders = useMemo(
+    () => [...onlineOrders].sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, 6),
+    [onlineOrders],
+  );
+  const channelToday = useMemo(() => {
+    const posToday = sales
+      .filter((sale) => sale.status !== "voided" && isSaleToday(sale.created_at))
+      .reduce((sum, sale) => sum + sale.total, 0);
+    return { pos: posToday, web: onlineKpis.salesToday };
+  }, [sales, onlineKpis.salesToday]);
 
   /* ── Performance series (Phase 14) ────────────────────────────────────────
      Computed for everybody but rendered only behind `maySeePerformance`, so the
@@ -164,6 +217,8 @@ export function DashboardPage() {
 
   const dayLabel = (day: string) => date(`${day}T00:00:00`);
   const percent = (value: number) => `${num(value, 1)}%`;
+  const outWord = t("dashboard.alertOut");
+  const lowWord = t("dashboard.alertLow");
 
   if (loading) return <LoadingBlock label={t("common.loading")} />;
 
@@ -171,7 +226,11 @@ export function DashboardPage() {
     <div>
       <PageHeader
         title={t("nav.dashboard")}
-        subtitle={t("app.phase")}
+        subtitle={
+          brand
+            ? t("dashboard.commandCentreHint", { name: brandDisplayName(brand, lang) })
+            : t("app.phase")
+        }
         actions={
           <Badge tone={mode === "supabase" ? "success" : "warning"}>
             {mode === "supabase" ? t("mode.live") : t("mode.demo")}
@@ -179,15 +238,94 @@ export function DashboardPage() {
         }
       />
 
-      {/* ── Sales KPIs ────────────────────────────────────────────────────── */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatTile
+      {/* ── Quick actions — each routes to a real operation ─────────────────── */}
+      <div className="mb-4 flex flex-wrap gap-2" data-testid="dash-quick-actions">
+        {mayOpenSales ? (
+          <Link to="/pos">
+            <Button variant="primary" size="sm" data-testid="dash-qa-new-sale">
+              <ShoppingCartIcon /> {t("dashboard.qaNewSale")}
+            </Button>
+          </Link>
+        ) : null}
+        {mayOpenProducts ? (
+          <Link to="/products/new">
+            <Button variant="secondary" size="sm" data-testid="dash-qa-add-product">
+              <BoxIcon /> {t("dashboard.qaAddProduct")}
+            </Button>
+          </Link>
+        ) : null}
+        {mayOpenInventory ? (
+          <Link to="/inventory">
+            <Button variant="secondary" size="sm" data-testid="dash-qa-stock">
+              <WarehouseIcon /> {t("dashboard.qaStock")}
+            </Button>
+          </Link>
+        ) : null}
+        {canSeeWebsite ? (
+          <Link to="/online/website">
+            <Button variant="secondary" size="sm" data-testid="dash-qa-website">
+              <GlobeIcon /> {t("dashboard.qaWebsite")}
+            </Button>
+          </Link>
+        ) : null}
+      </div>
+
+      {/* ── Today — the five numbers the day is judged by ──────────────────── */}
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5" data-testid="dash-kpi-row">
+        <KpiTile
           label={t("dashboard.todayRevenue")}
           value={money(snapshot.sales.todayRevenue)}
           tone="primary"
+          featured
           icon={<WalletIcon />}
           hint={`${snapshot.sales.todayCount} ${t("dashboard.todaySales").toLowerCase()}`}
+          to={mayOpenSales ? "/pos/sales?today=1" : undefined}
+          testId="kpi-today-sales"
         />
+        <KpiTile
+          label={t("dashboard.webOrdersToday")}
+          value={String(onlineKpis.ordersToday)}
+          tone="info"
+          icon={<GlobeIcon />}
+          hint={canSeeWebsite ? money(onlineKpis.salesToday) : undefined}
+          to={mayOpenOrders ? "/online/orders" : undefined}
+          testId="kpi-web-orders"
+        />
+        <KpiTile
+          label={t("dashboard.lowStock")}
+          value={String(inventoryAlerts.lowCount)}
+          tone="warning"
+          icon={<WarehouseIcon />}
+          hint={`${inventoryAlerts.outCount} ${t("dashboard.outOfStock").toLowerCase()}`}
+          to={mayOpenInventory ? "/inventory?status=low" : undefined}
+          testId="kpi-low-stock"
+        />
+        <KpiTile
+          label={t("dashboard.returnsToday")}
+          value={String(snapshot.returns.todayCount)}
+          tone="neutral"
+          icon={<RotateCcwIcon />}
+          hint={money(snapshot.returns.todayTotal)}
+          to={mayOpenReturns ? "/returns" : undefined}
+          testId="kpi-returns"
+        />
+        <KpiTile
+          label={t("dashboard.openShift")}
+          value={snapshot.openShift ? t("dashboard.shiftOpen") : t("dashboard.shiftClosed")}
+          tone={snapshot.openShift ? "success" : "neutral"}
+          icon={<ClockIcon />}
+          hint={
+            snapshot.shiftSummary
+              ? `${money(snapshot.shiftSummary.cash_sales)} · ${snapshot.shiftSummary.sales_count}`
+              : t("dashboard.noOpenShift")
+          }
+          to={mayOpenShifts ? "/shifts" : undefined}
+          testId="kpi-open-shift"
+        />
+      </div>
+
+      {/* ── Business KPIs ──────────────────────────────────────────────────── */}
+      <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile
           label={t("dashboard.totalRevenue")}
           value={money(snapshot.sales.totalRevenue)}
@@ -196,11 +334,18 @@ export function DashboardPage() {
           hint={`${snapshot.sales.totalCount} ${t("dashboard.totalSales").toLowerCase()}`}
         />
         <StatTile
-          label={t("dashboard.returnsToday")}
-          value={money(snapshot.returns.todayTotal)}
+          label={t("dashboard.pendingSales")}
+          value={money(snapshot.sales.pendingTotal)}
           tone="warning"
-          icon={<RotateCcwIcon />}
-          hint={`${snapshot.returns.todayCount} ${t("common.results")}`}
+          hint={`${snapshot.sales.pendingCount} ${t("common.results")}`}
+        />
+        <KpiTile
+          label={t("dashboard.customers")}
+          value={String(snapshot.customerCount)}
+          tone="info"
+          icon={<UsersIcon />}
+          to={mayOpenCustomers ? "/customers" : undefined}
+          hint={mayOpenCustomers ? t("dashboard.customersHint") : undefined}
         />
         <StatTile
           label={t("dashboard.expensesToday")}
@@ -211,74 +356,225 @@ export function DashboardPage() {
         />
       </div>
 
-      {/* ── Inventory + catalog ───────────────────────────────────────────── */}
-      <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatTile
-          label={t("products.title")}
-          value={String(snapshot.catalog.total)}
-          tone="info"
-          icon={<BoxIcon />}
-          hint={`${snapshot.catalog.active} ${t("common.active").toLowerCase()}`}
-        />
-        <StatTile
-          label={t("dashboard.lowStock")}
-          value={String(snapshot.catalog.lowStock)}
-          tone="warning"
-          icon={<WarehouseIcon />}
-        />
-        <StatTile
-          label={t("dashboard.outOfStock")}
-          value={String(snapshot.catalog.outOfStock)}
-          tone="danger"
-        />
-        <StatTile
-          label={t("dashboard.inventoryValue")}
-          value={money(snapshot.catalog.inventoryValue)}
-          tone="neutral"
-          icon={<LayersIcon />}
-        />
-      </div>
+      {/* ── The website (gated like the sidebar) ───────────────────────────── */}
+      {canSeeWebsite ? (
+        <Card className="mt-5 p-4" testId="web-section">
+          <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
+            <div>
+              <h2 className="text-base font-black text-stone-900">{t("dashboard.webSection")}</h2>
+              <p className="mt-0.5 text-xs font-medium text-stone-500">{t("dashboard.webSectionHint")}</p>
+            </div>
+            {mayOpenOrders ? (
+              <Link to="/online/orders" className="text-xs font-bold text-stone-600 hover:text-stone-900">
+                {t("dashboard.viewAll")} →
+              </Link>
+            ) : null}
+          </div>
 
-      {/* ── Customers + pending + shift ───────────────────────────────────── */}
-      <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatTile
-          label={t("dashboard.customers")}
-          value={String(snapshot.customerCount)}
-          tone="info"
-          icon={<UsersIcon />}
-        />
-        <StatTile
-          label={t("dashboard.pendingSales")}
-          value={money(snapshot.sales.pendingTotal)}
-          tone="warning"
-          hint={`${snapshot.sales.pendingCount} ${t("common.results")}`}
-        />
-        <StatTile
-          label={t("dashboard.totalReturns")}
-          value={money(snapshot.returns.totalRefunded)}
-          tone="neutral"
-          hint={`${snapshot.returns.totalCount} ${t("common.results")}`}
-        />
-        <StatTile
-          label={t("dashboard.pendingRefunds")}
-          value={String(snapshot.returns.pendingRefunds)}
-          tone={snapshot.returns.pendingRefunds > 0 ? "warning" : "success"}
-        />
-      </div>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" data-testid="web-kpi-row">
+            <KpiTile
+              label={t("dashboard.pendingReview")}
+              value={String(onlineKpis.pendingReview)}
+              tone={onlineKpis.pendingReview > 0 ? "warning" : "success"}
+              to={mayOpenOrders ? "/online/orders?status=pending" : undefined}
+              testId="web-kpi-pending"
+            />
+            <KpiTile
+              label={t("dashboard.instapayAwaiting")}
+              value={String(onlineKpis.instapayAwaiting)}
+              tone={onlineKpis.instapayAwaiting > 0 ? "danger" : "success"}
+              to={mayOpenOrders ? "/online/orders?payment=verification_required" : undefined}
+              testId="web-kpi-instapay"
+            />
+            <KpiTile
+              label={t("dashboard.webDelivery")}
+              value={String(onlineKpis.deliveryActive)}
+              tone="info"
+              hint={money(onlineKpis.deliveryFees)}
+              to={mayOpenOrders ? "/online/orders" : undefined}
+              testId="web-kpi-delivery"
+            />
+            <KpiTile
+              label={t("dashboard.webPickup")}
+              value={String(onlineKpis.pickupActive)}
+              tone="info"
+              to={mayOpenOrders ? "/online/orders" : undefined}
+              testId="web-kpi-pickup"
+            />
+            <KpiTile
+              label={t("dashboard.webSalesToday")}
+              value={money(onlineKpis.salesToday)}
+              tone="primary"
+              hint={`${onlineKpis.ordersToday} · ${t("dashboard.webAovShort")} ${money(onlineKpis.avgOrderToday)}`}
+              testId="web-kpi-sales-today"
+            />
+            <KpiTile
+              label={t("dashboard.webLast24h")}
+              value={String(onlineKpis.last24h)}
+              tone="neutral"
+              testId="web-kpi-last24h"
+            />
+            <KpiTile
+              label={t("dashboard.webCancelled")}
+              value={String(onlineKpis.cancelled)}
+              tone={onlineKpis.cancelled > 0 ? "warning" : "neutral"}
+              to={mayOpenOrders ? "/online/orders?status=cancelled" : undefined}
+              testId="web-kpi-cancelled"
+            />
+            <KpiTile
+              label={t("dashboard.webVisibility")}
+              value={`${websiteVisible.visible} / ${websiteVisible.hidden}`}
+              tone="neutral"
+              hint={t("dashboard.webVisibilityHint")}
+              to={mayOpenProducts ? "/products" : undefined}
+              testId="web-kpi-visibility"
+            />
+          </div>
+
+          {/* COD vs InstaPay — the split as a paired bar, small and readable. */}
+          <div className="mt-4 grid gap-3 lg:grid-cols-2">
+            <Card className="p-3" testId="web-channel-split">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-stone-500">
+                {t("dashboard.webCodSplit")}
+              </p>
+              <div className="mt-2 flex items-center gap-3">
+                <div className="flex h-3 flex-1 overflow-hidden rounded-full bg-stone-100" role="img" aria-label={t("dashboard.webCodSplit")}>
+                  <span
+                    className="h-full bg-emerald-500"
+                    style={{
+                      width: `${
+                        onlineKpis.codCount + onlineKpis.instapayCount > 0
+                          ? (onlineKpis.codCount / (onlineKpis.codCount + onlineKpis.instapayCount)) * 100
+                          : 0
+                      }%`,
+                    }}
+                  />
+                  <span className="h-full flex-1 bg-sky-500" />
+                </div>
+                <span className="shrink-0 text-xs font-bold tabular-nums text-stone-700">
+                  COD {onlineKpis.codCount} · InstaPay {onlineKpis.instapayCount}
+                </span>
+              </div>
+              <div className="mt-3 h-24">
+                <TrendChart
+                  points={channelTrendPoints(trend, channelToday)}
+                  color={CHART_COLORS[2]}
+                />
+              </div>
+              <p className="mt-1 text-[11px] font-medium text-stone-500">
+                {t("dashboard.channelSplitHint", { days: DASHBOARD_TREND_DAYS })}
+              </p>
+            </Card>
+
+            <Card className="p-3" testId="web-top-products">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-stone-500">
+                {t("dashboard.webTopProducts")}
+              </p>
+              {topOnline.length === 0 ? (
+                <p className="py-6 text-center text-xs font-medium text-stone-400">{t("dashboard.noWebOrders")}</p>
+              ) : (
+                <ul className="mt-2 space-y-1.5">
+                  {topOnline.map((row) => (
+                    <li key={row.id} className="flex items-center justify-between gap-2 text-xs font-semibold text-stone-700">
+                      <span className="truncate">{pick(row.nameAr, row.nameEn)}</span>
+                      <span className="shrink-0 tabular-nums text-stone-500">
+                        {row.units} × · {money(row.revenue)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {topOnlineCategories.length > 0 ? (
+                <p className="mt-3 truncate text-[11px] font-medium text-stone-500">
+                  {t("dashboard.webTopCategories")}:{" "}
+                  {topOnlineCategories.map((row) => row.categoryLabel).join(" · ")}
+                </p>
+              ) : null}
+            </Card>
+          </div>
+
+          {/* Variant-aware online stock health */}
+          <div className="mt-3 grid gap-3 sm:grid-cols-2" data-testid="web-stock-health">
+            <KpiTile
+              label={t("dashboard.webOutOfStock")}
+              value={String(inventoryAlerts.outCount)}
+              tone={inventoryAlerts.outCount > 0 ? "danger" : "success"}
+              hint={t("dashboard.webStockHint")}
+              to={mayOpenInventory ? "/inventory?status=out" : undefined}
+              testId="web-kpi-out-of-stock"
+            />
+            <KpiTile
+              label={t("dashboard.webLowStock")}
+              value={String(inventoryAlerts.lowCount)}
+              tone={inventoryAlerts.lowCount > 0 ? "warning" : "success"}
+              to={mayOpenInventory ? "/inventory?status=low" : undefined}
+              testId="web-kpi-low-stock"
+            />
+          </div>
+
+          {/* Recent website orders */}
+          <div className="mt-4" data-testid="dash-recent-web-orders">
+            <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-stone-500">
+              {t("dashboard.recentWebOrders")}
+            </p>
+            {recentWebOrders.length === 0 ? (
+              <p className="py-4 text-center text-xs font-medium text-stone-400">{t("dashboard.noWebOrders")}</p>
+            ) : (
+              <div className="divide-y divide-stone-100 rounded-xl border border-stone-200/80 bg-white">
+                {recentWebOrders.map((order) => (
+                  <Link
+                    key={order.id}
+                    to={mayOpenOrders ? "/online/orders" : "#"}
+                    className="flex items-center justify-between gap-3 px-3 py-2 hover:bg-stone-50"
+                  >
+                    <span className="min-w-0">
+                      <span dir="ltr" className="block truncate font-mono text-xs font-bold text-stone-800">
+                        {order.order_number}
+                      </span>
+                      <span className="block truncate text-[11px] font-medium text-stone-500">
+                        {order.customer_name || "—"} ·{" "}
+                        {order.delivery_type === "delivery" ? t("dashboard.webDelivery") : t("dashboard.webPickup")}
+                      </span>
+                    </span>
+                    <span className="flex shrink-0 items-center gap-2">
+                      <span className="text-xs font-bold tabular-nums text-stone-900">{money(order.total)}</span>
+                      <Badge
+                        tone={
+                          order.status === "cancelled"
+                            ? "danger"
+                            : order.status === "completed"
+                              ? "success"
+                              : order.status === "pending"
+                                ? "warning"
+                                : "info"
+                        }
+                      >
+                        {t(`online.status.${order.status}` as never)}
+                      </Badge>
+                    </span>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <ReservationSummaryCard className="mt-3" />
+        </Card>
+      ) : null}
 
       {maySeePerformance ? (
         <>
           {/* ── Month to date + queues ───────────────────────────────────── */}
           <div className="mt-6 flex flex-wrap items-end justify-between gap-2">
             <div>
-              <h2 className="text-base font-bold text-slate-900">{t("dashboard.performance")}</h2>
-              <p className="mt-0.5 text-xs font-medium text-slate-600">
+              <h2 className="text-base font-black text-stone-900">{t("dashboard.performance")}</h2>
+              <p className="mt-0.5 text-xs font-medium text-stone-500">
                 {t("dashboard.performanceHint", { days: DASHBOARD_TREND_DAYS })}
               </p>
             </div>
             <Link
               to="/reports/advanced"
-              className="text-xs font-semibold text-indigo-600 hover:text-indigo-700"
+              className="text-xs font-bold text-stone-600 hover:text-stone-900"
             >
               {t("dashboard.viewAdvanced")} →
             </Link>
@@ -311,12 +607,13 @@ export function DashboardPage() {
               icon={<ReceiptIcon />}
               hint={t("dashboard.monthRefunds", { amount: money(monthly.refunds) })}
             />
-            <StatTile
+            <KpiTile
               label={t("dashboard.pendingApprovals")}
               value={String(approvals?.summary.pending ?? 0)}
               tone={(approvals?.summary.pending ?? 0) > 0 ? "warning" : "success"}
               icon={<ClipboardIcon />}
               hint={t("approvals.pendingHint")}
+              to="/approvals"
             />
             {canManageOnline ? (
               <StatTile
@@ -329,11 +626,6 @@ export function DashboardPage() {
             ) : null}
           </div>
 
-          {/* What the website is holding, from the review the queue provider
-              already computed — no query of its own, and it hides itself for
-              anybody who cannot work the online queue. */}
-          <ReservationSummaryCard className="mt-3" />
-
           {/* ── Charts ─────────────────────────────────────────────────────── */}
           <div className="mt-3 grid gap-3 lg:grid-cols-2">
             <Card>
@@ -343,7 +635,7 @@ export function DashboardPage() {
                 empty={hasChartData ? undefined : t("dashboard.noChartData")}
                 legend={
                   hasChartData ? (
-                    <span className="text-[11px] font-semibold tabular-nums text-slate-500">
+                    <span className="text-[11px] font-semibold tabular-nums text-stone-500">
                       {dayLabel(trend[0].date)} – {dayLabel(trend[trend.length - 1].date)}
                     </span>
                   ) : undefined
@@ -408,33 +700,33 @@ export function DashboardPage() {
           <Card className="mt-3">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <div>
-                <h2 className="text-base font-bold text-slate-900">{t("dashboard.topProducts")}</h2>
-                <p className="mt-0.5 text-xs font-medium text-slate-600">
+                <h2 className="text-base font-black text-stone-900">{t("dashboard.topProducts")}</h2>
+                <p className="mt-0.5 text-xs font-medium text-stone-500">
                   {t("dashboard.topProductsHint", { count: DASHBOARD_TREND_DAYS })}
                 </p>
               </div>
               <Link
                 to="/reports/advanced"
-                className="text-xs font-semibold text-indigo-600 hover:text-indigo-700"
+                className="text-xs font-bold text-stone-600 hover:text-stone-900"
               >
                 {t("nav.advancedReports")} →
               </Link>
             </div>
             {bestSellersList.length === 0 ? (
-              <p className="py-6 text-center text-sm text-slate-500">{t("dashboard.noChartData")}</p>
+              <p className="py-6 text-center text-sm text-stone-500">{t("dashboard.noChartData")}</p>
             ) : (
-              <div className="divide-y divide-slate-100">
+              <div className="divide-y divide-stone-100">
                 {bestSellersList.map((row, index) => (
                   <div key={row.id} className="flex items-center justify-between gap-3 py-2.5">
                     <div className="flex min-w-0 items-center gap-3">
-                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-[11px] font-bold text-indigo-600">
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-stone-900 text-[11px] font-bold text-[#e8ddc9]">
                         {index + 1}
                       </span>
                       <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold text-slate-900">
+                        <p className="truncate text-sm font-bold text-stone-900">
                           {pick(row.nameAr, row.nameEn)}
                         </p>
-                        <p className="text-[11px] text-slate-500">
+                        <p className="text-[11px] text-stone-500">
                           {row.units} {t("dashboard.units")} · {money(row.revenue)}
                         </p>
                       </div>
@@ -450,87 +742,122 @@ export function DashboardPage() {
         </>
       ) : null}
 
+      {/* ── Stock alerts — variant-aware, name the exact combination ──────── */}
+      {mayOpenInventory && inventoryAlerts.low.length + inventoryAlerts.out.length > 0 ? (
+        <Card className="mt-4" testId="dash-stock-alerts">
+          <div className="mb-2 flex items-center justify-between">
+            <h2 className="text-base font-black text-stone-900">{t("dashboard.alertsTitle")}</h2>
+            <Link to="/inventory?status=low" className="text-xs font-bold text-stone-600 hover:text-stone-900">
+              {t("nav.inventory")} →
+            </Link>
+          </div>
+          <div className="divide-y divide-stone-100">
+            {[...inventoryAlerts.out, ...inventoryAlerts.low].slice(0, 8).map((alert) => (
+              <div
+                key={`${alert.productId}-${alert.variantId ?? "product"}`}
+                className="flex items-center justify-between gap-3 py-2"
+                data-testid="dash-stock-alert"
+              >
+                <p className="min-w-0 truncate text-xs font-bold text-stone-800">
+                  {inventoryAlertLine(alert, pick, lowWord, outWord)}
+                </p>
+                <Badge tone={alert.kind === "out" ? "danger" : "warning"}>
+                  {alert.kind === "out" ? outWord : lowWord}
+                </Badge>
+              </div>
+            ))}
+          </div>
+        </Card>
+      ) : null}
+
       {/* ── Open shift summary ────────────────────────────────────────────── */}
       {snapshot.openShift && snapshot.shiftSummary ? (
-        <Card className="mt-4">
+        <Card className="mt-4" testId="dash-open-shift">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h2 className="text-base font-bold text-slate-900">{t("dashboard.openShift")}</h2>
-              <p className="mt-0.5 text-xs font-medium text-slate-600">
+              <h2 className="text-base font-black text-stone-900">{t("dashboard.openShift")}</h2>
+              <p className="mt-0.5 text-xs font-medium text-stone-500">
                 {snapshot.openShift.branch || "—"} · {snapshot.openShift.opened_by_name}
               </p>
             </div>
             <div className="flex flex-wrap gap-4 text-end">
               <div>
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-stone-500">
                   {t("dashboard.cashSales")}
                 </p>
-                <p className="text-sm font-bold text-slate-900">
+                <p className="text-sm font-bold text-stone-900">
                   {money(snapshot.shiftSummary.cash_sales)}
                 </p>
               </div>
               <div>
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-stone-500">
                   {t("dashboard.expectedCash")}
                 </p>
-                <p className="text-sm font-bold text-slate-900">
+                <p className="text-sm font-bold text-stone-900">
                   {money(snapshot.shiftSummary.expected_cash)}
                 </p>
               </div>
               <div>
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-stone-500">
                   {t("dashboard.todaySales")}
                 </p>
-                <p className="text-sm font-bold text-slate-900">
+                <p className="text-sm font-bold text-stone-900">
                   {snapshot.shiftSummary.sales_count}
                 </p>
               </div>
+              {mayOpenShifts ? (
+                <Link to="/shifts" className="self-center">
+                  <Button variant="secondary" size="sm">{t("dashboard.viewAll")}</Button>
+                </Link>
+              ) : null}
             </div>
           </div>
         </Card>
       ) : (
-        <Card className="mt-4">
-          <p className="text-sm font-medium text-slate-500">{t("dashboard.noOpenShift")}</p>
+        <Card className="mt-4" testId="dash-no-open-shift">
+          <p className="text-sm font-medium text-stone-500">{t("dashboard.noOpenShift")}</p>
         </Card>
       )}
 
       {/* ── Recent sales ──────────────────────────────────────────────────── */}
-      <Card className="mt-4">
+      <Card className="mt-4" testId="dash-recent-orders">
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-base font-bold text-slate-900">{t("dashboard.recentSales")}</h2>
-          <Link
-            to="/pos/sales"
-            className="text-xs font-semibold text-indigo-600 hover:text-indigo-700"
-          >
-            {t("nav.sales")} →
-          </Link>
+          <h2 className="text-base font-black text-stone-900">{t("dashboard.recentSales")}</h2>
+          {mayOpenSales ? (
+            <Link
+              to="/pos/sales?today=1"
+              className="text-xs font-bold text-stone-600 hover:text-stone-900"
+            >
+              {t("nav.sales")} →
+            </Link>
+          ) : null}
         </div>
 
         {snapshot.recentSales.length === 0 ? (
-          <p className="py-6 text-center text-sm text-slate-500">{t("dashboard.noSalesYet")}</p>
+          <p className="py-6 text-center text-sm text-stone-500">{t("dashboard.noSalesYet")}</p>
         ) : (
-          <div className="divide-y divide-slate-100">
+          <div className="divide-y divide-stone-100">
             {snapshot.recentSales.map((sale) => (
               <Link
                 key={sale.id}
                 to={`/pos/sales/${sale.id}`}
-                className="flex items-center justify-between gap-3 py-2.5 hover:bg-slate-50 rounded-lg px-2 -mx-2 transition-colors"
+                className="flex items-center justify-between gap-3 rounded-lg px-2 py-2.5 transition-colors hover:bg-stone-50"
               >
-                <div className="flex items-center gap-3 min-w-0">
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">
+                <div className="flex min-w-0 items-center gap-3">
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-stone-100 text-stone-700">
                     <ReceiptIcon />
                   </span>
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-slate-900">
+                    <p className="truncate text-sm font-bold text-stone-900">
                       {sale.sale_number}
                     </p>
-                    <p className="text-[11px] text-slate-500">
+                    <p className="text-[11px] text-stone-500">
                       {sale.user_name} · {sale.items_count} {t("dashboard.items")}
                     </p>
                   </div>
                 </div>
-                <div className="text-end shrink-0">
-                  <p className="text-sm font-bold text-slate-900">{money(sale.total)}</p>
+                <div className="shrink-0 text-end">
+                  <p className="text-sm font-bold text-stone-900">{money(sale.total)}</p>
                   <Badge
                     tone={sale.status === "completed" ? "success" : "warning"}
                   >
@@ -548,4 +875,37 @@ export function DashboardPage() {
       </Card>
     </div>
   );
+}
+
+// ── helpers ─────────────────────────────────────────────────────────────────
+
+function isSaleToday(iso: string): boolean {
+  const now = new Date();
+  return new Date(iso) >= new Date(now.getFullYear(), now.getMonth(), now.getDate());
+}
+
+/**
+ * Web-vs-POS channel series: the 7-day POS revenue from the reports trend (the
+ * same numbers the chart above draws) with today's website revenue overlaid on
+ * the last point — small, readable, and it never invents website history the
+ * loaded queue cannot prove.
+ */
+function channelTrendPoints(
+  trend: Array<{ date: string; revenue: number }>,
+  channelToday: { pos: number; web: number },
+): Array<{ date: string; total: number }> {
+  if (trend.length === 0) return [];
+  const points = trend.map((point) => ({ date: point.date, total: point.revenue }));
+  const last = points[points.length - 1];
+  points[points.length - 1] = { ...last, total: last.total + channelToday.web };
+  return points;
+}
+
+// Local capability checks — kept in one place so the KPI row reads cleanly.
+function canActRoute(path: string): boolean {
+  const required = capabilityForPath(path);
+  return !required || canAct(required);
+}
+function canActWebsite(): boolean {
+  return canAct("manage_website");
 }

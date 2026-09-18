@@ -194,6 +194,8 @@ export function ReturnsPage({ initialTab = "returns" }: { initialTab?: "returns"
                     <th className="px-3 py-3 text-start font-semibold">{t("returns.saleNumber")}</th>
                     <th className="px-3 py-3 text-start font-semibold">{t("returns.customer")}</th>
                     <th className="px-3 py-3 text-start font-semibold">{t("returns.reason")}</th>
+                    <th className="px-3 py-3 text-start font-semibold">{t("returns.itemsColumn")}</th>
+                    <th className="px-3 py-3 text-start font-semibold">{t("pos.cols.status")}</th>
                     <th className="px-3 py-3 text-end font-semibold">{t("returns.refundAmount")}</th>
                     <th className="px-3 py-3 text-start font-semibold">{t("returns.refundMethod")}</th>
                     <th className="px-3 py-3 text-start font-semibold">{t("pos.cols.date")}</th>
@@ -224,6 +226,35 @@ export function ReturnsPage({ initialTab = "returns" }: { initialTab?: "returns"
                       </td>
                       <td className="px-3 py-3 text-xs text-slate-600 max-w-xs truncate">
                         {ret.reason}
+                      </td>
+                      {/* What came back, with its exact combination (Phase 43):
+                          a return restores the shelf the goods left, so the row
+                          names Gold / 17 rather than just the product. */}
+                      <td className="px-3 py-3 text-xs text-slate-700" data-testid="returns-items-cell">
+                        {ret.items.map((item) => (
+                          <div key={item.id} className="truncate">
+                            {t("returns.itemLine", {
+                              count: item.quantity,
+                              name: pick(item.name_ar, item.name_en),
+                              variant: item.variant_id
+                                ? ` · ${item.variant_color_en || item.variant_color_ar}${item.variant_size !== null || item.variant_size_label ? ` / ${item.variant_size !== null ? Math.round(item.variant_size * 100) / 100 : item.variant_size_label}` : ""}`
+                                : "",
+                            })}
+                          </div>
+                        ))}
+                      </td>
+                      <td className="px-3 py-3">
+                        <Badge
+                          tone={
+                            ret.refund_status === "completed"
+                              ? "success"
+                              : ret.refund_status === "rejected"
+                                ? "danger"
+                                : "warning"
+                          }
+                        >
+                          {t(`returns.status.${ret.refund_status}`)}
+                        </Badge>
                       </td>
                       <td className="px-3 py-3 text-end text-sm font-bold tabular-nums text-slate-900">
                         {num(ret.refund_amount, 2)}

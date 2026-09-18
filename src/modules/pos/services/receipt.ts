@@ -107,6 +107,12 @@ export interface ReceiptData {
   sale: Sale;
   strings: ReceiptStrings;
   direction: "rtl" | "ltr";
+  /**
+   * Phase 46: the shared brand logo, when the merchant enabled the receipt
+   * logo. Omitted or empty → the shipped ALYQ asset prints, exactly as before
+   * this phase. Never raw SVG/HTML — callers pass a stored media URL.
+   */
+  logo_url?: string | null;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -174,7 +180,10 @@ function receiptCss(rtl: boolean): string {
 }
 
 /** Shared brand header (logo + wordmark) used by every receipt. */
-function receiptBrandHeader(strings: Pick<ReceiptStrings, "businessName" | "businessTagline">): string {
+function receiptBrandHeader(
+  strings: Pick<ReceiptStrings, "businessName" | "businessTagline">,
+  logoSrc?: string | null,
+): string {
   const { businessName, businessTagline } = strings;
   // The tagline is rendered only when there is one. The unapproved slogan that
   // used to sit under the wordmark is gone and nothing was invented to replace
@@ -185,8 +194,11 @@ function receiptBrandHeader(strings: Pick<ReceiptStrings, "businessName" | "busi
     ? `
       <div class="btag">${escapeXml(businessTagline)}</div>`
     : "";
+  // Phase 46: the shared brand logo when configured and enabled; the shipped
+  // asset otherwise — a document written before branding prints unchanged.
+  const src = logoSrc?.trim() ? logoSrc : RECEIPT_LOGO_SRC;
   return `<div class="brand">
-      <img class="logo" src="${RECEIPT_LOGO_SRC}" alt="ALYQ" onerror="this.style.display='none'" />
+      <img class="logo" src="${src}" alt="ALYQ" onerror="this.style.display='none'" />
       <div class="bname">${escapeXml(businessName)}</div>${tag}
     </div>`;
 }
@@ -206,8 +218,9 @@ function receiptDocument(opts: {
   documentTitle: string;
   strings: Pick<ReceiptStrings, "businessName" | "businessTagline">;
   bodyHtml: string;
+  logoSrc?: string | null;
 }): string {
-  const { rtl, documentTitle, strings, bodyHtml } = opts;
+  const { rtl, documentTitle, strings, bodyHtml, logoSrc } = opts;
   return `<!doctype html>
 <html lang="${rtl ? "ar" : "en"}" dir="${rtl ? "rtl" : "ltr"}">
 <head>
@@ -217,7 +230,7 @@ ${receiptCss(rtl)}
 </head>
 <body onload="window.focus();window.print();">
   <div class="receipt">
-    ${receiptBrandHeader(strings)}
+    ${receiptBrandHeader(strings, logoSrc)}
 ${bodyHtml}
   </div>
 </body>
@@ -253,7 +266,7 @@ function variantLine(
   return [color.trim(), size].filter(Boolean).join(" / ");
 }
 
-export function buildReceiptHtml({ sale, strings, direction }: ReceiptData): string {
+export function buildReceiptHtml({ sale, strings, direction, logo_url }: ReceiptData): string {
   const rtl = direction === "rtl";
   const date = new Date(sale.created_at);
   const dateStr = date.toLocaleString(rtl ? "ar-SA" : "en-GB", {
@@ -346,6 +359,7 @@ export function buildReceiptHtml({ sale, strings, direction }: ReceiptData): str
     documentTitle: `${strings.businessName} — ${sale.sale_number}`,
     strings,
     bodyHtml,
+    logoSrc: logo_url,
   });
 }
 
@@ -418,6 +432,8 @@ export interface ReturnReceiptData {
   customerPhone?: string | null;
   /** Linked refund number, when a refund record exists. */
   refundNumber?: string | null;
+  /** Phase 46: the shared brand logo, when the receipt logo is enabled. */
+  logo_url?: string | null;
 }
 
 export function buildReturnReceiptHtml({
@@ -426,6 +442,7 @@ export function buildReturnReceiptHtml({
   direction,
   customerPhone,
   refundNumber,
+  logo_url,
 }: ReturnReceiptData): string {
   const rtl = direction === "rtl";
   const dateStr = new Date(returnRecord.created_at).toLocaleString(rtl ? "ar-SA" : "en-GB", {
@@ -509,6 +526,7 @@ export function buildReturnReceiptHtml({
     documentTitle: `${strings.businessName} — ${returnRecord.return_number}`,
     strings,
     bodyHtml,
+    logoSrc: logo_url,
   });
 }
 

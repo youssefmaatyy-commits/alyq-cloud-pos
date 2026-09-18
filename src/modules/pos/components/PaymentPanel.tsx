@@ -153,38 +153,38 @@ export function PaymentPanel() {
   };
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+    <div className="rounded-2xl border border-stone-200 bg-white p-4">
       <div className="mb-3 flex items-center justify-between">
-        <p className="text-[11px] font-bold uppercase tracking-wider text-slate-600">
+        <p className="text-[11px] font-bold uppercase tracking-wider text-stone-600">
           {t("pos.payment")}
         </p>
-        <span className="text-lg font-extrabold tabular-nums text-slate-900">
+        <span className="text-lg font-extrabold tabular-nums text-stone-900">
           {num(total, 2)}
         </span>
       </div>
 
       {/* Who the sale is for — chosen in the cart, shown here so it cannot
           be missed before money moves. Walk-in stays a first-class value. */}
-      <div className="mb-3 flex items-center gap-2 rounded-lg bg-slate-50 px-2.5 py-1.5">
-        <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+      <div className="mb-3 flex items-center gap-2 rounded-lg bg-stone-50 px-2.5 py-1.5">
+        <span className="text-[11px] font-bold uppercase tracking-wider text-stone-500">
           {t("pos.customer")}
         </span>
-        <span className="min-w-0 flex-1 truncate text-xs font-semibold text-slate-800">
+        <span className="min-w-0 flex-1 truncate text-xs font-semibold text-stone-800">
           {selectedCustomer ? selectedCustomer.name : t("customers.guestCustomer")}
         </span>
         {selectedCustomer ? (
-          <span className="font-mono text-[10px] text-slate-500" dir="ltr">
+          <span className="font-mono text-[10px] text-stone-500" dir="ltr">
             {selectedCustomer.phone}
           </span>
         ) : null}
       </div>
 
       {/* Cash */}
-      <div className="space-y-1.5 rounded-xl border border-slate-200 p-2.5">
+      <div className="space-y-1.5 rounded-xl border border-stone-200 p-2.5">
         <div className="flex items-center justify-between gap-2">
           <label
             htmlFor="cash-input"
-            className="text-xs font-bold text-slate-700"
+            className="text-xs font-bold text-stone-700"
           >
             💵 {t("pos.payment.cash")}
           </label>
@@ -194,7 +194,7 @@ export function PaymentPanel() {
                 key={`${amount}-${index}`}
                 type="button"
                 onClick={() => onCashChange(amount.toFixed(2))}
-                className="h-6 rounded-md border border-slate-200 bg-white px-1.5 text-[10px] font-bold text-slate-600 transition hover:border-indigo-300 hover:bg-indigo-50"
+                className="h-6 rounded-md border border-stone-200 bg-white px-1.5 text-[10px] font-bold text-stone-600 transition hover:border-[#d4bf9a] hover:bg-[#faf5ec]"
               >
                 {index === 0 ? t("pos.exact") : num(amount, 0)}
               </button>
@@ -225,8 +225,8 @@ export function PaymentPanel() {
 
       {split ? (
         <div className="mt-2 space-y-2">
-          <div className="space-y-1.5 rounded-xl border border-slate-200 p-2.5">
-            <label htmlFor="instapay-input" className="text-xs font-bold text-slate-700">
+          <div className="space-y-1.5 rounded-xl border border-stone-200 p-2.5">
+            <label htmlFor="instapay-input" className="text-xs font-bold text-stone-700">
               📱 {t("pos.payment.instapay")}
             </label>
             <TextInput
@@ -239,12 +239,12 @@ export function PaymentPanel() {
               placeholder="0.00"
               className="h-10 font-mono text-sm"
             />
-            <div className="grid grid-cols-2 gap-1 rounded-lg bg-slate-100 p-0.5">
+            <div className="grid grid-cols-2 gap-1 rounded-lg bg-stone-100 p-0.5">
               <button
                 type="button"
                 onClick={() => setInstapayStatus("paid")}
                 className={`h-8 rounded-md text-xs font-bold transition ${
-                  instapayStatus === "paid" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"
+                  instapayStatus === "paid" ? "bg-white text-stone-900 shadow-sm" : "text-stone-500"
                 }`}
               >
                 ✓ {t("pos.instapay.paid")}
@@ -253,7 +253,7 @@ export function PaymentPanel() {
                 type="button"
                 onClick={() => setInstapayStatus("pending")}
                 className={`h-8 rounded-md text-xs font-bold transition ${
-                  instapayStatus === "pending" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"
+                  instapayStatus === "pending" ? "bg-white text-stone-900 shadow-sm" : "text-stone-500"
                 }`}
               >
                 ⏳ {t("pos.instapay.pending")}
@@ -262,8 +262,8 @@ export function PaymentPanel() {
           </div>
 
           {/* Visa / Card */}
-          <div className="space-y-1.5 rounded-xl border border-slate-200 p-2.5">
-            <label htmlFor="visa-input" className="text-xs font-bold text-slate-700">
+          <div className="space-y-1.5 rounded-xl border border-stone-200 p-2.5">
+            <label htmlFor="visa-input" className="text-xs font-bold text-stone-700">
               💳 {t("pos.payment.visa")}
             </label>
             <TextInput
@@ -281,33 +281,33 @@ export function PaymentPanel() {
       ) : null}
 
       {/* Live summary — always visible */}
-      <div className="mt-3 space-y-1.5 rounded-xl bg-slate-50 px-3 py-2.5 text-sm">
-        <div className="flex justify-between font-bold text-slate-900">
+      <div className="mt-3 space-y-1.5 rounded-xl bg-stone-50 px-3 py-2.5 text-sm">
+        <div className="flex justify-between font-bold text-stone-900">
           <span>{t("pos.total")}</span>
           <span className="tabular-nums">{num(total, 2)}</span>
         </div>
         {/* Per-method breakdown: how much of the total is covered by each tender. */}
         <div className="space-y-1 rounded-lg bg-white/70 px-2.5 py-1.5">
-          <div className="flex justify-between text-slate-600">
+          <div className="flex justify-between text-stone-600">
             <span>💵 {t("pos.paidCash")}</span>
             <span className="tabular-nums">{num(calc.cashApplied, 2)}</span>
           </div>
-          <div className="flex justify-between text-slate-600">
+          <div className="flex justify-between text-stone-600">
             <span>📱 {t("pos.paidInstapay")}</span>
             <span className="tabular-nums">{num(calc.instapay, 2)}</span>
           </div>
           {calc.visa > 0 ? (
-            <div className="flex justify-between text-slate-600">
+            <div className="flex justify-between text-stone-600">
               <span>💳 {t("pos.paidVisa")}</span>
               <span className="tabular-nums">{num(calc.visa, 2)}</span>
             </div>
           ) : null}
         </div>
-        <div className="flex justify-between border-t border-slate-200 pt-1.5 font-semibold text-slate-800">
+        <div className="flex justify-between border-t border-stone-200 pt-1.5 font-semibold text-stone-800">
           <span>{t("pos.paid")}</span>
           <span className="tabular-nums">{num(calc.paid, 2)}</span>
         </div>
-        <div className="flex justify-between text-slate-600">
+        <div className="flex justify-between text-stone-600">
           <span>{t("pos.change")}</span>
           <span className="tabular-nums">{num(calc.change, 2)}</span>
         </div>

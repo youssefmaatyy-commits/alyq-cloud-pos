@@ -388,18 +388,20 @@ async function main() {
   await waitFor(() => squeezed().includes("CAT-A") || squeezed().includes("Old Ring"), {
     label: "the POS grid",
   });
-  const posSelect = document.querySelector('select[aria-label="Category"]');
-  assert.ok(posSelect, "the POS category filter exists");
-  assert.ok(
-    !(selectOptions(posSelect).includes("Rings Old") || selectOptions(posSelect).includes("Rings Old".replace(/\s+/g, ""))),
-    "the archived category leaves the POS filter",
-  );
+  // Phase 46: the register filters by category CHIPS, not a select. The chips
+  // are built from sellable categories only.
+  const posChips = () =>
+    [...document.querySelectorAll('button[data-testid^="pos-category-chip-"]')].map((b) =>
+      (b.textContent ?? "").replace(/\s+/g, " ").trim(),
+    );
+  await waitFor(() => posChips().length > 0, { label: "the POS category chips" });
+  assert.ok(!posChips().includes("Rings Old"), "the archived category leaves the POS filter");
   assert.ok(
     (squeezed().includes("OldRingA") || squeezed().includes("CAT-A")),
     "the archived category's PRODUCTS still sit on the register",
   );
   assert.ok(
-    selectOptions(posSelect).includes("Hidden Rings"),
+    posChips().includes("Hidden Rings"),
     "the still-active Hidden Rings sits on the filter (it is archived later)",
   );
   console.log("  ✓ products still sellable; archived shelves leave the picker and the register");

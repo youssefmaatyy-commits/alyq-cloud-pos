@@ -7,6 +7,7 @@ import { useAuth } from "../hooks/AuthProvider";
 import { resolveNextTarget } from "./RequireAuth";
 import type { AuthErrorCode } from "../types";
 import alyqLogoUrl from "@/assets/alyq-logo.png";
+import { brandDisplayName, useBrand } from "@/lib/branding/brand";
 
 /**
  * Login screen.
@@ -21,6 +22,9 @@ import alyqLogoUrl from "@/assets/alyq-logo.png";
  */
 export function LoginPage() {
   const { t, lang, setLang, dir } = useI18n();
+  // The shared brand (Phase 46) — one source with the sidebar, dashboard and
+  // receipts; the shipped ALYQ asset is the fallback when nothing is set.
+  const brand = useBrand();
   const { signIn, status, error, endReason, clearError, mode } = useAuth();
   const [params] = useSearchParams();
   const next = resolveNextTarget(params.get("next"));
@@ -66,9 +70,16 @@ export function LoginPage() {
       <div className="w-full max-w-md">
         <div className="mb-5 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <img src={alyqLogoUrl} alt="" className="h-10 w-10 rounded-xl" />
+            <img
+              src={brand?.logoUrl ?? alyqLogoUrl}
+              alt=""
+              className="h-10 w-10 rounded-xl object-contain"
+              data-testid="login-brand-logo"
+            />
             <div>
-              <p className="text-sm font-bold text-slate-900">{t("app.name")}</p>
+              <p className="text-sm font-bold text-slate-900" data-testid="login-brand-name">
+                {brand ? brandDisplayName(brand, lang) : t("app.name")}
+              </p>
               <p className="text-[11px] font-medium text-slate-600">{t("app.tagline")}</p>
             </div>
           </div>

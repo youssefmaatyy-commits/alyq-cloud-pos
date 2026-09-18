@@ -37,6 +37,7 @@ import { HOMEPAGE_SECTIONS } from "../types";
 /** The shop's name before the admin sets one. Both languages, like everything. */
 const DEFAULT_STORE_NAME_AR = "أَلِــيْـــق";
 const DEFAULT_STORE_NAME_EN = "ALYQ";
+export { DEFAULT_STORE_NAME_AR, DEFAULT_STORE_NAME_EN };
 
 export const DEFAULT_HERO_SLIDES: HeroSlide[] = [
   {
@@ -160,6 +161,13 @@ export const DEFAULT_WEBSITE_SETTINGS: WebsiteSettings = {
       },
     ],
     about_image_url: null,
+  },
+  brand: {
+    display_name_ar: "",
+    display_name_en: "",
+    mark_url: null,
+    logo_dark_url: null,
+    receipt_logo_enabled: true,
   },
   sections: defaultSections(),
   social: {
@@ -761,6 +769,14 @@ export function sanitizeSettings(input: unknown): WebsiteSettings {
   out.images.background_url = safeImageField(out.images.background_url);
   out.images.about_image_url = safeImageField(out.images.about_image_url);
   out.seo.og_image_url = safeImageField(out.seo.og_image_url);
+
+  // brand (Phase 46) — same media-URL rules as images, bounded names.
+  const brand = out.brand as unknown as Json;
+  brand.display_name_ar = str(brand.display_name_ar, 60);
+  brand.display_name_en = str(brand.display_name_en, 60);
+  brand.mark_url = safeImageField(brand.mark_url);
+  brand.logo_dark_url = safeImageField(brand.logo_dark_url);
+  brand.receipt_logo_enabled = bool(brand.receipt_logo_enabled, true);
 
   // product card + badges + header
   const card = out.product_card as unknown as Json;

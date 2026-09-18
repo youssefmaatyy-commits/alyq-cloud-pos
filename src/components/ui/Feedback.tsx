@@ -83,13 +83,18 @@ export function Card({
   children,
   className,
   padded = true,
+  testId,
 }: {
   children: ReactNode;
   className?: string;
   padded?: boolean;
+  /** Phase 46: an explicit prop — `data-testid` is not in this signature, so
+   *  passing it directly would be silently dropped. */
+  testId?: string;
 }) {
   return (
     <div
+      data-testid={testId}
       className={cn(
         "alyq-card",
         padded && "p-4 sm:p-5",

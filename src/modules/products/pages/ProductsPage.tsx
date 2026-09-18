@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState, lazy, Suspense } from "react";
-import { Link } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { PageHeader } from "@/components/layout/AppShell";
 import {
@@ -58,6 +58,22 @@ export function ProductsPage() {
   const [filters, setFilters] = useState<ProductFiltersValue>(EMPTY_FILTERS);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+
+  // Phase 46: the shell's global search lands here as `?q=…` (the catalog is
+  // the entity the shell can actually see). Hydrated once; anything else in the
+  // URL is ignored rather than invented.
+  const [params, setParams] = useSearchParams();
+  const hydrated = useRef(false);
+  useEffect(() => {
+    if (hydrated.current) return;
+    hydrated.current = true;
+    const q = params.get("q");
+    if (q) {
+      setFilters((current) => ({ ...current, search: q }));
+      setPage(1);
+      setParams({}, { replace: true });
+    }
+  }, []); // once, on mount
   const [busyId, setBusyId] = useState<string | null>(null);
   const [pending, setPending] = useState<Product | null>(null);
   const [pendingDelete, setPendingDelete] = useState<Product | null>(null);

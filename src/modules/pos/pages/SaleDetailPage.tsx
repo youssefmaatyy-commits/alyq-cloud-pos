@@ -19,6 +19,7 @@ import { canVoidSale, canConfirmPayment } from "../permissions";
 import type { Sale } from "../types";
 import { buildReceiptHtml, customerInfoIssue, printHtmlDocument } from "../services/receipt";
 import { salesReceiptStrings } from "../services/receiptStrings";
+import { loadBrand } from "@/lib/branding/brand";
 import { getSalesRepository } from "../data";
 import {
   confirmPayment as confirmPaymentAction,
@@ -59,7 +60,7 @@ export function SaleDetailPage() {
    * print workflow so a reprint behaves exactly like the receipt printed at
    * the till (popup, then hidden in-page frame fallback).
    */
-  const print = useCallback(() => {
+  const print = useCallback(async () => {
     if (!sale) return;
 
     // Customer-linked receipts must carry BOTH the customer name and phone.
@@ -80,10 +81,13 @@ export function SaleDetailPage() {
 
     let html: string;
     try {
+      // Phase 46: the shared brand logo when enabled; shipped asset otherwise.
+      const brand = await loadBrand();
       html = buildReceiptHtml({
         sale,
         direction: isRTL ? "rtl" : "ltr",
         strings: salesReceiptStrings(t),
+        logo_url: brand.receiptLogoEnabled ? brand.logoUrl : null,
       });
     } catch (err) {
       console.error("[receipt-print] failed to build receipt html", {

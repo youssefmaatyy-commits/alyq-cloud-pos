@@ -15,6 +15,7 @@ import {
 } from "@/components/ui";
 import { useReturns } from "../hooks/ReturnProvider";
 import { useCustomers } from "@/modules/customers";
+import { loadBrand } from "@/lib/branding/brand";
 import {
   buildReturnReceiptHtml,
   customerInfoIssue,
@@ -64,7 +65,7 @@ export function ReturnDetailPage() {
    * Print the return receipt through the shared receipt service + print
    * workflow (identical design and behaviour to the sales receipt).
    */
-  const printReturnReceipt = () => {
+  const printReturnReceipt = async () => {
     if (!returnRecord) return;
 
     // A customer-linked return receipt must carry BOTH the customer name and
@@ -88,12 +89,15 @@ export function ReturnDetailPage() {
 
     let html: string;
     try {
+      // Phase 46: the shared brand logo when enabled; shipped asset otherwise.
+      const brand = await loadBrand();
       html = buildReturnReceiptHtml({
         returnRecord: { ...returnRecord, customer_name: customerName },
         direction: isRTL ? "rtl" : "ltr",
         customerPhone,
         refundNumber: linkedRefund?.refund_number ?? null,
         strings: returnReceiptStrings(t, returnRecord.refund_status),
+        logo_url: brand.receiptLogoEnabled ? brand.logoUrl : null,
       });
     } catch (err) {
       console.error("[receipt-print] failed to build return receipt html", {

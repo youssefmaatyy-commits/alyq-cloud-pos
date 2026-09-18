@@ -55,6 +55,26 @@ const SUITES = [
     title: "Storefront customization (Phase 45): builder → live shop window, AR/RTL, variant ring sells, checkout copy",
   },
   { id: "backup", file: "scripts/backup.flow.mjs", title: "Backup & recovery flow (snapshot, download, health, schedule, restore, permissions)" },
+  {
+    id: "dashboardux",
+    file: "scripts/dashboardux.flow.mjs",
+    title: "Dashboard / Admin UX (Phase 46): KPI routing, website split, variant-aware alerts, mobile drawer, RTL, permissions",
+  },
+  {
+    id: "branding",
+    file: "scripts/branding.flow.mjs",
+    title: "Branding (Phase 46): one shared source — set/save, live sidebar, dashboard, receipt logo, login, ALYQ fallback, cashier refused",
+  },
+  {
+    id: "visualaudit",
+    file: "scripts/visualaudit.flow.mjs",
+    title: "Visual-consistency audit (Phase 46): 13 screens — page standard, shared tokens, RTL mirror, per-screen identity",
+  },
+  {
+    id: "posux",
+    file: "scripts/posux.flow.mjs",
+    title: "POS UX (Phase 46): speed register, exact-shelf picker, third-refusal, separate lines, receipt variants, barcode scan",
+  },
   { id: "crash", file: "scripts/crash.flow.mjs", title: "Crash recovery (ErrorBoundary: the screen, no leaked detail, the sibling survives)" },
   {
     id: "reports",

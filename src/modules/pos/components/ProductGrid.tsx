@@ -102,27 +102,48 @@ export function ProductGrid() {
           onKeyDown={onSearchKeyDown}
           placeholder={t("pos.searchPlaceholder")}
           aria-label={t("pos.search")}
-          className="h-11 flex-1 rounded-xl border border-slate-300 bg-white px-3 text-sm font-medium shadow-sm outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+          className="h-11 flex-1 rounded-xl border border-stone-200 bg-white px-3 text-sm font-medium shadow-sm outline-none transition focus:border-stone-500 focus:ring-2 focus:ring-stone-900/10"
         />
-        {categoryOptions.length > 0 ? (
-          <select
-            value={category}
-            onChange={(e) => setCategory(e.target.value)}
-            aria-label={t("products.category")}
-            className="h-11 rounded-xl border border-slate-300 bg-white px-2 text-sm font-medium shadow-sm outline-none focus:border-indigo-500"
-          >
-            <option value="all">{`${t("products.category")}: ${t("common.all")}`}</option>
-            {categoryOptions.map(([id, label]) => (
-              <option key={id} value={id}>
-                {label}
-              </option>
-            ))}
-          </select>
-        ) : null}
       </div>
 
+      {/* category chips (Phase 46): same filter, same sellable-shelf rules, one
+          click instead of a dropdown. Scrolls sideways on a narrow till. */}
+      {categoryOptions.length > 0 ? (
+        <div className="flex gap-1.5 overflow-x-auto pb-0.5" role="group" aria-label={t("products.category")}>
+          <button
+            type="button"
+            aria-pressed={category === "all"}
+            data-testid="pos-category-chip-all"
+            onClick={() => setCategory("all")}
+            className={`h-8 shrink-0 rounded-full px-3.5 text-xs font-bold transition ${
+              category === "all"
+                ? "bg-stone-900 text-[#f3ede1]"
+                : "border border-stone-200 bg-white text-stone-600 hover:border-stone-400"
+            }`}
+          >
+            {t("common.all")}
+          </button>
+          {categoryOptions.map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              aria-pressed={category === id}
+              data-testid={`pos-category-chip-${id}`}
+              onClick={() => setCategory(id)}
+              className={`h-8 shrink-0 rounded-full px-3.5 text-xs font-bold transition ${
+                category === id
+                  ? "bg-stone-900 text-[#f3ede1]"
+                  : "border border-stone-200 bg-white text-stone-600 hover:border-stone-400"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
       {/* grid */}
-      <div className="grid flex-1 grid-cols-2 gap-2.5 overflow-y-auto pb-1 sm:grid-cols-3 xl:grid-cols-4">
+      <div className="grid flex-1 grid-cols-2 gap-2.5 overflow-y-auto pb-1 sm:grid-cols-3 xl:grid-cols-4" data-testid="pos-grid">
         {filtered.map((product) => {
           // A variant product is never "out" because the rollup says so — it is
           // out when no active combination has stock left.
@@ -145,42 +166,37 @@ export function ProductGrid() {
                 if (sellsByVariant) setPicking(product.id);
                 else addLine(product);
               }}
-              className={`group flex flex-col rounded-2xl border bg-white p-3 text-start shadow-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-200 ${
+              className={`group flex flex-col rounded-2xl border bg-white p-3 text-start shadow-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-stone-900/20 ${
                 out
-                  ? "cursor-not-allowed border-slate-200 opacity-60"
-                  : "border-slate-200 hover:border-indigo-300 hover:shadow"
+                  ? "cursor-not-allowed border-stone-200 opacity-60"
+                  : "border-stone-200/80 hover:border-[#b08d57] hover:shadow-md"
               }`}
             >
-              <div className="mb-1.5 flex items-start justify-between gap-2">
-                <span
-                  className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-xl bg-slate-100"
-                  aria-hidden
-                >
-                  {product.image_url ? (
-                    <img
-                      src={product.image_url}
-                      alt=""
-                      loading="lazy"
-                      className="h-full w-full object-cover"
-                    />
-                  ) : (
-                    <span className="text-lg font-bold text-slate-400">
-                      {pick(product.name_ar, product.name_en).charAt(0)}
-                    </span>
-                  )}
-                </span>
+              <div className="relative mb-2 flex h-20 items-center justify-center overflow-hidden rounded-xl bg-[#faf7f2]">
+                {product.image_url ? (
+                  <img
+                    src={product.image_url}
+                    alt=""
+                    loading="lazy"
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <span className="text-2xl font-black text-[#d8c7a7]">
+                    {pick(product.name_ar, product.name_en).charAt(0)}
+                  </span>
+                )}
                 {qty > 0 ? (
-                  <span className="flex h-6 min-w-6 items-center justify-center rounded-full bg-indigo-600 px-1.5 text-xs font-bold text-white">
+                  <span className="absolute end-1.5 top-1.5 flex h-6 min-w-6 items-center justify-center rounded-full bg-stone-900 px-1.5 text-xs font-bold text-white ring-2 ring-white">
                     {qty}
                   </span>
                 ) : null}
               </div>
-              <p className="line-clamp-2 min-h-[2.5em] text-xs font-semibold leading-snug text-slate-900">
+              <p className="line-clamp-2 min-h-[2.5em] text-xs font-semibold leading-snug text-stone-900">
                 {pick(product.name_ar, product.name_en)}
               </p>
-              <p className="mt-0.5 truncate font-mono text-[10px] text-slate-500">{product.sku}</p>
+              <p className="mt-0.5 truncate font-mono text-[10px] text-stone-500">{product.sku}</p>
               <div className="mt-1.5 flex items-center justify-between gap-2">
-                <span className="text-sm font-extrabold tabular-nums text-slate-900">
+                <span className="text-sm font-extrabold tabular-nums text-stone-900">
                   {(sellsByVariant && sellable[0]?.price_override != null
                     ? sellable[0].price_override
                     : product.selling_price
@@ -193,13 +209,13 @@ export function ProductGrid() {
                     {t("inventory.status.low")} · {totalUnits}
                   </Badge>
                 ) : (
-                  <span className="text-[11px] font-semibold text-slate-500 tabular-nums">
+                  <span className="text-[11px] font-semibold text-stone-500 tabular-nums">
                     {sellsByVariant ? `${sellable.length}/${combinations.filter((v) => v.active).length}` : totalUnits}
                   </span>
                 )}
               </div>
               {sellsByVariant ? (
-                <p className="mt-1 text-[10px] font-semibold text-indigo-600">
+                <p className="mt-1 text-[10px] font-bold uppercase tracking-wide text-[#8a6a3b]">
                   {t("pos.variants.hint")}
                 </p>
               ) : null}
@@ -217,7 +233,7 @@ export function ProductGrid() {
         ) : null}
 
         {filtered.length === 0 ? (
-          <div className="col-span-full flex h-40 items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white text-sm font-medium text-slate-500">
+          <div className="col-span-full flex h-40 items-center justify-center rounded-2xl border border-dashed border-stone-300 bg-white text-sm font-medium text-stone-500">
             {t("pos.noResults")}
           </div>
         ) : null}

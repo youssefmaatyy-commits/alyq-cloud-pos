@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Link } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { PageHeader } from "@/components/layout/AppShell";
@@ -54,6 +55,19 @@ export function SalesHistoryPage() {
   };
   const [status, setStatus] = useState<"all" | "completed" | "pending" | "voided">("all");
   const [method, setMethod] = useState<"all" | "cash" | "instapay">("all");
+  // Phase 46: the dashboard's Today Sales tile routes here as `?today=1`.
+  // Rendered as a visible toggle so the scope is never a hidden surprise.
+  const [todayOnly, setTodayOnly] = useState(false);
+  const [params, setParams] = useSearchParams();
+  const hydrated = useRef(false);
+  useEffect(() => {
+    if (hydrated.current) return;
+    hydrated.current = true;
+    if (params.get("today") === "1") {
+      setTodayOnly(true);
+      setParams({}, { replace: true });
+    }
+  }, []); // once, on mount
 
   const filtered = useMemo(() => {
     const needle = normalizeText(search);
@@ -61,6 +75,12 @@ export function SalesHistoryPage() {
     return sales.filter((sale) => {
       if (status !== "all" && sale.status !== status) return false;
       if (method !== "all" && sale.payment_method !== method) return false;
+      if (todayOnly) {
+        const now = new Date();
+        if (new Date(sale.created_at) < new Date(now.getFullYear(), now.getMonth(), now.getDate())) {
+          return false;
+        }
+      }
       if (terms.length > 0) {
         const haystack = normalizeText(
           [
@@ -77,7 +97,7 @@ export function SalesHistoryPage() {
       }
       return true;
     });
-  }, [sales, search, status, method]);
+  }, [sales, search, status, method, todayOnly]);
 
   const statusBadge = (status: string) => {
     if (status === "completed") return <Badge tone="success">{t("pos.status.completed")}</Badge>;
@@ -138,7 +158,7 @@ export function SalesHistoryPage() {
         }
       />
 
-      <Card className="mb-4 grid gap-3 sm:grid-cols-3">
+      <Card className="mb-4 grid gap-3 sm:grid-cols-4">
         <TextInput
           value={search}
           leading={<SearchIcon />}
@@ -166,6 +186,17 @@ export function SalesHistoryPage() {
           <option value="cash">{t("pos.payment.cash")}</option>
           <option value="instapay">{t("pos.payment.instapay")}</option>
         </SelectInput>
+        <label className="flex cursor-pointer items-center justify-between gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm font-semibold text-slate-800 shadow-sm">
+          {t("pos.salesTodayToggle")}
+          <input
+            type="checkbox"
+            checked={todayOnly}
+            onChange={(e) => setTodayOnly(e.target.checked)}
+            aria-label={t("pos.salesTodayToggle")}
+            data-testid="sales-today-toggle"
+            className="h-4 w-4 accent-stone-900"
+          />
+        </label>
       </Card>
 
       {error ? (

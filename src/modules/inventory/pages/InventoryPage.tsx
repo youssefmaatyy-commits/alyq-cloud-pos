@@ -1,5 +1,5 @@
-import { Fragment, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { PageHeader } from "@/components/layout/AppShell";
 import { canAct } from "@/lib/permissions/enforce";
@@ -54,6 +54,22 @@ export function InventoryPage() {
   const [pageSize, setPageSize] = useState(10);
   const [adjusting, setAdjusting] = useState<string | null>(null);
 
+  // Phase 46: the dashboard's Low/Out tiles land here pre-filtered
+  // (`?status=low` / `?status=out`). Hydrated once; unknown values ignored.
+  const [params, setParams] = useSearchParams();
+  const hydrated = useRef(false);
+  useEffect(() => {
+    if (hydrated.current) return;
+    hydrated.current = true;
+    const status = params.get("status");
+    if (status === "low" || status === "out" || status === "in") {
+      setFilters((current) => ({ ...current, status }));
+      setPage(1);
+      setParams({}, { replace: true });
+    }
+  }, []); // once, on mount
+
+
   const nameOf = (id: string | null) => {
     if (!id) return t("products.withoutCategory");
     return prettyCategoryId(id);
@@ -70,6 +86,25 @@ export function InventoryPage() {
     () => summarizeInventory(products, movements),
     [products, movements],
   );
+  // Phase 46: the combination shelf counted directly — a variant product with
+  // healthy-looking rollup can still hide a sold-out size, so the tiles below
+  // also say how many COMBINATIONS are low or gone.
+  const comboStats = useMemo(() => {
+    let low = 0;
+    let out = 0;
+    let total = 0;
+    for (const product of products) {
+      if (!product.stock_tracking_enabled) continue;
+      const variants = (variantsByProduct.get(product.id) ?? []).filter((v) => v.active);
+      if (variants.length === 0) continue;
+      total += variants.length;
+      for (const variant of variants) {
+        if (variant.stock_quantity <= 0) out += 1;
+        else if (variant.low_stock_level > 0 && variant.stock_quantity <= variant.low_stock_level) low += 1;
+      }
+    }
+    return { low, out, total };
+  }, [products, variantsByProduct]);
 
   const updateFilters = (next: InventoryFiltersValue) => {
     setFilters(next);
@@ -152,19 +187,31 @@ export function InventoryPage() {
           value={num(stats.totalStock, 0)}
           tone="primary"
           icon={<WarehouseIcon />}
-          hint={t("inventory.kpi.totalStockHint")}
+          hint={
+            comboStats.total > 0
+              ? `${t("inventory.kpi.totalStockHint")} · ${t("inventory.kpi.variantSkus", { count: comboStats.total })}`
+              : t("inventory.kpi.totalStockHint")
+          }
         />
         <StatTile
           label={t("inventory.kpi.lowStock")}
           value={String(stats.lowStock)}
           tone="warning"
-          hint={t("inventory.status.low")}
+          hint={
+            comboStats.low > 0
+              ? `${t("inventory.status.low")} · ${t("inventory.kpi.combosLow", { count: comboStats.low })}`
+              : t("inventory.status.low")
+          }
         />
         <StatTile
           label={t("inventory.kpi.outOfStock")}
           value={String(stats.outOfStock)}
           tone="danger"
-          hint={t("inventory.status.out")}
+          hint={
+            comboStats.out > 0
+              ? `${t("inventory.status.out")} · ${t("inventory.kpi.combosOut", { count: comboStats.out })}`
+              : t("inventory.status.out")
+          }
         />
         <StatTile
           label={t("inventory.kpi.movements7d")}

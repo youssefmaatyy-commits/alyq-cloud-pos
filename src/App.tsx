@@ -53,6 +53,8 @@ import {
 import { AdvancedReportsPage, ReportsPage } from "@/modules/reports";
 import { RolesPage, SettingsProvider, UsersPage } from "@/modules/settings";
 import { BackupPage } from "@/modules/backup";
+import { BrandingPage } from "@/modules/settings/pages/BrandingPage";
+import { SettingsHomePage } from "@/modules/settings/pages/SettingsHomePage";
 
 import {
   MarketingPage,
@@ -329,19 +331,20 @@ function AuthenticatedApp() {
 }
 
 /**
- * Settings → Users and Settings → Roles.
+ * Settings — the grouped hub (Phase 46).
  *
- * `/settings` itself holds no screen: it forwards to the directory, which is what
- * an administrator means by "settings" in an installation where the only two
- * settings screens are people and permissions. Each child carries its own
- * capability (`manage_users`, `manage_roles`) in `ROUTE_CAPABILITIES`, so a role
- * can be given one without the other.
+ * `/settings` is a real screen now: one card per destination, only for roles
+ * that may open it. Branding (Phase 46) edits the shared website settings
+ * document and asks for the same capability the write enforces server-side
+ * (`manage_website`). Users, Roles, Approvals and Backup keep their own
+ * capabilities in `ROUTE_CAPABILITIES`, so a role can be given one without
+ * the other.
  */
 function SettingsArea() {
   return (
     <SettingsProvider>
       <Routes>
-        <Route index element={<Navigate to="/settings/users" replace />} />
+        <Route index element={<SettingsHomePage />} />
         <Route path="users" element={<UsersPage />} />
         <Route path="roles" element={<RolesPage />} />
         {/* Approval thresholds live under Settings because changing them is
@@ -353,7 +356,11 @@ function SettingsArea() {
             a floor task, and the route guard reads `view_backups` from
             ROUTE_CAPABILITIES like every other path. */}
         <Route path="backup" element={<BackupPage />} />
-        <Route path="*" element={<Navigate to="/settings/users" replace />} />
+        {/* Shared brand identity (Phase 46): one brand source for the admin
+            shell, login, dashboard and receipts, stored in the website
+            settings document the storefront already reads. */}
+        <Route path="branding" element={<BrandingPage />} />
+        <Route path="*" element={<Navigate to="/settings" replace />} />
       </Routes>
     </SettingsProvider>
   );
