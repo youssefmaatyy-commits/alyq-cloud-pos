@@ -14,7 +14,7 @@
 
 ## 3. Final HEAD
 
-`62d8e4d5af59637d603a5d9c6a2ac4dcba68a00d` (implementation + this report, one commit atop `0caa8dd`).
+`c37900c8dc3df5e22bc42571b8a6f7b5245d5b1f` = `62d8e4d` (implementation) + report-SHA fixup, atop `0caa8dd`.
 
 ## 4. Nav audit — what changed and why it is safe
 
@@ -101,15 +101,15 @@ Three selftests encoded the old UI shape and were updated to the Phase 49 contra
 
 ## 29–36. SHAs, tree, canonical/hosted
 
-- Commit: `62d8e4d5af59637d603a5d9c6a2ac4dcba68a00d`
-- Session remote tip after push: `62d8e4d5af59637d603a5d9c6a2ac4dcba68a00d` (= local HEAD)
+- Commit: `62d8e4d` (implementation) · `c37900c` (report SHAs)
+- Session remote tip after push: `c37900c8dc3df5e22bc42571b8a6f7b5245d5b1f` (= local HEAD)
 - Working tree: clean, 0 changed files
 - Canonical: `a96b9f3721f42f1983dcf968ac6b159c01980f1f`, untouched
 - Hosted Supabase: untouched (through migration 0043)
 
 ## 37. Commit / session / canonical
 
-- Session branch: `arena/01a0b007-alyq-cloud-pos` — commit `62d8e4d` (implementation + report), pushed to origin only (`0caa8dd..62d8e4d`).
+- Session branch: `arena/01a0b007-alyq-cloud-pos` — commits `62d8e4d` + `c37900c`, pushed to origin only (`0caa8dd..c37900c`). Final session remote: `c37900c8dc3df5e22bc42571b8a6f7b5245d5b1f`.
 - Canonical `arena/01a0a01f-alyq-cloud-pos` (`a96b9f3721f42f1983dcf968ac6b159c01980f1f`): **untouched, not pushed.**
 - Hosted Supabase: **untouched** — migrations 0044–0048 remain pending, by design.
 
