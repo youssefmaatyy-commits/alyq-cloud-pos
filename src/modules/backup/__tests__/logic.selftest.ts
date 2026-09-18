@@ -264,6 +264,13 @@ const migration = fs.readFileSync(
   path.join(repoRoot(), "supabase/migrations/0029_backup_and_recovery.sql"),
   "utf8",
 );
+// Phase 48: the order functions moved forward — 0048 re-states them with the
+// Phase 43/45 tables the 0029 array predated (and the trigger-owned restore
+// exclusion). Order parity reads THIS file; grants and vocabulary stay 0029.
+const orderMigration = fs.readFileSync(
+  path.join(repoRoot(), "supabase/migrations/0048_backup_covers_variants.sql"),
+  "utf8",
+);
 
 // ── fixtures ─────────────────────────────────────────────────────────────────
 
@@ -549,18 +556,31 @@ test("the offline allowlist is the business, and the session is not in it", () =
   assert.equal(new Set(DEMO_STORES).size, DEMO_STORES.length, "no store is listed twice");
 });
 
-// ── 2. parity with migration 0029 ───────────────────────────────────────────
+// ── 2. parity with the backup-order migration (0048, re-stating 0029) ──────
 test("the live table list agrees with the migration that reads it", () => {
   assert.equal(new Set(LIVE_TABLES).size, LIVE_TABLES.length, "no table is listed twice");
+  // Phase 48 regression pin: the Phase 43/45 tables were born AFTER 0029 and
+  // the original order silently dropped them from every live snapshot.
+  for (const required of ["product_variants", "catalogue_codes", "storefront_category_content"]) {
+    assert.ok(LIVE_TABLES.includes(required), `${required} is in the backup order`);
+    assert.ok(
+      LIVE_TABLES.indexOf(required) > LIVE_TABLES.indexOf("products"),
+      `${required} restores after its parent products`,
+    );
+  }
+  assert.ok(
+    LIVE_TABLES.indexOf("catalogue_codes") > LIVE_TABLES.indexOf("product_variants"),
+    "catalogue_codes restores after product_variants",
+  );
   assert.deepEqual(LIVE_TABLES_DELETE_ORDER, [...LIVE_TABLES].reverse(), "deletes run in reverse");
 
-  const orderMatch = migration.match(/create or replace function public\.backup_table_order\(\)[\s\S]*?select array\[([\s\S]*?)\];/);
-  assert.ok(orderMatch, "migration 0029 defines backup_table_order()");
+  const orderMatch = orderMigration.match(/create or replace function public\.backup_table_order\(\)[\s\S]*?select array\[([\s\S]*?)\];/);
+  assert.ok(orderMatch, "the backup-order migration defines backup_table_order()");
   const sqlTables = [...orderMatch[1].matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
   assert.deepEqual(sqlTables, [...LIVE_TABLES], "the SQL array is this list, in this order");
 
-  const excludeMatch = migration.match(/where t <> all \(array\[([^\]]*)\]\)/);
-  assert.ok(excludeMatch, "migration 0029 states which tables a restore leaves alone");
+  const excludeMatch = orderMigration.match(/where t <> all \(array\[([^\]]*)\]\)/);
+  assert.ok(excludeMatch, "the backup-order migration states which tables a restore leaves alone");
   const sqlExcluded = [...excludeMatch[1].matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
   assert.deepEqual(sqlExcluded.slice().sort(), [...LIVE_RESTORE_EXCLUDED].sort());
   assert.deepEqual(

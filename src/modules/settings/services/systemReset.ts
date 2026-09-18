@@ -26,6 +26,8 @@ import { getSupabaseClient, isSupabaseConfigured } from "@/lib/supabase/client";
 import { signIn } from "@/lib/auth/services/authService";
 import { getCurrentAuthUser } from "@/lib/auth/services/sessionStore";
 import { capabilitiesOfUser } from "@/lib/permissions/enforce";
+import { verifyPassword } from "@/lib/auth/services/password";
+import { findStaffByUsername } from "@/lib/auth/data/staffDirectory";
 import { safeStorage } from "@/modules/products/data/demoSeed";
 
 // ── types ───────────────────────────────────────────────────────────────────
@@ -142,6 +144,7 @@ function translateRpcError(err: unknown): never {
   const known = [
     "RESET_UNAUTHORIZED",
     "RESET_REAUTH_REQUIRED",
+    "RESET_REAUTH_LOCKED",
     "RESET_PHRASE_MISMATCH",
     "RESET_BAD_OPTIONS",
     "RESET_BAD_MODE",
@@ -169,6 +172,7 @@ export async function systemResetPreview(
 export async function clearOperationalData(
   options: OperationalOptions,
   phrase: string,
+  password: string,
 ): Promise<ResetResult> {
   assertPhrase(phrase, OPERATIONAL_PHRASE);
   assertFresh();
@@ -178,12 +182,13 @@ export async function clearOperationalData(
         p_options: options,
         p_confirmation: phrase.trim().toUpperCase(),
         p_fresh_until: freshUntilIso(),
+        p_password: password,
       });
     if (error) translateRpcError(error);
     reauthAt = 0; // one reset per proof
     return data as ResetResult;
   }
-  const result = demoClearOperational(options, phrase);
+  const result = await demoClearOperational(options, phrase, password);
   reauthAt = 0;
   return result;
 }
@@ -191,6 +196,7 @@ export async function clearOperationalData(
 export async function factoryReset(
   options: FactoryOptions,
   phrase: string,
+  password: string,
 ): Promise<ResetResult> {
   assertPhrase(phrase, FACTORY_PHRASE);
   assertFresh();
@@ -200,12 +206,13 @@ export async function factoryReset(
         p_options: options,
         p_confirmation: phrase.trim().toUpperCase(),
         p_fresh_until: freshUntilIso(),
+        p_password: password,
       });
     if (error) translateRpcError(error);
     reauthAt = 0;
     return data as ResetResult;
   }
-  const result = demoFactoryReset(options, phrase);
+  const result = await demoFactoryReset(options, phrase, password);
   reauthAt = 0;
   return result;
 }
@@ -324,17 +331,37 @@ const FACTORY_KEYS: (keyof FactoryOptions)[] = [
   "products", "categories", "customers", "website", "branding", "delivery_payment",
 ];
 
-function demoGate(
+/**
+ * The demo mirror of the server's re-auth proof (0047, Phase 48): the wizard
+ * having asked for the password proves nothing on its own — the engine checks
+ * it against the staff directory's verifier, exactly like sign-in does. The
+ * clear text never leaves this call; nothing about it is stored or audited.
+ */
+async function demoVerifyPassword(password: string): Promise<void> {
+  if (!password || !password.trim()) {
+    throw new ResetError("RESET_REAUTH_REQUIRED", "Re-enter the current password first.");
+  }
+  const entry = findStaffByUsername(getCurrentAuthUser().username);
+  const verifier = entry?.verifier ?? null;
+  const ok = verifier ? await verifyPassword(password, verifier) : false;
+  if (!ok) {
+    throw new ResetError("RESET_REAUTH_REQUIRED", "That current password was not accepted.");
+  }
+}
+
+async function demoGate(
   mode: ResetMode,
   options: Record<string, boolean>,
   allowed: string[],
   phrase: string,
   expected: string,
-): void {
+  password: string,
+): Promise<void> {
   if (!demoIsAdmin()) {
     throw new ResetError("RESET_UNAUTHORIZED", "manage_system_reset is required.");
   }
   assertFresh();
+  await demoVerifyPassword(password);
   assertPhrase(phrase, expected);
   for (const key of Object.keys(options)) {
     if (!allowed.includes(key)) {
@@ -418,8 +445,12 @@ function demoPreview(mode: ResetMode, options: Record<string, boolean>): ResetPr
   };
 }
 
-function demoClearOperational(options: OperationalOptions, phrase: string): ResetResult {
-  demoGate("operational", options as unknown as Record<string, boolean>, OPERATIONAL_KEYS as string[], phrase, OPERATIONAL_PHRASE);
+async function demoClearOperational(
+  options: OperationalOptions,
+  phrase: string,
+  password: string,
+): Promise<ResetResult> {
+  await demoGate("operational", options as unknown as Record<string, boolean>, OPERATIONAL_KEYS as string[], phrase, OPERATIONAL_PHRASE, password);
 
   const catalog = readJson<{ products: { id: string; variants_enabled: boolean; stock_quantity: number }[]; variants: { id: string; product_id: string; stock_quantity: number }[]; categories: unknown[] }>(
     K.catalog, { products: [], variants: [], categories: [] },
@@ -536,8 +567,8 @@ function demoClearOperational(options: OperationalOptions, phrase: string): Rese
   };
 }
 
-function demoFactoryReset(options: FactoryOptions, phrase: string): ResetResult {
-  demoGate("factory", options as unknown as Record<string, boolean>, FACTORY_KEYS as string[], phrase, FACTORY_PHRASE);
+async function demoFactoryReset(options: FactoryOptions, phrase: string, password: string): Promise<ResetResult> {
+  await demoGate("factory", options as unknown as Record<string, boolean>, FACTORY_KEYS as string[], phrase, FACTORY_PHRASE, password);
   const catalog = readJson<{ products: unknown[]; variants: unknown[]; categories: unknown[] }>(
     K.catalog, { products: [], variants: [], categories: [] },
   );

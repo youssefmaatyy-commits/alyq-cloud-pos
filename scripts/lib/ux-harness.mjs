@@ -263,11 +263,17 @@ export async function createUxHarness({ beforeImport } = {}) {
     await sleep(400);
   };
 
-  const placeOrder = async ({ payment = "cod", fulfilment = "Pickup" } = {}) => {
+  const placeOrder = async ({ payment = "cod", fulfilment = "Pickup", address = null } = {}) => {
     await navigate("#/store/checkout", 700);
     await waitFor(() => bodyText().includes("Checkout"), { label: "the checkout page" });
     setField("input[autocomplete='name']", "Mona Mahmoud");
     setField("input[autocomplete='tel']", "01001234567");
+    if (address) {
+      setField("input[autocomplete='address-level2']", address.city);
+      setField("input[autocomplete='address-level3']", address.area);
+      setField("input[autocomplete='street-address']", address.street);
+      await sleep(300);
+    }
     if (fulfilment) {
       const button = [...document.querySelectorAll("button")].find(
         (n) => (n.textContent ?? "").trim().startsWith(fulfilment),

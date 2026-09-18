@@ -5247,6 +5247,16 @@ declare
   v_audit    integer;
   v_settings jsonb;
 begin
+  -- Phase 48: the re-auth proof is the CURRENT PASSWORD, verified server-side
+  -- against the auth credential. Give the fixture admin (and cashier) the same
+  -- shared credential the demo directory carries, hashed for auth.users.
+  -- (The session is `authenticated` by now — an earlier block switched it and
+  -- only the superuser session_user may switch back; the damper cleanup below
+  -- needs the owner too.)
+  perform pg_temp.become(null, 'postgres');
+  update auth.users set encrypted_password = crypt('alyq1234', gen_salt('bf'))
+  where id in (v_admin, v_cashier);
+
   perform pg_temp.become(v_admin, 'authenticated');
 
   -- ── seed: category, a plain product, a variant product with 2+2 ──────────
@@ -5331,12 +5341,12 @@ begin
   exception when insufficient_privilege then null; end;
   begin
     perform public.system_clear_operational_data(
-      '{"sales": true}'::jsonb, 'DELETE OPERATIONAL DATA', now() + interval '1 minute');
+      '{"sales": true}'::jsonb, 'DELETE OPERATIONAL DATA', now() + interval '1 minute', 'alyq1234');
     raise exception 'a cashier cleared operational data';
   exception when insufficient_privilege then null; end;
   begin
     perform public.system_factory_reset(
-      '{"products": true}'::jsonb, 'DELETE ALL DATA', now() + interval '1 minute');
+      '{"products": true}'::jsonb, 'DELETE ALL DATA', now() + interval '1 minute', 'alyq1234');
     raise exception 'a cashier ran a factory reset';
   exception when insufficient_privilege then null; end;
 
@@ -5344,7 +5354,7 @@ begin
   perform pg_temp.become(v_admin, 'authenticated');
   begin
     perform public.system_clear_operational_data(
-      '{"sales": true}'::jsonb, 'delete operational data ', now() + interval '1 minute');
+      '{"sales": true}'::jsonb, 'delete operational data ', now() + interval '1 minute', 'alyq1234');
     raise exception 'a wrong phrase passed (case/trim must be normalized)';
   exception when others then
     if sqlerrm not like 'RESET_PHRASE_MISMATCH:%' then
@@ -5377,13 +5387,40 @@ begin
   -- unknown option key: abort, never silently do less
   begin
     perform public.system_clear_operational_data(
-      '{"sales": true, "explode": true}'::jsonb, 'DELETE OPERATIONAL DATA', now() + interval '1 minute');
+      '{"sales": true, "explode": true}'::jsonb, 'DELETE OPERATIONAL DATA', now() + interval '1 minute', 'alyq1234');
     raise exception 'an unknown option key passed';
   exception when others then
     if sqlerrm not like 'RESET_BAD_OPTIONS:%' then
       raise exception 'unknown key failed with the wrong error: %', sqlerrm;
     end if;
   end;
+
+  -- ── Phase 48: the password itself is the proof, checked server-side ───────
+  -- the correct phrase with a WRONG current password never reaches the phrase
+  begin
+    perform public.system_clear_operational_data(
+      '{"sales": true}'::jsonb, 'DELETE OPERATIONAL DATA', now() + interval '1 minute', 'totally-wrong');
+    raise exception 'a wrong current password passed';
+  exception when others then
+    if sqlerrm not like 'RESET_REAUTH_REQUIRED:%' then
+      raise exception 'wrong password failed with the wrong error: %', sqlerrm;
+    end if;
+  end;
+
+  -- a call with NO password (the pre-48 call shape) is refused outright
+  begin
+    perform public.system_clear_operational_data(
+      '{"sales": true}'::jsonb, 'DELETE OPERATIONAL DATA', now() + interval '1 minute');
+    raise exception 'a passwordless reset passed';
+  exception when others then
+    if sqlerrm not like 'RESET_REAUTH_REQUIRED:%' then
+      raise exception 'passwordless call failed with the wrong error: %', sqlerrm;
+    end if;
+  end;
+
+  -- (no failed-attempt counter exists on the server — a failed RPC is one
+  -- rolled-back statement, so a tally written inside it would die with the
+  -- raise; the honest posture is the per-call bcrypt proof itself)
 
   -- ── preview: server counts, zero mutation ─────────────────────────────────
   select count(*) into v_n from public.sales;
@@ -5410,7 +5447,8 @@ begin
   v_summary := public.system_clear_operational_data(
     '{"sales": true, "orders": true, "shifts": true, "quantities": true}'::jsonb,
     'DELETE OPERATIONAL DATA',
-    now() + interval '1 minute'
+    now() + interval '1 minute',
+    'alyq1234'
   );
 
   select count(*) into v_n from public.sales;
@@ -5498,7 +5536,8 @@ begin
     perform public.system_factory_reset(
       '{"products": true, "categories": true, "customers": true, "website": true, "branding": false}'::jsonb,
       'DELETE ALL DATA',
-      now() + interval '1 minute'
+      now() + interval '1 minute',
+      'alyq1234'
     );
     raise exception 'the forced failure did not fire';
   exception when others then
@@ -5525,7 +5564,8 @@ begin
   v_summary := public.system_factory_reset(
     '{"products": true, "categories": true, "customers": true, "website": true, "delivery_payment": false, "branding": false}'::jsonb,
     'DELETE ALL DATA',
-    now() + interval '1 minute'
+    now() + interval '1 minute',
+    'alyq1234'
   );
 
   select count(*) into v_n from public.products;

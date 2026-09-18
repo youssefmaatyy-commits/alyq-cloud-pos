@@ -380,10 +380,70 @@ $$;
 -- is deliberately short (10 minutes) so a stale prompt cannot authorize a
 -- reset an hour later. The password itself is verified by the auth provider —
 -- it is never sent here, never stored, never logged.
+-- The re-auth PROOF, not the re-auth theatre: the browser asking for the
+-- current password proves nothing server-side, and p_fresh_until is a stamp
+-- the client made up. What proves identity is the password itself, checked
+-- HERE against the auth credential through pgcrypto, on EVERY destructive
+-- call. (Phase 48 amendment: the original release trusted the client's
+-- freshness stamp alone, which let a hijacked admin session call the
+-- destructive RPCs directly.)
+--
+-- Why there is no failed-attempt counter here, deliberately: a failed RPC is
+-- one rolled-back statement, so any failure tally written inside it dies with
+-- the raise — Postgres has no autonomous transactions. A counter that never
+-- fires would be security theatre. The brute-force posture is therefore the
+-- honest one: every single guess is a full authenticated API request against
+-- a bcrypt check, rate-limitable at the gateway (see the deployment plan's
+-- "enable restrictive API rate limits" step).
+--
+-- Where pgcrypto landed differs by environment (the `extensions` schema on
+-- hosted Supabase, elsewhere the default schema). Resolve it once, here, and
+-- bake the qualified call into this wrapper. SECURITY DEFINER because
+-- auth.users is not readable by the wire role; the wrapper is revoked below,
+-- so it is reachable only from inside the definer RPCs.
+do $reauth_proof$
+declare
+  v_ns text;
+begin
+  create extension if not exists pgcrypto;
+  select n.nspname into v_ns
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+  where p.proname = 'crypt' and p.pronargs = 2
+  order by case when n.nspname = 'extensions' then 0 else 1 end
+  limit 1;
+  if v_ns is null then
+    raise exception '0047: pgcrypto.crypt(text,text) is not available';
+  end if;
+  execute format($fn$
+    create or replace function public.system_password_matches(p_password text, p_uid uuid)
+    returns boolean
+    language sql
+    stable
+    security definer
+    set search_path = public, %I
+    as $body$
+      select exists (
+        select 1
+        from auth.users u
+        where u.id = p_uid
+          and u.encrypted_password is not null
+          and crypt(p_password, u.encrypted_password) = u.encrypted_password
+      )
+    $body$;
+  $fn$, v_ns);
+end;
+$reauth_proof$;
+
+revoke all on function public.system_password_matches(text, uuid) from public;
+revoke all on function public.system_password_matches(text, uuid) from anon;
+revoke all on function public.system_password_matches(text, uuid) from authenticated;
+
 create or replace function public.system_assert_authorized(
   p_fresh_until timestamptz,
   p_confirmation text,
-  p_expected_phrase text
+  p_expected_phrase text,
+  p_password text default null
 )
 returns uuid
 language plpgsql
@@ -421,8 +481,22 @@ begin
       using errcode = 'insufficient_privilege';
   end if;
 
+  -- Freshness narrows the window; it is the weaker half of the proof and
+  -- never sufficient alone.
   if p_fresh_until is null or p_fresh_until < now() - interval '10 minutes' or p_fresh_until > now() + interval '10 minutes' then
     raise exception 'RESET_REAUTH_REQUIRED: re-enter the current password first'
+      using errcode = 'insufficient_privilege';
+  end if;
+
+  -- The password itself, verified against the auth credential. A stamped
+  -- window from the browser is not evidence; this is.
+  if p_password is null or btrim(p_password) = '' then
+    raise exception 'RESET_REAUTH_REQUIRED: re-enter the current password first'
+      using errcode = 'insufficient_privilege';
+  end if;
+
+  if not public.system_password_matches(btrim(p_password), v_uid) then
+    raise exception 'RESET_REAUTH_REQUIRED: that current password was not accepted'
       using errcode = 'insufficient_privilege';
   end if;
 
@@ -433,7 +507,6 @@ begin
   return v_uid;
 end;
 $$;
-
 -- Reject unknown option keys outright: a typo must abort, never silently do
 -- less (or more) than the screen promised.
 create or replace function public.system_assert_options(
@@ -598,7 +671,8 @@ $$;
 create or replace function public.system_clear_operational_data(
   p_options jsonb,
   p_confirmation text,
-  p_fresh_until timestamptz
+  p_fresh_until timestamptz,
+  p_password text default null
 )
 returns jsonb
 language plpgsql
@@ -612,7 +686,7 @@ declare
   v_actor    text;
   v_counts   integer := 0;
 begin
-  v_uid := public.system_assert_authorized(p_fresh_until, p_confirmation, 'DELETE OPERATIONAL DATA');
+  v_uid := public.system_assert_authorized(p_fresh_until, p_confirmation, 'DELETE OPERATIONAL DATA', p_password);
 
   perform public.system_assert_options(p_options,
     array['sales','returns','orders','shifts','expenses','customers','movements','quantities','audit']);
@@ -756,7 +830,8 @@ $$;
 create or replace function public.system_factory_reset(
   p_options jsonb,
   p_confirmation text,
-  p_fresh_until timestamptz
+  p_fresh_until timestamptz,
+  p_password text default null
 )
 returns jsonb
 language plpgsql
@@ -773,7 +848,7 @@ declare
   v_counts   integer := 0;
   v_depth    integer := 0;
 begin
-  v_uid := public.system_assert_authorized(p_fresh_until, p_confirmation, 'DELETE ALL DATA');
+  v_uid := public.system_assert_authorized(p_fresh_until, p_confirmation, 'DELETE ALL DATA', p_password);
 
   perform public.system_assert_options(p_options,
     array['products','categories','customers','website','branding','delivery_payment']);
@@ -978,20 +1053,21 @@ $$;
 revoke execute on function public.system_assert_super_admin(uuid) from public, anon, authenticated;
 revoke execute on function public.system_assert_options(jsonb, text[]) from public, anon, authenticated;
 revoke execute on function public.system_reset_preview(text, jsonb) from public, anon;
-revoke execute on function public.system_clear_operational_data(jsonb, text, timestamptz) from public, anon;
-revoke execute on function public.system_factory_reset(jsonb, text, timestamptz) from public, anon;
+revoke execute on function public.system_clear_operational_data(jsonb, text, timestamptz, text) from public, anon;
+revoke execute on function public.system_factory_reset(jsonb, text, timestamptz, text) from public, anon;
+revoke execute on function public.system_assert_authorized(timestamptz, text, text, text) from public, anon, authenticated;
 revoke execute on function public.system_reset_report_failure(text, text, text) from public, anon;
 
 grant execute on function public.system_reset_preview(text, jsonb) to authenticated;
-grant execute on function public.system_clear_operational_data(jsonb, text, timestamptz) to authenticated;
-grant execute on function public.system_factory_reset(jsonb, text, timestamptz) to authenticated;
+grant execute on function public.system_clear_operational_data(jsonb, text, timestamptz, text) to authenticated;
+grant execute on function public.system_factory_reset(jsonb, text, timestamptz, text) to authenticated;
 grant execute on function public.system_reset_report_failure(text, text, text) to authenticated;
 
 comment on function public.system_reset_preview(text, jsonb) is
   'Danger Zone (Phase 47): server-calculated delete/preserve counts for a reset mode. Read-only.';
-comment on function public.system_clear_operational_data(jsonb, text, timestamptz) is
-  'Danger Zone (Phase 47): atomic, audited clear of transactional data. Requires manage_system_reset, a fresh re-authentication window and the exact phrase DELETE OPERATIONAL DATA.';
-comment on function public.system_factory_reset(jsonb, text, timestamptz) is
-  'Danger Zone (Phase 47): atomic, audited factory reset. Same gates with the phrase DELETE ALL DATA; never touches auth, profiles, schema or migration history.';
+comment on function public.system_clear_operational_data(jsonb, text, timestamptz, text) is
+  'Danger Zone (Phase 47/48): atomic, audited clear of transactional data. Requires manage_system_reset, the exact phrase DELETE OPERATIONAL DATA, and the caller''s CURRENT PASSWORD, verified server-side against the auth credential (a client freshness stamp alone is not a proof).';
+comment on function public.system_factory_reset(jsonb, text, timestamptz, text) is
+  'Danger Zone (Phase 47/48): atomic, audited factory reset. Same gates with the phrase DELETE ALL DATA plus the server-verified current password; never touches auth, profiles, schema or migration history.';
 comment on function public.system_reset_report_failure(text, text, text) is
   'Danger Zone (Phase 47): after a rolled-back reset, records the failure in the (append-only) audit trail. Same capability required; never receives credentials.';

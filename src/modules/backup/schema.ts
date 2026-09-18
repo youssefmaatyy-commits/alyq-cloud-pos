@@ -57,6 +57,11 @@ export const LIVE_TABLES: readonly string[] = [
   "shifts",
   // children of the above
   "products",
+  // Phase 43: a variant row is a child of its product; catalogue codes point
+  // at products AND variants. Both must restore between their parents and the
+  // code-carrying children, or a restored shop loses every combination.
+  "product_variants",
+  "catalogue_codes",
   "profiles",
   "expenses",
   "sales",
@@ -68,6 +73,9 @@ export const LIVE_TABLES: readonly string[] = [
   "sale_payments",
   "stock_movements",
   "product_content",
+  // Phase 45: one content row per storefront category — a child of categories,
+  // restored beside the rest of the presentation layer.
+  "storefront_category_content",
   "store_reviews",
   "online_order_items",
   "order_events",
@@ -99,13 +107,16 @@ export const LIVE_TABLES_DELETE_ORDER: readonly string[] = [...LIVE_TABLES].reve
  * offline copy carries its own history with it.
  */
 export const LIVE_RESTORE_EXCLUDED: readonly string[] = [
+  // trigger-owned (0043): the sync triggers rebuild it as products/variants
+  // come back — re-inserting the captured rows would collide with them.
+  "catalogue_codes",
   "role_aliases",
   "role_capabilities",
   "audit_actions",
   "audit_log",
 ];
 
-/** What a live restore actually rewrites: the order above, minus the four. */
+/** What a live restore actually rewrites: the order above, minus the exclusions. */
 export const LIVE_RESTORE_TABLES: readonly string[] = LIVE_TABLES.filter(
   (table) => !LIVE_RESTORE_EXCLUDED.includes(table),
 );
@@ -134,6 +145,8 @@ export const DEMO_STORES: readonly string[] = [
   // catalogue
   "alyq.demo.catalog.v1",
   "alyq.demo.product_contents.v1",
+  // Phase 45: one content row per storefront category (live side: 0048)
+  "alyq.demo.storefront_category_contents.v1",
   // trading
   "alyq.demo.sales.v1",
   "alyq.demo.sale_counter.v1",

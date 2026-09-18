@@ -247,9 +247,17 @@ const listbox = document.querySelector('[role="listbox"]');
 assert.ok(listbox, "the picker's listbox is open");
 const option = [...listbox.querySelectorAll("button")].find((b) => (b.textContent ?? "").includes("سارة"));
 assert.ok(option, "the matching customer is offered");
-clickEl(option);
+// the options pick on mousedown (beating the input's blur) — press it like a
+// finger, then require the at-rest input to show the chosen NAME, which only
+// a real selection produces (the typed query would satisfy nothing)
+option.dispatchEvent(new dom.window.MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+option.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
 await sleep(300);
-assert.ok(bodyText().includes("سارة المحمود"), "the sale is now for سارة المحمود");
+assert.equal(
+  document.querySelector('input[aria-label="Select customer"]').value,
+  "سارة المحمود",
+  "the picker holds the chosen customer, not the typed query",
+);
 console.log("  ✓ the customer is attached to the sale");
 
 // ── 9 · complete the sale through the existing flow ─────────────────────────

@@ -28,6 +28,7 @@
  */
 import type { Product } from "@/modules/products/types";
 import { getDemoRepository } from "@/modules/products/data/demoRepository";
+import { recordAudit } from "@/modules/audit/services/auditService";
 import { safeStorage } from "@/modules/products/data/demoSeed";
 import { getDemoSalesRepository } from "@/modules/pos/data/demoRepository";
 import type {
@@ -1464,6 +1465,35 @@ export class DemoOnlineRepository
 
       this.orders[index] = next;
       this.persistOrders();
+
+      // Phase 48 audit parity: the live RPCs write these rows (0018 lines for
+      // payment_approved / approved), and demo mode now writes the same acts
+      // with the same vocabulary — the trail means one thing in both modes.
+      // Fire-and-forget: an audit failure must not undo an approved order.
+      const auditAction =
+        input.action === "approve"
+          ? "online_order.approved"
+          : input.action === "payment_approve"
+            ? "online_order.payment_approved"
+            : input.action === "payment_reject"
+              ? "online_order.payment_rejected"
+              : null;
+      if (auditAction) {
+        void recordAudit({
+          action: auditAction,
+          entity: "online_order",
+          entity_id: next.id,
+          entity_label: next.order_number,
+          details: {
+            order: next.order_number,
+            total: next.total,
+            delivery_type: next.delivery_type,
+            payment_method: next.payment_method,
+            payment_status: next.payment_status,
+            status: next.status,
+          },
+        });
+      }
       return resolveValue(next);
     } catch (error) {
       throw toOnlineError(error);

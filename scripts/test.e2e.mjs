@@ -61,6 +61,11 @@ const SUITES = [
     title: "Dashboard / Admin UX (Phase 46): KPI routing, website split, variant-aware alerts, mobile drawer, RTL, permissions",
   },
   {
+    id: "final",
+    file: "scripts/final.flow.mjs",
+    title: "Final integrated flow (Phase 48): login → shift → customer → variant ring → POS → return → storefront → delivery/COD/InstaPay → settle → category → KPIs → reports → Danger Zone preview → permissions → audit",
+  },
+  {
     id: "dangerzone",
     file: "scripts/dangerzone.flow.mjs",
     title: "Danger Zone (Phase 47): admin-only cards, wizard gates, preview, re-auth, phrase, operational clear, factory reset, audit survival",

@@ -17,7 +17,7 @@
  * the option keys and the protected admin AGAIN server-side — this screen is
  * the convenience, never the guard.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { PageHeader } from "@/components/layout/AppShell";
 import { Button, Card, Modal } from "@/components/ui";
 import { Badge } from "@/components/ui/Feedback";
@@ -98,6 +98,9 @@ export function SystemSettingsPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string | null>(null);
+  // The verified current password, held only for the execute call that needs
+  // it server-side (the RPC re-proves it) and wiped the moment execute ends.
+  const verifiedPassword = useRef<string>("");
   const [result, setResult] = useState<ResetResult | null>(null);
 
   const expectedPhrase = mode === "factory" ? FACTORY_PHRASE : OPERATIONAL_PHRASE;
@@ -147,6 +150,7 @@ export function SystemSettingsPage() {
         setError(t("dz.error.password"));
         return;
       }
+      verifiedPassword.current = password;
       setPassword("");
       setStage("phrase");
     } finally {
@@ -161,8 +165,8 @@ export function SystemSettingsPage() {
     setError(null);
     try {
       const data = mode === "factory"
-        ? await factoryReset(factory, phrase)
-        : await clearOperationalData(operational, phrase);
+        ? await factoryReset(factory, phrase, verifiedPassword.current)
+        : await clearOperationalData(operational, phrase, verifiedPassword.current);
       setResult(data);
       setStage("done");
     } catch (err) {
@@ -173,6 +177,7 @@ export function SystemSettingsPage() {
       void reportResetFailure(mode, "execute", message);
     } finally {
       setBusy(false);
+      verifiedPassword.current = "";
     }
   };
 
