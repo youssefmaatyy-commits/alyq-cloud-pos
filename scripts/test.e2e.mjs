@@ -49,6 +49,11 @@ const SUITES = [
     file: "scripts/categories.flow.mjs",
     title: "Category lifecycle (empty delete, blocked delete w/ count, archive → hidden, reactivate, atomic move+delete, archived destination refused)",
   },
+  {
+    id: "storefront",
+    file: "scripts/storefront.flow.mjs",
+    title: "Storefront customization (Phase 45): builder → live shop window, AR/RTL, variant ring sells, checkout copy",
+  },
   { id: "backup", file: "scripts/backup.flow.mjs", title: "Backup & recovery flow (snapshot, download, health, schedule, restore, permissions)" },
   { id: "crash", file: "scripts/crash.flow.mjs", title: "Crash recovery (ErrorBoundary: the screen, no leaked detail, the sibling survives)" },
   {

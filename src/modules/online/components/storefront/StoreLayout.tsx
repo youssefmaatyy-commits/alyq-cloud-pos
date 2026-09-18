@@ -196,13 +196,21 @@ function AnnouncementBar() {
 
 export function SocialRow({ size = "md" }: { size?: "sm" | "md" }) {
   const { settings } = useStorefront();
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const links = useMemo(() => resolvedSocialLinks(settings), [settings]);
   if (!settings.footer.show_social) return null;
 
+  const pick2 = (lang2: string, ar: string, en: string) => (lang2 === "ar" ? ar : en) || ar || en;
+  const PLATFORM_NAMES: Record<SocialLinkConfig["platform"], string> = {
+    instagram: "Instagram",
+    facebook: "Facebook",
+    tiktok: "TikTok",
+    whatsapp: "WhatsApp",
+  };
   const render = (config: SocialLinkConfig) => {
     if (!config.enabled) return null;
-    const label = config.label_ar || config.label_en;
+    const label =
+      pick2(lang, config.label_ar, config.label_en) || PLATFORM_NAMES[config.platform];
     if (config.platform === "whatsapp") {
       const href = whatsappHref(config.url, t("store.contact.whatsappMessage"));
       if (!href) return null;
@@ -212,7 +220,7 @@ export function SocialRow({ size = "md" }: { size?: "sm" | "md" }) {
           href={href}
           target="_blank"
           rel="noopener noreferrer"
-          aria-label={label || "WhatsApp"}
+          aria-label={label}
           className={cn(
             "grid place-items-center rounded-full border border-[var(--store-hairline)] text-[var(--store-muted)] transition hover:border-[var(--store-text)] hover:text-[var(--store-text)]",
             size === "sm" ? "h-8 w-8" : "h-9 w-9",
@@ -230,7 +238,7 @@ export function SocialRow({ size = "md" }: { size?: "sm" | "md" }) {
         href={href}
         target="_blank"
         rel="noopener noreferrer"
-        aria-label={label || config.platform}
+        aria-label={label}
         className={cn(
           "grid place-items-center rounded-full border border-[var(--store-hairline)] text-[var(--store-muted)] transition hover:border-[var(--store-text)] hover:text-[var(--store-text)]",
           size === "sm" ? "h-8 w-8" : "h-9 w-9",
@@ -466,6 +474,12 @@ function Header({
               {link.label}
             </NavLink>
           ))}
+          <Link
+            to="/store/products"
+            className="text-[11px] font-bold uppercase tracking-[0.18em] text-[var(--store-muted)] transition hover:text-[var(--store-text)]"
+          >
+            {t("store.nav.products")}
+          </Link>
           <Link
             to="/store/products?sort=newest"
             className="text-[11px] font-bold uppercase tracking-[0.18em] text-[var(--store-muted)] transition hover:text-[var(--store-text)]"

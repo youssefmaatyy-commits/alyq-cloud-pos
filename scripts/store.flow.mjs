@@ -816,6 +816,13 @@ async function main() {
   // ── 10 · the builder goes live on the storefront ──────────────────────────
   await navigate("#/online/website", 900);
   await waitFor(() => bodyText().includes("Website"), { label: "the website builder" });
+  // Phase 45: the builder's sub-tabs; the colour picker lives under Theme.
+  const themeTab = [...document.querySelectorAll("button")].find(
+    (n) => (n.textContent ?? "").trim() === "Theme",
+  );
+  assert.ok(themeTab, "the builder has a Theme sub-tab");
+  themeTab.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  await sleep(300);
   const colorField = document.querySelector('input[type="color"]');
   assert.ok(colorField, "the builder offers a colour picker");
   setField('input[type="color"]', "#0f766e");
@@ -845,7 +852,7 @@ async function main() {
   // Social links: written under "Contact & social", they become real links on the
   // storefront — the header, the footer and the floating WhatsApp button.
   await navigate("#/online/website", 900);
-  clickExact("Contact & social");
+  clickExact("General");
   await sleep(500);
   const whatsappField = [...document.querySelectorAll("input")].find(
     (input) => (input.getAttribute("placeholder") ?? "") === "201001234567",
@@ -1222,7 +1229,7 @@ async function main() {
   // padded with whitespace — render no link at all, while the valid WhatsApp
   // link keeps working throughout.
   await navigate("#/online/website", 900);
-  clickExact("Contact & social");
+  clickExact("General");
   await sleep(500);
   setInputValue(fieldByPlaceholder("https://instagram.com/…"), "https://instagram.com/alyq.shop");
   setInputValue(fieldByPlaceholder("https://tiktok.com/@…"), "https://tiktok.com/@alyq.shop");
@@ -1277,7 +1284,7 @@ async function main() {
 
   // Now the same fields, filled with values that must never become hrefs.
   await navigate("#/online/website", 900);
-  clickExact("Contact & social");
+  clickExact("General");
   await sleep(500);
   setInputValue(fieldByPlaceholder("https://facebook.com/…"), "JaVaScRiPt:alert(1)");
   setInputValue(fieldByPlaceholder("https://instagram.com/…"), "data:text/html,<script>alert(1)</script>");

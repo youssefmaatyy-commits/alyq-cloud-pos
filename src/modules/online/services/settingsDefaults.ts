@@ -576,12 +576,25 @@ export function resolvedSocialLinks(settings: WebsiteSettings): SocialLinkConfig
   };
   return (["instagram", "facebook", "tiktok", "whatsapp"] as const).map((platform) => {
     const own = byPlatform.get(platform);
-    if (own) return own;
     const url = legacy[platform] ?? "";
+    // An explicitly configured URL wins; a configured-but-EMPTY entry yields to
+    // the legacy contact field, so a shop that only ever filled those keeps
+    // working (the old storefront rendered them whenever they were non-empty).
+    if (own && own.url.trim() !== "") return own;
+    if (url.trim() !== "") {
+      return {
+        platform,
+        enabled: true,
+        url,
+        label_ar: own?.label_ar ?? "",
+        label_en: own?.label_en ?? "",
+      };
+    }
+    if (own) return own;
     return {
       platform,
-      enabled: url.trim() !== "",
-      url,
+      enabled: false,
+      url: "",
       label_ar: "",
       label_en: "",
     };

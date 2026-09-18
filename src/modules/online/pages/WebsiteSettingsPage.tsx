@@ -546,21 +546,23 @@ export function WebsiteSettingsPage() {
 
           {tab === "sections" ? (
             <>
-              <SectionContentPanel
-                patch={patch}
-                sections={sections}
-                categories={categories.map((category) => ({
-                  id: category.id,
-                  name_ar: category.name_ar,
-                  name_en: category.name_en,
-                  active: category.active,
-                }))}
-                products={products.map((product) => ({
-                  id: product.id,
-                  name_ar: product.name_ar,
-                  name_en: product.name_en,
-                }))}
-              />
+              <div data-testid="section-content-settings">
+                <SectionContentPanel
+                  patch={patch}
+                  sections={sections}
+                  categories={categories.map((category) => ({
+                    id: category.id,
+                    name_ar: category.name_ar,
+                    name_en: category.name_en,
+                    active: category.active,
+                  }))}
+                  products={products.map((product) => ({
+                    id: product.id,
+                    name_ar: product.name_ar,
+                    name_en: product.name_en,
+                  }))}
+                />
+              </div>
               <Card className="space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <h2 className="text-sm font-bold text-slate-900">{t("online.settings.sections")}</h2>
@@ -919,12 +921,12 @@ export function WebsiteSettingsPage() {
           ) : null}
 
           {tab === "categories" ? (
-            <CategoriesContentPanel repository={repository} categories={categories} />
+            <div data-testid="categories-content-settings"><CategoriesContentPanel repository={repository} categories={categories} /></div>
           ) : null}
 
-          {tab === "campaigns" ? <CampaignsPanel draft={draft} patch={patch} /> : null}
+          {tab === "campaigns" ? <div data-testid="campaigns-settings"><CampaignsPanel draft={draft} patch={patch} /></div> : null}
 
-          {tab === "productDisplay" ? <ProductDisplayPanel draft={draft} patch={patch} /> : null}
+          {tab === "productDisplay" ? <div data-testid="product-display-settings"><ProductDisplayPanel draft={draft} patch={patch} /></div> : null}
 
           {tab === "productContent" ? (
             <Card className="space-y-3">
@@ -939,15 +941,15 @@ export function WebsiteSettingsPage() {
             </Card>
           ) : null}
 
-          {tab === "header" ? <HeaderPanel draft={draft} patch={patch} /> : null}
+          {tab === "header" ? <div data-testid="header-settings"><HeaderPanel draft={draft} patch={patch} /></div> : null}
 
           {tab === "footer" ? <FooterPanel draft={draft} patch={patch} /> : null}
 
-          {tab === "social" ? <SocialPanel draft={draft} patch={patch} /> : null}
+          {tab === "social" ? <div data-testid="social-settings"><SocialPanel draft={draft} patch={patch} /></div> : null}
 
-          {tab === "checkout" ? <CheckoutCopyPanel draft={draft} patch={patch} /> : null}
+          {tab === "checkout" ? <div data-testid="checkout-copy-settings"><CheckoutCopyPanel draft={draft} patch={patch} /></div> : null}
 
-          {tab === "confirmation" ? <ConfirmationPanel draft={draft} patch={patch} /> : null}
+          {tab === "confirmation" ? <div data-testid="confirmation-settings"><ConfirmationPanel draft={draft} patch={patch} /></div> : null}
 
           {tab === "delivery" ? (
             <Card className="space-y-4">
