@@ -58,6 +58,7 @@ import type {
 } from "../types";
 import { formatOrderNumber } from "../types";
 import {
+  DEFAULT_HERO_SLIDES,
   DEFAULT_WEBSITE_SETTINGS,
   mergeSettings,
   resolveSettings,
@@ -240,6 +241,41 @@ function seedContent(products: readonly Product[]) {
     write(KEYS.contents, contents);
   }
 
+  // Phase 49 visual pass: the shop window opens dressed — each category carries
+  // its bundled editorial tile and a curation order, exactly as an admin would
+  // set them in Website Content (every field here stays admin-editable; a
+  // cleared image simply falls back to the section's own treatment).
+  if (safeStorage.get(KEYS.categoryContents) === null) {
+    const now = nowIso();
+    const tiles: Array<[string, string, boolean, number]> = [
+      // [category_id, bundled tile, featured in the shop window, order]
+      ["cat-beverages", "/brand/categories/jewellery.jpg", true, 1],
+      ["cat-coffee", "/brand/categories/earrings.jpg", true, 2],
+      ["cat-juices", "/brand/categories/necklaces.jpg", true, 3],
+      ["cat-rings", "/brand/categories/rings.jpg", true, 4],
+      ["cat-grocery", "/brand/categories/fashion-accessories.jpg", true, 5],
+      ["cat-dairy", "/brand/categories/bracelets.jpg", true, 6],
+    ];
+    const categoryContents: StorefrontCategoryContent[] = tiles.map(
+      ([category_id, tile, featured, sort_order], index) => ({
+        id: `ccontent-${index + 1}`,
+        category_id,
+        title_ar: null,
+        title_en: null,
+        description_ar: null,
+        description_en: null,
+        image_url: null,
+        mobile_image_url: null,
+        homepage_image_url: tile,
+        featured,
+        sort_order,
+        created_at: now,
+        updated_at: now,
+      }),
+    );
+    write(KEYS.categoryContents, categoryContents);
+  }
+
   if (safeStorage.get(KEYS.coupons) === null) {
     const coupons: Coupon[] = [
       {
@@ -378,6 +414,7 @@ export class DemoOnlineRepository
       settings: null,
       meta: null,
     };
+
   private contents: ProductContent[] = readArray<ProductContent>(KEYS.contents);
   private categoryContents: StorefrontCategoryContent[] = readArray<StorefrontCategoryContent>(
     KEYS.categoryContents,
@@ -388,14 +425,51 @@ export class DemoOnlineRepository
   private campaigns: Campaign[] = readArray<Campaign>(KEYS.campaigns);
   private seeded = false;
 
+  /**
+   * Phase 49 visual pass, demo-mode migration: a browser that stored the
+   * settings document before the editorial re-dress keeps showing the old
+   * bare hero and empty about preview — not because an admin chose them, but
+   * because the seed once wrote them. When the stored hero slides and about
+   * block are byte-identical to those OLD shipped defaults (proof the admin
+   * never touched them), re-dress them with the new defaults. Anything
+   * customized — one changed title, one picked colour — is left alone, and
+   * the check is idempotent (a re-dressed hero no longer matches).
+   */
+  private migratePhase49Defaults(): void {
+    const doc = this.settingsDoc.settings as WebsiteSettings | null;
+    const oldHero =
+      Array.isArray(doc?.images?.hero_slides) &&
+      doc.images.hero_slides.length === 2 &&
+      doc.images.hero_slides[0]?.image_url === null &&
+      doc.images.hero_slides[0]?.title_en === "ALYQ" &&
+      doc.images.hero_slides[0]?.subtitle_en === "ALYQ Accessories Store" &&
+      doc.images.hero_slides[0]?.cta_label_en === "Shop now" &&
+      doc.images.hero_slides[1]?.title_en === "This week's offers" &&
+      !doc.images.hero_slides[0]?.secondary_cta_label_en;
+    const oldAbout =
+      doc?.about?.title_en === "About ALYQ" &&
+      doc.about?.body_en === "" &&
+      doc.about?.image_url === null;
+    if (doc && oldHero && oldAbout) {
+      doc.images.hero_slides = structuredClone(DEFAULT_HERO_SLIDES);
+      doc.about.body_ar = DEFAULT_WEBSITE_SETTINGS.about.body_ar;
+      doc.about.body_en = DEFAULT_WEBSITE_SETTINGS.about.body_en;
+      doc.about.image_url = DEFAULT_WEBSITE_SETTINGS.about.image_url;
+      this.settingsDoc.settings = doc;
+      write(KEYS.settings, this.settingsDoc);
+    }
+  }
+
   /** Seed once per session, after the catalogue demo repo has its own data. */
   private async ensureSeeded(): Promise<Product[]> {
+    this.migratePhase49Defaults();
     const products = await getDemoRepository().listProducts();
     if (!this.seeded && safeStorage.get(KEYS.seeded) !== "1") {
       seedContent(products);
       safeStorage.set(KEYS.seeded, "1");
       // Re-read what the seed wrote.
       this.contents = readArray<ProductContent>(KEYS.contents);
+      this.categoryContents = readArray<StorefrontCategoryContent>(KEYS.categoryContents);
       this.faqs = readArray<StoreFaq>(KEYS.faqs);
       this.reviews = readArray<StoreReview>(KEYS.reviews);
       this.coupons = readArray<Coupon>(KEYS.coupons);

@@ -15,7 +15,7 @@
  * `configuredHref` / `whatsappHref`) or render no link at all.
  */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { cn } from "@/utils/cn";
 import { useStorefront } from "../../hooks/StorefrontProvider";
@@ -264,7 +264,7 @@ function Header({
   menuOpen: boolean;
 }) {
   const { t, pick, lang, toggleLang } = useI18n();
-  const { settings, categories, categoryContents } = useStorefront();
+  const { settings } = useStorefront();
   const { unitCount } = useStoreCart();
   const { customer } = useStoreAccount();
   const navigate = useNavigate();
@@ -273,27 +273,6 @@ function Header({
 
   const storeName = pick(settings.contact.store_name_ar, settings.contact.store_name_en) || "ALYQ";
   const sticky = settings.header.sticky;
-  const categoryNav = useMemo(() => {
-    // Active categories only (the provider's list is already active-only in
-    // both modes), titled by their storefront content when it exists, in the
-    // shop-window order.
-    const contentBy = new Map(categoryContents.map((row) => [row.category_id, row]));
-    return [...categories]
-      .sort((a, b) => {
-        const ca = contentBy.get(a.id)?.sort_order ?? Number.MAX_SAFE_INTEGER;
-        const cb = contentBy.get(b.id)?.sort_order ?? Number.MAX_SAFE_INTEGER;
-        return ca - cb || a.sort_order - b.sort_order || a.name_en.localeCompare(b.name_en);
-      })
-      .slice(0, 6)
-      .map((category) => {
-        const content = contentBy.get(category.id) ?? null;
-        return {
-          id: category.id,
-          to: `/store/products?category=${encodeURIComponent(category.id)}`,
-          label: pick(content?.title_ar ?? category.name_ar, content?.title_en ?? category.name_en),
-        };
-      });
-  }, [categories, categoryContents, pick]);
 
   const submitSearch = (event: React.FormEvent) => {
     event.preventDefault();
@@ -329,41 +308,35 @@ function Header({
               <path fill="currentColor" d="M4 6h16v1.8H4V6Zm0 5.1h16v1.8H4v-1.8ZM4 16.2h16V18H4v-1.8Z" />
             </svg>
           </button>
+          {/* Phase 49 visual pass: the slim editorial nav is the house pages,
+              not the category list — categories live in the shop-window tiles,
+              the drawer and the footer, where a picture carries them better
+              than a word. An accessories house keeps its header quiet. */}
           <nav
             aria-label={t("store.nav.menu")}
-            className="hidden min-w-0 items-center gap-x-5 lg:flex"
+            className="hidden min-w-0 items-center gap-x-6 lg:flex"
           >
-            {categoryNav.slice(0, 4).map((link) => (
-              <NavLink
-                key={link.id}
-                to={link.to}
-                className={({ isActive }) =>
-                  cn(
-                    "whitespace-nowrap text-[11px] font-bold uppercase tracking-[0.16em] transition",
-                    isActive
-                      ? "text-[var(--store-text)]"
-                      : "text-[var(--store-muted)] hover:text-[var(--store-text)]",
-                  )
-                }
-              >
-                {link.label}
-              </NavLink>
-            ))}
             <Link
               to="/store/products"
-              className="whitespace-nowrap text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--store-muted)] transition hover:text-[var(--store-text)]"
+              className="whitespace-nowrap text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--store-text)] transition hover:text-[var(--store-accent)]"
             >
               {t("store.nav.products")}
             </Link>
             <Link
+              to="/store/products?sort=newest"
+              className="whitespace-nowrap text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--store-muted)] transition hover:text-[var(--store-text)]"
+            >
+              {t("store.nav.new")}
+            </Link>
+            <Link
               to="/store/about"
-              className="whitespace-nowrap text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--store-muted)] transition hover:text-[var(--store-text)]"
+              className="whitespace-nowrap text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--store-muted)] transition hover:text-[var(--store-text)]"
             >
               {t("store.nav.about")}
             </Link>
             <Link
               to="/store/contact"
-              className="whitespace-nowrap text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--store-muted)] transition hover:text-[var(--store-text)]"
+              className="whitespace-nowrap text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--store-muted)] transition hover:text-[var(--store-text)]"
             >
               {t("store.nav.contact")}
             </Link>

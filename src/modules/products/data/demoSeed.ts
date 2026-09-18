@@ -74,7 +74,7 @@ const P: SeedProduct[] = [
     show_on_website: true,
     is_featured: true,
     active: true,
-    image_url: null,
+    image_url: "/brand/products/gold-pearl-earrings.jpg",
     images: [],
   },
   {
@@ -96,7 +96,7 @@ const P: SeedProduct[] = [
     show_on_website: true,
     is_featured: true,
     active: true,
-    image_url: null,
+    image_url: "/brand/products/classic-gold-ring.jpg",
     images: [],
   },
   {
@@ -118,7 +118,7 @@ const P: SeedProduct[] = [
     show_on_website: true,
     is_featured: false,
     active: true,
-    image_url: null,
+    image_url: "/brand/categories/necklaces.jpg",
     images: [],
   },
   {
@@ -142,7 +142,7 @@ const P: SeedProduct[] = [
     show_on_website: true,
     is_featured: false,
     active: true,
-    image_url: null,
+    image_url: "/brand/categories/bracelets.jpg",
     images: [],
   },
   {
@@ -164,7 +164,7 @@ const P: SeedProduct[] = [
     show_on_website: true,
     is_featured: false,
     active: true,
-    image_url: null,
+    image_url: "/brand/categories/jewellery.jpg",
     images: [],
   },
   {
@@ -186,7 +186,7 @@ const P: SeedProduct[] = [
     show_on_website: true,
     is_featured: false,
     active: true,
-    image_url: null,
+    image_url: "/brand/products/gift-wrapping.jpg",
     images: [],
   },
   {

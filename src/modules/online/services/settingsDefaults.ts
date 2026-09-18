@@ -42,7 +42,10 @@ export { DEFAULT_STORE_NAME_AR, DEFAULT_STORE_NAME_EN };
 export const DEFAULT_HERO_SLIDES: HeroSlide[] = [
   {
     id: "hero-1",
-    image_url: null,
+    // The house editorial photograph, bundled with the app. Image-led is the
+    // default; an admin replaces it (or clears it — a cleared slide falls back
+    // to the quiet gradient of the shop's own colours) in the builder.
+    image_url: "/brand/hero-editorial.jpg",
     title_ar: "أَلِــيْـــق",
     title_en: "ALYQ",
     subtitle_ar: "إكسسوارات أَلِــيْـــق",
@@ -70,6 +73,23 @@ export const DEFAULT_HERO_SLIDES: HeroSlide[] = [
 ];
 
 /** Every section, visible, in the order the homepage renders them. */
+/**
+ * Phase 49 visual pass: the editorial band opens dressed — the house's own
+ * words and the bundled photograph — so a brand-new shop never shows a bare
+ * heading. Every field here is a normal builder field (body, image, CTA);
+ * an admin rewrites or clears any of them, and a cleared band hides itself.
+ */
+const DEFAULT_SECTION_EXTRAS: Partial<Record<HomepageSectionKey, Partial<HomepageSectionConfig>>> = {
+  editorial: {
+    body_ar: "أشياء قليلة، تُصنع ببطء. كل قطعة من أَلِــيْـــق تُنهى يدويًا بدفعات صغيرة — من ذهب يحافظ على بريقه، ولؤلؤ يُنتقى حبةً حبة.",
+    body_en: "Fewer things, made slowly. Every ALYQ piece is finished by hand, in small batches — gold that keeps its shine, pearls chosen one by one.",
+    image_url: "/brand/hero-editorial.jpg",
+    cta_ar: "اقرأ قصتنا",
+    cta_en: "Read our story",
+    cta_href: "#/store/about",
+  },
+};
+
 export function defaultSections(): HomepageSectionConfig[] {
   return HOMEPAGE_SECTIONS.map((key: HomepageSectionKey, index) => ({
     key,
@@ -78,6 +98,7 @@ export function defaultSections(): HomepageSectionConfig[] {
     title_ar: DEFAULT_SECTION_TITLES[key].ar,
     title_en: DEFAULT_SECTION_TITLES[key].en,
     limit: 8,
+    ...DEFAULT_SECTION_EXTRAS[key],
   }));
 }
 
@@ -297,9 +318,11 @@ export const DEFAULT_WEBSITE_SETTINGS: WebsiteSettings = {
   about: {
     title_ar: "عن أَلِــيْـــق",
     title_en: "About ALYQ",
-    body_ar: "",
-    body_en: "",
-    image_url: null,
+    // Phase 49 visual pass: the preview opens dressed — the house line and the
+    // bundled editorial photograph — all of it editable in the builder.
+    body_ar: "بدأنا من ورشة صغيرة في الإسماعيلية بحُب للتفاصيل اليدوية. اليوم ما زلنا نصنع بدفعات صغيرة، ونغلّف كل قطعة كأنها هدية.",
+    body_en: "We began in a small workshop in Ismailia, with a love for hand-finished detail. Today we still make in small batches — and wrap every piece as if it were a gift.",
+    image_url: "/brand/categories/jewellery.jpg",
     cta_ar: "اقرأ المزيد",
     cta_en: "Read more",
     cta_href: "#/store/about",
@@ -437,6 +460,14 @@ export function repairSections(
       ...(typeof section.cta_ar === "string" ? { cta_ar: section.cta_ar } : {}),
       ...(typeof section.cta_en === "string" ? { cta_en: section.cta_en } : {}),
       ...(typeof section.cta_href === "string" ? { cta_href: section.cta_href } : {}),
+      // Phase 49: a field the admin has never set (absent, not cleared) takes
+      // the shipped editorial content; a cleared field ("") stays cleared.
+      ...Object.fromEntries(
+        Object.entries(DEFAULT_SECTION_EXTRAS[section.key] ?? {}).filter(
+          ([field, value]) =>
+            (section as unknown as Record<string, unknown>)[field] === undefined && value !== undefined && value !== "",
+        ),
+      ),
     });
   }
 
@@ -673,8 +704,11 @@ const safeUrlField = (value: unknown, max = 1000): string => {
 const safeImageField = (value: unknown): string | null => {
   const raw = typeof value === "string" ? value.trim() : "";
   if (raw === "") return null;
-  // Images are media URLs from the project's own storage: absolute http(s)
-  // only, or null. A data:/javascript: URL is never a rendering image here.
+  // Images are media URLs from the project's own storage: absolute http(s), a
+  // same-origin absolute path bundled with the app ("/brand/…" — how the
+  // shipped editorial defaults travel), or null. Protocol-relative "//…" and
+  // every scheme — data:/javascript: above all — are never a rendering image.
+  if (raw.startsWith("/") && !raw.startsWith("//")) return raw;
   return externalHref(raw);
 };
 const oneOf = <T>(value: unknown, allowed: readonly T[], fallback: T): T =>
