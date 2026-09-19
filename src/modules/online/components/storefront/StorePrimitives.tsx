@@ -143,7 +143,7 @@ export function QuantityStepper({
 }) {
   const { t } = useI18n();
   const atMax = typeof max === "number" && value >= max;
-  const pad = size === "sm" ? "h-7 w-7 text-sm" : "h-9 w-9";
+  const pad = size === "sm" ? "h-11 w-11 text-sm sm:h-8 sm:w-8" : "h-11 w-11";
   return (
     <div
       className="inline-flex items-center gap-1 border border-[var(--store-border)] bg-[var(--store-surface)]"
@@ -248,7 +248,7 @@ export function SectionShell({
       ) : null}
       <div className="mx-auto w-full max-w-[var(--store-max-width,72rem)] px-4 py-10 sm:px-6">
         <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
-          <h2 className="text-xl font-extrabold tracking-tight text-[var(--store-text)] sm:text-2xl">
+          <h2 style={{ fontFamily: "var(--store-font-display)" }} className="text-2xl font-normal tracking-tight text-[var(--store-text)] sm:text-3xl">
             {title}
           </h2>
           {action}

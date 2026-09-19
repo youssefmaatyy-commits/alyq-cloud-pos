@@ -46,10 +46,14 @@ export const DEFAULT_HERO_SLIDES: HeroSlide[] = [
     // default; an admin replaces it (or clears it — a cleared slide falls back
     // to the quiet gradient of the shop's own colours) in the builder.
     image_url: "/brand/hero-editorial.jpg",
-    title_ar: "أَلِــيْـــق",
-    title_en: "ALYQ",
-    subtitle_ar: "إكسسوارات أَلِــيْـــق",
-    subtitle_en: "ALYQ Accessories Store",
+    mobile_image_url: "/brand/hero-editorial-mobile.jpg",
+    title_ar: "أناقة في كل يوم.",
+    title_en: "The art of everyday.",
+    subtitle_ar: "تفاصيل هادئة. حضور لا يُنسى. اكتشفي قطعك المفضلة.",
+    subtitle_en: "Quiet details. A lasting impression. Find the pieces that feel like you.",
+    content_position: "start",
+    height: "editorial",
+    overlay: 32,
     cta_label_ar: "تسوق الآن",
     cta_label_en: "Shop now",
     cta_href: "#/store/products",
@@ -58,18 +62,7 @@ export const DEFAULT_HERO_SLIDES: HeroSlide[] = [
     secondary_cta_href: "#/store/about",
     align: "start",
   },
-  {
-    id: "hero-2",
-    image_url: null,
-    title_ar: "عروض الأسبوع",
-    title_en: "This week's offers",
-    subtitle_ar: "خصومات على المنتجات المميزة لفترة محدودة",
-    subtitle_en: "Limited-time discounts on featured products",
-    cta_label_ar: "شاهد العروض",
-    cta_label_en: "See the offers",
-    cta_href: "#/store/products?sort=newest",
-    align: "center",
-  },
+
 ];
 
 /** Every section, visible, in the order the homepage renders them. */
@@ -80,9 +73,16 @@ export const DEFAULT_HERO_SLIDES: HeroSlide[] = [
  * an admin rewrites or clears any of them, and a cleared band hides itself.
  */
 const DEFAULT_SECTION_EXTRAS: Partial<Record<HomepageSectionKey, Partial<HomepageSectionConfig>>> = {
+  lookbook: {
+    body_ar: "قطعة واحدة، واحتمالات كثيرة. امزجي الملمس والبريق والتفاصيل لإطلالة تشبهك.",
+    body_en: "One piece, endless possibilities. A study in texture, light and the details that make a look your own.",
+    image_url: "/brand/categories/necklaces.jpg",
+    mobile_image_url: "/brand/categories/bracelets.jpg",
+    cta_ar: "اكتشفي المجموعة", cta_en: "Explore the collection", cta_href: "#/store/products",
+  },
   editorial: {
-    body_ar: "أشياء قليلة، تُصنع ببطء. كل قطعة من أَلِــيْـــق تُنهى يدويًا بدفعات صغيرة — من ذهب يحافظ على بريقه، ولؤلؤ يُنتقى حبةً حبة.",
-    body_en: "Fewer things, made slowly. Every ALYQ piece is finished by hand, in small batches — gold that keeps its shine, pearls chosen one by one.",
+    body_ar: "لمسة بريق وتفاصيل ناعمة. اكتشفي قطعًا تنسقينها بطريقتك، من إطلالاتك اليومية إلى مناسباتك المميزة.",
+    body_en: "A little shine. A softer silhouette. Discover pieces to layer, love and make your own — from everyday favourites to your next special occasion.",
     image_url: "/brand/hero-editorial.jpg",
     cta_ar: "اقرأ قصتنا",
     cta_en: "Read our story",
@@ -93,11 +93,11 @@ const DEFAULT_SECTION_EXTRAS: Partial<Record<HomepageSectionKey, Partial<Homepag
 export function defaultSections(): HomepageSectionConfig[] {
   return HOMEPAGE_SECTIONS.map((key: HomepageSectionKey, index) => ({
     key,
-    visible: true,
+    visible: ["hero", "categories", "newArrivals", "campaigns", "bestSellers", "lookbook", "featured", "collection", "trustStrip", "newsletter"].includes(key),
     order: index,
     title_ar: DEFAULT_SECTION_TITLES[key].ar,
     title_en: DEFAULT_SECTION_TITLES[key].en,
-    limit: 8,
+    limit: 4,
     ...DEFAULT_SECTION_EXTRAS[key],
   }));
 }
@@ -235,9 +235,9 @@ export const DEFAULT_WEBSITE_SETTINGS: WebsiteSettings = {
     og_image_url: null,
   },
   announcement: {
-    enabled: false,
-    text_ar: "",
-    text_en: "",
+    enabled: true,
+    text_ar: "تفاصيل صغيرة، أناقة كل يوم — أَلِــيْـــق",
+    text_en: "Considered details. Everyday elegance. — ALYQ",
     href: "",
     mode: "rotate",
     bg_color: "#1c1917",
@@ -320,8 +320,8 @@ export const DEFAULT_WEBSITE_SETTINGS: WebsiteSettings = {
     title_en: "About ALYQ",
     // Phase 49 visual pass: the preview opens dressed — the house line and the
     // bundled editorial photograph — all of it editable in the builder.
-    body_ar: "بدأنا من ورشة صغيرة في الإسماعيلية بحُب للتفاصيل اليدوية. اليوم ما زلنا نصنع بدفعات صغيرة، ونغلّف كل قطعة كأنها هدية.",
-    body_en: "We began in a small workshop in Ismailia, with a love for hand-finished detail. Today we still make in small batches — and wrap every piece as if it were a gift.",
+    body_ar: "إكسسوارات للتفاصيل التي تعني لك الكثير. اكتشفي قطعًا تضيف لمستك الخاصة، كل يوم وفي كل مناسبة.",
+    body_en: "Accessories for the details that matter to you. Discover pieces that bring a personal touch to the everyday and a little occasion to any moment.",
     image_url: "/brand/categories/jewellery.jpg",
     cta_ar: "اقرأ المزيد",
     cta_en: "Read more",
@@ -368,7 +368,14 @@ export const DEFAULT_WEBSITE_SETTINGS: WebsiteSettings = {
     support_href: "#/store/contact",
     whatsapp_cta: true,
   },
-  campaigns: [],
+  campaigns: [{
+    id: "house-edit", enabled: true, layout: "full", placement: "homepage", sort_order: 0,
+    title_ar: "تفاصيل تستحق الحب.", title_en: "Objects of affection.",
+    subtitle_ar: "قطع صغيرة تمنح كل إطلالة طابعًا خاصًا.", subtitle_en: "Small treasures. A statement all your own.",
+    desktop_image_url: "/brand/categories/jewellery.jpg", mobile_image_url: "/brand/categories/jewellery.jpg",
+    cta_ar: "تسوقي المجموعة", cta_en: "Discover the edit", cta_href: "#/store/products",
+    starts_at: null, ends_at: null,
+  }],
   social_links: [
     { platform: "instagram", enabled: false, url: "", label_ar: "إنستغرام", label_en: "Instagram" },
     { platform: "facebook", enabled: false, url: "", label_ar: "فيسبوك", label_en: "Facebook" },
@@ -846,6 +853,7 @@ export function sanitizeSettings(input: unknown): WebsiteSettings {
     title_en: str(c.title_en, 120),
     subtitle_ar: str(c.subtitle_ar, 240),
     subtitle_en: str(c.subtitle_en, 240),
+    layout: enumOf(c.layout, ["full", "split", "alternating"] as const, "split"),
     desktop_image_url: safeImageField(c.desktop_image_url),
     mobile_image_url: safeImageField(c.mobile_image_url),
     cta_ar: str(c.cta_ar, 40),
@@ -939,4 +947,24 @@ export function sanitizeSettings(input: unknown): WebsiteSettings {
   }));
 
   return out;
+}
+
+/**
+ * SQL's existing media policy accepts absolute http(s) URLs. The packaged
+ * editorial assets are origin-relative for portable previews; promote ONLY
+ * those known asset paths at the live save boundary, without changing the
+ * draft or loosening any server-side URL guard. Uploaded media is unchanged.
+ */
+export function settingsForRemoteSave(settings: WebsiteSettings, origin: string): WebsiteSettings {
+  const base = new URL(origin);
+  if (base.protocol !== "https:" && base.protocol !== "http:") throw new Error("Invalid website origin");
+  const bundled = /^\/brand\/[a-zA-Z0-9/_-]+\.(?:jpe?g|png|webp|avif)$/;
+  const visit = (value: unknown, field = ""): unknown => {
+    const media = field.endsWith("_url") || field === "url" || field === "section_image";
+    if (media && typeof value === "string" && bundled.test(value)) return new URL(value, base.origin).href;
+    if (Array.isArray(value)) return value.map((entry) => visit(entry, field));
+    if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, visit(entry, field === "section_images" ? "section_image" : key)]));
+    return value;
+  };
+  return visit(settings) as WebsiteSettings;
 }

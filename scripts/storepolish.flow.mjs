@@ -152,8 +152,8 @@ async function main() {
   // ── 2 · the hero: gradient fallback in the shop's own colours ─────────────
   const heroSection = document.querySelector("main section[aria-label]");
   check(
-    "the hero falls back to a quiet gradient of the admin's own colours (no image, no orange field)",
-    Boolean(heroSection) && (heroSection.getAttribute("style") ?? "").includes("linear-gradient"),
+    "the hero falls back to a quiet paper surface from the admin theme (no image, no orange field)",
+    Boolean(heroSection) && (heroSection.getAttribute("style") ?? "").includes("var(--store-bg)"),
   );
 
   // ── 3 · the hero's primary CTA and the quieter "Our story" ────────────────
@@ -209,11 +209,9 @@ async function main() {
   const sectionIds = [...document.querySelectorAll("main section[id]")].map((s) => s.id);
   const pos = (id) => sectionIds.indexOf(id);
   check(
-    "the homepage rhythm: categories → new arrivals → editorial → best sellers → lookbook → collection, in that order",
-    pos("categories") > -1 && pos("newArrivals") > pos("categories") && pos("bestSellers") > pos("newArrivals") &&
-      sectionIds.includes("lookbook") === false ? // lookbook/textImage share the id-less band; fall back below
-      true
-      : pos("categories") > -1 && pos("newArrivals") > pos("categories") && pos("bestSellers") > pos("newArrivals"),
+    "the homepage rhythm: categories → new arrivals → full-width campaign → best sellers → lookbook → featured",
+    ["categories", "newArrivals", "campaigns", "bestSellers", "lookbook", "featured"].every((id, i, ids) =>
+      pos(id) >= 0 && (i === 0 || pos(id) > pos(ids[i - 1]))),
   );
 
   // ── 8 · trust before the newsletter invitation ────────────────────────────

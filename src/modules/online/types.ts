@@ -584,32 +584,11 @@ export interface StoreTheme {
 
 /** Every homepage section an admin can hide, reorder and retitle (Phase 45 set). */
 export const HOMEPAGE_SECTIONS = [
-  "hero",
-  "categories",
-  // Phase 49: the default rhythm is the editorial one — a shop window, then
-  // what just landed, then the house's voice, then what everyone wants, the
-  // lookbook, the curated collection, the reasons to trust, and the invitation
-  // to stay in touch. The admin reorders every one of these in the builder;
-  // this list is only what a brand-new shop opens with.
-  "newArrivals",
-  "editorial",
-  "bestSellers",
-  "lookbook",
-  "collection",
-  "trustStrip",
-  "newsletter",
-  // The rest, in their shipped order.
-  "featured",
-  "promoBanners",
-  "sale",
-  "campaigns",
-  "aboutPreview",
-  "socialGallery",
-  "textImage",
-  "brands",
-  "reviews",
-  "faq",
-  "contact",
+  "hero", "categories", "newArrivals", "campaigns", "bestSellers",
+  "lookbook", "featured", "collection", "trustStrip", "newsletter",
+  // Optional chapters remain available in the builder, not all shown at once.
+  "editorial", "promoBanners", "sale", "aboutPreview", "socialGallery",
+  "textImage", "brands", "reviews", "faq", "contact",
 ] as const;
 export type HomepageSectionKey = (typeof HOMEPAGE_SECTIONS)[number];
 
@@ -927,6 +906,8 @@ export interface BrandSettings {
  * server-derived exactly as before.
  */
 export interface EditorialCampaign {
+  /** Curated layouts only; absent values retain the legacy split composition. */
+  layout?: "full" | "split" | "alternating";
   id: string;
   enabled: boolean;
   title_ar: string;

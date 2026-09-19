@@ -43,16 +43,16 @@ export function StoreAboutPage() {
   const href = internalHref(about.cta_href)?.slice(1) ?? externalHref(about.cta_href);
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 py-12 sm:px-6" data-testid="store-about">
+    <div className="mx-auto w-full max-w-[var(--store-max-width)] px-4 py-12 sm:px-6 lg:grid lg:grid-cols-2 lg:items-center lg:gap-x-16" data-testid="store-about">
       <h1
-        className="text-3xl font-black tracking-tight text-[var(--store-text)] md:text-4xl"
+        className="text-4xl font-normal tracking-tight text-[var(--store-text)] md:text-4xl"
         style={{ fontFamily: "var(--store-font-display)" }}
       >
         {title}
       </h1>
-      <div className="mt-8">
+      <div className="mt-8 lg:col-start-1 lg:row-span-4 lg:row-start-1 lg:mt-0">
         {about.image_url ? (
-          <StoreImage src={about.image_url} alt={title} ratio="aspect-[16/9]" className="w-full" priority />
+          <StoreImage src={about.image_url} alt={title} ratio="aspect-[4/5]" className="w-full" priority />
         ) : null}
       </div>
       {body ? (
@@ -91,7 +91,7 @@ export function StoreAboutPage() {
           </a>
         )
       ) : null}
-      <div className="mt-10 border-t border-[var(--store-hairline)] pt-6">
+      <div className="mt-10 lg:col-span-2 border-t border-[var(--store-hairline)] pt-6">
         <Link
           to="/store/products"
           className="text-[11px] font-black uppercase tracking-[0.2em] text-[var(--store-muted)] transition hover:text-[var(--store-text)]"

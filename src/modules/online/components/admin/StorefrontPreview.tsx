@@ -115,9 +115,7 @@ export function StorefrontPreview({ settings }: { settings: WebsiteSettings }) {
           className="relative grid min-h-[9rem] place-items-center bg-cover bg-center px-4 py-8 text-center"
           style={{
             backgroundImage: heroImage ? `url("${heroImage}")` : undefined,
-            background: heroImage
-              ? undefined
-              : "linear-gradient(135deg, var(--store-primary), var(--store-secondary))",
+            backgroundColor: "var(--store-bg)",
           }}
         >
           <div

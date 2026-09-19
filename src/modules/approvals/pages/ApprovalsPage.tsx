@@ -60,7 +60,7 @@ export function ApprovalsPage() {
     <div>
       <PageHeader
         title={t("approvals.title")}
-        crumbs={[{ label: t("home.breadcrumb.sales"), to: "/sales" }, { label: t("nav.approvals") }]}
+        crumbs={[{ label: t("home.management.title"), to: "/management" }, { label: t("nav.approvals") }]}
         subtitle={mayDecide ? t("approvals.subtitleApprover") : t("approvals.subtitleRequester")}
         actions={
           <>

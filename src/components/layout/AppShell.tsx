@@ -22,10 +22,7 @@ import {
   GlobeIcon,
   GridIcon,
   MenuIcon,
-  ReceiptIcon,
   ShoppingCartIcon,
-  UsersIcon,
-  WarehouseIcon,
   ReportIcon,
 } from "@/components/ui";
 
@@ -71,6 +68,7 @@ function NavItem({
   badge = 0,
   badgeLabel,
   collapsed = false,
+  active,
 }: {
   to: string;
   icon: React.ReactNode;
@@ -81,6 +79,7 @@ function NavItem({
   badgeLabel?: string;
   collapsed?: boolean;
   testId?: string;
+  active?: boolean;
 }) {
   if (!visible) return null;
 
@@ -88,7 +87,7 @@ function NavItem({
     cn(
       "group relative flex items-center gap-3 rounded-xl text-sm font-medium transition-colors",
       collapsed ? "justify-center px-0 py-2.5" : "px-3 py-2.5",
-      isActive
+      (active ?? isActive)
         ? "bg-white/10 text-[#f3ede1]"
         : "text-stone-400 hover:bg-white/5 hover:text-stone-100",
     );
@@ -128,10 +127,10 @@ function NavItem({
     <span className="truncate">{label}</span>
   );
   return (
-    <NavLink to={to} end={end} title={collapsed ? label : badgeLabel} className={rowClass}>
+    <NavLink aria-current={active ? "page" : undefined} to={to} end={end} title={collapsed ? label : badgeLabel} className={rowClass}>
       {({ isActive }) => (
         <>
-          {marker({ isActive })}
+          {marker({ isActive: active ?? isActive })}
           {iconEl}
           {labelEl}
           {badgeEl}
@@ -267,14 +266,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     </span>
   );
 
-  const sidebar = (
+  const sidebar = (navCollapsed: boolean) => (
     <div className="flex h-full flex-col gap-5 overflow-hidden p-3.5">
       {/* Brand — the shared brand source; the wordmark is the fallback. Click
           always goes to the dashboard. */}
       <div className="flex shrink-0 items-center gap-2 px-0.5">
         <Link to="/" className="flex min-w-0 flex-1 items-center gap-3 rounded-xl" title={brandName}>
           {brandTile}
-          {!collapsed ? (
+          {!navCollapsed ? (
             <span className="min-w-0" data-testid="shell-brand">
               <span className="block truncate text-sm font-black tracking-tight text-[#f3ede1]">
                 {brandName}
@@ -285,7 +284,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </span>
           ) : null}
         </Link>
-        {!collapsed ? (
+        {!navCollapsed ? (
           <button
             type="button"
             onClick={toggleCollapsed}
@@ -299,28 +298,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </div>
 
       <nav className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto" aria-label={t("nav.menu")}>
-        {/*
-          Phase 49 — the sidebar is the MAIN MODULES and nothing else.
-          Nine doors, each opening a module landing that holds its own
-          sub-screens (Sales, Catalog, Inventory, Online) or already is the
-          hub (Dashboard, POS, Customers, Reports, Settings). Sub-pages are
-          reached from a module's cards, its tabs or a breadcrumb — never
-          from this list. Every door hides behind the same capability table
-          the route guard reads, and every old route still resolves.
-        */}
-        <NavItem to="/" icon={<GridIcon />} label={t("nav.dashboard")} end collapsed={collapsed} />
-        <NavItem to="/pos" icon={<ShoppingCartIcon />} label={t("nav.register")} visible={canOpen("/pos")} collapsed={collapsed} />
+        {/* Six primary areas; desktop and mobile share this exact navigation. */}
+        <NavItem to="/" icon={<GridIcon />} label={t("nav.dashboard")} end collapsed={navCollapsed} />
+        <NavItem to="/pos" icon={<ShoppingCartIcon />} label={t("home.pos.title")} end visible={canOpen("/pos")} collapsed={navCollapsed} />
         <NavItem
-          to="/sales"
-          icon={<ReceiptIcon />}
-          label={t("nav.sales")}
-          visible={canOpen("/sales")}
+          to="/management"
+          icon={<BoxIcon />}
+          label={t("home.management.title")}
+          active={["/management", "/catalog", "/products", "/categories", "/inventory", "/sales", "/pos/sales", "/returns", "/refunds", "/shifts", "/expenses", "/customers", "/approvals"].some((path) => location.pathname === path || location.pathname.startsWith(`${path}/`))}
           badge={pendingApprovals}
           badgeLabel={t("approvals.pendingHint")}
-          collapsed={collapsed}
+          collapsed={navCollapsed}
         />
-        <NavItem to="/catalog" icon={<BoxIcon />} label={t("home.breadcrumb.catalog")} collapsed={collapsed} />
-        <NavItem to="/inventory" icon={<WarehouseIcon />} label={t("nav.inventory")} visible={canOpen("/inventory")} collapsed={collapsed} />
         <NavItem
           to="/online"
           icon={<GlobeIcon />}
@@ -332,18 +321,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               ? t("nav.onlineOrdersBadgePayment", { count: online.counts.needs_payment })
               : t("nav.onlineOrdersBadge", { count: online.counts.pending })
           }
-          collapsed={collapsed}
+          collapsed={navCollapsed}
         />
-        <NavItem to="/customers" icon={<UsersIcon />} label={t("nav.customers")} visible={canOpen("/customers")} collapsed={collapsed} />
-        <NavItem to="/reports" icon={<ReportIcon />} label={t("nav.reports")} visible={canOpen("/reports")} collapsed={collapsed} />
-        {canManageUsers || canManageRoles || canManageSettings || canOpen("/settings/backup") || canManageWebsite ? (
+        <NavItem to="/reports" icon={<ReportIcon />} label={t("nav.reports")} visible={canOpen("/reports")} collapsed={navCollapsed} />
+        {canManageUsers || canManageRoles || canManageSettings || canOpen("/settings/backup") || canOpen("/audit") || canAct("manage_system_reset") || canManageWebsite ? (
           <NavItem
             to="/settings"
             icon={<ArchiveIcon />}
             label={t("nav.settings")}
-            end
+            active={location.pathname.startsWith("/settings") || location.pathname === "/audit"}
             visible
-            collapsed={collapsed}
+            collapsed={navCollapsed}
           />
         ) : null}
 
@@ -365,18 +353,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             }}
             className={cn(
               "mt-2 flex w-full items-center gap-3 rounded-xl border-t border-white/10 pt-3 text-sm font-medium text-stone-400 transition-colors hover:bg-white/5 hover:text-stone-100",
-              collapsed ? "justify-center px-0 py-2.5" : "px-3 py-2.5",
+              navCollapsed ? "justify-center px-0 py-2.5" : "px-3 py-2.5",
             )}
           >
             <span aria-hidden className="shrink-0">
               <GlobeIcon />
             </span>
-            {!collapsed ? (
+            {!navCollapsed ? (
               <span className="truncate">{t("nav.viewStore")}</span>
             ) : (
               <span className="sr-only">{t("nav.viewStore")}</span>
             )}
-            {!collapsed ? (
+            {!navCollapsed ? (
               <span aria-hidden className="ms-auto text-[10px] text-stone-500">
                 ↗
               </span>
@@ -395,7 +383,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <span className="rounded-md bg-[#b08d57]/20 px-1.5 py-0.5 text-[10px] font-bold text-[#dfc08a]">
             {roleLabel}
           </span>
-          {user.username && !collapsed ? (
+          {user.username && !navCollapsed ? (
             <span className="truncate text-[10px] font-medium text-stone-500">@{user.username}</span>
           ) : null}
         </p>
@@ -418,7 +406,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         ) : null}
       </div>
 
-      {!collapsed ? (
+      {!navCollapsed ? (
         <div className="shrink-0 rounded-2xl border border-white/10 bg-white/5 p-3">
           <p className="flex items-center gap-2 text-xs font-bold text-[#f3ede1]">
             <span
@@ -447,7 +435,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           collapsed ? "w-[4.75rem]" : "w-64",
         )}
       >
-        {sidebar}
+        {sidebar(collapsed)}
       </aside>
 
       {/* Mobile drawer */}
@@ -467,7 +455,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             >
               <CloseIcon />
             </button>
-            {sidebar}
+            {sidebar(false)}
           </aside>
         </div>
       ) : null}

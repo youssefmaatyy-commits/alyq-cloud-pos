@@ -184,16 +184,16 @@ test("the business type is stated in both languages, in the app and in the shop"
   }
 });
 
-test("the shop hero carries the identity and no invented slogan", () => {
+test("the editorial hero is editable copy, distinct from the shared brand identity", () => {
   const settings = resolveSettings({});
   const hero = settings.images.hero_slides[0];
-  assert.ok(hero, "a fresh install has no hero slide");
-  // Only the approved identity appears: the brand as the title, the business
-  // type as the subtitle. Nothing was written to fill the space.
-  assert.equal(hero.title_en, BRAND_EN);
-  assert.equal(hero.title_ar, BRAND_AR);
-  assert.equal(hero.subtitle_en, BUSINESS_EN);
-  assert.equal(hero.subtitle_ar, BUSINESS_AR);
+  assert.ok(hero?.image_url, "a fresh install opens with editorial imagery");
+  assert.ok(hero?.mobile_image_url, "the mobile crop is configured separately");
+  assert.ok(hero.title_en && hero.title_ar && hero.subtitle_en && hero.subtitle_ar);
+  assert.equal(settings.contact.store_name_en, BRAND_EN);
+  assert.equal(settings.contact.store_name_ar, BRAND_AR);
+  const custom = resolveSettings({ images: { hero_slides: [{ ...hero, title_en: "My collection" }] } });
+  assert.equal(custom.images.hero_slides[0].title_en, "My collection", "saved copy wins over defaults");
 });
 
 test("the unapproved receipt tagline is gone, not replaced", () => {

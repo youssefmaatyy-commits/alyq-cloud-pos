@@ -12,6 +12,7 @@ import { ChevronIcon } from "@/components/ui/icons";
 import { PageHeader } from "@/components/layout/AppShell";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { canAct } from "@/lib/permissions/enforce";
+import { capabilityForPath } from "@/lib/permissions/routes";
 import type { Capability } from "@/lib/permissions/roles";
 
 export interface ModuleCard {
@@ -33,23 +34,32 @@ export function ModuleHomePage({
   subtitle,
   crumbs,
   cards,
+  embedded = false,
 }: {
   moduleKey: string;
   title: string;
   subtitle: string;
   crumbs?: { label: string; to?: string }[];
   cards: ModuleCard[];
+  embedded?: boolean;
 }) {
   const { t } = useI18n();
-  const visible = cards.filter((card) => !card.capability || canAct(card.capability));
+  const visible = cards.filter((card) => {
+    const capability = card.capability ?? capabilityForPath(card.to);
+    return !capability || canAct(capability);
+  });
+  if (visible.length === 0) return null;
 
   return (
     <div data-testid={`module-${moduleKey}`}>
-      <PageHeader
+      {embedded ? <div className="mb-4 flex items-baseline gap-4 border-b border-stone-200 pb-3">
+        <h2 className="text-sm font-bold uppercase tracking-widest text-stone-800">{title}</h2>
+        <p className="hidden text-xs text-stone-500 md:block">{subtitle}</p>
+      </div> : <PageHeader
         title={title}
         subtitle={subtitle}
         crumbs={crumbs ?? [{ label: t("nav.dashboard"), to: "/" }, { label: title }]}
-      />
+      />}
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {visible.map((card) => (
           <Link

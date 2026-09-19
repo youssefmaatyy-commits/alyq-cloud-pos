@@ -72,7 +72,7 @@ export function VariantPicker({
                   data-testid={`variant-color-${group.color_key || "default"}`}
                   onClick={() => onColor(group.color_key)}
                   className={cn(
-                    "flex items-center gap-1.5 border px-3 py-1.5 text-xs font-bold transition",
+                    "min-h-11 flex items-center gap-1.5 border px-3 py-1.5 text-xs font-bold transition",
                     selected
                       ? "border-[var(--store-primary)] text-[var(--store-primary)] ring-1 ring-[var(--store-primary)]"
                       : "border-[var(--store-border)] text-[var(--store-text)] hover:border-[var(--store-primary)]",
@@ -130,7 +130,7 @@ export function VariantPicker({
                   }
                   onClick={() => buyable && onVariant(variant)}
                   className={cn(
-                    "min-w-11 border px-3 py-1.5 text-xs font-black tabular-nums transition",
+                    "min-h-11 min-w-11 border px-3 py-1.5 text-xs font-black tabular-nums transition",
                     selected
                       ? "border-[var(--store-primary)] bg-[var(--store-primary)] text-[var(--store-on-primary)]"
                       : "border-[var(--store-border)] text-[var(--store-text)] hover:border-[var(--store-primary)]",

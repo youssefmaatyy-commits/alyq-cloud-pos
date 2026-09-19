@@ -82,7 +82,7 @@ function ContentAccordions({
 
   return (
     <div className="mt-5">
-      {shortDescription ? (
+      {shortDescription && shortDescription !== "—" ? (
         <p className="text-sm font-medium leading-relaxed text-[var(--store-text)]">{shortDescription}</p>
       ) : null}
       {rows.length > 0 ? (
@@ -340,7 +340,7 @@ export function StoreProductPage() {
 
   const name = pick(product.name_ar, product.name_en);
   const specs = content?.specs ?? [];
-  const brand = pick(content?.brand_ar ?? null, content?.brand_en ?? null);
+  const brand = (content?.brand_ar || content?.brand_en) ? pick(content.brand_ar, content.brand_en) : "";
   const badgeText = campaignBadgeText(product.id, campaigns, (arabic, english) => pick(arabic, english));
   const wished = inWishlist(product.id);
 
@@ -470,7 +470,7 @@ export function StoreProductPage() {
           {brand ? (
             <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[var(--store-muted)]">{brand}</p>
           ) : null}
-          <h1 className="mt-1 text-2xl font-black leading-tight tracking-tight text-[var(--store-text)] sm:text-3xl">
+          <h1 style={{ fontFamily: "var(--store-font-display)" }} className="mt-1 text-3xl font-normal leading-tight tracking-tight text-[var(--store-text)] sm:text-4xl">
             {name}
           </h1>
 
@@ -492,7 +492,7 @@ export function StoreProductPage() {
 
           <div className="mt-4 flex flex-wrap items-baseline gap-3">
             <span data-testid="product-price">
-              <Money value={shelfPrice} className="text-3xl font-black text-[var(--store-text)]" />
+              <Money value={shelfPrice} className="text-2xl font-medium text-[var(--store-text)]" />
             </span>
             {chosenVariant === null && entry.onSale ? (
               <>
@@ -558,7 +558,7 @@ export function StoreProductPage() {
               disabled={!shelfInStock}
               data-testid="product-add-to-cart"
               onClick={addToCart}
-              className="flex-1 bg-[var(--store-primary)] px-6 py-3 text-sm font-black text-[var(--store-on-primary)] transition hover:bg-[var(--store-primary-hover)] disabled:cursor-not-allowed disabled:bg-[var(--store-border)] disabled:text-[var(--store-muted)] sm:flex-none"
+              className="min-h-11 min-w-40 flex-1 bg-[var(--store-primary)] px-6 py-3 text-sm font-black text-[var(--store-on-primary)] transition hover:bg-[var(--store-primary-hover)] disabled:cursor-not-allowed disabled:bg-[var(--store-border)] disabled:text-[var(--store-muted)] sm:flex-none"
               style={{ borderRadius: "var(--store-radius-button)" }}
             >
               {!shelfInStock
@@ -585,7 +585,7 @@ export function StoreProductPage() {
                 if (already === 0) add(product, quantity, chosenVariant);
               }}
               className={cn(
-                "border px-5 py-3 text-sm font-black transition",
+                "w-full border px-5 py-3 text-center text-sm font-bold transition sm:w-auto",
                 shelfInStock
                   ? "border-[var(--store-primary)] text-[var(--store-primary)] hover:bg-[var(--store-primary-soft)]"
                   : "pointer-events-none border-[var(--store-border)] text-[var(--store-muted)]",

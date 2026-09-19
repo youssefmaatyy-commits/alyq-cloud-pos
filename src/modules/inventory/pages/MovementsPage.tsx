@@ -80,7 +80,7 @@ export function MovementsPage() {
   return (
     <div>
       <PageHeader
-        crumbs={[{ label: t("home.breadcrumb.inventory"), to: "/inventory" }, { label: t("nav.movements") }]}
+        crumbs={[{ label: t("home.management.title"), to: "/management" }, { label: t("nav.movements") }]}
         title={t("inventory.history")}
         subtitle={t("inventory.history.subtitle")}
         actions={

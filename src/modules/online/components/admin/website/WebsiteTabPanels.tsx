@@ -922,6 +922,13 @@ export function CampaignsPanel({ draft, patch }: { draft: WebsiteSettings; patch
                     }
                   />
                 </Field>
+                <Field label={t("online.campaign.layout")}>
+                  <SelectInput value={campaign.layout ?? "split"} onChange={(event) => setCampaign(campaign.id, { layout: event.target.value as "full" | "split" | "alternating" })}>
+                    <option value="full">{t("online.campaign.full")}</option>
+                    <option value="split">{t("online.campaign.split")}</option>
+                    <option value="alternating">{t("online.campaign.alternating")}</option>
+                  </SelectInput>
+                </Field>
                 <Field label={t("online.s45.placement")}>
                   <SelectInput
                     value={campaign.placement}

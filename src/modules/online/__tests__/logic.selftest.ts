@@ -94,6 +94,8 @@ import {
 } from "../services/sections";
 import {
   configuredHref,
+  sanitizeSettings,
+  settingsForRemoteSave,
   DEFAULT_WEBSITE_SETTINGS,
   externalHref,
   internalHref,
@@ -2195,6 +2197,36 @@ test("delivery areas and the minimum order gate the cart the way the server does
   } finally {
     await repository.saveSettings({ settings: original, ...STAFF });
   }
+});
+
+test("editorial presets preserve saved choices and only allow curated campaign layouts", () => {
+  const original = settings();
+  const doc = structuredClone(original);
+  doc.images.hero_slides = [];
+  doc.sections = [...doc.sections].reverse().map((section, order) => ({ ...section, order, visible: false, image_url: null, body_en: "" }));
+  doc.campaigns = [{ ...original.campaigns[0], layout: "arbitrary-css" as never }];
+  const safe = sanitizeSettings(doc);
+  assert.deepEqual(safe.images.hero_slides, [], "a cleared hero stays cleared");
+  assert.deepEqual(safe.sections.map((s) => s.key), doc.sections.map((s) => s.key));
+  assert.ok(safe.sections.every((s) => !s.visible && s.image_url === null && s.body_en === ""));
+  assert.equal(safe.campaigns[0].layout, "split");
+  for (const layout of ["full", "split", "alternating"] as const) {
+    doc.campaigns[0].layout = layout;
+    assert.equal(sanitizeSettings(doc).campaigns[0].layout, layout);
+  }
+});
+
+test("bundled photography saves through the unchanged SQL absolute-URL policy", () => {
+  const original = settings();
+  const remote = settingsForRemoteSave(original, "https://shop.example");
+  assert.equal(remote.campaigns[0].desktop_image_url, "https://shop.example/brand/categories/jewellery.jpg");
+  assert.equal(remote.images.hero_slides[0].mobile_image_url, "https://shop.example/brand/hero-editorial-mobile.jpg");
+  assert.equal(original.campaigns[0].desktop_image_url, "/brand/categories/jewellery.jpg", "never mutate a draft");
+  assert.equal(remote.campaigns[0].cta_href, "#/store/products");
+  const uploaded = structuredClone(original);
+  uploaded.campaigns[0].desktop_image_url = "https://media.example/upload.jpg";
+  assert.equal(settingsForRemoteSave(uploaded, "https://shop.example").campaigns[0].desktop_image_url, uploaded.campaigns[0].desktop_image_url);
+  assert.throws(() => settingsForRemoteSave(original, "javascript:alert(1)"));
 });
 
 // runner — sequential, because the demo repository keeps one write in flight

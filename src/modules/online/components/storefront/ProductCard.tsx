@@ -162,7 +162,7 @@ export function ProductCard({
           title={customer ? undefined : t("store.wishlist.signInHint")}
           data-testid="card-wishlist"
           className={cn(
-            "-mt-9 relative z-10 ms-auto grid h-8 w-8 place-items-center self-end rounded-full bg-white/85 shadow-sm transition",
+            "-mt-12 relative z-10 ms-auto grid h-11 w-11 place-items-center self-end rounded-full bg-white/85 shadow-sm transition",
             wished ? "text-rose-500" : "text-slate-400 hover:text-rose-500",
           )}
           style={{ insetInlineEnd: "0.5rem" }}
@@ -209,7 +209,7 @@ export function ProductCard({
             <p
               className={cn(
                 "mt-0.5 text-[10px] font-semibold",
-                inStock ? "text-emerald-600" : "text-rose-600",
+                inStock ? "text-[var(--store-muted)]" : "text-[var(--store-muted)]",
               )}
             >
               {stockLine}
@@ -241,7 +241,7 @@ export function ProductCard({
               disabled={!inStock}
               data-testid="card-quick-add"
               className={cn(
-                "w-full border px-3 py-2 text-[11px] font-bold tracking-wide transition disabled:cursor-not-allowed",
+                "min-h-11 w-full border px-3 py-2 text-[11px] font-bold tracking-wide transition disabled:cursor-not-allowed",
                 inStock
                   ? "border-[var(--store-hairline)] bg-transparent text-[var(--store-text)] hover:border-[var(--store-primary)] hover:bg-[var(--store-primary)] hover:text-[var(--store-on-primary)]"
                   : "border-[var(--store-border)] bg-transparent text-[var(--store-muted)]",
@@ -257,7 +257,7 @@ export function ProductCard({
               disabled={!inStock}
               data-testid="card-add"
               className={cn(
-                "w-full border px-3 py-2 text-[11px] font-bold tracking-wide transition disabled:cursor-not-allowed",
+                "min-h-11 w-full border px-3 py-2 text-[11px] font-bold tracking-wide transition disabled:cursor-not-allowed",
                 inStock
                   ? "border-[var(--store-hairline)] bg-transparent text-[var(--store-text)] hover:border-[var(--store-primary)] hover:bg-[var(--store-primary)] hover:text-[var(--store-on-primary)]"
                   : "border-[var(--store-border)] bg-transparent text-[var(--store-muted)]",
@@ -299,7 +299,7 @@ export function ProductCard({
                       title={soldOut ? t("store.product.outOfStock") : variantLabelOf(variant, lang)}
                       disabled={soldOut}
                       onClick={() => quickAdd(variant.id)}
-                      className={`border px-2 py-1 text-[11px] font-bold transition ${
+                      className={`min-h-11 border px-2 py-1 text-[11px] font-bold transition ${
                         soldOut
                           ? "cursor-not-allowed border-[var(--store-border)] text-[var(--store-muted)] line-through opacity-50"
                           : "border-[var(--store-hairline)] text-[var(--store-text)] hover:border-[var(--store-primary)] hover:text-[var(--store-primary)]"

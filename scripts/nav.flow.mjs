@@ -2,7 +2,7 @@
  * Admin navigation E2E (Phase 49) — the sidebar is the MAIN MODULES and
  * nothing else, driven through the real bundle in jsdom, demo mode:
  *
- *   1. the signed-in admin sees exactly nine doors (Dashboard, POS, Sales,
+ *   1. the signed-in admin sees exactly six doors (Dashboard, POS, Sales,
  *      Catalog, Inventory, Online, Customers, Reports, Settings) plus the
  *      storefront shortcut;
  *   2. no sub-screen (Products, Categories, Audit, Approvals, Shifts,
@@ -20,7 +20,7 @@
  *      stock table one level below the module landing;
  *   17. a cashier sees no Reports/Settings/Online door and a direct URL is
  *      refused by the guard — hiding is courtesy, the guard is the law;
- *   18. Arabic mirrors the same nine doors, and the mobile drawer carries
+ *   18. Arabic mirrors the same six doors, and the mobile drawer carries
  *      the identical module list.
  *
  * Any console.error / window.onerror / network call fails the run.
@@ -70,7 +70,7 @@ const sidebarHrefs = () =>
   )];
 
 async function main() {
-  console.log("\nPhase 49 · Admin navigation — nine doors, no clutter\n");
+  console.log("\nPhase 49 · Admin navigation — six doors, no clutter\n");
   await sleep(600);
 
   // ── 0 · admin signs in ────────────────────────────────────────────────────
@@ -79,16 +79,16 @@ async function main() {
     label: "the sidebar",
   });
 
-  // ── 1 · exactly the nine module doors (+ the storefront shortcut) ─────────
-  const MODULES = ["#/", "#/pos", "#/sales", "#/catalog", "#/inventory", "#/online", "#/customers", "#/reports", "#/settings"];
+  // ── 1 · exactly the six module doors (+ the storefront shortcut) ─────────
+  const MODULES = ["#/", "#/pos", "#/management", "#/online", "#/reports", "#/settings"];
   const hrefs = sidebarHrefs();
   check(
-    "the sidebar carries exactly the nine module doors + the storefront shortcut",
-    MODULES.every((m) => hrefs.includes(m)) && hrefs.includes("#/store") && hrefs.length === 10,
+    "the sidebar carries exactly the six module doors + the storefront shortcut",
+    MODULES.every((m) => hrefs.includes(m)) && hrefs.includes("#/store") && hrefs.length === 7,
   );
 
   // ── 2 · no sub-screen in the sidebar ──────────────────────────────────────
-  const STRAYS = ["#/products", "#/categories", "#/inventory/movements", "#/pos/sales", "#/returns", "#/refunds", "#/shifts", "#/expenses", "#/audit", "#/approvals", "#/online/orders", "#/online/website", "#/settings/branding", "#/settings/users", "#/settings/backup"];
+  const STRAYS = ["#/sales", "#/catalog", "#/inventory", "#/customers", "#/products", "#/categories", "#/inventory/movements", "#/pos/sales", "#/returns", "#/refunds", "#/shifts", "#/expenses", "#/audit", "#/approvals", "#/online/orders", "#/online/website", "#/settings/branding", "#/settings/users", "#/settings/backup"];
   check("no sub-screen (products, audit, shifts, branding…) leaks into the sidebar", STRAYS.every((s) => !hrefs.includes(s)));
 
   // ── 3 · Settings appears exactly once and opens the grouped home ──────────
@@ -96,8 +96,8 @@ async function main() {
   clickEl([...document.querySelectorAll("aside a")].find((a) => a.getAttribute("href") === "#/settings"));
   await waitFor(() => testid("settings-group-people"), { label: "the grouped settings home" });
   check(
-    "the settings home is grouped: General / Users & roles / Branding / Online store / Backup & restore / Audit log / System",
-    ["general", "people", "branding", "online", "backup", "audit", "system"].every((g) => testid(`settings-group-${g}`)),
+    "the settings home is grouped: General / Users & roles / Branding / Backup & restore / Audit log / System",
+    ["general", "people", "branding", "backup", "audit", "system"].every((g) => testid(`settings-group-${g}`)),
   );
 
   // ── 4–8 · the grouped home reaches every room ─────────────────────────────
@@ -126,11 +126,11 @@ async function main() {
   check("Settings → Danger Zone opens from the System group", Boolean(testid("breadcrumbs")));
 
   // ── 9–11 · the Catalog module home reaches its rooms ──────────────────────
-  await navigate("#/catalog");
-  await waitFor(() => testid("module-catalog"), { label: "the Catalog module home" });
+  await navigate("#/management");
+  await waitFor(() => testid("module-management"), { label: "the Catalog module home" });
   check(
-    "the Catalog home offers Products / Categories / Content / Import cards",
-    ["products", "categories", "content", "import"].every((k) => testid(`module-card-${k}`)),
+    "Store Management offers all catalog, inventory and operations destinations",
+    ["products", "categories", "content", "import", "media", "overview", "low", "out", "movements", "adjustments", "suppliers", "invoices", "returns", "refunds", "shifts", "shift-history", "expenses", "customers", "approvals"].every((k) => testid(`module-card-${k}`)),
   );
   clickTestid("module-card-products");
   await waitFor(() => window.location.hash.includes("#/products") && testid("breadcrumbs")?.textContent.includes("Products"), {
@@ -139,15 +139,15 @@ async function main() {
   const productCrumbs = testid("breadcrumbs").textContent ?? "";
   
   check(
-    "Catalog → Products: breadcrumbs read Catalog › Products and the table renders",
-    productCrumbs.includes("Catalog") && productCrumbs.includes("Products") && Boolean(document.querySelector('a[href="#/products/new"]')),
+    "Store Management → Products: workspace breadcrumb and the table renders",
+    productCrumbs.includes("Store Management") && productCrumbs.includes("Products") && Boolean(document.querySelector('a[href="#/products/new"]')),
   );
 
-  await navigate("#/catalog");
+  await navigate("#/management");
   await waitFor(() => testid("module-card-categories"), { label: "the Catalog home again" });
   clickTestid("module-card-categories");
   await waitFor(() => testid("breadcrumbs")?.textContent.includes("Categories"), { label: "the Categories page" });
-  check("Catalog → Categories opens through the module home", Boolean(testid("breadcrumbs")));
+  check("Store Management → Categories opens through the module home", Boolean(testid("breadcrumbs")));
 
   // ── 12–14 · the Online module home, then the browser's back button ────────
   await navigate("#/online");
@@ -201,7 +201,7 @@ async function main() {
   const guardRefused = bodyText().includes("You do not have access to this screen");
   check(
     "a cashier sees no Settings door (their modules stay) and a direct URL to Branding is refused",
-    !cashierHrefs.includes("#/settings") && cashierHrefs.includes("#/pos") && cashierHrefs.includes("#/sales") && cashierHrefs.includes("#/online") && cashierHrefs.includes("#/reports") && guardRefused,
+    !cashierHrefs.includes("#/settings") && cashierHrefs.includes("#/pos") && cashierHrefs.includes("#/management") && cashierHrefs.includes("#/online") && cashierHrefs.includes("#/reports") && guardRefused,
   );
 
   // ── 18 · Arabic mirror + the mobile drawer's identical IA ─────────────────
@@ -219,10 +219,10 @@ async function main() {
   clickEl(hamburger);
   await waitFor(() => document.querySelector('aside[role="dialog"]'), { label: "the mobile drawer" });
   const drawerHrefs = [...document.querySelectorAll('aside[role="dialog"] a')].map((a) => a.getAttribute("href"));
-  const arabicDoors = ["لوحة التحكم", "الكاشير", "المبيعات", "الكتالوج", "المخزون", "أونلاين", "العملاء", "التقارير", "الإعدادات"];
+  const arabicDoors = ["لوحة التحكم", "الكاشير", "إدارة المتجر", "المتجر الإلكتروني", "التقارير", "الإعدادات"];
   const drawerText = document.querySelector('aside[role="dialog"]').textContent ?? "";
   check(
-    "Arabic mirrors the nine doors and the mobile drawer carries the identical module list",
+    "Arabic mirrors the six doors and the mobile drawer carries the identical module list",
     MODULES.every((m) => drawerHrefs.includes(m)) && arabicDoors.every((label) => drawerText.includes(label)) && drawerHrefs.every((h) => !STRAYS.includes(h)),
   );
 

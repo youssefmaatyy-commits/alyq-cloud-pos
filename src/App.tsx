@@ -56,7 +56,7 @@ import { BackupPage } from "@/modules/backup";
 import { BrandingPage } from "@/modules/settings/pages/BrandingPage";
 import { SettingsHomePage } from "@/modules/settings/pages/SettingsHomePage";
 import { SystemSettingsPage } from "@/modules/settings/pages/SystemSettingsPage";
-import { SalesHome, CatalogHome, InventoryHome, OnlineHome } from "./components/layout/moduleHomes";
+import { StoreManagementHome, SalesHome, CatalogHome, InventoryHome, OnlineHome } from "./components/layout/moduleHomes";
 
 import {
   MarketingPage,
@@ -254,6 +254,7 @@ function AuthenticatedApp() {
                             <Route path="/products/:id" element={<ProductDetailPage />} />
                             <Route path="/products/:id/edit" element={<ProductFormPage mode="edit" />} />
                             {/* Phase 49: the Catalog module landing. */}
+                            <Route path="/management" element={<StoreManagementHome />} />
                             <Route path="/catalog" element={<CatalogHome />} />
                             <Route path="/categories" element={<CategoriesPage />} />
                             {/* Phase 49: /inventory is the module landing; the

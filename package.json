@@ -13,7 +13,8 @@
     "test:e2e": "node scripts/test.e2e.mjs",
     "test:all": "npm run typecheck && npm run test && npm run test:e2e",
     "db:check": "node scripts/migrations.check.mjs",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test:rendered": "node scripts/rendered.flow.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.109.0",
@@ -27,6 +28,7 @@
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.8",
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.63.0",
     "@tailwindcss/vite": "4.1.17",
     "@types/node": "22.19.17",
     "@types/react": "19.2.7",

@@ -73,7 +73,7 @@ const SUITES = [
   {
     id: "nav",
     file: "scripts/nav.flow.mjs",
-    title: "Admin navigation (Phase 49): nine module doors, grouped settings, module homes, breadcrumbs, deep links, permissions, Arabic drawer",
+    title: "Admin navigation (Phase 49): six primary areas, grouped settings, module homes, breadcrumbs, deep links, permissions, Arabic drawer",
   },
   {
     id: "dangerzone",

@@ -51,6 +51,14 @@ export function SettingsHomePage() {
       labelKey: "admin.settings.group.general",
       cards: [
         {
+          to: "/online/website?tab=general",
+          capability: "manage_website",
+          icon: "🛍",
+          titleKey: "online.ws.general",
+          descKey: "admin.settings.card.online.desc",
+          testId: "settings-card-online",
+        },
+        {
           to: "/settings/approvals",
           capability: "manage_settings",
           icon: "✓",
@@ -76,7 +84,7 @@ export function SettingsHomePage() {
           to: "/settings/roles",
           capability: "manage_roles",
           icon: "🛡",
-          titleKey: "admin.settings.card.roles.title",
+          titleKey: "admin.settings.permissions",
           descKey: "admin.settings.card.roles.desc",
           testId: "settings-card-roles",
         },
@@ -93,20 +101,6 @@ export function SettingsHomePage() {
           titleKey: "admin.settings.card.branding.title",
           descKey: "admin.settings.card.branding.desc",
           testId: "settings-card-branding",
-        },
-      ],
-    },
-    {
-      key: "online",
-      labelKey: "admin.settings.group.online",
-      cards: [
-        {
-          to: "/online/website",
-          capability: "manage_website",
-          icon: "🛍",
-          titleKey: "admin.settings.card.online.title",
-          descKey: "admin.settings.card.online.desc",
-          testId: "settings-card-online",
         },
       ],
     },
@@ -181,13 +175,13 @@ export function SettingsHomePage() {
         subtitle={t("admin.settings.subtitle")}
         crumbs={[{ label: t("nav.dashboard"), to: "/" }, { label: t("admin.settings.title") }]}
       />
-      <div className="space-y-7">
+      <div className="grid items-start gap-6 md:grid-cols-2 xl:grid-cols-3">
         {visibleGroups.map((group) => (
           <section key={group.key} data-testid={`settings-group-${group.key}`}>
             <h2 className="mb-2 text-[11px] font-black uppercase tracking-widest text-stone-400">
               {t(group.labelKey)}
             </h2>
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            <div className="grid gap-3">
               {group.cards.map((card) => (
                 <Link
                   key={card.to + card.testId}

@@ -9,6 +9,8 @@
  * pages already ARE the hub (list with details; tabbed reports), so the
  * sidebar points straight at them.
  */
+import { Navigate, useLocation } from "react-router-dom";
+import { PageHeader } from "@/components/layout/AppShell";
 import { ModuleHomePage } from "@/components/layout/ModuleHomePage";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import {
@@ -27,14 +29,16 @@ import {
 import { useOnlineNotificationState } from "@/modules/online/hooks/OnlineNotificationsProvider";
 import { useOptionalApprovals } from "@/modules/approvals";
 
-export function SalesHome() {
+export function SalesHome({ embedded = false }: { embedded?: boolean }) {
   const { t } = useI18n();
   const approvals = useOptionalApprovals();
   const pending = approvals?.summary.pending ?? 0;
   return (
     <ModuleHomePage
+      embedded={embedded}
+      crumbs={[{ label: t("home.management.title"), to: "/management" }, { label: t("home.breadcrumb.sales") }]}
       moduleKey="sales"
-      title={t("home.breadcrumb.sales")}
+      title={embedded ? t("home.management.operations") : t("home.breadcrumb.sales")}
       subtitle={t("home.sales.subtitle")}
       cards={[
         {
@@ -81,15 +85,19 @@ export function SalesHome() {
           badge: pending,
           badgeLabel: t("approvals.pendingHint"),
         },
+        { key: "customers", to: "/customers", icon: <ClipboardIcon />, title: t("nav.customers"), description: t("home.management.customers") },
+        { key: "shift-history", to: "/shifts/history", icon: <HistoryIcon />, title: t("nav.shiftHistory"), description: t("home.sales.shifts.desc") },
       ]}
     />
   );
 }
 
-export function CatalogHome() {
+export function CatalogHome({ embedded = false }: { embedded?: boolean }) {
   const { t } = useI18n();
   return (
     <ModuleHomePage
+      embedded={embedded}
+      crumbs={[{ label: t("home.management.title"), to: "/management" }, { label: t("home.breadcrumb.catalog") }]}
       moduleKey="catalog"
       title={t("home.breadcrumb.catalog")}
       subtitle={t("home.catalog.subtitle")}
@@ -110,10 +118,10 @@ export function CatalogHome() {
         },
         {
           key: "content",
-          to: "/online/content",
+          to: "/online/website?tab=productContent",
           capability: "manage_website",
           icon: <EditIcon />,
-          title: t("nav.websiteContent"),
+          title: t("online.ws.productContent"),
           description: t("home.catalog.content.desc"),
         },
         {
@@ -123,15 +131,20 @@ export function CatalogHome() {
           title: t("nav.importExport"),
           description: t("home.catalog.import.desc"),
         },
+        { key: "media", to: "/online/website?tab=productContent", icon: <EditIcon />, title: t("home.management.media"), description: t("home.management.media.desc") },
       ]}
     />
   );
 }
 
-export function InventoryHome() {
+export function InventoryHome({ embedded = false }: { embedded?: boolean }) {
   const { t } = useI18n();
+  const location = useLocation();
+  if (!embedded && new URLSearchParams(location.search).has("status")) return <Navigate to={`/inventory/stock${location.search}`} replace />;
   return (
     <ModuleHomePage
+      embedded={embedded}
+      crumbs={[{ label: t("home.management.title"), to: "/management" }, { label: t("home.breadcrumb.inventory") }]}
       moduleKey="inventory"
       title={t("home.breadcrumb.inventory")}
       subtitle={t("home.inventory.subtitle")}
@@ -164,6 +177,8 @@ export function InventoryHome() {
           title: t("nav.movements"),
           description: t("home.inventory.movements.desc"),
         },
+        { key: "adjustments", to: "/inventory/stock", capability: "adjust_stock", icon: <EditIcon />, title: t("inventory.adjust"), description: t("home.management.adjustments") },
+        { key: "suppliers", to: "/reports?section=suppliers", icon: <ClipboardIcon />, title: t("reports.suppliersTitle"), description: t("reports.suppliersHint") },
       ]}
     />
   );
@@ -227,7 +242,7 @@ export function OnlineHome() {
         },
         {
           key: "delivery",
-          to: "/online/website",
+          to: "/online/website?tab=delivery",
           capability: "manage_website",
           icon: <WalletIcon />,
           title: t("online.ws.delivery"),
@@ -241,7 +256,26 @@ export function OnlineHome() {
           title: t("nav.onlineReports"),
           description: t("home.online.reports.desc"),
         },
+        ...(["social", "checkout", "confirmation"] as const).map((tab) => ({
+          key: tab, to: `/online/website?tab=${tab}`, capability: "manage_website" as const,
+          icon: <EditIcon />, title: t(`online.ws.${tab}`), description: t("home.online.configure"),
+        })),
+        { key: "verification", to: "/online/orders", icon: <WalletIcon />, title: t("home.online.verification"), description: t("home.online.verification.desc") },
       ]}
     />
   );
+}
+
+/** One operational workspace; the old module URLs remain valid bookmarks. */
+export function StoreManagementHome() {
+  const { t } = useI18n();
+  return <div data-testid="module-management">
+    <PageHeader title={t("home.management.title")} subtitle={t("home.management.subtitle")}
+      crumbs={[{ label: t("nav.dashboard"), to: "/" }, { label: t("home.management.title") }]} />
+    <div className="space-y-9">
+      <CatalogHome embedded />
+      <InventoryHome embedded />
+      <SalesHome embedded />
+    </div>
+  </div>;
 }

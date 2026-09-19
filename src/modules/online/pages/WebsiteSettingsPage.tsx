@@ -15,6 +15,7 @@
  * Guarded by `manage_website`: a cashier can work online orders without being
  * able to repaint the shop.
  */
+import { useSearchParams } from "react-router-dom";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { canActAs } from "@/lib/permissions/enforce";
 import { openStorefrontRoute } from "@/lib/storefront/storefrontLink";
@@ -241,7 +242,13 @@ export function WebsiteSettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [loadError, setLoadError] = useState<OnlineErrorCode | null>(null);
-  const [tab, setTab] = useState<Tab>("general");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedTab = searchParams.get("tab");
+  const tab: Tab = TABS.find((entry) => entry.key === requestedTab)?.key ?? "general";
+  const setTab = (next: Tab) => setSearchParams((current) => {
+    current.set("tab", next);
+    return current;
+  });
 
   useEffect(() => {
     let cancelled = false;

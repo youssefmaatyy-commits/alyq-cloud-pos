@@ -32,6 +32,9 @@ export function RouteGuard({ children }: { children: ReactNode }) {
   // Screens with a dedicated guard (audit) render their own, more specific denial.
   if (isSelfGuardedPath(location.pathname)) return <>{children}</>;
 
+  // This shared directory serves order operators AND website-only roles.
+  // Child routes still use their original individual guards.
+  if (location.pathname.replace(/\/+$/, "") === "/online" && canAct("manage_website")) return <>{children}</>;
   const required = capabilityForPath(location.pathname);
   // The session's *resolved* capabilities, not the system matrix: a custom role
   // replaces the matrix, so asking the role alone would deny a screen the

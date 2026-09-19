@@ -138,7 +138,7 @@ export function SalesHistoryPage() {
   return (
     <div>
       <PageHeader
-        crumbs={[{ label: t("home.breadcrumb.sales"), to: "/sales" }, { label: t("nav.sales") }]}
+        crumbs={[{ label: t("home.management.title"), to: "/management" }, { label: t("nav.sales") }]}
         title={t("pos.salesTitle")}
         subtitle={t("pos.salesSubtitle")}
         actions={

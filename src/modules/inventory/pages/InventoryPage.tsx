@@ -121,7 +121,7 @@ export function InventoryPage() {
   return (
     <div>
       <PageHeader
-        crumbs={[{ label: t("home.breadcrumb.inventory"), to: "/inventory" }, { label: t("nav.inventory") }]}
+        crumbs={[{ label: t("home.management.title"), to: "/management" }, { label: t("nav.inventory") }]}
         title={t("inventory.dashboard")}
         subtitle={t("inventory.dashboardSubtitle")}
         actions={

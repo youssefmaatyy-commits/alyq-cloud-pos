@@ -58,7 +58,6 @@ import type {
 } from "../types";
 import { formatOrderNumber } from "../types";
 import {
-  DEFAULT_HERO_SLIDES,
   DEFAULT_WEBSITE_SETTINGS,
   mergeSettings,
   resolveSettings,
@@ -425,44 +424,8 @@ export class DemoOnlineRepository
   private campaigns: Campaign[] = readArray<Campaign>(KEYS.campaigns);
   private seeded = false;
 
-  /**
-   * Phase 49 visual pass, demo-mode migration: a browser that stored the
-   * settings document before the editorial re-dress keeps showing the old
-   * bare hero and empty about preview — not because an admin chose them, but
-   * because the seed once wrote them. When the stored hero slides and about
-   * block are byte-identical to those OLD shipped defaults (proof the admin
-   * never touched them), re-dress them with the new defaults. Anything
-   * customized — one changed title, one picked colour — is left alone, and
-   * the check is idempotent (a re-dressed hero no longer matches).
-   */
-  private migratePhase49Defaults(): void {
-    const doc = this.settingsDoc.settings as WebsiteSettings | null;
-    const oldHero =
-      Array.isArray(doc?.images?.hero_slides) &&
-      doc.images.hero_slides.length === 2 &&
-      doc.images.hero_slides[0]?.image_url === null &&
-      doc.images.hero_slides[0]?.title_en === "ALYQ" &&
-      doc.images.hero_slides[0]?.subtitle_en === "ALYQ Accessories Store" &&
-      doc.images.hero_slides[0]?.cta_label_en === "Shop now" &&
-      doc.images.hero_slides[1]?.title_en === "This week's offers" &&
-      !doc.images.hero_slides[0]?.secondary_cta_label_en;
-    const oldAbout =
-      doc?.about?.title_en === "About ALYQ" &&
-      doc.about?.body_en === "" &&
-      doc.about?.image_url === null;
-    if (doc && oldHero && oldAbout) {
-      doc.images.hero_slides = structuredClone(DEFAULT_HERO_SLIDES);
-      doc.about.body_ar = DEFAULT_WEBSITE_SETTINGS.about.body_ar;
-      doc.about.body_en = DEFAULT_WEBSITE_SETTINGS.about.body_en;
-      doc.about.image_url = DEFAULT_WEBSITE_SETTINGS.about.image_url;
-      this.settingsDoc.settings = doc;
-      write(KEYS.settings, this.settingsDoc);
-    }
-  }
-
   /** Seed once per session, after the catalogue demo repo has its own data. */
   private async ensureSeeded(): Promise<Product[]> {
-    this.migratePhase49Defaults();
     const products = await getDemoRepository().listProducts();
     if (!this.seeded && safeStorage.get(KEYS.seeded) !== "1") {
       seedContent(products);

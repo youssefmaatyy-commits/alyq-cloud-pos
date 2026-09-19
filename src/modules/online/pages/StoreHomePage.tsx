@@ -209,7 +209,8 @@ export function StoreHomePage() {
       case "hero": {
         if (slides.length === 0) return null;
         const slide = slides[Math.min(slideIndex, slides.length - 1)];
-        const overlay = slide.overlay ?? 42;
+        const overlay = slide.overlay ?? 32;
+        const hasImage = Boolean(slide.imageUrl || slide.mobileImageUrl);
         const position =
           slide.contentPosition === "start"
             ? "items-end justify-start text-start"
@@ -226,12 +227,10 @@ export function StoreHomePage() {
           <section
             key="hero"
             aria-label={slide.title || storeName}
-            // Without imagery the stage falls back to the admin's own colours —
-            // a quiet gradient from the secondary into the primary. Never a
-            // colour the shop did not choose.
+            // An empty image uses the configured paper surface, not a dark color slab.
             className="relative overflow-hidden"
             style={{
-              backgroundImage: "linear-gradient(140deg, var(--store-secondary) 0%, var(--store-primary) 100%)",
+              backgroundColor: "var(--store-bg)",
             }}
             onMouseEnter={() => setPaused(true)}
             onMouseLeave={() => setPaused(false)}
@@ -262,27 +261,27 @@ export function StoreHomePage() {
                 />
               ) : null}
               {/* the scrim — strength is the admin's call */}
-              <div className="absolute inset-0 bg-black" style={{ opacity: overlay / 100 }} />
+              {hasImage ? <div className="absolute inset-0 bg-black" style={{ opacity: overlay / 100 }} /> : null}
             </div>
 
             <div
               className={cn(
                 "relative mx-auto flex w-full max-w-[var(--store-max-width)] px-6 sm:px-10",
-                HERO_HEIGHT[slide.height ?? "editorial"] ?? HERO_HEIGHT.editorial,
+                hasImage ? (HERO_HEIGHT[slide.height ?? "editorial"] ?? HERO_HEIGHT.editorial) : "min-h-[24rem] md:min-h-[28rem]",
                 position,
               )}
             >
-              <div className="max-w-xl py-16">
+              <div className="max-w-md py-12 md:py-16">
                 {slide.title ? (
                   <h1
-                    className="text-3xl font-black leading-[1.1] tracking-tight text-white sm:text-5xl lg:text-6xl"
+                    className={cn("text-4xl font-normal leading-[1.05] tracking-tight sm:text-5xl lg:text-6xl", hasImage ? "text-white" : "text-[var(--store-text)]")}
                     style={{ fontFamily: "var(--store-font-display)" }}
                   >
                     {slide.title}
                   </h1>
                 ) : null}
                 {slide.subtitle ? (
-                  <p className="mt-4 max-w-md text-sm font-medium leading-relaxed text-white/85 sm:text-base">
+                  <p className={cn("mt-4 max-w-xs text-sm leading-relaxed sm:text-base", hasImage ? "text-white/90" : "text-[var(--store-muted)]")}>
                     {slide.subtitle}
                   </p>
                 ) : null}
@@ -304,7 +303,7 @@ export function StoreHomePage() {
                     {secondaryLabel && secondaryHref ? (
                       <Link
                         to={secondaryHref}
-                        className="inline-block border border-white/60 px-7 py-3 text-xs font-bold uppercase tracking-[0.18em] text-white/90 transition hover:border-white hover:bg-white/10 hover:text-white"
+                        className={cn("inline-block border px-7 py-3 text-xs font-bold uppercase tracking-[0.18em] transition", hasImage ? "border-white/60 text-white hover:bg-white/10" : "border-[var(--store-hairline)] text-[var(--store-text)]")}
                         style={{ borderRadius: "var(--store-radius-button)" }}
                       >
                         {secondaryLabel}
@@ -325,8 +324,8 @@ export function StoreHomePage() {
                     aria-label={t("store.hero.goToSlide", { count: index + 1 })}
                     aria-current={index === slideIndex}
                     className={cn(
-                      "h-1.5 rounded-full transition-all",
-                      index === slideIndex ? "w-7 bg-white" : "w-1.5 bg-white/50",
+                      "h-11 w-11 border-y-[20px] border-x-8 border-transparent bg-clip-content transition-all",
+                      index === slideIndex ? "bg-white" : "bg-white/50",
                     )}
                   />
                 ))}
@@ -496,7 +495,7 @@ export function StoreHomePage() {
             image={image}
             action={
               cta ? (
-                cta.to.startsWith("#") ? (
+                (cta.to.startsWith("#") || cta.to.startsWith("/")) ? (
                   <StoreLink href={cta.to}>{cta.label}</StoreLink>
                 ) : (
                   <a
@@ -513,7 +512,7 @@ export function StoreHomePage() {
               )
             }
           >
-            <ProductGrid>
+            <ProductGrid overrideColumns={{ mobile: settings.product_card.mobile_columns, desktop: Math.min(settings.product_card.desktop_columns, Math.max(2, entries.length)) }}>
               {entries.map((entry, index) => (
                 <ProductCard key={entry.product.id} entry={entry} priority={index < 4 && key === "featured"} />
               ))}
@@ -577,16 +576,17 @@ export function StoreHomePage() {
         const blocks = activeEditorialCampaigns(settings).filter((c) => c.placement === "homepage");
         if (blocks.length === 0) return null;
         return (
-          <SectionShell key="campaigns" id="campaigns" title={heading("campaigns", "store.section.campaigns")} image={null}>
+          <section key="campaigns" id="campaigns" aria-label={heading("campaigns", "store.section.campaigns")} className="py-[calc(var(--store-space-section)/2)]">
             <div className="space-y-6">
               {blocks.map((campaign) => {
                 const title = pick(campaign.title_ar, campaign.title_en).trim();
                 const subtitle = pick(campaign.subtitle_ar, campaign.subtitle_en).trim();
                 const ctaLabel = pick(campaign.cta_ar, campaign.cta_en).trim();
                 const href = configuredHref(campaign.cta_href);
+                const full = campaign.layout === "full";
                 const body = (
                   <>
-                    <div className="relative hidden md:block md:w-1/2">
+                    <div className={cn("hidden md:block", full ? "absolute inset-0" : "relative md:w-1/2")}>
                       {campaign.desktop_image_url ? (
                         <StoreImage
                           src={campaign.desktop_image_url}
@@ -597,34 +597,36 @@ export function StoreHomePage() {
                       ) : null}
                     </div>
                     {campaign.mobile_image_url ?? campaign.desktop_image_url ? (
-                      <div className="relative md:hidden">
+                      <div className={cn("md:hidden", full ? "absolute inset-0" : "relative")}>
                         <StoreImage
                           src={campaign.mobile_image_url ?? campaign.desktop_image_url}
                           alt=""
-                          ratio="aspect-[16/9]"
-                          className="w-full"
+                          ratio={full ? "" : "aspect-[16/9]"}
+                          className={full ? "h-full w-full" : "w-full"}
                         />
                       </div>
                     ) : null}
-                    <div className="flex flex-1 flex-col items-start justify-center gap-3 p-6 md:p-10">
+                    {full ? <div className="absolute inset-0 bg-black/35" /> : null}
+                    <div className={cn("relative flex flex-1 flex-col items-start justify-center gap-4 p-8 md:p-16", full && "mx-auto w-full max-w-[var(--store-max-width)]")}>
+
                       <h3
-                        className="text-xl font-black leading-tight text-[var(--store-text)] md:text-3xl"
+                        className={cn("max-w-md text-4xl font-normal leading-tight md:text-5xl", full ? "text-white" : "text-[var(--store-text)]")}
                         style={{ fontFamily: "var(--store-font-display)" }}
                       >
                         {title}
                       </h3>
                       {subtitle ? (
-                        <p className="max-w-md text-sm leading-relaxed text-[var(--store-muted)]">{subtitle}</p>
+                        <p className={cn("max-w-xs text-sm leading-relaxed", full ? "text-white/90" : "text-[var(--store-muted)]")}>{subtitle}</p>
                       ) : null}
                       {ctaLabel && href ? (
-                        <span className="mt-2 border-b border-[var(--store-text)] pb-0.5 text-[11px] font-black uppercase tracking-[0.2em] text-[var(--store-text)]">
+                        <span className={cn("mt-4 border-b pb-2 text-[11px] font-bold uppercase tracking-[0.2em]", full ? "border-white text-white" : "border-[var(--store-text)] text-[var(--store-text)]")}>
                           {ctaLabel}
                         </span>
                       ) : null}
                     </div>
                   </>
                 );
-                const shell = "flex flex-col overflow-hidden bg-[var(--store-surface-alt)] md:flex-row";
+                const shell = cn("relative flex min-h-80 flex-col overflow-hidden bg-[var(--store-surface-alt)] md:flex-row", full ? "min-h-[60vh] md:min-h-[65vh]" : "mx-auto max-w-[var(--store-max-width)]", campaign.layout === "alternating" && "md:flex-row-reverse");
                 return href && href.startsWith("#") ? (
                   <Link
                     key={campaign.id}
@@ -652,7 +654,7 @@ export function StoreHomePage() {
                 );
               })}
             </div>
-          </SectionShell>
+          </section>
         );
       }
 
@@ -665,12 +667,12 @@ export function StoreHomePage() {
         const cta = sectionCta(section);
         const desktop = section.image_url ?? null;
         const mobile = section.mobile_image_url ?? null;
-        if (!title && !body && !desktop && !mobile) return null;
+        if (!body && !desktop && !mobile) return null;
         return (
           <section key={key} id={key} className="mx-auto w-full max-w-[var(--store-max-width)] px-4 py-[calc(var(--store-space-section)/2)] sm:px-6">
             {title && key !== "textImage" ? (
               <h2
-                className="mb-6 text-center text-2xl font-black tracking-tight text-[var(--store-text)] md:text-3xl"
+                className="mb-8 text-center text-3xl font-normal tracking-tight text-[var(--store-text)] md:text-3xl"
                 style={{ fontFamily: "var(--store-font-display)" }}
               >
                 {title}
@@ -706,9 +708,9 @@ export function StoreHomePage() {
                   </p>
                 ) : null}
                 {cta ? (
-                  cta.to.startsWith("#") ? (
+                  (cta.to.startsWith("#") || cta.to.startsWith("/")) ? (
                     <Link
-                      to={cta.to.slice(1)}
+                      to={cta.to.startsWith("#") ? cta.to.slice(1) : cta.to}
                       className="mt-6 inline-block border-b border-[var(--store-text)] pb-0.5 text-[11px] font-black uppercase tracking-[0.2em] text-[var(--store-text)]"
                     >
                       {cta.label}

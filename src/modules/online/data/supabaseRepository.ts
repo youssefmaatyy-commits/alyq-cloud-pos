@@ -1,3 +1,4 @@
+import { settingsForRemoteSave } from "../services/settingsDefaults";
 /**
  * Live Supabase implementation of the online storefront repositories.
  *
@@ -1018,7 +1019,7 @@ export class SupabaseOnlineRepository
       const { error } = await client.from("website_settings").upsert(
         {
           id: 1,
-          settings: input.settings as unknown as Record<string, unknown>,
+          settings: settingsForRemoteSave(input.settings, window.location.origin) as unknown as Record<string, unknown>,
           updated_by: input.user_id || null,
           updated_by_name: input.user_name || null,
         },

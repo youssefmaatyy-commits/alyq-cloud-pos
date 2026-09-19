@@ -49,7 +49,7 @@ export function CategoriesPage() {
   return (
     <div>
       <PageHeader
-        crumbs={[{ label: t("home.breadcrumb.catalog"), to: "/catalog" }, { label: t("nav.categories") }]}
+        crumbs={[{ label: t("home.management.title"), to: "/management" }, { label: t("nav.categories") }]}
         title={t("categories.title")}
         subtitle={t("categories.subtitle")}
         actions={
