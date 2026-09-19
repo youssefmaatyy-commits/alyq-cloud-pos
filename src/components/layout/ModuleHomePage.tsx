@@ -87,7 +87,7 @@ export function ModuleHomePage({
               className="mt-3 inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-widest text-stone-400 transition group-hover:text-stone-700"
             >
               {t("common.open")}
-              <ChevronIcon className="h-3 w-3 -rotate-90 rtl:rotate-90" />
+              <ChevronIcon className="h-3 w-3 rtl:rotate-180" />
             </span>
           </Link>
         ))}

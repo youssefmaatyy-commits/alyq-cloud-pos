@@ -118,7 +118,7 @@ const P: SeedProduct[] = [
     show_on_website: true,
     is_featured: false,
     active: true,
-    image_url: "/brand/categories/necklaces.jpg",
+    image_url: "/brand/products/pearl-necklace.jpg",
     images: [],
   },
   {
@@ -142,7 +142,7 @@ const P: SeedProduct[] = [
     show_on_website: true,
     is_featured: false,
     active: true,
-    image_url: "/brand/categories/bracelets.jpg",
+    image_url: "/brand/products/minimal-bracelet.jpg",
     images: [],
   },
   {
@@ -164,7 +164,7 @@ const P: SeedProduct[] = [
     show_on_website: true,
     is_featured: false,
     active: true,
-    image_url: "/brand/categories/jewellery.jpg",
+    image_url: "/brand/products/jewellery-set.jpg",
     images: [],
   },
   {
@@ -208,7 +208,7 @@ const P: SeedProduct[] = [
     show_on_website: true,
     is_featured: false,
     active: true,
-    image_url: null,
+    image_url: "/brand/products/styling-membership.jpg",
     images: [],
   },
   {
