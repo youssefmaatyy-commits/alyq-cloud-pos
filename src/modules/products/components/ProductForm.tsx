@@ -216,6 +216,38 @@ export function ProductForm({ productId }: { productId?: string }) {
     navigate(productId ? `/products/${productId}` : "/products");
   }, [navigate, productId]);
 
+  const handleSaveAndEditVariants = async () => {
+    setSubmitAttempted(true);
+    if (Object.keys(errors).length > 0) {
+      toast.error(t("validation.fixErrors"));
+      const first = Object.keys(errors)[0];
+      document.querySelector<HTMLElement>(`[name="${first}"]`)?.focus();
+      return;
+    }
+    setSaving(true);
+    try {
+      const { product, isNew } = await saveProduct(values, productId);
+      toast.success(t(isNew ? "products.createdToast" : "products.updatedToast"));
+      if (isNew) {
+        navigate(`/products/${product.id}/edit`);
+      } else {
+        navigate(`/products/${productId}`);
+      }
+    } catch (error) {
+      if (isApprovalRequired(error)) {
+        setApprovalAsk(error.approvalRequired);
+        return;
+      }
+      const described = describeError(error);
+      toast.error(t(described.key as never));
+      if (described.field) {
+        setTouched((prev) => ({ ...prev, [described.field as string]: true }));
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     setSubmitAttempted(true);
@@ -729,9 +761,26 @@ export function ProductForm({ productId }: { productId?: string }) {
           <Button variant="secondary" type="button" onClick={goBack} disabled={saving}>
             {t("common.cancel")}
           </Button>
-          <Button type="submit" size="lg" loading={saving} className="max-sm:w-full">
-            {saving ? t("common.saving") : t("common.save")}
-          </Button>
+          {!isEdit ? (
+            <>
+              <Button
+                variant="secondary"
+                type="button"
+                onClick={() => void handleSaveAndEditVariants()}
+                disabled={saving}
+                className="max-sm:w-full"
+              >
+                {t("products.saveAndEditVariants")}
+              </Button>
+              <Button type="submit" size="lg" loading={saving} className="max-sm:w-full" data-testid="product-form-save">
+                {saving ? t("common.saving") : t("common.save")}
+              </Button>
+            </>
+          ) : (
+            <Button type="submit" size="lg" loading={saving} className="max-sm:w-full">
+              {saving ? t("common.saving") : t("common.save")}
+            </Button>
+          )}
         </div>
       </div>
     </form>

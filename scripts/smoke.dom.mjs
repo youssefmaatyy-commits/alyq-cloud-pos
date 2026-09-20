@@ -139,6 +139,14 @@ await import(bundleFileUrl());
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const bodyText = () => document.body.textContent ?? "";
+const waitFor = async (condition, { label, timeout = 15_000, interval = 150 } = {}) => {
+  const deadline = Date.now() + timeout;
+  for (;;) {
+    if (condition()) return;
+    if (Date.now() > deadline) throw new Error(`Timed out waiting for ${label}.`);
+    await sleep(interval);
+  }
+};
 const navigate = async (hash) => {
   dom.window.location.hash = hash;
   dom.window.dispatchEvent(new dom.window.HashChangeEvent("hashchange"));
@@ -149,6 +157,14 @@ const click = (label, scope = document) => {
     (n.textContent ?? "").trim().includes(label),
   );
   if (!el) throw new Error(`control not found: ${label}`);
+  el.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  return el;
+};
+const clickExact = (label, scope = document) => {
+  const el = [...scope.querySelectorAll("button, a")].find(
+    (n) => (n.textContent ?? "").trim() === label,
+  );
+  if (!el) throw new Error(`control not found (exact): ${label}`);
   el.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
   return el;
 };
@@ -365,6 +381,7 @@ async function main() {
 
   // 7 ─ sorting
   await navigate("#/products");
+  await waitFor(() => document.querySelector('select[aria-label="Filters"]'), { label: "filters select" });
   selectOption('select[aria-label="Filters"]', (o) => o.value === "price_desc");
   await sleep(250);
   const firstRow = [...document.querySelectorAll("tbody tr")][0];

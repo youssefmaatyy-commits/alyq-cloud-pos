@@ -125,6 +125,14 @@ const click = (label, scope = document) => {
   clickEl(el);
   return el;
 };
+const clickExact = (label, scope = document) => {
+  const el = [...scope.querySelectorAll("button, a")].find(
+    (n) => (n.textContent ?? "").trim() === label,
+  );
+  if (!el) throw new Error(`control not found (exact): ${label}`);
+  clickEl(el);
+  return el;
+};
 const setNative = (input, proto) => (value) => {
   Object.getOwnPropertyDescriptor(proto.prototype, "value").set.call(input, value);
   input.dispatchEvent(
@@ -214,7 +222,7 @@ async function main() {
     setField(selector, option.value);
   };
   setSelect("#category_id", (o) => o.value !== "");
-  click("Save");
+  clickExact("Save");
   await waitFor(() => dom.window.location.hash === "#/products", {
     label: "the save to route back to the catalogue",
   });

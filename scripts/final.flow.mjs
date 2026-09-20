@@ -136,7 +136,7 @@ setField("#low_stock_level", "1");
   const option = [...categorySelect.options].find((o) => o.value !== "");
   if (option) setReactValue(categorySelect, option.value);
 }
-click("Save");
+clickExact("Save");
 await waitFor(() => ux.dom.window.location.hash === "#/products", { label: "the save to land" });
 const productId = catalog().products.find((p) => p.sku === RING_SKU)?.id;
 assert.ok(productId, "the ring is in the catalogue");
@@ -445,7 +445,7 @@ await waitFor(() => treeRow("خواتم") || treeRow("Rings") || document.queryS
   await waitFor(() => document.querySelector("#cat-name-en"), { label: "the add-category form" });
   setField("#cat-name-ar", "خاتم مؤقت");
   setField("#cat-name-en", "Final Scratch");
-  click("Save");
+  clickExact("Save");
   await sleep(700);
   rowAction("Final Scratch", "Deactivate");
   await waitFor(() => squeezed().includes("willbehiddenfromnewproducts"), { label: "the archive confirm" });

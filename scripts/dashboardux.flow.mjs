@@ -196,7 +196,7 @@ async function main() {
     const option = [...categorySelect.options].find((o) => o.value !== "");
     if (option) ux.setReactValue(categorySelect, option.value);
   }
-  click("Save");
+  clickExact("Save");
   await waitFor(() => ux.dom.window.location.hash === "#/products", { label: "the save to land" });
   const productId = catalog().products.find((p) => p.sku === SKU)?.id;
   assert.ok(productId, "the ring is in the catalogue");

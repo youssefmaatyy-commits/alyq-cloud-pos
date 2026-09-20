@@ -155,7 +155,7 @@ try {
   }
   const category = await page.locator('#category_id option').evaluateAll((options) => options.find((o) => o.value)?.value);
   await page.locator('#category_id').selectOption(category);
-  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await page.locator('[data-testid="product-form-save"]').click();
   await page.waitForURL('**/#/products');
   const productId = await page.evaluate(() => JSON.parse(localStorage.getItem('alyq.demo.catalog.v1')).products.find((p) => p.sku === 'RENDER-RING').id);
   await go(`/products/${productId}/edit`);
@@ -198,7 +198,7 @@ try {
     await page.locator(`#${id}`).fill(value);
   }
   await page.locator('#category_id').selectOption(category);
-  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await page.locator('[data-testid="product-form-save"]').click();
   await page.waitForURL('**/#/products');
   const bandId = await page.evaluate(() => JSON.parse(localStorage.getItem('alyq.demo.catalog.v1')).products.find((p) => p.sku === 'RENDER-BAND').id);
   await page.evaluate((id) => {

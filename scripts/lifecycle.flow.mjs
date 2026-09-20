@@ -137,6 +137,14 @@ const click = (label, scope = document) => {
   clickEl(el);
   return el;
 };
+const clickExact = (label, scope = document) => {
+  const el = [...scope.querySelectorAll("button, a")].find(
+    (n) => (n.textContent ?? "").trim() === label,
+  );
+  if (!el) throw new Error(`control not found (exact): ${label}`);
+  clickEl(el);
+  return el;
+};
 const dialog = () => document.querySelector('[role="dialog"]');
 const confirmInDialog = (label) => {
   const scope = dialog();
@@ -274,7 +282,7 @@ async function main() {
   // The form routes to /products once the save resolves; the SKU is visible on
   // the form page itself (barcode preview), so a text wait alone can race the
   // navigation and have the pending route clobber the next one.
-  click("Save");
+  clickExact("Save");
   await waitFor(() => dom.window.location.hash === "#/products", {
     label: "the save to route back to the catalogue",
   });
@@ -315,7 +323,7 @@ async function main() {
   setField("#stock_quantity", "10");
   setField("#low_stock_level", "2");
   selectOption("#category_id", (o) => o.value !== "");
-  click("Save");
+  clickExact("Save");
   await waitFor(() => dom.window.location.hash === "#/products", {
     label: "the save to route back to the catalogue",
   });

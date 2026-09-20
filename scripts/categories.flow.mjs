@@ -128,6 +128,14 @@ const click = (label, scope = document) => {
   clickEl(el);
   return el;
 };
+const clickExact = (label, scope = document) => {
+  const el = [...scope.querySelectorAll("button, a")].find(
+    (n) => (n.textContent ?? "").trim() === label,
+  );
+  if (!el) throw new Error(`control not found (exact): ${label}`);
+  clickEl(el);
+  return el;
+};
 const setNative = (input, proto) => (value) => {
   Object.getOwnPropertyDescriptor(proto.prototype, "value").set.call(input, value);
   input.dispatchEvent(
@@ -224,7 +232,7 @@ async function createCategory(nameAr, nameEn) {
   });
   setField("#cat-name-ar", nameAr);
   setField("#cat-name-en", nameEn);
-  click("Save");
+  clickExact("Save");
   // The modal closes on success; if it is still open after a grace period,
   // surface why (validation, duplicate, …).
   for (let i = 0; i < 20 && document.querySelector("#cat-name-en"); i += 1) await sleep(200);
@@ -270,7 +278,7 @@ async function main() {
     const option = [...catSelect.options].find((o) => (o.textContent ?? "").includes(categoryLabel));
     assert.ok(option, `${categoryLabel} is offered in the product form`);
     setField("#category_id", option.value);
-    click("Save");
+    clickExact("Save");
     await waitFor(() => dom.window.location.hash === "#/products", {
       label: "the save to route back",
     });

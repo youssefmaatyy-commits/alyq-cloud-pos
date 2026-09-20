@@ -98,7 +98,7 @@ async function main() {
     const option = [...select.options].find((o) => o.value !== "");
     setField("#category_id", option.value);
   }
-  click("Save");
+  clickExact("Save");
   await waitFor(() => dom.window.location.hash === "#/products", { label: "route back to the catalogue" });
   const productId = (readJson(CATALOG_KEY)?.products ?? []).find((p) => p.sku === SKU)?.id;
   assert.ok(productId, "the ring is in the demo catalogue");
