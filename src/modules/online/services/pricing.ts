@@ -242,7 +242,19 @@ export type CouponCheck =
   | { ok: true; coupon: Coupon; discount: number }
   | { ok: false; reason: CouponRejection };
 
+/**
+ * Context for evaluating a coupon.
+ *
+ * IMPORTANT: `subtotal` MUST be the **post-campaign subtotal** (i.e., the sum of
+ * line totals after any automatic/campaign discounts have been applied). The
+ * pricing ladder is: list price → campaign price = line price → subtotal = Σ
+ * line totals → coupon discount → total. The coupon minimum is therefore
+ * assessed against the live subtotal the customer sees, not the struck list
+ * price. Both the TypeScript engine and the SQL `evaluate_order_pricing` /
+ * `check_storefront_coupon` follow this rule.
+ */
 export interface CouponContext {
+  /** Sum of line totals after campaign discounts. */
   subtotal: number;
   /** Product ids in the cart, with their category ids, for restricted coupons. */
   lines: { product_id: string; category_id: string | null; line_total: number }[];
@@ -289,6 +301,11 @@ export function couponApplies(coupon: Coupon, context: CouponContext): boolean {
  * of a restricted coupon: a coupon on "earrings" that takes 20 EGP off an order
  * containing earrings is what a customer expects, and it can never exceed the
  * subtotal, so it cannot make an order negative.
+ *
+ * IMPORTANT: `context.subtotal` must be the post-campaign subtotal (after
+ * automatic/campaign discounts). The coupon minimum is assessed against this
+ * live subtotal, matching the SQL `evaluate_order_pricing` and
+ * `check_storefront_coupon`.
  */
 export function checkCoupon(
   coupon: Coupon | null,

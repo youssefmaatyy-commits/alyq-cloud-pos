@@ -42,6 +42,7 @@ import type { CampaignDraft, CouponDraft } from "../data/repository";
 import type { Campaign, Coupon, CouponTarget } from "../types";
 import { fromDateTimeLocal, isWindowOpen, toDateTimeLocal } from "../services/datetime";
 import { isCampaignLive, unitPriceOf } from "../services/pricing";
+import { storefrontInvalidation } from "../hooks/storefrontInvalidation";
 
 type Tab = "campaigns" | "coupons";
 
@@ -115,6 +116,7 @@ export function MarketingPage() {
       });
       setCampaignDraft(null);
       toast.success(t("online.marketing.campaignSaved"));
+      storefrontInvalidation.notify();
     } catch (caught) {
       toast.error(t(`online.error.${toOnlineError(caught).code}`));
     } finally {
@@ -138,6 +140,7 @@ export function MarketingPage() {
       });
       setCouponDraft(null);
       toast.success(t("online.marketing.couponSaved"));
+      storefrontInvalidation.notify();
     } catch (caught) {
       toast.error(t(`online.error.${toOnlineError(caught).code}`));
     } finally {
@@ -157,6 +160,7 @@ export function MarketingPage() {
         setCoupons((current) => current.filter((entry) => entry.id !== confirmDelete.id));
       }
       toast.push(t("online.marketing.deleted"), "info");
+      storefrontInvalidation.notify();
       setConfirmDelete(null);
     } catch (caught) {
       toast.error(t(`online.error.${toOnlineError(caught).code}`));

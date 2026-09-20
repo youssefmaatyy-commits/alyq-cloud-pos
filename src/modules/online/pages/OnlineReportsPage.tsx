@@ -170,6 +170,13 @@ export function OnlineReportsPage() {
   // Promotions, read off the order snapshots — never off the live promotion
   // rows, so changing a discount later cannot rewrite this report. Legacy
   // rows predate snapshots: their code (if any) carries the whole discount.
+  //
+  // RECONCILIATION WITH POS:
+  // - order.subtotal = post-campaign goods total
+  // - order.discount_amount = campaign + coupon (total markdown from list)
+  // - POS sale.discount_amount = same total markdown from list
+  // - This report breaks down: autoGiven (campaign) + byCode[].discount (coupon)
+  //   = given (total). The sum matches POS.
   const promos = useMemo(() => {
     let gross = 0;
     let given = 0;

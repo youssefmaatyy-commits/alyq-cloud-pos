@@ -63,6 +63,7 @@ import { reservedByProduct } from "../services/availability";
 import { visibleSections } from "../services/sections";
 import { applyStoreTheme, applyFavicon, clearStoreTheme } from "../services/theme";
 import { uploadProofImage } from "../data/localAccounts";
+import { storefrontInvalidation } from "./storefrontInvalidation";
 
 export interface StorefrontContextValue {
   mode: OnlineMode;
@@ -226,6 +227,15 @@ export function StorefrontProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     void load();
+  }, [load]);
+
+  // Cross-tree invalidation: admin pages (MarketingPage, PromotionsPage,
+  // DeliveryZonesPage) notify after successful writes so the storefront
+  // refetches its snapshot without a full remount.
+  useEffect(() => {
+    return storefrontInvalidation.subscribe(() => {
+      void load();
+    });
   }, [load]);
 
   const settings = useMemo(

@@ -33,6 +33,7 @@ import {
 import { getWebsiteRepository } from "../data";
 import { toOnlineError, type OnlineErrorCode } from "../data/repository";
 import type { DeliveryZone } from "../types";
+import { storefrontInvalidation } from "../hooks/storefrontInvalidation";
 
 export function DeliveryZonesPage() {
   const { t, money } = useI18n();
@@ -79,6 +80,7 @@ export function DeliveryZonesPage() {
       });
       setDraft(null);
       toast.success(t("online.zones.saved"));
+      storefrontInvalidation.notify();
     } catch (caught) {
       toast.error(t(`online.error.${toOnlineError(caught).code}`));
     } finally {
@@ -93,6 +95,7 @@ export function DeliveryZonesPage() {
       await repository.deleteDeliveryZone(confirmDelete.id);
       setZones((current) => current.filter((entry) => entry.id !== confirmDelete.id));
       toast.push(t("online.zones.deleted"), "info");
+      storefrontInvalidation.notify();
       setConfirmDelete(null);
     } catch (caught) {
       toast.error(t(`online.error.${toOnlineError(caught).code}`));

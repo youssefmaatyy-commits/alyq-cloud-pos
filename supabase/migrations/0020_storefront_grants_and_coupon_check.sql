@@ -40,6 +40,13 @@ comment on table public.coupons is
   'Discount codes for the storefront. Readable by staff only — a public read would publish every code; the storefront validates a typed code through public.check_storefront_coupon() instead. `used_count` is incremented when an order is PLACED and decremented again if that order is cancelled, so one customer cannot hold the last use of a code across several pending orders.';
 
 -- ── 2. does this code work on this cart? ──────────────────────────────────
+/*
+ * check_storefront_coupon:
+ *
+ * p_subtotal MUST be the post-campaign subtotal (sum of line totals after
+ * campaign discounts). The coupon minimum is assessed against this live
+ * subtotal, matching evaluate_order_pricing.
+ */
 create or replace function public.check_storefront_coupon(
   p_code         text,
   p_subtotal     numeric,

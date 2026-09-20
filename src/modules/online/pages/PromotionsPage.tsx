@@ -36,6 +36,7 @@ import { getWebsiteRepository } from "../data";
 import { toOnlineError, type OnlineErrorCode } from "../data/repository";
 import type { Promotion, PromotionTarget, PromotionTargetDraft } from "../types";
 import { fromDateTimeLocal, toDateTimeLocal } from "../services/datetime";
+import { storefrontInvalidation } from "../hooks/storefrontInvalidation";
 
 export function PromotionsPage() {
   const { t, pick, num, money, date } = useI18n();
@@ -128,6 +129,7 @@ export function PromotionsPage() {
       setDraft(null);
       setDraftTargets([]);
       toast.success(t("online.promos.saved"));
+      storefrontInvalidation.notify();
     } catch (caught) {
       toast.error(t(`online.error.${toOnlineError(caught).code}`));
     } finally {
@@ -143,6 +145,7 @@ export function PromotionsPage() {
       setPromotions((current) => current.filter((entry) => entry.id !== confirmDelete.id));
       setTargets((current) => current.filter((entry) => entry.promotion_id !== confirmDelete.id));
       toast.push(t("online.promos.deleted"), "info");
+      storefrontInvalidation.notify();
       setConfirmDelete(null);
     } catch (caught) {
       toast.error(t(`online.error.${toOnlineError(caught).code}`));

@@ -282,6 +282,16 @@ $$;
 
 comment on function public.coupon_line_matches(public.coupon_target, jsonb, jsonb) is
   'Whether a priced line falls in a coupon targeting. Shared by validation and allocation.';
+/*
+ * evaluate_order_pricing:
+ *
+ * p_subtotal MUST be the post-campaign subtotal (sum of line totals after
+ * campaign discounts). The pricing ladder is: list price → campaign price
+ * = line price → subtotal = Σ line totals → coupon discount → total.
+ * The coupon minimum is assessed against this live subtotal, not the
+ * struck list price. Both the TypeScript engine and this function follow
+ * this rule.
+ */
 create or replace function public.evaluate_order_pricing(
   p_subtotal      numeric,
   p_lines         jsonb,
@@ -708,6 +718,14 @@ comment on function public.evaluate_order_pricing(numeric, jsonb, text, text, js
 -- then answers through the core. STABLE and side-effect free: checking a code
 -- never consumes a use, and a customer who edits their cart re-checks on the
 -- new contents because nothing is stored.
+/*
+ * preview_storefront_pricing:
+ *
+ * The subtotal passed to evaluate_order_pricing is computed from v_priced
+ * lines, whose unit_price includes campaign discounts (see lines 784-800).
+ * Therefore the coupon minimum is evaluated against the post-campaign
+ * subtotal, matching evaluate_order_pricing and check_storefront_coupon.
+ */
 create or replace function public.preview_storefront_pricing(
   p_lines         jsonb,
   p_promo_code    text default null,

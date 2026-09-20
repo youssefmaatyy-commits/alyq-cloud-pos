@@ -1504,6 +1504,15 @@ export class DemoOnlineRepository
           // across as one fixed discount. Otherwise the register books more
           // revenue than the customer paid. A combination's own override IS a
           // catalogue price, so it counts at that, not at the product's.
+          //
+          // RECONCILIATION:
+          // - order.subtotal = post-campaign goods total (e.g., 462.40)
+          // - order.discount_amount = campaign + coupon (e.g., 127.84 = 81.60 + 46.24)
+          // - listTotal = pre-discount list price total (e.g., 544)
+          // - goodsTotal = order.subtotal - order.discount_amount = net goods (e.g., 334.56)
+          // - saleDiscount = listTotal - goodsTotal = TOTAL markdown from list (e.g., 127.84)
+          // This equals the online order's discount_amount, so POS and online agree on
+          // the total discount. OnlineReportsPage breaks it down into campaign vs coupon.
           const listTotal = round2(
             order.items.reduce((sum, item) => {
               const product = byId.get(item.product_id);
