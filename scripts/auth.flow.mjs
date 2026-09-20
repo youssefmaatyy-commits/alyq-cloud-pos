@@ -3,7 +3,7 @@
  * credential/session cases the phase must also cover (wrong password, expiry).
  *
  * Build the bundle first, then run it:
- *   npm run test:bundle                 # → /tmp/alyq-app.mjs
+  *   npm run test:bundle                 # → os.tmpdir()/alyq-app.mjs
  *   node scripts/auth.flow.mjs
  * or let the runner do both: `npm run test:e2e auth`.
  *
@@ -23,8 +23,9 @@
  * the app is running, and one that had already lapsed before boot.
  */
 import { JSDOM } from "jsdom";
+import { DEFAULT_BUNDLE, bundleFileUrl } from "./lib/app-bundle.mjs";
 
-const BUNDLE = "/tmp/alyq-app.mjs";
+const BUNDLE = DEFAULT_BUNDLE;
 const DEMO_PASSWORD = "alyq1234";
 const SESSION_KEY = "alyq.auth.session.v1";
 
@@ -114,7 +115,7 @@ async function boot({ seedSession = null } = {}) {
 
   bootCount += 1;
   try {
-    await import(`${BUNDLE}?boot=${bootCount}`);
+    await import(bundleFileUrl(BUNDLE, `boot=${bootCount}`));
   } catch (err) {
     console.error(`\n✗ could not load the app bundle at ${BUNDLE}.\n  Build it first (see the header of this file).\n  ${err?.message ?? err}\n`);
     process.exit(2);

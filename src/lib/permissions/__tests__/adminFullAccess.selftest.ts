@@ -128,8 +128,12 @@ function gateCapabilitySites(): { capability: string; file: string; kind: string
   ];
   for (const file of sourceFiles()) {
     // This file defines the helpers; its signature lines mention capability
-    // names in comments and types, so scan the bodies it actually ships.
-    if (file.endsWith("lib/permissions/enforce.ts")) continue;
+    // names in comments and types, so scan the bodies it actually ships. The
+    // separator is normalised first: on Windows `file` carries backslashes and
+    // a bare `endsWith("lib/permissions/enforce.ts")` never matches, which
+    // leaks the helper's own `Pick<AuthUser, "role" | …>` signature into the
+    // scan as a phantom `"role"` capability.
+    if (file.split(path.sep).join("/").endsWith("lib/permissions/enforce.ts")) continue;
     const body = sourceBody(file);
     const rel = path.relative(repoRoot(), file);
     for (const [re, kind] of helpers) {

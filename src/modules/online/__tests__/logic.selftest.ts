@@ -26,19 +26,23 @@ import {
   campaignCovers,
   campaignFor,
   checkCoupon,
+  customerKeyFor,
   deliveryAreaSupported,
   deliveryAreasOf,
   deliveryFeeFor,
   deliveryMinimumShortfall,
+  evaluateCartPricing,
   freeDeliveryProgress,
   normalizePlaceName,
   goodsTotalOf,
   isCampaignLive,
+  promotionUnitPrice,
   liveCampaigns,
   normalizeCouponCode,
   priceCart,
   round2,
   unitPriceOf,
+  type CartPricingInput,
 } from "../services/pricing";
 import {
   availableToPromise,
@@ -129,9 +133,11 @@ import type {
   Coupon,
   CustomerAddress,
   DeliverySettings,
+  DeliveryZone,
   OnlineOrder,
   OrderEvent,
   ProductContent,
+  Promotion,
   StockReservation,
   WebsiteSettings,
 } from "../types";
@@ -221,12 +227,19 @@ function makeCoupon(overrides: Partial<Coupon> = {}): Coupon {
   return {
     id: "cpn-1",
     code: "WELCOME10",
+    title_en: "Welcome",
+    title_ar: "ترحيب",
+    description_en: null,
+    description_ar: null,
     discount_type: "percent",
     value: 10,
     min_subtotal: 0,
     max_discount: null,
     usage_limit: null,
     used_count: 0,
+    per_customer_limit: null,
+    first_order_only: false,
+    stackable: false,
     applies_to: "all",
     target_ids: [],
     active: true,
@@ -265,6 +278,8 @@ function makeOrder(overrides: Partial<OnlineOrder> = {}): OnlineOrder {
     subtotal: 200,
     discount_code: null,
     discount_amount: 0,
+    promotion_id: null,
+    price_snapshot: null,
     delivery_fee: 30,
     total: 230,
     payment_method: "cod",
@@ -501,6 +516,306 @@ test("every coupon refusal reason is reported, not swallowed", () => {
 test("a typed coupon code is normalised before matching", () => {
   assert.equal(normalizeCouponCode("  welcome 10 "), "WELCOME10");
   assert.equal(normalizeCouponCode(""), "");
+});
+
+// ── promotions engine (mirrors evaluate_order_pricing) ─────────────────────
+
+function makePromotion(overrides: Partial<Promotion> = {}): Promotion {
+  return {
+    id: "prm-1",
+    enabled: true,
+    name_en: "Test offer",
+    name_ar: "عرض فحص",
+    description_en: null,
+    description_ar: null,
+    discount_type: "percent",
+    value: 15,
+    scope: "store",
+    minimum_order_amount: 0,
+    maximum_discount_amount: null,
+    starts_at: null,
+    ends_at: null,
+    priority: 0,
+    stackable: false,
+    created_at: "2026-04-01T00:00:00.000Z",
+    updated_at: "2026-04-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function makeZone(overrides: Partial<DeliveryZone> = {}): DeliveryZone {
+  return {
+    id: "dz-1",
+    key: "cairo",
+    name_en: "Cairo",
+    name_ar: "القاهرة",
+    governorate_key: "cairo",
+    shipping_fee: 70,
+    minimum_order_amount: 0,
+    free_shipping_threshold: null,
+    estimated_delivery_text_en: null,
+    estimated_delivery_text_ar: null,
+    enabled: true,
+    sort_order: 20,
+    created_at: "2026-04-01T00:00:00.000Z",
+    updated_at: "2026-04-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+const promoLines = () => [
+  { product_id: "prd-1", category_id: "cat-rings", variant_id: null, qty: 5, unit_price: 200, line_total: 1000 },
+  { product_id: "prd-2", category_id: "cat-neck", variant_id: null, qty: 1, unit_price: 100, line_total: 100 },
+];
+
+const noUsage = { customerUses: 0, hasPriorOrder: false };
+
+function evaluatePromo(over: Partial<CartPricingInput>) {
+  return evaluateCartPricing({
+    lines: promoLines(),
+    subtotal: 1100,
+    promoCode: null,
+    coupons: [],
+    promotions: [],
+    targetsByPromotion: new Map(),
+    usageFor: () => noUsage,
+    customerKey: "phone:01001234567",
+    zone: null,
+    legacy: { fee: 30, minimum: 0, threshold: 0 },
+    deliveryType: "pickup",
+    now: NOW,
+    ...over,
+  });
+}
+
+test("ALYQ10: discount, minimum, cap and refusals", () => {
+  const coupon = makeCoupon({ code: "ALYQ10", value: 10, min_subtotal: 500, max_discount: 200 });
+  const thousand = [
+    { product_id: "prd-1", category_id: null, variant_id: null, qty: 10, unit_price: 100, line_total: 1000 },
+  ];
+  const ok = evaluatePromo({ promoCode: "alyq10", coupons: [coupon], lines: thousand, subtotal: 1000 });
+  assert.equal(ok.ok, true);
+  if (ok.ok) {
+    assert.equal(ok.pricing.promoDiscount, 100, "10% of 1000");
+    assert.equal(ok.pricing.total, 900, "pickup, no fee: goods minus code");
+    assert.equal(ok.pricing.promoCode, "ALYQ10", "the stored form, not the typed casing");
+  }
+
+  const small = evaluatePromo({
+    promoCode: "ALYQ10",
+    coupons: [coupon],
+    lines: [{ product_id: "prd-1", category_id: null, variant_id: null, qty: 3, unit_price: 100, line_total: 300 }],
+    subtotal: 300,
+  });
+  assert.equal(small.ok, false);
+  if (!small.ok) assert.equal(small.reason, "min_subtotal");
+
+  const big = evaluatePromo({
+    promoCode: "ALYQ10",
+    coupons: [coupon],
+    lines: [{ product_id: "prd-1", category_id: null, variant_id: null, qty: 30, unit_price: 100, line_total: 3000 }],
+    subtotal: 3000,
+  });
+  assert.equal(big.ok, true);
+  if (big.ok) assert.equal(big.pricing.promoDiscount, 200, "the 200 cap holds");
+
+  for (const [alter, reason] of [
+    [{ ends_at: "2026-04-01T00:00:00.000Z" }, "expired"],
+    [{ active: false }, "inactive"],
+  ] as const) {
+    const refused = evaluatePromo({ promoCode: "ALYQ10", coupons: [makeCoupon({ code: "ALYQ10", ...alter })] });
+    assert.equal(refused.ok, false);
+    if (!refused.ok) assert.equal(refused.reason, reason);
+  }
+  const unknown = evaluatePromo({ promoCode: "NOPE", coupons: [coupon] });
+  assert.equal(unknown.ok, false);
+  if (!unknown.ok) assert.equal(unknown.reason, "not_found");
+});
+
+test("per-customer limits, first-order-only and free shipping", () => {
+  const per1 = makeCoupon({ code: "PER1", per_customer_limit: 1 });
+  const spent = evaluatePromo({
+    promoCode: "PER1",
+    coupons: [per1],
+    usageFor: () => ({ customerUses: 1, hasPriorOrder: true }),
+  });
+  assert.equal(spent.ok, false);
+  if (!spent.ok) assert.equal(spent.reason, "limit_reached");
+  const fresh = evaluatePromo({
+    promoCode: "PER1",
+    coupons: [per1],
+    usageFor: () => ({ customerUses: 0, hasPriorOrder: true }),
+  });
+  assert.equal(fresh.ok, true, "a new customer passes a per-customer limit");
+
+  const first = makeCoupon({ code: "FIRST", first_order_only: true });
+  const repeat = evaluatePromo({
+    promoCode: "FIRST",
+    coupons: [first],
+    usageFor: () => ({ customerUses: 0, hasPriorOrder: true }),
+  });
+  assert.equal(repeat.ok, false);
+  if (!repeat.ok) assert.equal(repeat.reason, "limit_reached");
+
+  const ship = makeCoupon({ code: "FREESHIP", discount_type: "free_shipping", value: 1 });
+  const waived = evaluatePromo({
+    promoCode: "FREESHIP",
+    coupons: [ship],
+    deliveryType: "delivery",
+    zone: makeZone(),
+  });
+  assert.equal(waived.ok, true);
+  if (waived.ok) {
+    assert.equal(waived.pricing.promoDiscount, 0, "free shipping takes no money off");
+    assert.equal(waived.pricing.promoFreeShipping, true);
+    assert.equal(waived.pricing.deliveryFee, 0, "the Cairo 70 is waived");
+    assert.equal(waived.pricing.shippingDiscount, 70);
+    assert.equal(waived.pricing.total, 1100);
+  }
+});
+
+test("stacking needs both sides to agree, else the larger wins alone", () => {
+  const coupon = makeCoupon({ code: "SAVE20", discount_type: "fixed", value: 20 });
+  const auto = makePromotion({ id: "prm-auto", value: 15 });
+  // 15% of 1100 = 165 vs code 20: the automatic wins alone by default.
+  const contested = evaluatePromo({ promoCode: "SAVE20", coupons: [coupon], promotions: [auto], targetsByPromotion: new Map() });
+  assert.equal(contested.ok, true);
+  if (contested.ok) {
+    assert.equal(contested.pricing.autoDiscount, 165);
+    assert.equal(contested.pricing.promoDiscount, 0);
+    assert.equal(contested.pricing.totalDiscount, 165);
+  }
+  // Both stackable: 165 + 20 combine, capped at the subtotal.
+  const stacked = evaluatePromo({
+    promoCode: "SAVE20",
+    coupons: [makeCoupon({ code: "SAVE20", discount_type: "fixed", value: 20, stackable: true })],
+    promotions: [makePromotion({ id: "prm-auto", value: 15, stackable: true })],
+    targetsByPromotion: new Map(),
+  });
+  assert.equal(stacked.ok, true);
+  if (stacked.ok) assert.equal(stacked.pricing.totalDiscount, 185);
+});
+
+test("zones price server-side: fee, minimum, threshold, pickup, disabled", () => {
+  const cairo = evaluatePromo({ deliveryType: "delivery", zone: makeZone() });
+  assert.equal(cairo.ok, true);
+  if (cairo.ok) {
+    assert.equal(cairo.pricing.deliveryFee, 70);
+    assert.equal(cairo.pricing.shippingSource, "zone");
+    assert.equal(cairo.pricing.total, 1170);
+  }
+  const ism = evaluatePromo({ deliveryType: "delivery", zone: makeZone({ id: "dz-0", key: "ismailia", shipping_fee: 0 }) });
+  assert.equal(ism.ok && ism.pricing.deliveryFee, 0);
+  const pick = evaluatePromo({ deliveryType: "pickup", zone: makeZone() });
+  assert.equal(pick.ok && pick.pricing.deliveryFee, 0, "pickup ignores the zone");
+
+  const off = evaluatePromo({ deliveryType: "delivery", zone: makeZone({ enabled: false }) });
+  assert.equal(off.ok, false, "a disabled zone is refused");
+
+  const minimum = evaluatePromo({
+    deliveryType: "delivery",
+    zone: makeZone({ minimum_order_amount: 5000 }),
+  });
+  assert.equal(minimum.ok, false, "under the minimum the zone refuses");
+
+  const free = evaluatePromo({
+    deliveryType: "delivery",
+    zone: makeZone({ free_shipping_threshold: 1000 }),
+  });
+  assert.equal(free.ok, true);
+  if (free.ok) {
+    assert.equal(free.pricing.deliveryFee, 0, "at the threshold the fee waives");
+    assert.equal(free.pricing.shippingDiscount, 70);
+  }
+});
+
+test("the storewide sale prices variant overrides and allocates exactly", () => {
+  const lines = [
+    { product_id: "prd-1", category_id: "cat-rings", variant_id: null, qty: 1, unit_price: 200, line_total: 200 },
+    { product_id: "prd-2", category_id: "cat-rings", variant_id: "var-gold", qty: 1, unit_price: 300, line_total: 300 },
+  ];
+  const sale = evaluatePromo({
+    lines,
+    subtotal: 500,
+    promotions: [makePromotion({ id: "prm-sale", value: 15 })],
+    targetsByPromotion: new Map(),
+  });
+  assert.equal(sale.ok, true);
+  if (sale.ok) {
+    assert.equal(sale.pricing.autoDiscount, 75);
+    assert.equal(sale.pricing.autoPromotionId, "prm-sale");
+    // 75 × 200/500 = 30 → 170; the remainder 45 lands on the override → 255.
+    assert.deepEqual(
+      sale.pricing.lines.map((line) => line.discounted_unit_price),
+      [170, 255],
+    );
+    const back = sale.pricing.lines.reduce((sum, line) => sum + line.discounted_unit_price * line.qty, 0);
+    assert.equal(back, 425, "the shares add back to goods minus discount");
+  }
+});
+
+test("targeted offers isolate lines: the ring moves, the necklace does not", () => {
+  const ring20 = makePromotion({ id: "prm-ring", value: 20, scope: "category" });
+  const targets = new Map([["prm-ring", new Set(["category:cat-rings"])]]);
+  const offer = evaluatePromo({ promotions: [ring20], targetsByPromotion: targets });
+  assert.equal(offer.ok, true);
+  if (offer.ok) {
+    assert.equal(offer.pricing.autoDiscount, 200, "20% of the ring's 1000 only");
+    const [ring, neck] = offer.pricing.lines;
+    assert.equal(ring.discounted_unit_price, 160);
+    assert.equal(neck.discounted_unit_price, 100, "the out-of-scope line keeps its price");
+  }
+
+  const gold50 = makePromotion({ id: "prm-gold", value: 50, scope: "variant" });
+  const vlines = [
+    { product_id: "prd-2", category_id: "cat-rings", variant_id: "var-gold", qty: 1, unit_price: 300, line_total: 300 },
+    { product_id: "prd-1", category_id: "cat-rings", variant_id: null, qty: 1, unit_price: 200, line_total: 200 },
+  ];
+  const variant = evaluatePromo({
+    lines: vlines,
+    subtotal: 500,
+    promotions: [gold50],
+    targetsByPromotion: new Map([["prm-gold", new Set(["variant:var-gold"])]]),
+  });
+  assert.equal(variant.ok, true);
+  if (variant.ok) {
+    assert.equal(variant.pricing.autoDiscount, 150, "50% of the 300 shelf only");
+    assert.deepEqual(
+      variant.pricing.lines.map((line) => line.discounted_unit_price),
+      [150, 200],
+    );
+  }
+});
+
+test("customer keys normalize like the server", () => {
+  assert.equal(customerKeyFor("9c8b7a65-4321-4f0e-8a1b-2c3d4e5f6071", "0100"), "9c8b7a65-4321-4f0e-8a1b-2c3d4e5f6071");
+  assert.equal(customerKeyFor(null, "010 0123-4567"), "phone:01001234567");
+  assert.equal(customerKeyFor(null, "abc", "ref-1"), "order:ref-1");
+  assert.equal(customerKeyFor(null, "abc", null), null);
+});
+
+test("display prices show real current offers, never promises", () => {
+  const targets = new Map([["prm-ring", new Set(["category:cat-rings"])]]);
+  const ring20 = makePromotion({ id: "prm-ring", value: 20, scope: "category" });
+  assert.deepEqual(
+    promotionUnitPrice("prd-1", null, "cat-rings", 200, [ring20], targets, NOW),
+    { unit: 160, promotionId: "prm-ring" },
+  );
+  assert.deepEqual(
+    promotionUnitPrice("prd-2", null, "cat-neck", 100, [ring20], targets, NOW),
+    { unit: 100, promotionId: null },
+    "out of scope shows list",
+  );
+  assert.deepEqual(
+    promotionUnitPrice("prd-1", null, "cat-rings", 200, [makePromotion({ minimum_order_amount: 500 })], new Map(), NOW),
+    { unit: 200, promotionId: null },
+    "a cart-level minimum is not a display promise",
+  );
+  assert.deepEqual(
+    promotionUnitPrice("prd-1", null, "cat-rings", 200, [makePromotion({ enabled: false })], new Map(), NOW),
+    { unit: 200, promotionId: null },
+    "a disabled offer shows nothing",
+  );
 });
 
 // ── delivery fees ───────────────────────────────────────────────────────────
@@ -969,6 +1284,7 @@ function itemStub(productId: string) {
     unit_price: 10,
     quantity: 1,
     line_total: 10,
+    discounted_unit_price: 10,
   };
 }
 
@@ -1600,6 +1916,53 @@ test("approving an order creates a POS sale and deducts the stock it was holding
 
   const kinds = approved.events.map((event: OrderEvent) => event.kind);
   assert.ok(kinds.includes("placed") && kinds.includes("approved"), "the history shows what happened");
+});
+
+test("completing an order stores the completed status and illegal moves carry the transition code", async () => {
+  const repository = getDemoOnlineRepository();
+  const product = await demoProduct("ALYQ-1020");
+
+  const placed = await repository.placeOrder({
+    client_ref: "ref-e2e-complete",
+    customer_name: "Mona",
+    customer_phone: "01001234567",
+    delivery_type: "pickup",
+    address: null,
+    payment_method: "cod",
+    lines: [{ product_id: product.id, qty: 1 }],
+  });
+  const approved = await repository.resolveOrder(placed.order.id, { action: "approve", ...STAFF });
+
+  // The action word is "complete"; the stored status is "completed" — the only
+  // label the database enum accepts. A server answering anything else becomes
+  // the same typed refusal (see `normalizeOrderStatus`).
+  const completed = await repository.resolveOrder(approved.id, { action: "complete", ...STAFF });
+  assert.equal(completed.status, "completed", "the action maps to the stored status");
+  assert.ok(completed.completed_at, "completion is timestamped");
+  assert.ok(
+    completed.events.some((event: OrderEvent) => event.kind === "completed"),
+    "the history records the completion",
+  );
+
+  await assert.rejects(
+    repository.resolveOrder(completed.id, { action: "complete", ...STAFF }),
+    (error: unknown) => {
+      assert.equal(
+        toOnlineError(error).code,
+        "status_transition_refused",
+        "completing a completed order is a transition refusal, not a raw error",
+      );
+      return true;
+    },
+  );
+
+  await assert.rejects(
+    repository.resolveOrder(completed.id, { action: "approve", ...STAFF }),
+    (error: unknown) => {
+      assert.equal(toOnlineError(error).code, "status_transition_refused");
+      return true;
+    },
+  );
 });
 
 test("cancelling a pending order releases the stock and keeps the record with its reason", async () => {

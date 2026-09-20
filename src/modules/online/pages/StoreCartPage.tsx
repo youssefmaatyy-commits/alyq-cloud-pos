@@ -44,6 +44,7 @@ export function StoreCartPage() {
     applyCoupon,
     clearCoupon,
     freeDelivery,
+    preview,
   } = useStoreCart();
 
   const [codeDraft, setCodeDraft] = useState(couponInput);
@@ -208,23 +209,44 @@ export function StoreCartPage() {
             <dl className="mt-3 space-y-2 text-sm">
               <div className="flex justify-between gap-2">
                 <dt className="text-[var(--store-muted)]">{t("store.cart.subtotal")}</dt>
-                <dd className="font-bold text-[var(--store-text)]"><Money value={totals.subtotal} /></dd>
+                <dd className="font-bold text-[var(--store-text)]"><Money value={preview?.subtotal ?? totals.subtotal} /></dd>
               </div>
-              {totals.discount_amount > 0 ? (
+              {(preview?.autoDiscount ?? 0) > 0 ? (
                 <div className="flex justify-between gap-2 text-emerald-700">
-                  <dt>{t("store.cart.discount")} {totals.discount_code ? `· ${totals.discount_code}` : ""}</dt>
-                  <dd className="font-bold">−{money(totals.discount_amount)}</dd>
+                  <dt>
+                    {t("store.checkout.productDiscounts")}
+                    {preview?.autoPromotionName ? ` · ${preview.autoPromotionName}` : ""}
+                  </dt>
+                  <dd className="font-bold">−{money(preview?.autoDiscount ?? 0)}</dd>
                 </div>
               ) : null}
-              {totals.delivery_fee > 0 ? (
+              {(preview?.promoDiscount ?? totals.discount_amount) > 0 ? (
+                <div className="flex justify-between gap-2 text-emerald-700">
+                  <dt>
+                    {t("store.cart.discount")}
+                    {(preview?.promoCode ?? totals.discount_code) ? ` · ${preview?.promoCode ?? totals.discount_code}` : ""}
+                  </dt>
+                  <dd className="font-bold">−{money(preview?.promoDiscount ?? totals.discount_amount)}</dd>
+                </div>
+              ) : null}
+              {(preview?.deliveryFee ?? totals.delivery_fee) > 0 ? (
                 <div className="flex justify-between gap-2">
-                  <dt className="text-[var(--store-muted)]">{t("store.cart.deliveryFee")}</dt>
-                  <dd className="font-bold text-[var(--store-text)]"><Money value={totals.delivery_fee} /></dd>
+                  <dt className="text-[var(--store-muted)]">
+                    {t("store.cart.deliveryFee")}
+                    {preview?.zoneName ? ` · ${preview.zoneName}` : ""}
+                  </dt>
+                  <dd className="font-bold text-[var(--store-text)]"><Money value={preview?.deliveryFee ?? totals.delivery_fee} /></dd>
+                </div>
+              ) : null}
+              {(preview?.shippingDiscount ?? 0) > 0 ? (
+                <div className="flex justify-between gap-2 text-emerald-700">
+                  <dt>{t("store.checkout.deliveryDiscount")}</dt>
+                  <dd className="font-bold">−{money(preview?.shippingDiscount ?? 0)}</dd>
                 </div>
               ) : null}
               <div className="flex justify-between gap-2 border-t border-[var(--store-border)] pt-2 text-base">
                 <dt className="font-black text-[var(--store-text)]">{t("store.cart.total")}</dt>
-                <dd className="font-black text-[var(--store-text)]"><Money value={totals.total} /></dd>
+                <dd className="font-black text-[var(--store-text)]"><Money value={preview?.total ?? totals.total} /></dd>
               </div>
             </dl>
 

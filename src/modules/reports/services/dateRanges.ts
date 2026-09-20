@@ -13,6 +13,7 @@
  * empty string / `null` means "unbounded on that side".
  */
 import type { DateRange } from "./financialExport";
+import { dayRangeToTimestampBounds } from "@/lib/dates/calendarDays";
 
 export interface DateRangeValue {
   from: string;
@@ -77,25 +78,17 @@ export function monthToDateRange(now: Date = new Date()): DateRange {
 }
 
 /**
- * Inclusive SQL bounds for a local `yyyy-mm-dd` range.
+ * Inclusive SQL bounds for a `yyyy-mm-dd` range, as UTC ISO instants.
  *
- * The edges are built exactly the way `withinDateRange` builds them — local
- * midnight through local 23:59:59.999 — and then expressed as UTC instants,
- * because `created_at` is a timestamptz and a bare date compared against one is
- * interpreted in the database's timezone, not the shop's. Getting this wrong
- * does not throw; it quietly drops the last day of every report, which is the
- * day somebody is most likely to be looking at. An open end stays absent rather
+ * The edges are the UTC calendar day — midnight through 23:59:59.999 — so a
+ * `created_at` timestamptz is compared against unambiguous instants: the same
+ * range matches the same rows on every machine, whatever its timezone, and the
+ * client predicate (`withinDateRange`) and the database bounds can never
+ * disagree about which day a timestamp belongs to. Getting this wrong does not
+ * throw; it quietly drops the last day of every report, which is the day
+ * somebody is most likely to be looking at. An open end stays absent rather
  * than becoming the epoch.
  */
 export function toTimestampBounds(range: DateRange): { from?: string; to?: string } {
-  const bounds: { from?: string; to?: string } = {};
-  if (range.from) {
-    const start = new Date(`${range.from}T00:00:00`);
-    if (!Number.isNaN(start.getTime())) bounds.from = start.toISOString();
-  }
-  if (range.to) {
-    const end = new Date(`${range.to}T23:59:59.999`);
-    if (!Number.isNaN(end.getTime())) bounds.to = end.toISOString();
-  }
-  return bounds;
+  return dayRangeToTimestampBounds(range);
 }

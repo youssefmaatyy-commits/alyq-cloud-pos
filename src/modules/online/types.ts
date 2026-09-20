@@ -85,6 +85,42 @@ export const ORDER_ACTIONS = [
 ] as const;
 export type OrderAction = (typeof ORDER_ACTIONS)[number];
 
+/**
+ * Action → the stored status it produces. THE canonical mapping — UI text is
+ * NOT the DB value.
+ *
+ * The employee presses "Mark completed" (action `"complete"`); the row becomes
+ * `"completed"`, the only label `online_order_status` accepts. Sending the
+ * action word to the database raises `invalid input value for enum
+ * online_order_status: "complete"` (22P02), which is exactly the live bug this
+ * table closes: every layer reads the status here instead of scattering the
+ * literal — the workflow, the demo repository, the Supabase read-back guard
+ * and the SQL `resolve_online_order` itself. Payment actions move the money
+ * axis, not the status axis, so they map to `null`.
+ */
+export const ORDER_ACTION_TO_STATUS: Record<OrderAction, OnlineOrderStatus | null> = {
+  approve: "approved",
+  cancel: "cancelled",
+  processing: "processing",
+  ready: "ready",
+  complete: "completed",
+  payment_approve: null,
+  payment_reject: null,
+};
+
+/**
+ * A stored status read back, or `null` for anything the enum does not hold.
+ * The read-back guard in the Supabase repository uses this so a server that
+ * still answers with an action word (or anything unexpected) becomes a typed
+ * `status_transition_refused` instead of a row the screens cannot render.
+ */
+export function normalizeOrderStatus(raw: unknown): OnlineOrderStatus | null {
+  return typeof raw === "string" &&
+    (ONLINE_ORDER_STATUSES as readonly string[]).includes(raw)
+    ? (raw as OnlineOrderStatus)
+    : null;
+}
+
 /** A pending order's hold on stock. */
 export const RESERVATION_STATUSES = ["reserved", "released", "converted"] as const;
 export type ReservationStatus = (typeof RESERVATION_STATUSES)[number];
@@ -135,6 +171,12 @@ export interface OnlineOrderItem {
   unit_price: number;
   quantity: number;
   line_total: number;
+  /**
+   * What the unit actually cost after every ORDER-level discount (automatic
+   * promotion, promo code), allocated proportionally across lines. Returns
+   * refund this, never the list price. Null on legacy rows predating it.
+   */
+  discounted_unit_price: number | null;
 }
 
 export interface OrderEvent {
@@ -167,6 +209,19 @@ export interface OnlineOrder {
   subtotal: number;
   discount_code: string | null;
   discount_amount: number;
+  /**
+   * The automatic promotion that lowered this order, when one did. A later
+   * edit of the promotion never rewrites history — the snapshot below is the
+   * record, this id is the link.
+   */
+  promotion_id: string | null;
+  /**
+   * What the customer actually paid and why, written once at placement:
+   * promo code, promotion id/name, discount type and amounts, original and
+   * final subtotals, gross and net shipping, zone, totals. Changing or
+   * deleting a promotion later must not change this object.
+   */
+  price_snapshot: PriceSnapshot | null;
   /**
    * Charged on top of the merchandise. A POS sale cannot carry it (its total is
    * constrained to `subtotal − discount`), so an approved order becomes a sale
@@ -304,6 +359,12 @@ export interface PlaceOrderInput {
    */
   lines: { product_id: string; qty: number; variant_id?: string | null }[];
   coupon_code?: string | null;
+  /**
+   * The delivery zone the customer chose (see `DeliveryZone`). Omitted for
+   * pickup and for shops on the legacy settings fee — the server prices from
+   * the row and never trusts a browser-sent fee.
+   */
+  delivery_zone_id?: string | null;
   payment_method: OnlinePaymentMethod;
   notes?: string | null;
 }
@@ -341,18 +402,31 @@ export interface StoreCustomer {
 
 export type CouponTarget = "all" | "products" | "categories";
 
+/** A promo code's kind. `free_shipping` waives the delivery fee instead of money. */
+export type PromoDiscountType = "percent" | "fixed" | "free_shipping";
+
 export interface Coupon {
   id: string;
   /** Always stored uppercase; matching is case-insensitive. */
   code: string;
-  discount_type: "percent" | "fixed";
+  title_en: string;
+  title_ar: string;
+  description_en: string | null;
+  description_ar: string | null;
+  discount_type: PromoDiscountType;
   value: number;
   min_subtotal: number;
   /** Percent coupons only: caps the discount. `null` = uncapped. */
   max_discount: number | null;
   usage_limit: number | null;
-  /** Incremented on approval, decremented on cancellation. */
+  /** Incremented on placement, decremented on cancellation. */
   used_count: number;
+  /** Per-customer cap, counted over non-cancelled orders. Null = unlimited. */
+  per_customer_limit: number | null;
+  /** Only customers with no prior non-cancelled order may use it. */
+  first_order_only: boolean;
+  /** May combine with the automatic promotion (which must agree). */
+  stackable: boolean;
   applies_to: CouponTarget;
   target_ids: string[];
   active: boolean;
@@ -381,6 +455,112 @@ export interface Campaign {
   active: boolean;
   created_at: string;
   updated_at: string;
+}
+
+// ── delivery zones ─────────────────────────────────────────────────────────
+
+/**
+ * Per-governorate delivery pricing, owned by the admin. Checkout names the
+ * zone id; the server prices fee, minimum and free-shipping threshold from
+ * the row and never trusts a browser-sent fee. The shipped defaults
+ * (Ismailia free, Cairo, Suez, other governorates) are seed rows an admin
+ * edits — never constants in code.
+ */
+export interface DeliveryZone {
+  id: string;
+  /** Stable slug (`ismailia`, `cairo`, …) — identity for seeds, not display. */
+  key: string;
+  name_en: string;
+  name_ar: string;
+  governorate_key: string | null;
+  shipping_fee: number;
+  minimum_order_amount: number;
+  /** Null = no free-shipping threshold: the fee always applies. */
+  free_shipping_threshold: number | null;
+  estimated_delivery_text_en: string | null;
+  estimated_delivery_text_ar: string | null;
+  enabled: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+// ── automatic promotions ───────────────────────────────────────────────────
+
+export type PromotionScope = "store" | "category" | "product" | "variant";
+
+/**
+ * An automatic (codeless) discount: the storewide sale, a category offer, a
+ * product or variant offer. The best applicable one is chosen per order by
+ * priority then size; it combines with a promo code only when both are
+ * stackable, otherwise the larger discount wins alone.
+ */
+export interface Promotion {
+  id: string;
+  enabled: boolean;
+  name_en: string;
+  name_ar: string;
+  description_en: string | null;
+  description_ar: string | null;
+  discount_type: "percent" | "fixed";
+  value: number;
+  scope: PromotionScope;
+  minimum_order_amount: number;
+  /** Percent promotions only. Null = uncapped. */
+  maximum_discount_amount: number | null;
+  starts_at: string | null;
+  ends_at: string | null;
+  /** Higher wins when several apply; ties break toward the larger discount. */
+  priority: number;
+  stackable: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export type PromotionTargetKind = "category" | "product" | "variant";
+
+/** Relational targeting: which categories, products or variants an offer covers. */
+export interface PromotionTarget {
+  promotion_id: string;
+  target_kind: PromotionTargetKind;
+  target_id: string;
+  created_at: string;
+}
+
+/** Draft: `promotion_id` is filled by the repository on save. */
+export type PromotionTargetDraft = { target_kind: PromotionTargetKind; target_id: string };
+
+/** One promo-code application, per order per customer — the usage history. */
+export interface PromoCodeUsage {
+  id: string;
+  coupon_id: string;
+  order_id: string;
+  /** Store account id, else `phone:<digits>`. */
+  customer_key: string;
+  used_at: string;
+}
+
+/**
+ * The order's price history, written once at placement. Changing or deleting
+ * a promotion later must not change this object — returns, reports and the
+ * confirmation screen all read it, never the live promotion rows.
+ */
+export interface PriceSnapshot {
+  promo_code: string | null;
+  promotion_id: string | null;
+  promotion_name: string | null;
+  auto_discount: number;
+  promo_discount: number;
+  promo_free_shipping: boolean;
+  original_subtotal: number;
+  final_subtotal: number;
+  gross_shipping_fee: number;
+  shipping_discount: number;
+  shipping_source: string;
+  zone_id: string | null;
+  zone_name: string | null;
+  total_discount: number;
+  final_total: number;
 }
 
 // ── storefront content ──────────────────────────────────────────────────────

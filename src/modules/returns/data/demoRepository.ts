@@ -9,6 +9,7 @@ import type {
 import { AppError, type ReturnRepository } from "./repository";
 import { safeStorage } from "@/modules/products/data/demoSeed";
 import { getDemoSalesRepository } from "@/modules/pos/data/demoRepository";
+import { getDemoOnlineRepository } from "@/modules/online/data/demoRepository";
 import { getDemoRepository as getCatalogDemo } from "@/modules/products/data/demoRepository";
 import { applyDemoAdjustment } from "@/modules/inventory/data/demoRepository";
 import { validateReturnDraft } from "../validation";
@@ -121,6 +122,25 @@ export class DemoReturnRepository implements ReturnRepository {
     const sale = await salesRepo.getSale(input.sale_id);
     if (!sale) throw new AppError("NOT_FOUND", `Sale ${input.sale_id} not found`);
 
+    // An online-origin sale's lines read at list while its discount rides as
+    // one fixed sale discount: the refund uses the order snapshot's paid
+    // prices instead, so a discounted item refunds discounted, never list.
+    let paidPrices: { product_id: string; variant_id: string | null; discounted_unit_price: number | null }[] | null =
+      null;
+    if (sale.source === "online") {
+      try {
+        const origin = await getDemoOnlineRepository().getOrderBySaleId(sale.id);
+        paidPrices =
+          origin?.items.map((item) => ({
+            product_id: item.product_id,
+            variant_id: item.variant_id ?? null,
+            discounted_unit_price: item.discounted_unit_price ?? null,
+          })) ?? null;
+      } catch {
+        paidPrices = null;
+      }
+    }
+
     const validation = validateReturnDraft(
       sale,
       input.items,
@@ -128,6 +148,7 @@ export class DemoReturnRepository implements ReturnRepository {
       input.refund_method,
       this.returns,
       this.refunds,
+      paidPrices,
     );
 
     if (!validation.valid) {

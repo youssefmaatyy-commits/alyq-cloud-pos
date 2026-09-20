@@ -23,6 +23,7 @@ import type {
   OnlinePaymentStatus,
   OrderAction,
 } from "../types";
+import { ORDER_ACTION_TO_STATUS } from "../types";
 
 /** Why an action was refused. Keys, so the UI translates them. */
 export type WorkflowRejection =
@@ -156,8 +157,11 @@ export function checkAction(
     case "processing":
     case "ready":
     case "complete": {
-      const next: OnlineOrderStatus =
-        action === "processing" ? "processing" : action === "ready" ? "ready" : "completed";
+      // The stored status comes from the canonical action→status table, never
+      // from the action word itself: `"complete"` is not an enum label.
+      const mapped = ORDER_ACTION_TO_STATUS[action];
+      if (mapped === null) return { ok: false, reason: "unknown" };
+      const next: OnlineOrderStatus = mapped;
       if (order.status === "pending") return { ok: false, reason: "not_approved" };
       if (order.status === "completed") return { ok: false, reason: "already_completed" };
       if (!FLOW[order.status].includes(next)) return { ok: false, reason: "backwards" };

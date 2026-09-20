@@ -85,7 +85,7 @@ export function StoreCheckoutPage() {
     return () => clearDocumentMeta();
   }, [t]);
   const navigate = useNavigate();
-  const { settings } = useStorefront();
+  const { settings, deliveryZones } = useStorefront();
   // The InstaPay link is admin-typed text bound for a public `href`: only an
   // absolute http(s) URL is rendered, and an unset or unsafe value shows no
   // button at all rather than a broken or dangerous one.
@@ -112,7 +112,17 @@ export function StoreCheckoutPage() {
     checkout,
     checkoutError,
     clearCheckoutError,
+    deliveryZoneId,
+    setDeliveryZoneId,
+    preview,
+    couponCode,
+    setCouponInput,
+    couponError,
+    applyingCoupon,
+    applyCoupon,
+    clearCoupon,
   } = useStoreCart();
+  const [promoDraft, setPromoDraft] = useState("");
 
   const [name, setName] = useState(customer?.name ?? "");
   const [phone, setPhone] = useState(customer?.phone ?? "");
@@ -177,11 +187,37 @@ export function StoreCheckoutPage() {
         : null;
 
   // The shop's own delivery rules, computed live so they are visible before the
-  // submit. `place_online_order` (0042) enforces exactly these two, from the
-  // shop's settings, so a cart that passes here passes there.
+  // submit. `place_online_order` enforces the same numbers server-side, so a
+  // cart that passes here passes there. With zones the chosen row decides;
+  // without one the legacy settings do.
   const deliveryPlaces = useMemo(() => deliveryAreasOf(settings.delivery), [settings.delivery]);
-  const goodsTotal = round2(totals.subtotal - totals.discount_amount);
-  const deliveryShortfall = deliveryMinimumShortfall(settings.delivery, deliveryType, goodsTotal);
+  const enabledZones = useMemo(() => deliveryZones.filter((zone) => zone.enabled), [deliveryZones]);
+  const activeZone = useMemo(
+    () => enabledZones.find((zone) => zone.id === deliveryZoneId) ?? null,
+    [deliveryZoneId, enabledZones],
+  );
+
+  // When zones exist the customer picks one: preselecting the first would price
+  // a Cairo order at Ismailia's fee, so the choice stays empty until made —
+  // and a zone that was disabled after being chosen is cleared instead.
+  useEffect(() => {
+    if (activeZone) return;
+    if (deliveryZoneId !== null) setDeliveryZoneId(null);
+  }, [activeZone, deliveryZoneId, setDeliveryZoneId]);
+
+  // The advisory breakdown when it is fresh, else the local totals. Both read
+  // the same engine; the preview additionally knows automatic offers, codes
+  // beyond the coupon input, and the chosen zone.
+  const shown = useMemo(() => {
+    if (!preview) return null;
+    return preview;
+  }, [preview]);
+  const goodsTotal = round2((shown?.subtotal ?? totals.subtotal) - (shown?.totalDiscount ?? totals.discount_amount));
+  const zoneMinimum = activeZone && deliveryType === "delivery" ? activeZone.minimum_order_amount : null;
+  const deliveryShortfall =
+    zoneMinimum !== null
+      ? round2(Math.max(zoneMinimum - goodsTotal, 0))
+      : deliveryMinimumShortfall(settings.delivery, deliveryType, goodsTotal);
   const addressTyped = Boolean(address.city.trim() || address.area.trim());
 
   // A whole address — city, area and street — for a driver to find. The server
@@ -192,17 +228,23 @@ export function StoreCheckoutPage() {
       ? t("store.checkout.addressRequired")
       : null;
   // Only when the customer has actually typed a place: an empty form is the
-  // "address required" case, not the "we do not deliver there" one.
+  // "address required" case, not the "we do not deliver there" one. A named
+  // zone replaces the areas list — the zone IS the place the shop serves.
   const areaError =
     deliveryType === "delivery" &&
+    !activeZone &&
     addressTyped &&
     !deliveryAreaSupported(settings.delivery, address.city, address.area)
       ? t("store.checkout.areaNotServed")
       : null;
+  const zoneError =
+    touched && deliveryType === "delivery" && enabledZones.length > 0 && !activeZone
+      ? t("store.checkout.zoneRequired")
+      : null;
   const blocked = problems.length > 0;
   const orderingOpen = settings.delivery.enabled || settings.delivery.pickup_enabled;
   const invalid =
-    Boolean(nameError || phoneError || addressError || areaError) ||
+    Boolean(nameError || phoneError || addressError || areaError || zoneError) ||
     blocked ||
     deliveryShortfall > 0 ||
     !orderingOpen;
@@ -344,8 +386,8 @@ export function StoreCheckoutPage() {
                 >
                   <p className="text-sm font-black text-[var(--store-text)]">{t("store.checkout.delivery")}</p>
                   <p className="mt-0.5 text-xs text-[var(--store-muted)]">
-                    {totals.delivery_fee > 0
-                      ? t("store.checkout.deliveryFeeAmount", { amount: money(settings.delivery.fee) })
+                    {(shown?.deliveryFee ?? totals.delivery_fee) > 0
+                      ? t("store.checkout.deliveryFeeAmount", { amount: money(activeZone?.shipping_fee ?? settings.delivery.fee) })
                       : t("store.cart.freeDeliveryReached")}
                   </p>
                 </button>
@@ -369,6 +411,56 @@ export function StoreCheckoutPage() {
                 </button>
               ) : null}
             </div>
+
+            {deliveryType === "delivery" && enabledZones.length > 0 ? (
+              <fieldset className="mt-3">
+                <legend className="mb-1 block text-xs font-bold text-[var(--store-text)]">
+                  {t("store.checkout.chooseZone")}
+                </legend>
+                <div className="flex flex-col gap-2" data-testid="checkout-zone-picker">
+                  {enabledZones.map((zone) => {
+                    const selected = zone.id === deliveryZoneId;
+                    const eta = pick(zone.estimated_delivery_text_ar, zone.estimated_delivery_text_en);
+                    return (
+                      <label
+                        key={zone.id}
+                        className={cn(
+                          "flex cursor-pointer items-start gap-3 rounded-xl border-2 p-3 transition",
+                          selected
+                            ? "border-[var(--store-primary)] bg-[var(--store-primary-soft)]"
+                            : "border-[var(--store-border)]",
+                        )}
+                      >
+                        <input
+                          type="radio"
+                          name="delivery-zone"
+                          checked={selected}
+                          onChange={() => setDeliveryZoneId(zone.id)}
+                          className="mt-0.5 accent-[var(--store-primary)]"
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-sm font-black text-[var(--store-text)]">
+                            {pick(zone.name_ar, zone.name_en)}
+                          </span>
+                          <span className="mt-0.5 block text-xs text-[var(--store-muted)]">
+                            {zone.shipping_fee > 0 ? (
+                              t("store.checkout.zoneFee", { amount: money(zone.shipping_fee) })
+                            ) : (
+                              <span className="font-bold text-emerald-700">{t("store.checkout.free")}</span>
+                            )}
+                            {zone.minimum_order_amount > 0
+                              ? ` · ${t("store.checkout.zoneMinimum", { amount: money(zone.minimum_order_amount) })}`
+                              : ""}
+                            {eta ? ` · ${eta}` : ""}
+                          </span>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+                {zoneError ? <FieldNote tone="error">{zoneError}</FieldNote> : null}
+              </fieldset>
+            ) : null}
 
             {deliveryNoteCopy && deliveryType === "delivery" ? (
               <p className="mt-3 text-xs leading-relaxed text-[var(--store-muted)]">{deliveryNoteCopy}</p>
@@ -557,7 +649,7 @@ export function StoreCheckoutPage() {
                           </p>
                         ) : (
                           <ol className="mt-2 list-decimal space-y-1 ps-4 text-xs text-[var(--store-muted)]">
-                            <li>{t("store.checkout.instapayStep1", { amount: money(totals.total) })}</li>
+                            <li>{t("store.checkout.instapayStep1", { amount: money(shown?.total ?? totals.total) })}</li>
                             <li>{t("store.checkout.instapayStep2")}</li>
                             <li>{t("store.checkout.instapayStep3")}</li>
                           </ol>
@@ -668,32 +760,113 @@ export function StoreCheckoutPage() {
             <dl className="mt-3 space-y-2 border-t border-[var(--store-border)] pt-3 text-sm">
               <div className="flex justify-between gap-2">
                 <dt className="text-[var(--store-muted)]">{t("store.cart.subtotal")}</dt>
-                <dd className="font-bold text-[var(--store-text)]"><Money value={totals.subtotal} /></dd>
+                <dd className="font-bold text-[var(--store-text)]"><Money value={shown?.subtotal ?? totals.subtotal} /></dd>
               </div>
-              {totals.discount_amount > 0 ? (
+              {(shown?.autoDiscount ?? 0) > 0 ? (
                 <div className="flex justify-between gap-2 text-emerald-700">
-                  <dt>{t("store.cart.discount")}</dt>
-                  <dd className="font-bold">−{money(totals.discount_amount)}</dd>
+                  <dt>
+                    {t("store.checkout.productDiscounts")}
+                    {shown?.autoPromotionName ? ` · ${shown.autoPromotionName}` : ""}
+                  </dt>
+                  <dd className="font-bold">−{money(shown?.autoDiscount ?? 0)}</dd>
+                </div>
+              ) : null}
+              {(shown?.promoDiscount ?? totals.discount_amount) > 0 ? (
+                <div className="flex justify-between gap-2 text-emerald-700">
+                  <dt>
+                    {t("store.cart.discount")}
+                    {shown?.promoCode ?? totals.discount_code ? ` · ${shown?.promoCode ?? totals.discount_code}` : ""}
+                  </dt>
+                  <dd className="font-bold">−{money(shown?.promoDiscount ?? totals.discount_amount)}</dd>
                 </div>
               ) : null}
               <div className="flex justify-between gap-2">
                 <dt className="text-[var(--store-muted)]">
-                  {deliveryType === "pickup" ? t("store.checkout.pickup") : t("store.cart.deliveryFee")}
+                  {deliveryType === "pickup"
+                    ? t("store.checkout.pickup")
+                    : activeZone
+                      ? pick(activeZone.name_ar, activeZone.name_en)
+                      : t("store.cart.deliveryFee")}
                 </dt>
                 <dd className="font-bold text-[var(--store-text)]">
-                  {totals.delivery_fee > 0 ? <Money value={totals.delivery_fee} /> : t("store.checkout.free")}
+                  {(shown?.deliveryFee ?? totals.delivery_fee) > 0 ? (
+                    <Money value={shown?.deliveryFee ?? totals.delivery_fee} />
+                  ) : (
+                    t("store.checkout.free")
+                  )}
                 </dd>
               </div>
+              {(shown?.shippingDiscount ?? 0) > 0 ? (
+                <div className="flex justify-between gap-2 text-emerald-700">
+                  <dt>
+                    {t("store.checkout.deliveryDiscount")}
+                    {shown?.promoFreeShipping ? ` · ${t("store.checkout.freeShippingApplied")}` : ""}
+                  </dt>
+                  <dd className="font-bold">−{money(shown?.shippingDiscount ?? 0)}</dd>
+                </div>
+              ) : null}
               <div className="flex justify-between gap-2 border-t border-[var(--store-border)] pt-2 text-base">
                 <dt className="font-black text-[var(--store-text)]">{t("store.cart.total")}</dt>
-                <dd className="font-black text-[var(--store-text)]"><Money value={totals.total} /></dd>
+                <dd className="font-black text-[var(--store-text)]"><Money value={shown?.total ?? totals.total} /></dd>
               </div>
             </dl>
+
+            {couponCode || shown?.promoCode ? (
+              <div className="mt-3 flex items-center justify-between gap-2 rounded-lg bg-[var(--store-primary-soft)] px-3 py-2">
+                <p className="text-sm font-black text-[var(--store-primary)]">
+                  {shown?.promoCode ?? couponCode}
+                </p>
+                <button
+                  type="button"
+                  onClick={clearCoupon}
+                  className="text-xs font-bold text-[var(--store-muted)] hover:text-rose-600"
+                >
+                  {t("store.cart.removeCoupon")}
+                </button>
+              </div>
+            ) : (
+              <div className="mt-3 flex gap-2">
+                <input
+                  value={promoDraft}
+                  onChange={(event) => {
+                    setPromoDraft(event.target.value);
+                    setCouponInput(event.target.value);
+                  }}
+                  // No <form> here: this block already lives inside the
+                  // checkout's own form, and a nested form is invalid HTML.
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      void applyCoupon(promoDraft);
+                    }
+                  }}
+                  placeholder={t("store.cart.couponPlaceholder")}
+                  aria-label={t("store.cart.coupon")}
+                  className="min-w-0 flex-1 rounded-lg border border-[var(--store-border)] bg-[var(--store-surface)] px-3 py-2 text-sm uppercase outline-none focus:border-[var(--store-primary)]"
+                />
+                <button
+                  type="button"
+                  onClick={() => void applyCoupon(promoDraft)}
+                  disabled={applyingCoupon || !promoDraft.trim()}
+                  className="shrink-0 rounded-lg border border-[var(--store-primary)] px-3 py-2 text-xs font-black text-[var(--store-primary)] transition hover:bg-[var(--store-primary-soft)] disabled:opacity-40"
+                >
+                  {applyingCoupon ? t("common.loading") : t("store.cart.applyCoupon")}
+                </button>
+              </div>
+            )}
+            {couponError && !couponCode ? (
+              <p className="mt-2 text-xs font-bold text-rose-600">
+                {t(`store.coupon.${couponError}` as never)}
+              </p>
+            ) : null}
+            {!couponError && (couponCode || shown?.promoCode) ? (
+              <p className="mt-2 text-xs font-bold text-emerald-600">{t("store.coupon.applied")}</p>
+            ) : null}
 
             {deliveryShortfall > 0 ? (
               <p className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-2 text-xs font-semibold text-amber-900">
                 {t("store.checkout.minimumOrder", {
-                  amount: money(settings.delivery.minimum_order ?? 0),
+                  amount: money(zoneMinimum ?? settings.delivery.minimum_order ?? 0),
                   remaining: money(deliveryShortfall),
                 })}
               </p>

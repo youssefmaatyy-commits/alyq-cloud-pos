@@ -89,6 +89,12 @@ export const ROUTE_CAPABILITIES: ReadonlyArray<readonly [string, Capability]> = 
   ["/online/website", "manage_website"],
   ["/online/marketing", "manage_website"],
   ["/online/content", "manage_website"],
+  // Delivery zones and automatic discounts price what customers pay, so like
+  // campaigns and coupons they sit behind `manage_website` — same capability
+  // the tables' RLS enforces. Listed explicitly so the route table (and the
+  // admin audit that scans it) names every room.
+  ["/online/zones", "manage_website"],
+  ["/online/discounts", "manage_website"],
   ["/audit", "view_audit_log"],
   // Settings (Phase 10). Three capabilities rather than one, so a role can be
   // given the area without being given the directory inside it: `manage_settings`

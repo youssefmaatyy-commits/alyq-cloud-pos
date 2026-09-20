@@ -12,15 +12,15 @@
  *      Danger Zone;
  *   9–11. the Catalog module home reaches Products and Categories through
  *      its own cards, with breadcrumbs on the child pages;
- *   12–14. the Online module home reaches Orders and Website, and the
- *      browser's back button returns to the module home;
- *   15. legacy deep routes (#/products, #/pos/sales) still resolve — the
+ *   12–15. the Online module home reaches Orders, Website, Delivery Zones and
+ *      Discounts, and the browser's back button returns to the module home;
+ *   16. legacy deep routes (#/products, #/pos/sales) still resolve — the
  *      navigation was restructured, not the routes destroyed;
- *   16. the inventory deep link with its status pre-filter hydrates the
+ *   17. the inventory deep link with its status pre-filter hydrates the
  *      stock table one level below the module landing;
- *   17. a cashier sees no Reports/Settings/Online door and a direct URL is
+ *   18. a cashier sees no Reports/Settings/Online door and a direct URL is
  *      refused by the guard — hiding is courtesy, the guard is the law;
- *   18. Arabic mirrors the same six doors, and the mobile drawer carries
+ *   19. Arabic mirrors the same six doors, and the mobile drawer carries
  *      the identical module list.
  *
  * Any console.error / window.onerror / network call fails the run.
@@ -51,7 +51,7 @@ const {
 } = ux;
 
 let passed = 0;
-const TOTAL = 18;
+const TOTAL = 20;
 function check(label, condition) {
   assert.ok(condition, label);
   passed += 1;
@@ -149,15 +149,33 @@ async function main() {
   await waitFor(() => testid("breadcrumbs")?.textContent.includes("Categories"), { label: "the Categories page" });
   check("Store Management → Categories opens through the module home", Boolean(testid("breadcrumbs")));
 
-  // ── 12–14 · the Online module home, then the browser's back button ────────
+  // ── 12–15 · the Online module home, new rooms, the back button ────────────
   await navigate("#/online");
   await waitFor(() => testid("module-online"), { label: "the Online module home" });
-  const onlineCards = ["orders", "holds", "website", "marketing"].every((k) => testid(`module-card-${k}`));
+  const onlineCards = ["orders", "holds", "website", "marketing", "zones", "discounts", "promocodes"].every((k) => testid(`module-card-${k}`));
   clickTestid("module-card-orders");
   await waitFor(() => testid("breadcrumbs")?.textContent.includes("Online orders"), { label: "the online orders queue" });
   check(
-    "the Online home offers Orders/Holds/Website/Campaigns cards, and Orders opens with breadcrumbs Online › Online orders",
+    "the Online home offers Orders/Holds/Website/Campaigns/Zones/Discounts/Promo-codes cards, and Orders opens with breadcrumbs Online › Online orders",
     onlineCards && window.location.hash.includes("#/online/orders"),
+  );
+
+  await navigate("#/online");
+  await waitFor(() => testid("module-card-zones"), { label: "the zones card" });
+  clickTestid("module-card-zones");
+  await waitFor(() => testid("breadcrumbs")?.textContent.includes("Delivery Zones"), { label: "the zones page" });
+  check(
+    "Online → Delivery Zones opens with breadcrumbs Online › Delivery Zones",
+    window.location.hash.includes("#/online/zones"),
+  );
+
+  await navigate("#/online");
+  await waitFor(() => testid("module-card-discounts"), { label: "the discounts card" });
+  clickTestid("module-card-discounts");
+  await waitFor(() => testid("breadcrumbs")?.textContent.includes("Discounts"), { label: "the discounts page" });
+  check(
+    "Online → Discounts opens with breadcrumbs Online › Discounts",
+    window.location.hash.includes("#/online/discounts"),
   );
 
   await navigate("#/online");
@@ -171,7 +189,7 @@ async function main() {
   await waitFor(() => testid("module-online"), { label: "the Online home after going back" });
   check("the browser's back button returns from a room to its module home", true);
 
-  // ── 15 · legacy deep routes still resolve ─────────────────────────────────
+  // ── 16 · legacy deep routes still resolve ────────────────────────────────
   await navigate("#/products");
   await waitFor(() => testid("breadcrumbs")?.textContent.includes("Products"), { label: "the bookmarked products URL" });
   await navigate("#/pos/sales");
@@ -180,7 +198,7 @@ async function main() {
   });
   check("bookmarked deep routes (#/products, #/pos/sales) still resolve unchanged", true);
 
-  // ── 16 · the inventory pre-filter hydrates one level deeper ───────────────
+  // ── 17 · the inventory pre-filter hydrates one level deeper ───────────────
   await navigate("#/inventory/stock?status=low");
   await sleep(500);
   const statusSelect = document.querySelector('select[aria-label="Status"]');
@@ -189,7 +207,7 @@ async function main() {
     statusSelect instanceof HTMLSelectElement && statusSelect.value === "low",
   );
 
-  // ── 17 · the cashier: doors hidden, direct URL guarded ────────────────────
+  // ── 18 · the cashier: doors hidden, direct URL guarded ────────────────────
   await signOut();
   await signInAs("cashier");
   await waitFor(() => (document.querySelector("aside")?.textContent ?? "").length > 0, { label: "the cashier's sidebar" });
@@ -204,7 +222,7 @@ async function main() {
     !cashierHrefs.includes("#/settings") && cashierHrefs.includes("#/pos") && cashierHrefs.includes("#/management") && cashierHrefs.includes("#/online") && cashierHrefs.includes("#/reports") && guardRefused,
   );
 
-  // ── 18 · Arabic mirror + the mobile drawer's identical IA ─────────────────
+  // ── 19 · Arabic mirror + the mobile drawer's identical IA ─────────────────
   await signOut();
   await signInAs("admin");
   await navigate("#/");

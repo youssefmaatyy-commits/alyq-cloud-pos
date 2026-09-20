@@ -42,6 +42,7 @@ import {
   toOnlineError,
   type OnlineError,
   type PlaceOrderResult,
+  type PricingPreview,
 } from "../data/repository";
 import type {
   CustomerAddress,
@@ -132,6 +133,7 @@ interface StoredCart {
   couponCode: string | null;
   deliveryType: DeliveryType;
   paymentMethod: OnlinePaymentMethod;
+  deliveryZoneId: string | null;
 }
 
 function readStoredCart(): StoredCart {
@@ -140,6 +142,7 @@ function readStoredCart(): StoredCart {
     couponCode: null,
     deliveryType: "delivery",
     paymentMethod: "cod",
+    deliveryZoneId: null,
   };
   try {
     const raw = window.localStorage.getItem(CART_KEY);
@@ -166,6 +169,7 @@ function readStoredCart(): StoredCart {
       couponCode: typeof parsed.couponCode === "string" ? parsed.couponCode : null,
       deliveryType: parsed.deliveryType === "pickup" ? "pickup" : "delivery",
       paymentMethod: parsed.paymentMethod === "instapay" ? "instapay" : "cod",
+      deliveryZoneId: typeof parsed.deliveryZoneId === "string" ? parsed.deliveryZoneId : null,
     };
   } catch {
     return fallback;
@@ -210,6 +214,20 @@ export interface StoreCartContextValue {
   paymentMethod: OnlinePaymentMethod;
   setPaymentMethod: (value: OnlinePaymentMethod) => void;
   freeDelivery: { eligible: boolean; remaining: number; threshold: number } | null;
+  /**
+   * The delivery zone the customer chose (or null for pickup / legacy shops).
+   * The server prices from the row; no fee ever travels from the browser.
+   */
+  deliveryZoneId: string | null;
+  setDeliveryZoneId: (value: string | null) => void;
+  /**
+   * The advisory checkout breakdown — automatic promotion, code, fee, total —
+   * refreshed as the cart changes. Null while loading or when the check is
+   * unreachable; screens fall back to the local totals, and placement
+   * recomputes authoritatively either way.
+   */
+  preview: PricingPreview | null;
+  previewLoading: boolean;
 
   placing: boolean;
   checkoutError: OnlineError | null;
@@ -241,13 +259,14 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
     catalogContext,
     settings,
     checkCoupon: verifyCode,
+    previewPricing,
   } = useStorefront();
   const { customer } = useStoreAccount();
   const orders = useMemo(() => getOnlineOrdersRepository(), []);
 
   const [stored] = useState<StoredCart>(() =>
     typeof window === "undefined"
-      ? { lines: [], couponCode: null, deliveryType: "delivery" as const, paymentMethod: "cod" as const }
+      ? { lines: [], couponCode: null, deliveryType: "delivery" as const, paymentMethod: "cod" as const, deliveryZoneId: null }
       : readStoredCart(),
   );
 
@@ -259,10 +278,13 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
   const [applyingCoupon, setApplyingCoupon] = useState(false);
   const [deliveryType, setDeliveryType] = useState<DeliveryType>(stored.deliveryType);
   const [paymentMethod, setPaymentMethod] = useState<OnlinePaymentMethod>(stored.paymentMethod);
+  const [deliveryZoneId, setDeliveryZoneId] = useState<string | null>(stored.deliveryZoneId);
   const [placing, setPlacing] = useState(false);
   const [checkoutError, setCheckoutError] = useState<OnlineError | null>(null);
   const [lastOrder, setLastOrder] = useState<OnlineOrder | null>(null);
   const [lastWasDuplicate, setLastWasDuplicate] = useState(false);
+  const [preview, setPreview] = useState<PricingPreview | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
 
   const productsById = useMemo(() => new Map(products.map((product) => [product.id, product])), [
     products,
@@ -297,12 +319,12 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
     try {
       window.localStorage.setItem(
         CART_KEY,
-        JSON.stringify({ lines, couponCode, deliveryType, paymentMethod } satisfies StoredCart),
+        JSON.stringify({ lines, couponCode, deliveryType, paymentMethod, deliveryZoneId } satisfies StoredCart),
       );
     } catch {
       /* private mode: the cart simply will not survive a reload */
     }
-  }, [lines, couponCode, deliveryType, paymentMethod]);
+  }, [lines, couponCode, deliveryType, paymentMethod, deliveryZoneId]);
 
   const entries = useMemo<CartEntry[]>(() => {
     const now = new Date();
@@ -631,6 +653,7 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
             variant_id: line.variant_id,
           })),
           coupon_code: couponCode,
+          delivery_zone_id: deliveryType === "delivery" ? deliveryZoneId : null,
           payment_method: paymentMethod,
           notes: input.notes ?? null,
         };
@@ -681,7 +704,41 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
   // different order, and reusing the key would return the previous one.
   useEffect(() => {
     clientRefRef.current = null;
-  }, [lines, couponCode, deliveryType, paymentMethod]);
+  }, [lines, couponCode, deliveryType, paymentMethod, deliveryZoneId]);
+
+  // Advisory pricing refresh: the full breakdown (automatic promotion, code,
+  // zone fee) recomputed as the cart changes. Debounced like the coupon
+  // re-check; a failure clears the preview and screens fall back to the local
+  // totals, because placement recomputes authoritatively either way.
+  const previewTimer = useRef<number | null>(null);
+  useEffect(() => {
+    if (previewTimer.current !== null) window.clearTimeout(previewTimer.current);
+    if (isEmpty) {
+      setPreview(null);
+      setPreviewLoading(false);
+      return;
+    }
+    setPreviewLoading(true);
+    previewTimer.current = window.setTimeout(() => {
+      void previewPricing({
+        lines: lines.map((line) => ({
+          product_id: line.product_id,
+          qty: line.quantity,
+          variant_id: line.variant_id,
+        })),
+        couponCode,
+        deliveryZoneId: deliveryType === "delivery" ? deliveryZoneId : null,
+        customerKey: customer?.id ?? null,
+        deliveryType,
+      })
+        .then((result) => setPreview(result))
+        .catch(() => setPreview(null))
+        .finally(() => setPreviewLoading(false));
+    }, 350);
+    return () => {
+      if (previewTimer.current !== null) window.clearTimeout(previewTimer.current);
+    };
+  }, [couponCode, customer?.id, deliveryType, deliveryZoneId, isEmpty, lines, previewPricing]);
 
   const value = useMemo<StoreCartContextValue>(
     () => ({
@@ -711,6 +768,10 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
       paymentMethod,
       setPaymentMethod,
       freeDelivery,
+      deliveryZoneId,
+      setDeliveryZoneId,
+      preview,
+      previewLoading,
       placing,
       checkoutError,
       clearCheckoutError: () => setCheckoutError(null),
@@ -734,6 +795,10 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
       couponInput,
       decrease,
       deliveryType,
+      deliveryZoneId,
+      setDeliveryZoneId,
+      preview,
+      previewLoading,
       discount,
       entries,
       freeDelivery,

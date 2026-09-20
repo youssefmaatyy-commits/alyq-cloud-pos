@@ -10,7 +10,7 @@
  * Any console.error / window.onerror fails the run.
  *
  * Build the bundle first, then run this file:
- *   npm run test:bundle                 # → /tmp/alyq-app.mjs
+  *   npm run test:bundle                 # → os.tmpdir()/alyq-app.mjs
  *   node scripts/smoke.dom.mjs
  * or let the runner do both: `npm run test:e2e smoke`.
  *
@@ -22,6 +22,7 @@
  */
 import { JSDOM } from "jsdom";
 import assert from "node:assert/strict";
+import { bundleFileUrl } from "./lib/app-bundle.mjs";
 
 const dom = new JSDOM('<!doctype html><html lang="en"><body><div id="root"></div></body></html>', {
   url: "http://localhost/",
@@ -134,7 +135,7 @@ dom.window.open = () => {
   return fake;
 };
 
-await import("/tmp/alyq-app.mjs");
+await import(bundleFileUrl());
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const bodyText = () => document.body.textContent ?? "";
@@ -2453,11 +2454,12 @@ async function main() {
   assert.ok(isSignedIn(), "cashier signed in");
   const cashierNav = navHrefs();
   assert.ok(cashierNav.includes("#/pos"), "cashier sees the register");
-  // Phase 49: returns and refunds hang off the Sales module home — the cashier
-  // sees the door; the rooms are its cards, each route still its own gate.
-  assert.ok(cashierNav.includes("#/sales"), "cashier sees the Sales door");
+  // Phase 49+: catalog, sales, inventory and customers hang off the Store
+  // Management workspace — the cashier sees the door; the rooms are its
+  // cards, each route still its own gate.
+  assert.ok(cashierNav.includes("#/management"), "cashier sees the Store Management door");
   assert.ok(!cashierNav.includes("#/returns") && !cashierNav.includes("#/refunds"), "no returns/refunds leaves in the sidebar");
-  await navigate("#/sales");
+  await navigate("#/management");
   for (let i = 0; i < 12 && !document.querySelector('[data-testid="module-card-returns"]'); i += 1) await sleep(300);
   assert.ok(document.querySelector('[data-testid="module-card-returns"]'), "cashier sees returns on the Sales home");
   assert.ok(document.querySelector('[data-testid="module-card-refunds"]'), "cashier sees refunds on the Sales home");
@@ -2487,7 +2489,7 @@ async function main() {
   assert.ok(!viewerNav.includes("#/returns"), "viewer does not see returns");
   assert.ok(!viewerNav.includes("#/refunds"), "viewer does not see refunds");
   assert.ok(!viewerNav.includes("#/audit"), "viewer does not see the audit log");
-  assert.ok(viewerNav.includes("#/inventory"), "viewer keeps read access to inventory");
+  assert.ok(viewerNav.includes("#/management"), "viewer keeps workspace access (inventory lives inside)");
   for (const route of ["#/pos", "#/returns", "#/refunds", "#/audit"]) {
     await navigate(route);
     await sleep(400);
@@ -2555,38 +2557,39 @@ async function main() {
   console.log("  ✓ role changes are driven by the signed-in session, not a demo switcher");
 
   // ── Explicit Sidebar Navigation Verification ──
-  // Click Customers sidebar item
-  const customersNav = [...document.querySelectorAll("aside nav a")].find((a) =>
-    (a.textContent ?? "").includes("Customers") || (a.getAttribute("href") ?? "") === "#/customers"
-  );
-  assert.ok(customersNav, "Customers nav link exists in sidebar");
-  customersNav.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  // Six-door IA: Customers has no global door — it is a card of the Store
+  // Management workspace. Click the workspace door, then its Customers card.
+  const managementNav = [...document.querySelectorAll("aside nav a")].find((a) => (a.getAttribute("href") ?? "") === "#/management");
+  assert.ok(managementNav, "Store Management door exists in sidebar");
+  managementNav.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
   await sleep(350);
-  assert.ok(dom.window.location.hash.includes("/customers"), "sidebar navigates to Customers page");
-  assert.ok(bodyText().includes("Customer name") || bodyText().includes("Customers"), "Customers UI rendered from sidebar");
+  const customersCard = [...document.querySelectorAll('[data-testid="module-card-customers"]')][0];
+  assert.ok(customersCard, "workspace offers the Customers card");
+  customersCard.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  await sleep(400);
+  assert.ok(dom.window.location.hash.includes("/customers"), "the workspace navigates to Customers page");
+  assert.ok(bodyText().includes("Customer name") || bodyText().includes("Customers"), "Customers UI rendered from the workspace");
 
-  // Returns and Refunds: cards on the Sales module home (Phase 49) — the rooms
-  // render through the home's cards, their URLs unchanged.
-  const salesNav = [...document.querySelectorAll("aside nav a")].find((a) => (a.getAttribute("href") ?? "") === "#/sales");
-  assert.ok(salesNav, "Sales nav door exists in sidebar");
-  salesNav.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  // Returns and Refunds: cards on the workspace's embedded operations section —
+  // the rooms render through the home's cards, their URLs unchanged.
+  await navigate("#/management");
   await sleep(500);
   const returnsCard = [...document.querySelectorAll('[data-testid="module-card-returns"]')][0];
-  assert.ok(returnsCard, "Sales home offers the Returns card");
+  assert.ok(returnsCard, "workspace offers the Returns card");
   returnsCard.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
   await sleep(400);
-  assert.ok(dom.window.location.hash.includes("/returns"), "the Sales home navigates to Returns");
+  assert.ok(dom.window.location.hash.includes("/returns"), "the workspace navigates to Returns");
   assert.ok(bodyText().includes("Returns") || bodyText().includes("Refunds"), "Returns UI rendered");
 
-  await navigate("#/sales");
+  await navigate("#/management");
   await sleep(400);
   const refundsCard = [...document.querySelectorAll('[data-testid="module-card-refunds"]')][0];
-  assert.ok(refundsCard, "Sales home offers the Refunds card");
+  assert.ok(refundsCard, "workspace offers the Refunds card");
   refundsCard.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
   await sleep(400);
-  assert.ok(dom.window.location.hash.includes("/refunds"), "the Sales home navigates to Refunds");
+  assert.ok(dom.window.location.hash.includes("/refunds"), "the workspace navigates to Refunds");
   assert.ok(bodyText().includes("Refund #") || bodyText().includes("Refunds"), "Refunds UI rendered");
-  console.log("  ✓ module navigation: Customers door, Sales home → Returns and Refunds verified");
+  console.log("  ✓ module navigation: workspace door → Customers, Returns and Refunds verified");
 
   // 13 ─ bilingual RTL/LTR (including the POS screens)
   click("العربية");

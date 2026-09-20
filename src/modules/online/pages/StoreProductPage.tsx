@@ -29,6 +29,7 @@ import {
 import {
   campaignFor,
   colorGroupsOf,
+  promotionUnitPrice,
   variantUnitPriceOf,
   type StoreVariant,
 } from "../services/pricing";
@@ -136,6 +137,8 @@ export function StoreProductPage() {
     categories,
     catalogContext,
     campaigns,
+    promotions,
+    promotionTargets,
     reviews,
     settings,
     variantsOf,
@@ -214,6 +217,46 @@ export function StoreProductPage() {
         : null,
     [catalogContext, product],
   );
+
+  // What THIS shelf promises. A variant product answers from the chosen
+  // combination — its own stock minus its own holds — and refuses to sell
+  // before one is chosen; a plain product answers from the rollup, exactly as
+  // it always has.
+  const needsChoice = entry?.needsVariantChoice ?? false;
+  const shelfPrice =
+    chosenVariant && product
+      ? variantUnitPriceOf(chosenVariant, product.selling_price, campaignFor(product.id, campaigns))
+      : (entry?.price ?? 0);
+
+  // A real current automatic offer on the chosen shelf — struck through, with
+  // the sale badge — exactly what checkout will charge for it. Variant-scoped
+  // offers resolve here (the combination IS chosen), store/category/product
+  // scopes resolve on the card too. Above the early return: hooks first.
+  const promoTargets = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    for (const row of promotionTargets) {
+      const set = map.get(row.promotion_id) ?? new Set<string>();
+      set.add(`${row.target_kind}:${row.target_id}`);
+      map.set(row.promotion_id, set);
+    }
+    return map;
+  }, [promotionTargets]);
+  const shelfPromo = useMemo(
+    () =>
+      product
+        ? promotionUnitPrice(
+            product.id,
+            chosenVariant?.id ?? null,
+            product.category_id,
+            shelfPrice,
+            promotions,
+            promoTargets,
+          )
+        : { unit: shelfPrice, promotionId: null },
+    [chosenVariant?.id, product, promotions, promoTargets, shelfPrice],
+  );
+  const promoShelfPrice =
+    shelfPromo.promotionId !== null && shelfPromo.unit < shelfPrice ? shelfPromo.unit : null;
 
   const gallery = useMemo(() => {
     if (!product) return [] as string[];
@@ -343,15 +386,6 @@ export function StoreProductPage() {
   const brand = (content?.brand_ar || content?.brand_en) ? pick(content.brand_ar, content.brand_en) : "";
   const badgeText = campaignBadgeText(product.id, campaigns, (arabic, english) => pick(arabic, english));
   const wished = inWishlist(product.id);
-
-  // What THIS shelf promises. A variant product answers from the chosen
-  // combination — its own stock minus its own holds — and refuses to sell
-  // before one is chosen; a plain product answers from the rollup, exactly as
-  // it always has.
-  const needsChoice = entry.needsVariantChoice;
-  const shelfPrice = chosenVariant
-    ? variantUnitPriceOf(chosenVariant, product.selling_price, campaignFor(product.id, campaigns))
-    : entry.price;
   const shelfAvailable = chosenVariant ? variantAvailable(chosenVariant) : entry.available;
   const shelfInStock = needsChoice
     ? chosenVariant !== null && (shelfAvailable === null || shelfAvailable > 0)
@@ -422,9 +456,12 @@ export function StoreProductPage() {
                   : undefined
               }
             />
-            {entry.badges.length > 0 ? (
+            {entry.badges.length > 0 || promoShelfPrice !== null ? (
               <ProductBadges
-                badges={entry.badges.filter((badge) =>
+                badges={(promoShelfPrice !== null && !entry.badges.includes("sale")
+                  ? [...entry.badges, "sale" as const]
+                  : entry.badges
+                ).filter((badge) =>
                   badge === "new"
                     ? settings.badges.show_new
                     : badge === "sale"
@@ -492,9 +529,14 @@ export function StoreProductPage() {
 
           <div className="mt-4 flex flex-wrap items-baseline gap-3">
             <span data-testid="product-price">
-              <Money value={shelfPrice} className="text-2xl font-medium text-[var(--store-text)]" />
+              <Money
+                value={promoShelfPrice ?? shelfPrice}
+                className="text-2xl font-medium text-[var(--store-text)]"
+              />
             </span>
-            {chosenVariant === null && entry.onSale ? (
+            {promoShelfPrice !== null ? (
+              <Money value={shelfPrice} strike className="text-base" />
+            ) : chosenVariant === null && entry.onSale ? (
               <>
                 <Money value={entry.listPrice} strike className="text-base" />
                 <span

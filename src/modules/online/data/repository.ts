@@ -20,12 +20,18 @@ import type {
   Campaign,
   Coupon,
   CustomerAddress,
+  DeliveryType,
+  DeliveryZone,
   OnlineOrder,
   OnlineOrderStatus,
   OnlinePaymentStatus,
   PaymentProofInput,
   PlaceOrderInput,
   ProductContent,
+  PromoCodeUsage,
+  Promotion,
+  PromotionTarget,
+  PromotionTargetDraft,
   ResolveOrderInput,
   SettingsSaveInput,
   StoreCustomer,
@@ -86,6 +92,13 @@ export const ONLINE_ERROR_CODES = [
   "coupon_min_subtotal",
   "coupon_not_applicable",
   "order_not_found",
+  /**
+   * A fulfilment transition the order cannot take — already completed, not
+   * approved yet, backwards, unknown, or a value the status enum does not
+   * hold. The operator reads "this order cannot be moved to that status",
+   * never the database's own wording.
+   */
+  "status_transition_refused",
   /**
    * The order was accepted and written, but reading it back for the
    * confirmation screen failed. The customer is told the order exists (with its
@@ -295,6 +308,26 @@ export function toOnlineError(error: unknown): OnlineError {
   if (/order not found/i.test(message)) {
     return new OnlineError("order_not_found", message, { field: "order_number" });
   }
+  // Staff order transitions (`resolve_online_order`): the refusal names the
+  // rule, not the data. Every wording below is a 23514/check_violation raise
+  // from the workflow — and `invalid input value for enum` is the 22P02 the
+  // old server produced by casting the action word `"complete"` straight into
+  // `online_order_status`. All of them mean the same thing to the operator:
+  // this order cannot be moved to that status. The server's own wording rides
+  // along in `message` for the dev log only — the UI keys its copy off `code`.
+  if (/invalid input value for enum/i.test(message)) {
+    return new OnlineError("status_transition_refused", message);
+  }
+  if (
+    /must be approved first/i.test(message) ||
+    /can be approved/i.test(message) ||
+    /already completed/i.test(message) ||
+    /cannot go back to/i.test(message) ||
+    /cannot be cancelled/i.test(message) ||
+    /unknown action/i.test(message)
+  ) {
+    return new OnlineError("status_transition_refused", message);
+  }
   // Live mode: `repair_stock_reservation` (migration 0025) raises with this
   // wording when a repair is asked to reverse a resolution — releasing a hold
   // the sale already converted, which would put taken units back on the shelf.
@@ -394,6 +427,12 @@ export interface OnlineOrdersRepository {
   // Staff side
   listOrders(filter?: Partial<OnlineOrderFilter>): Promise<OnlineOrder[]>;
   getOrder(id: string): Promise<OnlineOrder>;
+  /**
+   * The website order that became this POS sale, if any. Returns uses it to
+   * refund what the customer actually paid per unit (the snapshot), never the
+   * invoice's list prices. Null for till sales and legacy rows.
+   */
+  getOrderBySaleId(saleId: string): Promise<OnlineOrder | null>;
   /** Every legal state change; refuses illegal ones rather than ignoring them. */
   resolveOrder(id: string, input: ResolveOrderInput): Promise<OnlineOrder>;
   /** Stock currently held by pending orders — the POS shows it per product. */
@@ -444,17 +483,24 @@ export interface WebsiteSnapshot {
   campaigns: Campaign[];
   /** Phase 45: the shop-window face of the active categories. */
   categoryContents: StorefrontCategoryContent[];
+  /** Delivery choices at checkout (enabled zones, admin order). */
+  deliveryZones: DeliveryZone[];
+  /** Live automatic offers (struck-through prices read these). */
+  promotions: Promotion[];
+  promotionTargets: PromotionTarget[];
 }
 
 /** What the marketing screen manages: codes and campaigns. Staff only. */
 export interface MarketingSnapshot {
   coupons: Coupon[];
   campaigns: Campaign[];
+  promotions: Promotion[];
+  promotionTargets: PromotionTarget[];
 }
 
 /** A coupon check, as the checkout form needs it. */
 export type CouponCheckResult =
-  | { valid: true; code: string; discount: number; discountType: "percent" | "fixed"; value: number }
+  | { valid: true; code: string; discount: number; discountType: "percent" | "fixed" | "free_shipping"; value: number; freeShipping?: boolean }
   | { valid: false; reason: CouponCheckReason; minSubtotal?: number };
 
 export const COUPON_CHECK_REASONS = [
@@ -465,6 +511,8 @@ export const COUPON_CHECK_REASONS = [
   "exhausted",
   "min_subtotal",
   "not_applicable",
+  /** The customer exhausted their personal uses, or it is first-orders-only. */
+  "limit_reached",
 ] as const;
 export type CouponCheckReason = (typeof COUPON_CHECK_REASONS)[number];
 
@@ -474,7 +522,56 @@ export interface CouponCheckInput {
   subtotal: number;
   productIds: string[];
   categoryIds: string[];
+  /** Store account id, else `phone:<digits>` — for per-customer rules. Null skips them (advisory). */
+  customerKey?: string | null;
 }
+
+/** The advisory checkout breakdown: automatic promotion, code, fee, total. */
+export interface PricingPreviewInput {
+  lines: { product_id: string; qty: number; variant_id?: string | null }[];
+  couponCode?: string | null;
+  deliveryZoneId?: string | null;
+  customerKey?: string | null;
+  deliveryType: DeliveryType;
+}
+
+export interface PricingPreviewLine {
+  product_id: string;
+  variant_id: string | null;
+  qty: number;
+  unit_price: number;
+  line_total: number;
+  discounted_unit_price: number;
+}
+
+export interface PricingPreview {
+  subtotal: number;
+  autoDiscount: number;
+  autoPromotionId: string | null;
+  autoPromotionName: string | null;
+  /** The typed code (normalized), whether or not it won the stacking contest. */
+  promoCode: string | null;
+  promoValid: boolean;
+  promoReason: CouponCheckReason | null;
+  promoDiscount: number;
+  promoFreeShipping: boolean;
+  deliveryFee: number;
+  shippingDiscount: number;
+  shippingSource: string;
+  zoneId: string | null;
+  zoneName: string | null;
+  totalDiscount: number;
+  total: number;
+  lines: PricingPreviewLine[];
+}
+
+/** Drafts: `id` absent means create, present means update. */
+export type DeliveryZoneDraft = Partial<Omit<DeliveryZone, "id" | "created_at" | "updated_at">> & {
+  id?: string;
+};
+export type PromotionDraft = Partial<Omit<Promotion, "id" | "created_at" | "updated_at">> & {
+  id?: string;
+};
 
 /** One row of the best-sellers list: an id and how many units it moved. */
 export interface BestSellerRow {
@@ -515,6 +612,33 @@ export interface WebsiteRepository {
 
   /** Coupons + campaigns, for the marketing screen. */
   getMarketing(): Promise<MarketingSnapshot>;
+
+  /**
+   * The full advisory checkout breakdown — automatic promotion, promo code,
+   * delivery fee and total — computed without writing anything. The checkout
+   * shows this; placement recomputes it authoritatively, so a customer who
+   * edits their cart afterwards cannot check out on the old numbers.
+   */
+  previewPricing(input: PricingPreviewInput): Promise<PricingPreview>;
+
+  // ── delivery zones (Part 9): the admin owns the per-governorate pricing ──
+
+  /** All zones, enabled-first by sort order. Public read, `manage_website` writes. */
+  listDeliveryZones(): Promise<DeliveryZone[]>;
+  saveDeliveryZone(draft: DeliveryZoneDraft): Promise<DeliveryZone>;
+  deleteDeliveryZone(id: string): Promise<void>;
+
+  // ── automatic promotions (Part 10): codeless discounts ──
+
+  /** All automatic promotions. Public read, `manage_website` writes. */
+  listPromotions(): Promise<Promotion[]>;
+  /** The rows one offer covers. Empty for store scope. */
+  listPromotionTargets(promotionId: string): Promise<PromotionTarget[]>;
+  savePromotion(draft: PromotionDraft, targets: PromotionTargetDraft[]): Promise<Promotion>;
+  deletePromotion(id: string): Promise<void>;
+
+  /** Usage history for reporting (and per-customer enforcement server-side). Staff only. */
+  listPromoCodeUsages(couponId?: string): Promise<PromoCodeUsage[]>;
 
   /**
    * Is this code usable on this cart, and what is it worth?

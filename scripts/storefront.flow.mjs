@@ -18,6 +18,7 @@
  */
 import { JSDOM } from "jsdom";
 import assert from "node:assert/strict";
+import { bundleFileUrl } from "./lib/app-bundle.mjs";
 
 const dom = new JSDOM('<!doctype html><html lang="en"><body><div id="root"></div></body></html>', {
   url: "http://localhost/",
@@ -105,7 +106,7 @@ process.on("unhandledRejection", (reason) => {
   errors.push(`unhandledRejection: ${reason?.stack ?? String(reason)}`);
 });
 
-await import("/tmp/alyq-app.mjs");
+await import(bundleFileUrl());
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 

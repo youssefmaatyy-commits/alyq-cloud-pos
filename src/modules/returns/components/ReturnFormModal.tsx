@@ -16,7 +16,9 @@ import { useReturns } from "../hooks/ReturnProvider";
 import { useCatalog } from "@/modules/products";
 import { getCurrentUser } from "@/modules/inventory/permissions";
 import { validateReturnDraft, MAX_RETURN_REASON_LENGTH } from "../validation";
+import type { PaidUnitPrice } from "../validation";
 import { saleReturnability } from "../services/saleReturnability";
+import { getOnlineOrdersRepository } from "@/modules/online/data";
 import type { Sale } from "@/modules/pos/types";
 import type { ReturnItemInput } from "../types";
 import { normalizeText } from "@/modules/products/services/productQuery";
@@ -39,7 +41,7 @@ export function ReturnFormModal({
 }: ReturnFormModalProps) {
   const { t, pick, num, date } = useI18n();
   const toast = useToast();
-  const { sales } = usePos();
+  const { sales, refreshSales } = usePos();
   const { returnsList, refundsList, createReturn } = useReturns();
   const { refresh: refreshCatalog } = useCatalog();
 
@@ -82,6 +84,14 @@ export function ReturnFormModal({
       setDateTo("");
     }
   }, [open, preselectedSaleId]);
+
+  // The invoice list is a point-in-time read: a sale written since the last
+  // read — an online order approved into the till from another screen — would
+  // otherwise be missing from the picker until the next POS-side write. Every
+  // open re-reads, silently, so the list is never older than the modal.
+  useEffect(() => {
+    if (open) void refreshSales({ silent: true });
+  }, [open, refreshSales]);
 
   // Filter eligible non-voided sales invoices by invoice number, customer name, customer phone, date range
   const filteredSales: Sale[] = useMemo(() => {
@@ -137,6 +147,35 @@ export function ReturnFormModal({
     }));
   }, [selectedSale, itemQuantities]);
 
+  // An online-origin sale refunds at the order snapshot's paid prices (see
+  // validation's `paidPrices`): resolve the originating order when the
+  // selection is one, so the preview matches what the write will refund.
+  const [originPaidPrices, setOriginPaidPrices] = useState<PaidUnitPrice[] | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setOriginPaidPrices(null);
+    if (selectedSale?.source === "online") {
+      void getOnlineOrdersRepository()
+        .getOrderBySaleId(selectedSale.id)
+        .then((origin) => {
+          if (cancelled) return;
+          setOriginPaidPrices(
+            origin?.items.map((item) => ({
+              product_id: item.product_id,
+              variant_id: item.variant_id ?? null,
+              discounted_unit_price: item.discounted_unit_price ?? null,
+            })) ?? null,
+          );
+        })
+        .catch(() => {
+          if (!cancelled) setOriginPaidPrices(null);
+        });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedSale?.id, selectedSale?.source]);
+
   const validation = useMemo(() => {
     if (!selectedSale) {
       return {
@@ -154,8 +193,9 @@ export function ReturnFormModal({
       refundMethod,
       returnsList,
       refundsList,
+      originPaidPrices,
     );
-  }, [selectedSale, itemsInput, reason, refundMethod, returnsList, refundsList]);
+  }, [selectedSale, itemsInput, reason, refundMethod, returnsList, refundsList, originPaidPrices]);
 
   const handleSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();

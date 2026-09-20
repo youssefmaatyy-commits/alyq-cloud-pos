@@ -24,13 +24,14 @@
  *   node scripts/crash.flow.mjs
  */
 import { JSDOM, VirtualConsole } from "jsdom";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildAppBundle } from "./lib/app-bundle.mjs";
+import { buildAppBundle, bundleFileUrl } from "./lib/app-bundle.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const ENTRY = path.join(ROOT, "scripts", "lib", "crash-entry.ts");
-const BUNDLE = "/tmp/alyq-crash.mjs";
+const BUNDLE = path.join(os.tmpdir(), "alyq-crash.mjs");
 
 // ── jsdom, bootstrapped the way every other flow bootstraps it ────────────
 // `window.location.reload()` cannot be stubbed: jsdom defines it as an own,
@@ -89,7 +90,7 @@ let mod;
 try {
   const { bytes } = await buildAppBundle({ outfile: BUNDLE, entryPoint: ENTRY });
   console.log(`bundled ${path.relative(ROOT, ENTRY)} → ${BUNDLE} (${(bytes / 1024).toFixed(0)} kB)`);
-  mod = await import(`${BUNDLE}?run=${Date.now()}`);
+  mod = await import(bundleFileUrl(BUNDLE, `run=${Date.now()}`));
 } catch (error) {
   console.error(`\n✗ could not build/load the crash harness: ${String(error?.message ?? error).slice(0, 300)}`);
   for (const e of error?.errors ?? []) console.error(`  ${e.text}`);

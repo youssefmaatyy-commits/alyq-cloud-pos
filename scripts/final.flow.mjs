@@ -316,7 +316,7 @@ console.log("  ✓ 9 · the storefront chose Silver / 17 by hand");
 
 // ── 10+11 · a DELIVERY order, paid COD ──────────────────────────────────────
 const deliveryAddress = { city: "القاهرة", area: "مدينة نصر", street: "12 شارع التسعين" };
-const codNumber = await ux.placeOrder({ payment: "cod", fulfilment: "Delivery", address: deliveryAddress });
+const codNumber = await ux.placeOrder({ payment: "cod", fulfilment: "Delivery", address: deliveryAddress, zone: "Cairo" });
 assert.ok(codNumber, "the delivery COD order was placed");
 const codOrder = orders().find((o) => o.order_number === codNumber);
 assert.equal(codOrder.status, "pending", "the order waits for the shop");

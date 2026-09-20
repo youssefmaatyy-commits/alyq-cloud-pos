@@ -266,9 +266,11 @@ const migration = fs.readFileSync(
 );
 // Phase 48: the order functions moved forward — 0048 re-states them with the
 // Phase 43/45 tables the 0029 array predated (and the trigger-owned restore
-// exclusion). Order parity reads THIS file; grants and vocabulary stay 0029.
+// exclusion). 0050 re-states them again carrying the delivery-zone and
+// promotion tables forward. Order parity reads the LATEST file; grants and
+// vocabulary stay 0029.
 const orderMigration = fs.readFileSync(
-  path.join(repoRoot(), "supabase/migrations/0048_backup_covers_variants.sql"),
+  path.join(repoRoot(), "supabase/migrations/0050_promotions.sql"),
   "utf8",
 );
 
@@ -546,6 +548,10 @@ test("the offline allowlist is the business, and the session is not in it", () =
     "alyq.demo.audit_log.v1",
     "alyq.identity.staff.v1",
     "alyq.identity.custom_roles.v1",
+    "alyq.demo.delivery_zones.v1",
+    "alyq.demo.promotions.v1",
+    "alyq.demo.promotion_targets.v1",
+    "alyq.demo.promo_code_usages.v1",
   ]) {
     assert.ok(DEMO_STORES.includes(required), `${required} is carried`);
   }
@@ -556,7 +562,7 @@ test("the offline allowlist is the business, and the session is not in it", () =
   assert.equal(new Set(DEMO_STORES).size, DEMO_STORES.length, "no store is listed twice");
 });
 
-// ── 2. parity with the backup-order migration (0048, re-stating 0029) ──────
+// ── 2. parity with the backup-order migration (0050, re-stating 0029) ──────
 test("the live table list agrees with the migration that reads it", () => {
   assert.equal(new Set(LIVE_TABLES).size, LIVE_TABLES.length, "no table is listed twice");
   // Phase 48 regression pin: the Phase 43/45 tables were born AFTER 0029 and
@@ -568,6 +574,25 @@ test("the live table list agrees with the migration that reads it", () => {
       `${required} restores after its parent products`,
     );
   }
+  // 0049/0050 regression pin: the same defect class for zones and promotions.
+  // A backup that omits what the shop charges for shipping, or which discounts
+  // it promised, restores a shop that forgot both.
+  for (const required of [
+    "delivery_zones",
+    "promotions",
+    "promotion_targets",
+    "promo_code_usages",
+  ]) {
+    assert.ok(LIVE_TABLES.includes(required), `${required} is in the backup order`);
+  }
+  assert.ok(
+    LIVE_TABLES.indexOf("promotion_targets") > LIVE_TABLES.indexOf("promotions"),
+    "promotion_targets restores after its parent promotions",
+  );
+  assert.ok(
+    LIVE_TABLES.indexOf("promo_code_usages") > LIVE_TABLES.indexOf("online_orders"),
+    "promo_code_usages restores after the orders they belong to",
+  );
   assert.ok(
     LIVE_TABLES.indexOf("catalogue_codes") > LIVE_TABLES.indexOf("product_variants"),
     "catalogue_codes restores after product_variants",

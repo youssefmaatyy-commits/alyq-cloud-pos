@@ -86,7 +86,11 @@ export function OrderDetailModal({ order, onClose }: { order: OnlineOrder | null
         toast.push(t("online.orders.stockReleased"), "info");
       }
     } else if (actionError) {
-      toast.error(actionError.message);
+      // The code's copy, never the server's wording: a raw Postgres refusal
+      // (enum casts, SQLSTATEs) must not reach the operator's screen. The
+      // technical detail stays on `actionError.message` for the dev log, and
+      // the inline banner below renders the same code the same way.
+      toast.error(t(`online.error.${actionError.code}`));
     }
   };
 

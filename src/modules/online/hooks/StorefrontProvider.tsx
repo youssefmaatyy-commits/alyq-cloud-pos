@@ -34,13 +34,16 @@ import {
 import type { Category, Product } from "@/modules/products/types";
 import { fetchStorefrontCatalog } from "@/modules/storefront/data/storefrontCatalog";
 import { getOnlineMode, getOnlineOrdersRepository, getWebsiteRepository } from "../data";
-import { toOnlineError, type CouponCheckInput, type CouponCheckResult, type OnlineMode } from "../data/repository";
+import { toOnlineError, type CouponCheckInput, type CouponCheckResult, type OnlineMode, type PricingPreview, type PricingPreviewInput } from "../data/repository";
 import type {
   Campaign,
+  DeliveryZone,
   HomepageSectionConfig,
   OnlineOrder,
   PaymentProofInput,
   ProductContent,
+  Promotion,
+  PromotionTarget,
   StoreFaq,
   StoreReview,
   WebsiteSettings,
@@ -86,6 +89,11 @@ export interface StorefrontContextValue {
   campaigns: Campaign[];
   /** Phase 45: the shop-window content of the active categories. */
   categoryContents: StorefrontCategoryContent[];
+  /** Enabled delivery zones, admin order — the checkout's choices. */
+  deliveryZones: DeliveryZone[];
+  /** Live automatic offers (struck-through prices read these). */
+  promotions: Promotion[];
+  promotionTargets: PromotionTarget[];
 
   /** Ids of the best-selling products, strongest first. */
   bestSellerIds: string[];
@@ -110,6 +118,12 @@ export interface StorefrontContextValue {
 
   /** Ask whether a typed code works on the current cart. */
   checkCoupon: (input: CouponCheckInput) => Promise<CouponCheckResult>;
+  /**
+   * The full advisory checkout breakdown — automatic promotion, code, fee and
+   * total — without writing anything. The cart and checkout show this;
+   * placement recomputes it authoritatively.
+   */
+  previewPricing: (input: PricingPreviewInput) => Promise<PricingPreview>;
   /** Guest order tracking: number + the phone it was placed with. */
   lookupOrder: (orderNumber: string, phone: string) => Promise<OnlineOrder>;
   /** Submit an InstaPay reference and (optionally) a proof image. */
@@ -143,6 +157,9 @@ export function StorefrontProvider({ children }: { children: ReactNode }) {
     reviews: StoreReview[];
     campaigns: Campaign[];
     categoryContents: StorefrontCategoryContent[];
+    deliveryZones: DeliveryZone[];
+    promotions: Promotion[];
+    promotionTargets: PromotionTarget[];
   }>({
     settings: null,
     meta: null,
@@ -151,6 +168,9 @@ export function StorefrontProvider({ children }: { children: ReactNode }) {
     reviews: [],
     campaigns: [],
     categoryContents: [],
+    deliveryZones: [],
+    promotions: [],
+    promotionTargets: [],
   });
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -190,6 +210,9 @@ export function StorefrontProvider({ children }: { children: ReactNode }) {
         reviews: site.reviews,
         campaigns: site.campaigns,
         categoryContents: site.categoryContents ?? [],
+        deliveryZones: site.deliveryZones ?? [],
+        promotions: site.promotions ?? [],
+        promotionTargets: site.promotionTargets ?? [],
       });
       setBestSellers(top);
       setReservedList(holds);
@@ -326,6 +349,11 @@ export function StorefrontProvider({ children }: { children: ReactNode }) {
     [website],
   );
 
+  const previewPricing = useCallback(
+    (input: PricingPreviewInput) => website.previewPricing(input),
+    [website],
+  );
+
   const lookupOrder = useCallback(
     (orderNumber: string, phone: string) => orders.lookupOrder(orderNumber, phone),
     [orders],
@@ -356,6 +384,9 @@ export function StorefrontProvider({ children }: { children: ReactNode }) {
       reviews: snapshot.reviews,
       campaigns: snapshot.campaigns,
       categoryContents: snapshot.categoryContents,
+      deliveryZones: snapshot.deliveryZones,
+      promotions: snapshot.promotions,
+      promotionTargets: snapshot.promotionTargets,
       bestSellerIds: bestSellers.map((row) => row.product_id),
       units,
       reserved,
@@ -366,6 +397,7 @@ export function StorefrontProvider({ children }: { children: ReactNode }) {
       categoriesFacet,
       priceRange,
       checkCoupon,
+      previewPricing,
       lookupOrder,
       submitPaymentProof,
       uploadProofImage: uploadProof,
@@ -393,6 +425,7 @@ export function StorefrontProvider({ children }: { children: ReactNode }) {
       categoriesFacet,
       priceRange,
       checkCoupon,
+      previewPricing,
       lookupOrder,
       submitPaymentProof,
       uploadProof,

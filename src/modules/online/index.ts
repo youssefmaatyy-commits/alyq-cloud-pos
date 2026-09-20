@@ -25,6 +25,8 @@ export { StoreContactPage } from "./pages/StoreContactPage";
 export { OnlineOrdersPage } from "./pages/OnlineOrdersPage";
 export { WebsiteSettingsPage } from "./pages/WebsiteSettingsPage";
 export { MarketingPage } from "./pages/MarketingPage";
+export { DeliveryZonesPage } from "./pages/DeliveryZonesPage";
+export { PromotionsPage } from "./pages/PromotionsPage";
 export { StoreContentPage } from "./pages/StoreContentPage";
 export { OnlineReportsPage } from "./pages/OnlineReportsPage";
 

@@ -2,6 +2,30 @@ import type { Sale } from "@/modules/pos/types";
 import type { ReturnItemInput, SalesReturn, RefundRecord } from "./types";
 import { round2 } from "@/modules/pos/services/posMath";
 
+/**
+ * What a returned unit refunds: the snapshot price when the sale came from a
+ * discounted website order (matched on product + combination, first match —
+ * duplicate lines can differ by a rounding piastre), else the invoice's list
+ * price. Never negative, never NaN: a missing snapshot is list price, exactly
+ * as before.
+ */
+export function paidUnitOf(
+  saleItem: { product_id: string; variant_id?: string | null; unit_price: number },
+  paidPrices?: readonly PaidUnitPrice[] | null,
+): number {
+  const list = Number(saleItem.unit_price) || 0;
+  if (!paidPrices) return list;
+  const match = paidPrices.find(
+    (line) =>
+      line.product_id === saleItem.product_id &&
+      (line.variant_id ?? null) === (saleItem.variant_id ?? null) &&
+      line.discounted_unit_price !== null &&
+      Number.isFinite(line.discounted_unit_price),
+  );
+  if (!match || match.discounted_unit_price === null) return list;
+  return Math.max(0, match.discounted_unit_price);
+}
+
 export interface ItemReturnValidation {
   sale_item_id: string;
   product_id: string;
@@ -77,6 +101,13 @@ export function getTotalRefundedForSale(sale: Sale, refunds: RefundRecord[]): nu
   return round2(sum);
 }
 
+export interface PaidUnitPrice {
+  product_id: string;
+  variant_id: string | null;
+  /** What the unit actually cost after every order-level discount. */
+  discounted_unit_price: number | null;
+}
+
 export function validateReturnDraft(
   sale: Sale,
   itemsToReturn: ReturnItemInput[],
@@ -84,6 +115,14 @@ export function validateReturnDraft(
   refundMethod: string,
   existingReturns: SalesReturn[],
   existingRefunds: RefundRecord[],
+  /**
+   * The originating website order's lines, when the sale came from one. A
+   * discounted order's sale lines read at list price while its discount rides
+   * as one fixed sale discount — refunding those lines at list would hand back
+   * money the customer never paid, so the matching snapshot price wins.
+   * Till sales and legacy rows pass nothing and refund at list, as before.
+   */
+  paidPrices?: readonly PaidUnitPrice[] | null,
 ): ReturnValidationResult {
   const errors: Record<string, string> = {};
   const returnableMap = getRemainingReturnableQuantities(sale, existingReturns);
@@ -124,7 +163,7 @@ export function validateReturnDraft(
       errors[`item_${saleItem.id}`] = "qtyExceedsSold";
     }
 
-    const itemRefund = round2(saleItem.unit_price * qty);
+    const itemRefund = round2(paidUnitOf(saleItem, paidPrices) * qty);
     totalRefund += itemRefund;
 
     itemValidations.push({
@@ -141,7 +180,7 @@ export function validateReturnDraft(
       name_en: saleItem.name_en,
       sku: saleItem.sku,
       barcode: saleItem.barcode,
-      unit_price: saleItem.unit_price,
+      unit_price: paidUnitOf(saleItem, paidPrices),
       sold_quantity: saleItem.quantity,
       previously_returned: saleItem.quantity - returnable,
       returnable_quantity: returnable,

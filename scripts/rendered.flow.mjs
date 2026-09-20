@@ -1,13 +1,78 @@
 /** Real Chromium layout acceptance. Unlike jsdom this measures actual pixels.
- * Start Vite, then: npm run test:rendered
+ *
+ * Self-contained: `npm run test:rendered` starts its own Vite dev server on
+ * 127.0.0.1:5173 (override the port with VISUAL_PORT), waits for readiness,
+ * runs the Chromium checks, then shuts the server down — no manually started
+ * dev server required. Point VISUAL_BASE_URL at a provisioned server (sandbox,
+ * CI) to skip the managed one.
  * Optional: CHROMIUM_EXECUTABLE=/path/to/chromium (for a provisioned sandbox).
  * Evidence is written to ignored coverage/visual, never bundled with the app.
  */
+import { spawn } from 'node:child_process';
+import net from 'node:net';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { chromium, expect } from '@playwright/test';
 import { mkdir, writeFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 
-const base = process.env.VISUAL_BASE_URL ?? 'http://127.0.0.1:5173';
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const MANAGED_PORT_WANT = Number(process.env.VISUAL_PORT ?? 0);
+let base = process.env.VISUAL_BASE_URL ?? null;
+let server = null;
+/** A free loopback port: a stale server from an earlier run can never squat it. */
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const probe = net.createServer();
+    probe.once('error', reject);
+    probe.listen(0, '127.0.0.1', () => {
+      const port = probe.address().port;
+      probe.close(() => resolve(port));
+    });
+  });
+}
+async function ensureServer() {
+  if (base) return base; // provisioned server: use as-is
+  const port = MANAGED_PORT_WANT > 0 ? MANAGED_PORT_WANT : await freePort();
+  base = `http://127.0.0.1:${port}`;
+  // The rendered acceptance is specified against DEMO mode (seeded accounts,
+  // localStorage fixtures). A developer machine often carries a `.env.local`
+  // with Supabase credentials, which would boot the server into live mode and
+  // reject the demo login — so the managed server clears exactly those two
+  // variables. Real process env wins over `.env*` files in Vite, and empty
+  // strings fail `isSupabaseConfigured`, so the app falls back to demo mode.
+  // A provisioned VISUAL_BASE_URL is used as-is: its mode is the operator's.
+  server = spawn(
+    process.execPath,
+    [path.join(ROOT, 'node_modules', 'vite', 'bin', 'vite.js'), '--host', '127.0.0.1', '--port', String(port), '--strictPort'],
+    {
+      cwd: ROOT,
+      stdio: 'pipe',
+      windowsHide: true,
+      env: { ...process.env, VITE_SUPABASE_URL: '', VITE_SUPABASE_ANON_KEY: '' },
+    },
+  );
+  const logged = [];
+  server.stdout?.on('data', (chunk) => logged.push(String(chunk)));
+  server.stderr?.on('data', (chunk) => logged.push(String(chunk)));
+  const deadline = Date.now() + 90000;
+  for (;;) {
+    try {
+      const res = await fetch(`${base}/`);
+      if (res.ok) break;
+    } catch { /* not up yet */ }
+    if (server.exitCode !== null) {
+      throw new Error(`Vite dev server exited early:\n${logged.join('').slice(-2000)}`);
+    }
+    if (Date.now() > deadline) {
+      server.kill();
+      throw new Error(`Vite dev server did not become ready at ${base}:\n${logged.join('').slice(-2000)}`);
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  return base;
+}
+await ensureServer();
 const output = 'coverage/visual';
 await mkdir(output, { recursive: true });
 const browser = await chromium.launch({
@@ -20,8 +85,14 @@ const errors = [];
 page.on('pageerror', (error) => errors.push(error.message));
 page.on('console', (message) => { if (message.type() === 'error') errors.push(message.text()); });
 const results = [];
+let firstLoad = true;
 async function go(route) {
-  await page.goto(`${base}/#${route}`);
+  // The first navigation compiles the app in the dev server (cold Vite cache
+  // after `npm ci` transforms 400+ modules — tens of seconds on Windows), so
+  // it gets a generous budget; every later navigation is a same-document hash
+  // change that resolves instantly, and a hang there is a real failure.
+  await page.goto(`${base}/#${route}`, firstLoad ? { timeout: 180000 } : undefined);
+  firstLoad = false;
   await page.waitForTimeout(400);
 }
 async function layout(name, fullPage = true) {
@@ -118,6 +189,35 @@ try {
       created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
     localStorage.setItem(contentsKey, JSON.stringify(contents));
   }, productId);
+  // A second, variant-free product funds the staff-queue order below. The
+  // ring's own shelves must stay exactly 2 + 2 for every PDP assertion that
+  // follows, so this order is placed BEFORE the ring lines enter the cart —
+  // the cart screenshots later still show the full ring cart.
+  await go('/products/new');
+  for (const [id, value] of Object.entries({name_ar:'سوار الفحص', name_en:'Everyday Band', sku:'RENDER-BAND', selling_price:'150', cost_price:'80', tax_rate:'0', stock_quantity:'4', low_stock_level:'1'})) {
+    await page.locator(`#${id}`).fill(value);
+  }
+  await page.locator('#category_id').selectOption(category);
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await page.waitForURL('**/#/products');
+  const bandId = await page.evaluate(() => JSON.parse(localStorage.getItem('alyq.demo.catalog.v1')).products.find((p) => p.sku === 'RENDER-BAND').id);
+  await page.evaluate((id) => {
+    const key = 'alyq.demo.catalog.v1';
+    const data = JSON.parse(localStorage.getItem(key));
+    data.products.find((p) => p.id === id).image_url = '/brand/products/minimal-bracelet.jpg';
+    localStorage.setItem(key, JSON.stringify(data));
+  }, bandId);
+  await go(`/store/products/${bandId}`);
+  await page.getByTestId('product-add-to-cart').click();
+  // One real order, so the staff queue below renders with data (not just its
+  // empty state): the overflow contract has to hold with rows on screen.
+  await go('/store/checkout');
+  await page.locator("input[autocomplete='name']").fill('Mona Mahmoud Abdelrahman');
+  await page.locator("input[autocomplete='tel']").fill('01001234567');
+  await page.getByRole('button', { name: /^Pickup/ }).first().click().catch(() => {});
+  await page.locator('input[name="payment"][value="cod"]').check({ force: true }).catch(() => {});
+  await page.getByRole('button', { name: 'Place the order' }).click();
+  await page.waitForURL('**#/store/confirmation', { timeout: 15000 });
   await page.reload();
   await go(`/store/products/${productId}`);
   await expect(page.getByTestId('product-add-to-cart')).toBeDisabled();
@@ -150,13 +250,23 @@ try {
         }
         if (name === 'pdp') {
           assert.ok((await page.getByTestId('product-add-to-cart').boundingBox()).width >= 160, 'purchase button never collapses into a narrow text column');
-          await page.getByTestId('variant-color-gold').click();
+          // Silver: Gold's shelf is fully held by the staff-queue order placed
+          // above (available 0, correctly unsellable), so the geometry probe
+          // uses the shelf that is still promiseable. Gold's own selectability
+          // is proven before checkout, above.
+          await page.getByTestId('variant-color-silver').click();
           await page.getByRole('option', { name: '17', exact: true }).click();
           for (const height of await page.getByTestId('store-variant-picker').getByRole('option').evaluateAll((els) => els.map((el) => el.getBoundingClientRect().height))) assert.ok(height >= 44, 'variant touch targets');
         }
         await layout(`${lang}-${width}-${name}`);
         if (name === 'home') await page.locator('footer').screenshot({ path: `${output}/${lang}-${width}-footer.png` });
       }
+      // The staff order queue, WITH a real order on screen: the page itself
+      // must never scroll sideways (the wide table scrolls inside its own
+      // card), filters and date inputs must wrap, and cards must not force
+      // the viewport at 375/390/430 in either language.
+      await go('/online/orders');
+      await layout(`${lang}-${width}-online-orders`);
       if (width !== 1440) {
         await go('/management');
         await page.locator('header button[aria-label]').first().click();
@@ -172,4 +282,8 @@ try {
   console.log(`Rendered acceptance: ${results.length} screens passed; EN/AR at 1440, 375, 390, 430.`);
 } finally {
   await browser.close();
+  // SIGKILL (TerminateProcess on Windows): a plain SIGTERM has been observed
+  // to leave the dev server behind, and the orphan then squats the port and
+  // hangs the *next* run's first navigation.
+  if (server) { try { server.kill('SIGKILL'); } catch { /* already gone */ } }
 }

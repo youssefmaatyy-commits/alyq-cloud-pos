@@ -16,6 +16,7 @@
  */
 import { JSDOM } from "jsdom";
 import assert from "node:assert/strict";
+import { bundleFileUrl } from "./app-bundle.mjs";
 
 export async function createUxHarness({ beforeImport } = {}) {
   const dom = new JSDOM('<!doctype html><html lang="en"><body><div id="root"></div></body></html>', {
@@ -115,7 +116,7 @@ export async function createUxHarness({ beforeImport } = {}) {
   // not booted yet — the demo repositories seed on boot, so clearing later
   // would destroy the shelf instead of resetting it.
   if (beforeImport) beforeImport({ localStorage: dom.window.localStorage });
-  await import("/tmp/alyq-app.mjs");
+  await import(bundleFileUrl());
 
   // ── helpers ─────────────────────────────────────────────────────────────
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -263,7 +264,7 @@ export async function createUxHarness({ beforeImport } = {}) {
     await sleep(400);
   };
 
-  const placeOrder = async ({ payment = "cod", fulfilment = "Pickup", address = null } = {}) => {
+  const placeOrder = async ({ payment = "cod", fulfilment = "Pickup", address = null, zone = null } = {}) => {
     await navigate("#/store/checkout", 700);
     await waitFor(() => bodyText().includes("Checkout"), { label: "the checkout page" });
     setField("input[autocomplete='name']", "Mona Mahmoud");
@@ -280,6 +281,20 @@ export async function createUxHarness({ beforeImport } = {}) {
       );
       if (button) clickEl(button);
       await sleep(200);
+    }
+    if (zone) {
+      // Delivery zones are an explicit choice: the checkout names each zone
+      // on its radio label, and nothing is preselected.
+      const picker = document.querySelector('[data-testid="checkout-zone-picker"]');
+      assert.ok(picker, "the zone picker is offered for delivery");
+      const label = [...picker.querySelectorAll("label")].find((l) =>
+        (l.textContent ?? "").includes(zone),
+      );
+      assert.ok(label, `the ${zone} zone is offered`);
+      const radio = label.querySelector('input[type="radio"]');
+      assert.ok(radio, "the zone radio exists");
+      radio.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+      await sleep(300);
     }
     const radio = document.querySelector(`input[name="payment"][value="${payment}"]`);
     if (radio) {

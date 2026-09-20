@@ -188,6 +188,7 @@ export function MarketingPage() {
               ⟳
             </Button>
             <Button
+              data-testid="coupon-new"
               onClick={() =>
                 tab === "campaigns"
                   ? setCampaignDraft({
@@ -209,12 +210,19 @@ export function MarketingPage() {
                   : setCouponDraft({
                       id: "",
                       code: "",
+                      title_en: "",
+                      title_ar: "",
+                      description_en: null,
+                      description_ar: null,
                       discount_type: "percent",
                       value: 10,
                       min_subtotal: 0,
                       max_discount: null,
                       usage_limit: null,
                       used_count: 0,
+                      per_customer_limit: null,
+                      first_order_only: false,
+                      stackable: false,
                       applies_to: "all",
                       target_ids: [],
                       active: true,
@@ -382,19 +390,26 @@ export function MarketingPage() {
                     <p className="mt-1 text-xs text-slate-600">
                       {coupon.discount_type === "percent"
                         ? t("online.marketing.percentOff", { value: num(coupon.value, 0) })
-                        : t("online.marketing.fixedOff", { value: money(coupon.value) })}
+                        : coupon.discount_type === "free_shipping"
+                          ? t("online.marketing.freeShipping")
+                          : t("online.marketing.fixedOff", { value: money(coupon.value) })}
                       {coupon.max_discount !== null
                         ? ` · ${t("online.marketing.cappedAt", { value: money(coupon.max_discount) })}`
                         : ""}
                       {coupon.min_subtotal > 0
                         ? ` · ${t("online.marketing.minSubtotal", { value: money(coupon.min_subtotal) })}`
                         : ""}
+                      {coupon.first_order_only ? ` · ${t("online.marketing.firstOrderOnly")}` : ""}
+                      {coupon.stackable ? ` · ${t("online.marketing.stackable")}` : ""}
                     </p>
                     <p className="mt-1 text-xs text-slate-500">
                       {t("online.marketing.used", {
                         count: num(coupon.used_count, 0),
                         limit: coupon.usage_limit === null ? t("online.marketing.unlimited") : num(coupon.usage_limit, 0),
                       })}
+                      {coupon.per_customer_limit !== null
+                        ? ` · ${t("online.marketing.perCustomerUsed", { count: num(coupon.per_customer_limit, 0) })}`
+                        : ""}
                       {" · "}
                       {coupon.applies_to === "all"
                         ? t("online.marketing.appliesAll")
@@ -584,6 +599,7 @@ export function MarketingPage() {
               {t("common.cancel")}
             </Button>
             <Button
+              data-testid="coupon-save"
               onClick={() => void saveCoupon()}
               loading={busy}
               disabled={
@@ -606,6 +622,7 @@ export function MarketingPage() {
               <Field label={t("online.marketing.code")} required hint={t("online.marketing.codeHint")}>
                 <TextInput
                   dir="ltr"
+                  data-testid="coupon-code"
                   value={couponDraft.code}
                   onChange={(event) =>
                     setCouponDraft({ ...couponDraft, code: event.target.value.toUpperCase() })
@@ -625,13 +642,40 @@ export function MarketingPage() {
                 >
                   <option value="percent">{t("online.marketing.percent")}</option>
                   <option value="fixed">{t("online.marketing.fixed")}</option>
+                  <option value="free_shipping">{t("online.marketing.freeShipping")}</option>
                 </SelectInput>
               </Field>
-              <Field label={t("online.marketing.value")}>
+              <Field
+                label={t("online.marketing.couponTitleEn")}
+                hint={t("online.marketing.couponTitleHint")}
+              >
+                <TextInput
+                  dir="ltr"
+                  value={couponDraft.title_en}
+                  onChange={(event) => setCouponDraft({ ...couponDraft, title_en: event.target.value })}
+                />
+              </Field>
+              <Field label={t("online.marketing.couponTitleAr")}>
+                <TextInput
+                  dir="rtl"
+                  value={couponDraft.title_ar}
+                  onChange={(event) => setCouponDraft({ ...couponDraft, title_ar: event.target.value })}
+                />
+              </Field>
+              <Field
+                label={t("online.marketing.value")}
+                hint={
+                  couponDraft.discount_type === "free_shipping"
+                    ? t("online.marketing.freeShippingValueHint")
+                    : undefined
+                }
+              >
                 <TextInput
                   type="number"
                   min={0}
                   step="0.01"
+                  data-testid="coupon-value"
+                  disabled={couponDraft.discount_type === "free_shipping"}
                   value={String(couponDraft.value)}
                   onChange={(event) =>
                     setCouponDraft({ ...couponDraft, value: Math.max(0, Number(event.target.value) || 0) })
@@ -646,6 +690,7 @@ export function MarketingPage() {
                   type="number"
                   min={0}
                   step="0.01"
+                  data-testid="coupon-max"
                   disabled={couponDraft.discount_type !== "percent"}
                   value={couponDraft.max_discount === null ? "" : String(couponDraft.max_discount)}
                   placeholder={t("online.marketing.uncapped")}
@@ -663,6 +708,7 @@ export function MarketingPage() {
                   type="number"
                   min={0}
                   step="0.01"
+                  data-testid="coupon-min"
                   value={String(couponDraft.min_subtotal)}
                   onChange={(event) =>
                     setCouponDraft({
@@ -682,6 +728,24 @@ export function MarketingPage() {
                     setCouponDraft({
                       ...couponDraft,
                       usage_limit:
+                        event.target.value.trim() === "" ? null : Math.max(1, Number(event.target.value) || 1),
+                    })
+                  }
+                />
+              </Field>
+              <Field
+                label={t("online.marketing.perCustomerLimit")}
+                hint={t("online.marketing.perCustomerLimitHint")}
+              >
+                <TextInput
+                  type="number"
+                  min={1}
+                  value={couponDraft.per_customer_limit === null ? "" : String(couponDraft.per_customer_limit)}
+                  placeholder={t("online.marketing.unlimited")}
+                  onChange={(event) =>
+                    setCouponDraft({
+                      ...couponDraft,
+                      per_customer_limit:
                         event.target.value.trim() === "" ? null : Math.max(1, Number(event.target.value) || 1),
                     })
                   }
@@ -736,6 +800,20 @@ export function MarketingPage() {
               onChange={(checked) => setCouponDraft({ ...couponDraft, active: checked })}
               label={t("online.marketing.active")}
               hint={t("online.marketing.couponActiveHint")}
+            />
+
+            <ToggleSwitch
+              checked={couponDraft.first_order_only}
+              onChange={(checked) => setCouponDraft({ ...couponDraft, first_order_only: checked })}
+              label={t("online.marketing.firstOrderOnly")}
+              hint={t("online.marketing.firstOrderOnlyHint")}
+            />
+
+            <ToggleSwitch
+              checked={couponDraft.stackable}
+              onChange={(checked) => setCouponDraft({ ...couponDraft, stackable: checked })}
+              label={t("online.marketing.stackable")}
+              hint={t("online.marketing.stackableHint")}
             />
 
             {couponDraft.applies_to !== "all" ? (

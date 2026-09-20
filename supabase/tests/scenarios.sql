@@ -972,6 +972,19 @@ as $$
   select coalesce((select used_count from public.coupons where code = p_code), -1)
 $$;
 
+/** Promo-code applications for one order — staff-only rows, owner's eyes. */
+create or replace function pg_temp.scn_promo_uses(p_code text, p_order uuid)
+returns integer
+language sql
+security definer
+set search_path = public
+as $$
+  select count(*)::integer
+  from public.promo_code_usages u
+  join public.coupons c on c.id = u.coupon_id
+  where c.code = p_code and u.order_id = p_order
+$$;
+
 /**
  * What an order actually holds, read with the owner's eyes while the caller is
  * still `anon`: the whole contract of the phase is about rows a visitor may not
@@ -989,16 +1002,21 @@ as $$
     'subtotal',        o.subtotal,
     'discount_amount', o.discount_amount,
     'discount_code',   o.discount_code,
+    'promotion_id',    o.promotion_id,
+    'price_snapshot',  o.price_snapshot,
     'delivery_fee',    o.delivery_fee,
     'total',           o.total,
     'address_city',    o.address->>'city',
     'address_area',    o.address->>'area',
+    'address_zone_id', o.address->>'zone_id',
+    'address_zone_name', o.address->>'zone_name',
     'phone',           o.customer_phone,
     'notes',           o.notes,
     'order_number',    o.order_number,
     'lines', coalesce((
       select jsonb_agg(jsonb_build_object(
                'sku', i.sku, 'unit_price', i.unit_price,
+               'discounted_unit_price', i.discounted_unit_price,
                'quantity', i.quantity, 'line_total', i.line_total,
                'order_id', i.order_id))
       from public.online_order_items i where i.order_id = o.id), '[]'::jsonb),
@@ -5614,6 +5632,649 @@ begin
   raise notice 'danger zone (0047) — forged calls refused at every door, phrase/freshness/options enforced, preview counted without touching, operational clear emptied the sale/order/return/shift trees while the catalogue and settings survived, the variant shelves zeroed through their trigger with a true recount ledger, the forced failure rolled back completely, the factory reset cleared catalogue + website + customers and kept the Super Admin and the branding block, numbering restarted, and the reset''s own audit rows survived without ever seeing a password';
 end
 $dz$;
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- $promo50$ — delivery zones, promotions and the completion fix (0049/0050).
+--
+-- Every amount below is asserted against rows the server wrote, never against
+-- the payload: the browser sends ids, quantities, a code and a zone — never
+-- money. Refusals must write ZERO rows (reusing scn_expect_refusal) and raise
+-- the wording the storefront maps to a friendly message.
+--
+--   Part 19  zones: seeded fees, pickup free, disabled/bogus refused, forged
+--            fee impossible, minimum + threshold, admin edit takes effect.
+--   Part 20  promo codes: percent math, min, cap, expiry, disabled, unknown,
+--            usage limit, per-customer limit, first-order-only, single
+--            application, cart-change recalculation, forged discount ignored.
+--   Part 21  global sale: storewide 15%, variant-override base, snapshot
+--            frozen, disabling restores normal price for new orders only.
+--   Part 22  targeting: category scope discounts the ring, not the necklace;
+--            variant scope discounts one combination only.
+--   Part 23  returns: a discounted item refunds its paid price, not list.
+--   Part 24  status: "Mark completed" stores 'completed' (never 'complete'),
+--            invalid moves refuse with the workflow wording, no raw enum text.
+-- ═══════════════════════════════════════════════════════════════════════════
+do $promo50$
+declare
+  v_admin    uuid := '00000000-0000-4000-8000-0000000000a1';
+  v_cashier  uuid := '00000000-0000-4000-8000-0000000000c1';
+  v_cat      uuid := '00000000-0000-4000-8000-000000000d01';
+  v_cat_out  uuid := '00000000-0000-4000-8000-000000000d09';
+  v_goods    uuid := '00000000-0000-4000-8000-000000000d02';
+  v_ring     uuid := '00000000-0000-4000-8000-000000000d03';
+  v_neck     uuid := '00000000-0000-4000-8000-000000000d04';
+  v_varprod  uuid := '00000000-0000-4000-8000-000000000d05';
+  v_gold     uuid := '00000000-0000-4000-8000-000000000d06';
+  v_result   jsonb;
+  v_facts    jsonb;
+  v_id       uuid;
+  v_sale_id  uuid;
+  v_item_id  uuid;
+  v_amt      numeric(14,2);
+  v_n        integer;
+  v_status   text;
+  v_zone_ism uuid;
+  v_zone_cai uuid;
+  v_zone_oth uuid;
+  v_zone_off uuid;
+  v_promo    uuid;
+begin
+  -- ── fixtures (admin claim: coupons, zones and promotions write behind the
+  --    manage_website RLS gate; the owner bypass is not what is under test) ──
+  perform pg_temp.become(v_admin, 'authenticated');
+  insert into public.categories (id, name_ar, name_en, active)
+  values (v_cat, 'خواتم فحص', 'Scenario Rings', true),
+         (v_cat_out, 'عقود فحص', 'Scenario Necklaces', true)
+  on conflict (id) do update set active = true;
+
+  insert into public.products (
+    id, sku, barcode, name_ar, name_en, category_id, selling_price, cost_price,
+    stock_quantity, low_stock_level, show_on_website, is_featured, active,
+    stock_tracking_enabled
+  ) values
+    (v_goods,   'SCN-P50-G',  '6291000000311', 'صنف فحص',    'Promo Goods',  v_cat, 100.00, 40.00, 500, 5, true, false, true, true),
+    (v_ring,    'SCN-P50-R',  '6291000000328', 'خاتم فحص',   'Promo Ring',   v_cat, 200.00, 80.00, 50,  5, true, false, true, true),
+    (v_neck,    'SCN-P50-N',  '6291000000335', 'عقد فحص',    'Promo Necklace', v_cat_out, 100.00, 40.00, 50,  5, true, false, true, true),
+    (v_varprod, 'SCN-P50-V',  '6291000000342', 'خاتم مزدوج', 'Promo Duo Ring', v_cat, 200.00, 80.00, 10,  2, true, false, true, true)
+  on conflict (id) do update
+    set selling_price = excluded.selling_price, stock_quantity = 10,
+        active = true, show_on_website = true, stock_tracking_enabled = true;
+
+  -- The duo ring sells by combination: enable variants with the whole shelf on
+  -- Gold / 17 (the same RPC the admin screen calls), so the tests below buy a
+  -- 300-override shelf, never the 200 product price.
+  insert into public.product_variants (
+    id, product_id, sku, color_key, color_ar, color_en, color_hex,
+    size, size_label, stock_quantity, low_stock_level, active, sort_order, price_override
+  ) values (
+    v_gold, v_varprod, 'SCN-P50-GOLD-17', 'gold', 'ذهبي', 'Gold', '#d4af37',
+    17, null, 0, 1, true, 1, 300.00
+  )
+  on conflict (id) do update
+    set active = true, stock_quantity = 0, price_override = 300.00;
+  perform public.enable_product_variants(
+    v_varprod, jsonb_build_object(v_gold::text, 10), v_admin::text, 'Amina Admin');
+
+  -- One variant with its own price: discounts must land on the override (300),
+  -- never on the product price (200).
+  insert into public.product_variants (
+    id, product_id, sku, color_key, color_ar, color_en, color_hex,
+    size, size_label, stock_quantity, low_stock_level, active, sort_order, price_override
+  ) values
+    (v_gold, v_varprod, 'SCN-P50-GOLD-17', 'gold', 'ذهبي', 'Gold', '#d4af37',
+     17, null, 10, 1, true, 1, 300.00)
+  on conflict (id) do update
+    set active = true, stock_quantity = 10, price_override = 300.00;
+
+  insert into public.coupons
+    (code, discount_type, value, min_subtotal, max_discount, usage_limit, used_count,
+     per_customer_limit, first_order_only, stackable, applies_to, target_ids, active,
+     starts_at, ends_at)
+  values
+    ('SCN-P50-10',   'percent', 10, 500, 200, null, 0, null, false, false, 'all', '[]', true,  null, null),
+    ('SCN-P50-EXP',  'percent', 10, 0,   null, null, 0, null, false, false, 'all', '[]', true,  null, now() - interval '1 day'),
+    ('SCN-P50-OFF',  'percent', 10, 0,   null, null, 0, null, false, false, 'all', '[]', false, null, null),
+    ('SCN-P50-ONE',  'percent', 10, 0,   null, 1,    0, null, false, false, 'all', '[]', true,  null, null),
+    ('SCN-P50-PER1', 'percent', 10, 0,   null, null, 0, 1,    false, false, 'all', '[]', true,  null, null),
+    ('SCN-P50-FIRST','percent', 10, 0,   null, null, 0, null, true,  false, 'all', '[]', true,  null, null)
+  on conflict (code) do update
+    set discount_type = excluded.discount_type, value = excluded.value,
+        min_subtotal = excluded.min_subtotal, max_discount = excluded.max_discount,
+        usage_limit = excluded.usage_limit, used_count = 0,
+        per_customer_limit = excluded.per_customer_limit,
+        first_order_only = excluded.first_order_only, stackable = excluded.stackable,
+        active = excluded.active, starts_at = excluded.starts_at, ends_at = excluded.ends_at;
+
+  -- A disabled zone for the refusal; the seeded Ismailia/Cairo/Other rows are
+  -- asserted as-is below (the seed is part of the contract).
+  insert into public.delivery_zones
+    (key, name_en, name_ar, shipping_fee, enabled, sort_order)
+  values ('scn-off', 'Scenario Closed', 'مغلق فحص', 25, false, 500)
+  on conflict (key) do update set enabled = false, shipping_fee = 25;
+  select id into v_zone_off from public.delivery_zones where key = 'scn-off';
+
+  select id into v_zone_ism from public.delivery_zones where key = 'ismailia';
+  select id into v_zone_cai from public.delivery_zones where key = 'cairo';
+  select id into v_zone_oth from public.delivery_zones where key = 'other';
+  if v_zone_ism is null or v_zone_cai is null or v_zone_oth is null then
+    raise exception 'the 0049 seed zones are missing';
+  end if;
+
+  perform pg_temp.ensure_open_shift();
+
+  -- ── Part 19 · zones ──────────────────────────────────────────────────────
+  perform pg_temp.become(null, 'anon');
+
+  -- 1–3. the seeded fees price server-side: Ismailia 0, Cairo 70, Other 80.
+  v_result := public.place_online_order(jsonb_build_object(
+    'client_ref', 'scn-p50-ism', 'customer_name', 'Z', 'customer_phone', '0510000001',
+    'delivery_type', 'delivery',
+    'address', jsonb_build_object('city', 'Ismailia', 'area', 'Downtown', 'street', 'S1'),
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_goods::text, 'qty', 2)),
+    'coupon_code', null, 'delivery_zone_id', v_zone_ism::text,
+    'payment_method', 'cod'));
+  v_id := (v_result->>'order_id')::uuid;
+  v_facts := pg_temp.scn_order_facts(v_id);
+  if (v_facts->>'delivery_fee')::numeric <> 0 then
+    raise exception 'Ismailia delivery priced % instead of 0', v_facts->>'delivery_fee';
+  end if;
+
+  v_result := public.place_online_order(jsonb_build_object(
+    'client_ref', 'scn-p50-cai', 'customer_name', 'Z', 'customer_phone', '0510000001',
+    'delivery_type', 'delivery',
+    'address', jsonb_build_object('city', 'Cairo', 'area', 'Nasr City', 'street', 'S9'),
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_goods::text, 'qty', 2)),
+    'coupon_code', null, 'delivery_zone_id', v_zone_cai::text,
+    'payment_method', 'cod'));
+  v_facts := pg_temp.scn_order_facts((v_result->>'order_id')::uuid);
+  if (v_facts->>'delivery_fee')::numeric <> 70 then
+    raise exception 'Cairo delivery priced % instead of 70', v_facts->>'delivery_fee';
+  end if;
+  if (v_facts->>'total')::numeric <> 270 then
+    raise exception 'Cairo total % is not 200 + 70', v_facts->>'total';
+  end if;
+  -- Forged money is structurally impossible: the payload carries no fee field,
+  -- and the stored address names the zone the fee came from.
+  if v_facts->>'address_zone_id' is distinct from v_zone_cai::text then
+    raise exception 'the Cairo order does not name its zone';
+  end if;
+
+  v_result := public.place_online_order(jsonb_build_object(
+    'client_ref', 'scn-p50-oth', 'customer_name', 'Z', 'customer_phone', '0510000001',
+    'delivery_type', 'delivery',
+    'address', jsonb_build_object('city', 'Aswan', 'area', 'Downtown', 'street', 'S2'),
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_goods::text, 'qty', 2)),
+    'coupon_code', null, 'delivery_zone_id', v_zone_oth::text,
+    'payment_method', 'cod'));
+  v_facts := pg_temp.scn_order_facts((v_result->>'order_id')::uuid);
+  if (v_facts->>'delivery_fee')::numeric <> 80 then
+    raise exception 'Other-governorates delivery priced % instead of 80', v_facts->>'delivery_fee';
+  end if;
+
+  -- 4. pickup never pays a fee, zone or none.
+  v_result := public.place_online_order(jsonb_build_object(
+    'client_ref', 'scn-p50-pick', 'customer_name', 'Z', 'customer_phone', '0510000001',
+    'delivery_type', 'pickup', 'address', '{}'::jsonb,
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_goods::text, 'qty', 2)),
+    'coupon_code', null, 'delivery_zone_id', v_zone_cai::text,
+    'payment_method', 'cod'));
+  v_facts := pg_temp.scn_order_facts((v_result->>'order_id')::uuid);
+  if (v_facts->>'delivery_fee')::numeric <> 0 then
+    raise exception 'pickup with a zone priced a fee of %', v_facts->>'delivery_fee';
+  end if;
+
+  -- 5. a disabled zone and a bogus id are refused, writing nothing.
+  perform pg_temp.scn_expect_refusal(jsonb_build_object(
+    'client_ref', 'scn-p50-zoff', 'customer_name', 'Z', 'customer_phone', '0510000001',
+    'delivery_type', 'delivery',
+    'address', jsonb_build_object('city', 'X', 'area', 'Y', 'street', 'S'),
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_goods::text, 'qty', 1)),
+    'coupon_code', null, 'delivery_zone_id', v_zone_off::text,
+    'payment_method', 'cod'), 'Delivery zone is not available');
+  perform pg_temp.scn_expect_refusal(jsonb_build_object(
+    'client_ref', 'scn-p50-zbogus', 'customer_name', 'Z', 'customer_phone', '0510000001',
+    'delivery_type', 'delivery',
+    'address', jsonb_build_object('city', 'X', 'area', 'Y', 'street', 'S'),
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_goods::text, 'qty', 1)),
+    'coupon_code', null, 'delivery_zone_id', '00000000-0000-4000-8000-ffffffffffff',
+    'payment_method', 'cod'), 'Delivery zone is not available');
+
+  -- 6. the pickup order carries no zone (proved above by its 0 fee and by the
+  --    zone merge applying only to delivery rows).
+
+  -- 8–9. minimum and free threshold, set temporarily on Cairo, then restored.
+  -- Zone writes run as the admin (manage_website); the guest only places.
+  perform pg_temp.become(v_admin, 'authenticated');
+  update public.delivery_zones
+     set minimum_order_amount = 1000, free_shipping_threshold = 150
+   where id = v_zone_cai;
+  perform pg_temp.become(null, 'anon');
+  perform pg_temp.scn_expect_refusal(jsonb_build_object(
+    'client_ref', 'scn-p50-zmin', 'customer_name', 'Z', 'customer_phone', '0510000001',
+    'delivery_type', 'delivery',
+    'address', jsonb_build_object('city', 'Cairo', 'area', 'A', 'street', 'S'),
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_goods::text, 'qty', 2)),
+    'coupon_code', null, 'delivery_zone_id', v_zone_cai::text,
+    'payment_method', 'cod'), 'Delivery orders need at least 1000.00');
+  v_result := public.place_online_order(jsonb_build_object(
+    'client_ref', 'scn-p50-zmin-ok', 'customer_name', 'Z', 'customer_phone', '0510000001',
+    'delivery_type', 'delivery',
+    'address', jsonb_build_object('city', 'Cairo', 'area', 'A', 'street', 'S'),
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_goods::text, 'qty', 12)),
+    'coupon_code', null, 'delivery_zone_id', v_zone_cai::text,
+    'payment_method', 'cod'));
+  v_facts := pg_temp.scn_order_facts((v_result->>'order_id')::uuid);
+  if (v_facts->>'delivery_fee')::numeric <> 0 then
+    raise exception 'the 150 threshold did not waive the Cairo fee (%)', v_facts->>'delivery_fee';
+  end if;
+  perform pg_temp.become(v_admin, 'authenticated');
+  update public.delivery_zones
+     set minimum_order_amount = 0, free_shipping_threshold = null
+   where id = v_zone_cai;
+  perform pg_temp.become(null, 'anon');
+
+  -- 10. the admin moves Ismailia 0 → 30 with an update, no code involved.
+  perform pg_temp.become(v_admin, 'authenticated');
+  update public.delivery_zones set shipping_fee = 30 where id = v_zone_ism;
+  perform pg_temp.become(null, 'anon');
+  v_result := public.place_online_order(jsonb_build_object(
+    'client_ref', 'scn-p50-ism30', 'customer_name', 'Z', 'customer_phone', '0510000001',
+    'delivery_type', 'delivery',
+    'address', jsonb_build_object('city', 'Ismailia', 'area', 'Downtown', 'street', 'S1'),
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_goods::text, 'qty', 2)),
+    'coupon_code', null, 'delivery_zone_id', v_zone_ism::text,
+    'payment_method', 'cod'));
+  v_facts := pg_temp.scn_order_facts((v_result->>'order_id')::uuid);
+  if (v_facts->>'delivery_fee')::numeric <> 30 then
+    raise exception 'the edited Ismailia fee did not take effect (%)', v_facts->>'delivery_fee';
+  end if;
+  perform pg_temp.become(v_admin, 'authenticated');
+  update public.delivery_zones set shipping_fee = 0 where id = v_zone_ism;
+  perform pg_temp.become(null, 'anon');
+
+  -- ── Part 20 · promo codes ────────────────────────────────────────────────
+  -- 1. subtotal 1000 → 100 off; the snapshot names the code and the maths.
+  v_result := public.place_online_order(jsonb_build_object(
+    'client_ref', 'scn-p50-c1', 'customer_name', 'C', 'customer_phone', '0520000001',
+    'delivery_type', 'pickup', 'address', '{}'::jsonb,
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_goods::text, 'qty', 10)),
+    'coupon_code', 'SCN-P50-10',
+    'payment_method', 'cod'));
+  v_id := (v_result->>'order_id')::uuid;
+  v_facts := pg_temp.scn_order_facts(v_id);
+  if (v_facts->>'discount_amount')::numeric <> 100 then
+    raise exception 'ALYQ10-style 10%% on 1000 discounted % instead of 100', v_facts->>'discount_amount';
+  end if;
+  if (v_facts->>'total')::numeric <> 900 then
+    raise exception 'promo total % is not 900', v_facts->>'total';
+  end if;
+  if v_facts->>'discount_code' <> 'SCN-P50-10' then
+    raise exception 'the snapshot lost the promo code';
+  end if;
+  if (v_facts->'price_snapshot'->>'promo_discount')::numeric <> 100 then
+    raise exception 'the snapshot lost the promo discount';
+  end if;
+  if pg_temp.scn_promo_uses('SCN-P50-10', v_id) <> 1 then
+    raise exception 'the usage history missed the order';
+  end if;
+
+  -- 2. subtotal 300 under a 500 minimum is refused, writing nothing.
+  perform pg_temp.scn_expect_refusal(jsonb_build_object(
+    'client_ref', 'scn-p50-c2', 'customer_name', 'C', 'customer_phone', '0520000002',
+    'delivery_type', 'pickup', 'address', '{}'::jsonb,
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_goods::text, 'qty', 3)),
+    'coupon_code', 'SCN-P50-10',
+    'payment_method', 'cod'), 'needs a subtotal of at least');
+
+  -- 3. subtotal 3000 caps the 10% at 200.
+  v_result := public.place_online_order(jsonb_build_object(
+    'client_ref', 'scn-p50-c3', 'customer_name', 'C', 'customer_phone', '0520000003',
+    'delivery_type', 'pickup', 'address', '{}'::jsonb,
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_goods::text, 'qty', 30)),
+    'coupon_code', 'SCN-P50-10',
+    'payment_method', 'cod'));
+  v_facts := pg_temp.scn_order_facts((v_result->>'order_id')::uuid);
+  if (v_facts->>'discount_amount')::numeric <> 200 then
+    raise exception 'the 200 cap did not hold (%)', v_facts->>'discount_amount';
+  end if;
+
+  -- 4–6. expired, disabled and unknown codes are refused with their wordings.
+  perform pg_temp.scn_expect_refusal(jsonb_build_object(
+    'client_ref', 'scn-p50-c4', 'customer_name', 'C', 'customer_phone', '0520000004',
+    'delivery_type', 'pickup', 'address', '{}'::jsonb,
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_goods::text, 'qty', 10)),
+    'coupon_code', 'SCN-P50-EXP',
+    'payment_method', 'cod'), 'has expired');
+  perform pg_temp.scn_expect_refusal(jsonb_build_object(
+    'client_ref', 'scn-p50-c5', 'customer_name', 'C', 'customer_phone', '0520000004',
+    'delivery_type', 'pickup', 'address', '{}'::jsonb,
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_goods::text, 'qty', 10)),
+    'coupon_code', 'SCN-P50-OFF',
+    'payment_method', 'cod'), 'is not valid');
+  perform pg_temp.scn_expect_refusal(jsonb_build_object(
+    'client_ref', 'scn-p50-c6', 'customer_name', 'C', 'customer_phone', '0520000004',
+    'delivery_type', 'pickup', 'address', '{}'::jsonb,
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_goods::text, 'qty', 10)),
+    'coupon_code', 'SCN-NOPE',
+    'payment_method', 'cod'), 'is not valid');
+
+  -- 7. a usage limit of one: the second checkout is refused.
+  v_result := public.place_online_order(jsonb_build_object(
+    'client_ref', 'scn-p50-c7a', 'customer_name', 'C', 'customer_phone', '0520000005',
+    'delivery_type', 'pickup', 'address', '{}'::jsonb,
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_goods::text, 'qty', 10)),
+    'coupon_code', 'SCN-P50-ONE',
+    'payment_method', 'cod'));
+  perform pg_temp.scn_expect_refusal(jsonb_build_object(
+    'client_ref', 'scn-p50-c7b', 'customer_name', 'C', 'customer_phone', '0520000006',
+    'delivery_type', 'pickup', 'address', '{}'::jsonb,
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_goods::text, 'qty', 10)),
+    'coupon_code', 'SCN-P50-ONE',
+    'payment_method', 'cod'), 'has been fully used');
+
+  -- 8. per-customer limit of one: the same phone is refused, a new one passes.
+  v_result := public.place_online_order(jsonb_build_object(
+    'client_ref', 'scn-p50-c8a', 'customer_name', 'C', 'customer_phone', '0520000007',
+    'delivery_type', 'pickup', 'address', '{}'::jsonb,
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_goods::text, 'qty', 10)),
+    'coupon_code', 'SCN-P50-PER1',
+    'payment_method', 'cod'));
+  perform pg_temp.scn_expect_refusal(jsonb_build_object(
+    'client_ref', 'scn-p50-c8b', 'customer_name', 'C', 'customer_phone', '0520000007',
+    'delivery_type', 'pickup', 'address', '{}'::jsonb,
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_goods::text, 'qty', 10)),
+    'coupon_code', 'SCN-P50-PER1',
+    'payment_method', 'cod'), 'has reached its usage limit');
+  v_result := public.place_online_order(jsonb_build_object(
+    'client_ref', 'scn-p50-c8c', 'customer_name', 'C', 'customer_phone', '0520000008',
+    'delivery_type', 'pickup', 'address', '{}'::jsonb,
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_goods::text, 'qty', 10)),
+    'coupon_code', 'SCN-P50-PER1',
+    'payment_method', 'cod'));
+
+  -- 9. one application per order: the discount is computed once, not per line.
+  v_facts := pg_temp.scn_order_facts((v_result->>'order_id')::uuid);
+  if (v_facts->>'discount_amount')::numeric <> 100 then
+    raise exception 'the code applied != once (%)', v_facts->>'discount_amount';
+  end if;
+
+  -- 10. a changed cart recalculates: the same code on 300 is refused again.
+  perform pg_temp.scn_expect_refusal(jsonb_build_object(
+    'client_ref', 'scn-p50-c10', 'customer_name', 'C', 'customer_phone', '0520000009',
+    'delivery_type', 'pickup', 'address', '{}'::jsonb,
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_goods::text, 'qty', 3)),
+    'coupon_code', 'SCN-P50-10',
+    'payment_method', 'cod'), 'needs a subtotal of at least');
+
+  -- first-order-only: the phone with history is refused, a fresh one passes.
+  perform pg_temp.scn_expect_refusal(jsonb_build_object(
+    'client_ref', 'scn-p50-cf1', 'customer_name', 'C', 'customer_phone', '0520000001',
+    'delivery_type', 'pickup', 'address', '{}'::jsonb,
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_goods::text, 'qty', 10)),
+    'coupon_code', 'SCN-P50-FIRST',
+    'payment_method', 'cod'), 'first orders only');
+  v_result := public.place_online_order(jsonb_build_object(
+    'client_ref', 'scn-p50-cf2', 'customer_name', 'C', 'customer_phone', '0520000010',
+    'delivery_type', 'pickup', 'address', '{}'::jsonb,
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_goods::text, 'qty', 10)),
+    'coupon_code', 'SCN-P50-FIRST',
+    'payment_method', 'cod'));
+
+  -- 11. a forged discount is re-priced from the catalogue.
+  v_result := public.place_online_order(jsonb_build_object(
+    'client_ref', 'scn-p50-c11', 'customer_name', 'C', 'customer_phone', '0520000011',
+    'delivery_type', 'pickup', 'address', '{}'::jsonb,
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_goods::text, 'qty', 1, 'unit_price', 0.01)),
+    'coupon_code', null,
+    'payment_method', 'cod'));
+  v_facts := pg_temp.scn_order_facts((v_result->>'order_id')::uuid);
+  if (v_facts->>'subtotal')::numeric <> 100 then
+    raise exception 'a forged unit price survived: subtotal %', v_facts->>'subtotal';
+  end if;
+
+  -- ── Part 21 · the storewide sale ─────────────────────────────────────────
+  -- Admin writes run as the admin (promotions write behind manage_website);
+  -- the guest places as anon.
+  perform pg_temp.become(v_admin, 'authenticated');
+  insert into public.promotions
+    (id, enabled, name_en, name_ar, discount_type, value, scope,
+     minimum_order_amount, maximum_discount_amount, priority, stackable)
+  values
+    ('00000000-0000-4000-8000-000000000d10', true, 'Scenario 15% storewide', 'خصم شامل',
+     'percent', 15, 'store', 0, null, 0, false)
+  on conflict (id) do update
+    set enabled = true, value = 15, scope = 'store', stackable = false;
+  v_promo := '00000000-0000-4000-8000-000000000d10';
+  perform pg_temp.become(null, 'anon');
+
+  -- Ring 200 + override variant 300 = 500 goods → 75 off, on the override base.
+  v_result := public.place_online_order(jsonb_build_object(
+    'client_ref', 'scn-p50-g1', 'customer_name', 'G', 'customer_phone', '0530000001',
+    'delivery_type', 'pickup', 'address', '{}'::jsonb,
+    'lines', jsonb_build_array(
+      jsonb_build_object('product_id', v_ring::text, 'qty', 1),
+      jsonb_build_object('product_id', v_varprod::text, 'qty', 1, 'variant_id', v_gold::text)),
+    'coupon_code', null,
+    'payment_method', 'cod'));
+  v_id := (v_result->>'order_id')::uuid;
+  v_facts := pg_temp.scn_order_facts(v_id);
+  if (v_facts->>'discount_amount')::numeric <> 75 then
+    raise exception 'the storewide 15%% on 500 discounted % instead of 75', v_facts->>'discount_amount';
+  end if;
+  if v_facts->>'promotion_id' is distinct from v_promo::text then
+    raise exception 'the order does not name its promotion';
+  end if;
+  if (v_facts->'price_snapshot'->>'auto_discount')::numeric <> 75 then
+    raise exception 'the snapshot lost the automatic discount';
+  end if;
+  -- The variant line paid 255 (300 − 15%), not 170 (200 − 15%).
+  select (line->>'discounted_unit_price')::numeric into v_amt
+  from jsonb_array_elements(v_facts->'lines') as line
+  where line->>'sku' = 'SCN-P50-GOLD-17';
+  if v_amt <> 255 then
+    raise exception 'the override variant discounted to % instead of 255', v_amt;
+  end if;
+
+  -- Disabling restores normal price for NEW orders; history does not move.
+  perform pg_temp.become(v_admin, 'authenticated');
+  update public.promotions set enabled = false where id = v_promo;
+  perform pg_temp.become(null, 'anon');
+  v_result := public.place_online_order(jsonb_build_object(
+    'client_ref', 'scn-p50-g2', 'customer_name', 'G', 'customer_phone', '0530000002',
+    'delivery_type', 'pickup', 'address', '{}'::jsonb,
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_ring::text, 'qty', 1)),
+    'coupon_code', null,
+    'payment_method', 'cod'));
+  v_facts := pg_temp.scn_order_facts((v_result->>'order_id')::uuid);
+  if (v_facts->>'discount_amount')::numeric <> 0 then
+    raise exception 'a disabled sale still discounted %', v_facts->>'discount_amount';
+  end if;
+  v_facts := pg_temp.scn_order_facts(v_id);
+  if (v_facts->>'discount_amount')::numeric <> 75 then
+    raise exception 'disabling the sale rewrote history';
+  end if;
+
+  -- ── Part 22 · targeted offers ────────────────────────────────────────────
+  perform pg_temp.become(v_admin, 'authenticated');
+  insert into public.promotions
+    (id, enabled, name_en, name_ar, discount_type, value, scope,
+     minimum_order_amount, maximum_discount_amount, priority, stackable)
+  values
+    ('00000000-0000-4000-8000-000000000d11', true, 'Scenario 20% rings', 'خصم خواتم',
+     'percent', 20, 'category', 0, null, 10, false)
+  on conflict (id) do update
+    set enabled = true, value = 20, scope = 'category', stackable = false;
+  insert into public.promotion_targets (promotion_id, target_kind, target_id)
+  values ('00000000-0000-4000-8000-000000000d11', 'category', v_cat)
+  on conflict do nothing;
+  perform pg_temp.become(null, 'anon');
+
+  -- Ring 200 (in) + necklace 100 (out) → 40 off, nothing else.
+  v_result := public.place_online_order(jsonb_build_object(
+    'client_ref', 'scn-p50-t1', 'customer_name', 'T', 'customer_phone', '0540000001',
+    'delivery_type', 'pickup', 'address', '{}'::jsonb,
+    'lines', jsonb_build_array(
+      jsonb_build_object('product_id', v_ring::text, 'qty', 1),
+      jsonb_build_object('product_id', v_neck::text, 'qty', 1)),
+    'coupon_code', null,
+    'payment_method', 'cod'));
+  v_id := (v_result->>'order_id')::uuid;
+  v_facts := pg_temp.scn_order_facts(v_id);
+  if (v_facts->>'discount_amount')::numeric <> 40 then
+    raise exception 'the category offer discounted % instead of 40', v_facts->>'discount_amount';
+  end if;
+  select (line->>'discounted_unit_price')::numeric into v_amt
+  from jsonb_array_elements(v_facts->'lines') as line
+  where line->>'sku' = 'SCN-P50-N';
+  if v_amt <> 100 then
+    raise exception 'the necklace outside the scope discounted to %', v_amt;
+  end if;
+
+  -- Variant scope: only the Gold / 17 line moves.
+  perform pg_temp.become(v_admin, 'authenticated');
+  update public.promotions set enabled = false
+   where id = '00000000-0000-4000-8000-000000000d11';
+  insert into public.promotions
+    (id, enabled, name_en, name_ar, discount_type, value, scope,
+     minimum_order_amount, maximum_discount_amount, priority, stackable)
+  values
+    ('00000000-0000-4000-8000-000000000d12', true, 'Scenario gold only', 'ذهب فقط',
+     'percent', 50, 'variant', 0, null, 10, false)
+  on conflict (id) do update
+    set enabled = true, value = 50, scope = 'variant', stackable = false;
+  insert into public.promotion_targets (promotion_id, target_kind, target_id)
+  values ('00000000-0000-4000-8000-000000000d12', 'variant', v_gold)
+  on conflict do nothing;
+  perform pg_temp.become(null, 'anon');
+  v_result := public.place_online_order(jsonb_build_object(
+    'client_ref', 'scn-p50-t2', 'customer_name', 'T', 'customer_phone', '0540000002',
+    'delivery_type', 'pickup', 'address', '{}'::jsonb,
+    'lines', jsonb_build_array(
+      jsonb_build_object('product_id', v_varprod::text, 'qty', 1, 'variant_id', v_gold::text),
+      jsonb_build_object('product_id', v_ring::text, 'qty', 1)),
+    'coupon_code', null,
+    'payment_method', 'cod'));
+  v_id := (v_result->>'order_id')::uuid;
+  v_facts := pg_temp.scn_order_facts(v_id);
+  -- 300-override line at 50% (150) + plain 200 line untouched = 150 off.
+  if (v_facts->>'discount_amount')::numeric <> 150 then
+    raise exception 'the variant offer discounted % instead of 150', v_facts->>'discount_amount';
+  end if;
+  perform pg_temp.become(v_admin, 'authenticated');
+  update public.promotions set enabled = false
+   where id = '00000000-0000-4000-8000-000000000d12';
+
+  -- ── Part 23 · the discounted return ───────────────────────────────────────
+  -- A 10% code on 10 × 100 refunds 90 per unit, never the 100 list price.
+  perform pg_temp.become(v_admin, 'authenticated');
+  v_result := public.place_online_order(jsonb_build_object(
+    'client_ref', 'scn-p50-r1', 'customer_name', 'R', 'customer_phone', '0550000001',
+    'delivery_type', 'pickup', 'address', '{}'::jsonb,
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_goods::text, 'qty', 10)),
+    'coupon_code', 'SCN-P50-10',
+    'payment_method', 'cod'));
+  v_id := (v_result->>'order_id')::uuid;
+  perform public.resolve_online_order(jsonb_build_object(
+    'order_id', v_id::text, 'action', 'approve',
+    'user_id', v_admin::text, 'user_name', 'Amina Admin'));
+  select sale_id into v_sale_id from public.online_orders where id = v_id;
+  if v_sale_id is null then raise exception 'the approval created no sale'; end if;
+  select id into v_item_id from public.sale_items where sale_id = v_sale_id limit 1;
+  perform pg_temp.become(v_cashier, 'authenticated');
+  perform public.pos_process_return(jsonb_build_object(
+    'sale_id', v_sale_id::text,
+    'items', jsonb_build_array(jsonb_build_object('sale_item_id', v_item_id::text, 'quantity', 1)),
+    'reason', 'scenario check', 'refund_method', 'cash', 'refund_status', 'completed',
+    'user_id', v_cashier::text, 'user_name', 'Karim Cashier'));
+  select amount into v_amt from public.refund_records where sale_id = v_sale_id;
+  if v_amt <> 90 then
+    raise exception 'the discounted unit refunded % instead of 90', v_amt;
+  end if;
+
+  -- ── Part 24 · completion stores the label, never the verb ────────────────
+  perform pg_temp.become(v_admin, 'authenticated');
+  v_result := public.place_online_order(jsonb_build_object(
+    'client_ref', 'scn-p50-s1', 'customer_name', 'S', 'customer_phone', '0560000001',
+    'delivery_type', 'pickup', 'address', '{}'::jsonb,
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_goods::text, 'qty', 1)),
+    'coupon_code', null,
+    'payment_method', 'cod'));
+  v_id := (v_result->>'order_id')::uuid;
+
+  -- Completing a pending order is refused with the workflow wording — and a
+  -- check_violation SQLSTATE with zero rows written, pinned the same way the
+  -- checkout refusals are (the resolve path writes nothing on refusal, so the
+  -- order counts before and after must match).
+  select count(*) into v_n from public.online_orders;
+  begin
+    perform public.resolve_online_order(jsonb_build_object(
+      'order_id', v_id::text, 'action', 'complete',
+      'user_id', v_admin::text, 'user_name', 'Amina Admin'));
+    raise exception 'completing a pending order was accepted';
+  exception when check_violation then
+    if SQLERRM not like '%must be approved first%' then
+      raise exception 'the pending completion refusal read "%" instead of the workflow wording', SQLERRM;
+    end if;
+  end;
+  select count(*) into v_amt from public.online_orders;
+  if v_amt <> v_n then
+    raise exception 'a refused completion wrote rows';
+  end if;
+
+  perform public.resolve_online_order(jsonb_build_object(
+    'order_id', v_id::text, 'action', 'approve',
+    'user_id', v_admin::text, 'user_name', 'Amina Admin'));
+
+  -- approved → completed is legal; prove the stored value is the LABEL.
+  perform public.resolve_online_order(jsonb_build_object(
+    'order_id', v_id::text, 'action', 'complete',
+    'user_id', v_admin::text, 'user_name', 'Amina Admin'));
+  select status::text into v_status from public.online_orders where id = v_id;
+  if v_status <> 'completed' then
+    raise exception 'completion stored % instead of completed', v_status;
+  end if;
+
+  -- The stored value is the label, the event kind matches, and no raw enum
+  -- text ever left the database.
+  if exists (select 1 from public.online_orders where id = v_id and status::text = 'complete') then
+    raise exception 'the action word leaked into the status column';
+  end if;
+  select count(*) into v_n from public.order_events
+   where order_id = v_id and kind = 'completed';
+  if v_n <> 1 then raise exception 'the completion wrote % completed events', v_n; end if;
+
+  -- Completing again is a workflow refusal, not a database error text.
+  begin
+    perform public.resolve_online_order(jsonb_build_object(
+      'order_id', v_id::text, 'action', 'complete',
+      'user_id', v_admin::text, 'user_name', 'Amina Admin'));
+    raise exception 're-completing a completed order was accepted';
+  exception when check_violation then
+    if SQLERRM not like '%already completed%' then
+      raise exception 'the re-completion refusal read "%" instead of the workflow wording', SQLERRM;
+    end if;
+  end;
+
+  -- ── the zone admin path audits itself ─────────────────────────────────────
+  perform pg_temp.become(v_admin, 'authenticated');
+  insert into public.delivery_zones (key, name_en, name_ar, shipping_fee, enabled, sort_order)
+  values ('scn-audit', 'Scenario Audit', 'تدقيق فحص', 5, true, 501)
+  on conflict (key) do update set shipping_fee = 5;
+  select count(*) into v_n from public.audit_log
+   where action = 'delivery_zone.created' and entity_id =
+     (select id::text from public.delivery_zones where key = 'scn-audit');
+  if v_n < 1 then raise exception 'the zone insert wrote no audit row'; end if;
+  update public.delivery_zones set shipping_fee = 6 where key = 'scn-audit';
+  select count(*) into v_n from public.audit_log
+   where action = 'delivery_zone.changed' and entity_id =
+     (select id::text from public.delivery_zones where key = 'scn-audit');
+  if v_n < 1 then raise exception 'the zone change wrote no audit row'; end if;
+  delete from public.delivery_zones where key = 'scn-audit';
+  delete from public.delivery_zones where key = 'scn-off';
+
+  raise notice 'promotions (0049/0050) — zones price server-side (seeded 0/70/80, pickup free, disabled and bogus refused, minimum and threshold enforced, admin edits take effect), codes validate and cap (min, cap, expiry, disabled, unknown, usage, per-customer, first-order, single application, recalculation, forged money ignored, history kept), the storewide sale prices variant overrides and freezes history, category and variant targeting isolate lines, discounted returns refund paid prices, completion stores the label with workflow refusals, and zone writes audit themselves';
+end
+$promo50$;
 
 do $$
 begin

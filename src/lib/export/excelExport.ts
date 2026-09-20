@@ -27,6 +27,7 @@
  *     no repository, no migration, no new capability, no audit entry.
  */
 import type { I18nContextValue } from "@/lib/i18n/I18nProvider";
+import { dayEndUtcMs, dayStartUtcMs } from "@/lib/dates/calendarDays";
 
 /** The dictionary translate function, typed identically to `useI18n().t`. */
 export type Translate = I18nContextValue["t"];
@@ -245,14 +246,16 @@ export function withinDateRange(
   const date = toDate(value);
   if (!date) return false;
   const time = date.getTime();
+  // Day strings are UTC calendar days (see `@/lib/dates/calendarDays`): the
+  // same range matches the same rows on every machine, whatever its timezone.
   if (from) {
-    const start = new Date(`${from}T00:00:00`);
-    if (!Number.isNaN(start.getTime()) && time < start.getTime()) return false;
+    const start = dayStartUtcMs(from);
+    if (start !== null && time < start) return false;
   }
   if (to) {
     // `to` is a calendar day, so it includes everything up to its midnight end.
-    const end = new Date(`${to}T23:59:59.999`);
-    if (!Number.isNaN(end.getTime()) && time > end.getTime()) return false;
+    const end = dayEndUtcMs(to);
+    if (end !== null && time > end) return false;
   }
   return true;
 }

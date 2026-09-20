@@ -16,21 +16,39 @@
  *
  * Also runnable, so the suite headers can point at a command that works:
  *
- *   node scripts/lib/app-bundle.mjs              # → /tmp/alyq-app.mjs
+ *   node scripts/lib/app-bundle.mjs              # → os.tmpdir()/alyq-app.mjs
  *   node scripts/lib/app-bundle.mjs out.mjs      # → out.mjs
  */
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import process from "node:process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { assetMockPlugin } from "./asset-mock.plugin.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "..", "..");
 
-/** Where the suites import the app bundle from. */
-export const DEFAULT_BUNDLE = "/tmp/alyq-app.mjs";
+/**
+ * Where the suites import the app bundle from: the OS temp directory, joined
+ * with `path.join` — never a hardcoded `/tmp/...` path, which does not exist
+ * on Windows (Node resolves it against the current drive and esbuild writes
+ * nowhere the suites can read back). `os.tmpdir()` is correct on every
+ * platform the suites run on.
+ */
+export const DEFAULT_BUNDLE = path.join(os.tmpdir(), "alyq-app.mjs");
+
+/**
+ * A `file:` URL for the bundle, for dynamic `import()`. A bare filesystem
+ * path is not a valid import specifier on Windows (backslashes), and a
+ * `?query` suffix is how the auth/backup suites boot the app once per
+ * scenario without sharing a module graph.
+ */
+export function bundleFileUrl(outfile = DEFAULT_BUNDLE, query) {
+  const href = pathToFileURL(outfile).href;
+  return query ? `${href}?${query}` : href;
+}
 
 /**
  * `import.meta.env` does not exist under Node ESM, but the app reads it at
@@ -96,7 +114,7 @@ export const testBuildOptions = (overrides = {}) => ({
  * Bundle the real application for the jsdom suites.
  *
  * @param {object} [options]
- * @param {string} [options.outfile] defaults to `/tmp/alyq-app.mjs`
+ * @param {string} [options.outfile] defaults to `os.tmpdir()/alyq-app.mjs`
  * @param {string} [options.entryPoint] defaults to `src/main.tsx`
  * @returns {Promise<{ outfile: string, bytes: number }>}
  */

@@ -59,11 +59,13 @@ import { SystemSettingsPage } from "@/modules/settings/pages/SystemSettingsPage"
 import { StoreManagementHome, SalesHome, CatalogHome, InventoryHome, OnlineHome } from "./components/layout/moduleHomes";
 
 import {
+  DeliveryZonesPage,
   MarketingPage,
   OnlineNotificationsProvider,
   OnlineOrdersPage,
   OnlineOrdersProvider,
   OnlineReportsPage,
+  PromotionsPage,
   StockHoldsPage,
   StoreAccountPage,
   StoreCartPage,
@@ -308,6 +310,8 @@ function AuthenticatedApp() {
                             <Route path="/online/reservations" element={<StockHoldsPage />} />
                             <Route path="/online/website" element={<WebsiteSettingsPage />} />
                             <Route path="/online/marketing" element={<MarketingPage />} />
+                            <Route path="/online/zones" element={<DeliveryZonesPage />} />
+                            <Route path="/online/discounts" element={<PromotionsPage />} />
                             <Route path="/online/content" element={<StoreContentPage />} />
                             <Route path="/online/reports" element={<OnlineReportsPage />} />
                             <Route

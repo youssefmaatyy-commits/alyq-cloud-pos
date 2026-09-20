@@ -36,11 +36,12 @@
  * disagreeing with itself, and the day that happens nobody can say which number
  * is the real one.
  *
- * Also not in the database: what a day is. `dayKeyOf` buckets by the BROWSER's
- * local calendar day, so the caller's IANA zone name travels with the request.
- * A name and not a UTC offset — Egypt observes daylight saving, so a window
- * spanning April or October contains two offsets, and one number would move
- * every late-evening invoice of the other season into the wrong day.
+ * Also not in the database: what a day is. `dayKeyOf` buckets by the UTC
+ * calendar day (see `@/lib/dates/calendarDays`), so a day-bucketed request
+ * carries the `"UTC"` zone name and both sides of the differential agree on
+ * every machine. A browser-local zone would move every small-hours invoice
+ * into a different day per device — the exact drift the UTC-day contract
+ * exists to prevent.
  *
  * Every function returns a RESULT, never throws and never returns a partial
  * number. When the database cannot answer — demo mode, a project whose
@@ -64,14 +65,18 @@ import type { DateRange, FinancialTotals } from "./financialExport";
  */
 export type AggregateResult<T> = { ok: true; value: T } | { ok: false; reason: string };
 
-/** The zone name to send with a day-bucketed request. */
+/**
+ * The zone name to send with a day-bucketed request.
+ *
+ * Always `"UTC"`: the TypeScript builders bucket by the UTC calendar day, so
+ * the database must bucket the same day or the two sides of the differential
+ * disagree per device. A browser-local zone name here would reintroduce the
+ * timezone day-shift the UTC-day contract removed — the RPCs still accept any
+ * IANA name (the differential proves the parameter is load-bearing), but the
+ * app standardises on UTC.
+ */
 export function clientTimeZone(): string {
-  try {
-    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    return zone && zone.length > 0 ? zone : "UTC";
-  } catch {
-    return "UTC";
-  }
+  return "UTC";
 }
 
 // ── jsonb → the app's own types ─────────────────────────────────────────────

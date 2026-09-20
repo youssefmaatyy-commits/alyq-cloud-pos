@@ -19,7 +19,16 @@
  * them as a second percentage: two stacked discounts on one line is how a shop
  * sells below cost by accident.
  */
-import type { Campaign, Coupon, DeliveryArea, DeliverySettings, ProductContent } from "../types";
+import type {
+  Campaign,
+  Coupon,
+  DeliveryArea,
+  DeliverySettings,
+  DeliveryType,
+  DeliveryZone,
+  ProductContent,
+  Promotion,
+} from "../types";
 
 /** Money is Egyptian pounds, rounded to piastres. */
 export function round2(value: number): number {
@@ -225,7 +234,9 @@ export type CouponRejection =
   | "expired"
   | "exhausted"
   | "min_subtotal"
-  | "not_applicable";
+  | "not_applicable"
+  /** The customer's personal uses are spent, or the code is first-orders-only. */
+  | "limit_reached";
 
 export type CouponCheck =
   | { ok: true; coupon: Coupon; discount: number }
@@ -292,7 +303,11 @@ export function checkCoupon(
   if (context.subtotal < coupon.min_subtotal) return { ok: false, reason: "min_subtotal" };
 
   let discount: number;
-  if (coupon.discount_type === "percent") {
+  if (coupon.discount_type === "free_shipping") {
+    // A free-shipping code takes no money off the merchandise — its benefit
+    // is the waived fee, resolved where the fee is resolved.
+    discount = 0;
+  } else if (coupon.discount_type === "percent") {
     const percent = Math.min(Math.max(coupon.value, 0), 100);
     discount = round2((context.subtotal * percent) / 100);
     if (coupon.max_discount !== null) discount = Math.min(discount, round2(coupon.max_discount));
@@ -498,6 +513,476 @@ export function goodsTotalOf(order: {
   discount_amount: number;
 }): number {
   return round2(order.subtotal - order.discount_amount);
+}
+
+// ── delivery zones + automatic promotions (the demo-side pricing engine) ────
+// Mirrors `evaluate_order_pricing` in the database, rule for rule: the demo
+// checkout and the advisory preview compute here what live mode computes in
+// SQL, so both modes charge the same order the same total. Section order
+// follows the SQL core — automatic promotion, promo code, stacking, fee,
+// allocation — so a drift between the two is found by reading them side by
+// side.
+
+/**
+ * Who is buying, for per-customer limits and first-order-only: the account id
+ * when signed in, else `phone:<digits>`, else a per-order fallback that keeps
+ * the key non-null (an unidentifiable customer counts as new, never as an
+ * error). Same normalization the server uses.
+ */
+export function customerKeyFor(
+  storeCustomerId: string | null | undefined,
+  phone: string,
+  orderRef?: string | null,
+): string | null {
+  const account = (storeCustomerId ?? "").trim();
+  if (account) return account;
+  const digits = phone.replace(/[^0-9]/g, "");
+  if (digits) return `phone:${digits}`;
+  return orderRef ? `order:${orderRef}` : null;
+}
+
+/** A promotion is live when it is switched on and the clock is inside its window. */
+export function isPromotionLive(promotion: Promotion, now: Date = new Date()): boolean {
+  if (!promotion.enabled) return false;
+  const at = now.getTime();
+  if (promotion.starts_at) {
+    const start = Date.parse(promotion.starts_at);
+    if (Number.isFinite(start) && at < start) return false;
+  }
+  if (promotion.ends_at) {
+    const end = Date.parse(promotion.ends_at);
+    if (Number.isFinite(end) && at > end) return false;
+  }
+  return true;
+}
+
+export interface PromotionCartLine {
+  product_id: string;
+  category_id: string | null;
+  variant_id: string | null;
+  line_total: number;
+}
+
+/** Does a scoped offer touch this cart? Store scope always does. */
+export function promotionApplies(
+  promotion: Promotion,
+  targetIds: ReadonlySet<string>,
+  lines: readonly PromotionCartLine[],
+): boolean {
+  // Targets ride as `kind:id` so a product id can never match a category
+  // scope — exactly like the SQL core's per-kind checks.
+  if (promotion.scope === "store") return true;
+  if (promotion.scope === "category") {
+    return lines.some(
+      (line) => line.category_id !== null && targetIds.has(`category:${line.category_id}`),
+    );
+  }
+  if (promotion.scope === "product") {
+    return lines.some((line) => targetIds.has(`product:${line.product_id}`));
+  }
+  return lines.some((line) => line.variant_id !== null && targetIds.has(`variant:${line.variant_id}`));
+}
+
+/**
+ * What an offer takes off: a percentage of its eligible base (the whole goods
+ * total for store scope, the matching lines otherwise), capped by its maximum
+ * and never more than the goods total itself.
+ */
+export function promotionDiscount(
+  promotion: Promotion,
+  targetIds: ReadonlySet<string>,
+  lines: readonly PromotionCartLine[],
+  subtotal: number,
+): number {
+  let eligible = subtotal;
+  if (promotion.scope !== "store") {
+    eligible = round2(
+      lines.reduce((sum, line) => {
+        const hit =
+          (promotion.scope === "category" &&
+            line.category_id !== null &&
+            targetIds.has(`category:${line.category_id}`)) ||
+          (promotion.scope === "product" && targetIds.has(`product:${line.product_id}`)) ||
+          (promotion.scope === "variant" &&
+            line.variant_id !== null &&
+            targetIds.has(`variant:${line.variant_id}`));
+        return hit ? sum + line.line_total : sum;
+      }, 0),
+    );
+  }
+  let discount: number;
+  if (promotion.discount_type === "percent") {
+    const percent = Math.min(Math.max(promotion.value, 0), 100);
+    discount = round2((eligible * percent) / 100);
+    if (promotion.maximum_discount_amount !== null) {
+      discount = Math.min(discount, round2(promotion.maximum_discount_amount));
+    }
+  } else {
+    discount = round2(promotion.value);
+    discount = Math.min(discount, round2(eligible));
+  }
+  return Math.min(Math.max(discount, 0), round2(subtotal));
+}
+
+/**
+ * The best applicable automatic offer: highest priority wins, ties break
+ * toward the larger discount, and the first candidate sets a bar only a
+ * strictly larger discount displaces. Deterministic — no compounding.
+ */
+export function selectAutomaticPromotion(
+  promotions: readonly Promotion[],
+  targetsByPromotion: ReadonlyMap<string, ReadonlySet<string>>,
+  lines: readonly PromotionCartLine[],
+  subtotal: number,
+  now: Date = new Date(),
+): { promotion: Promotion; discount: number } | null {
+  const ordered = [...promotions].sort((a, b) => {
+    if (b.priority !== a.priority) return b.priority - a.priority;
+    return a.created_at.localeCompare(b.created_at);
+  });
+  let best: { promotion: Promotion; discount: number } | null = null;
+  for (const promotion of ordered) {
+    if (!isPromotionLive(promotion, now)) continue;
+    if (subtotal < promotion.minimum_order_amount) continue;
+    const targetIds = targetsByPromotion.get(promotion.id) ?? new Set<string>();
+    if (!promotionApplies(promotion, targetIds, lines)) continue;
+    const discount = promotionDiscount(promotion, targetIds, lines, subtotal);
+    if (!best || discount > best.discount) best = { promotion, discount };
+  }
+  return best;
+}
+
+export interface PromoUsageSummary {
+  /** Non-cancelled uses of this code by this customer. */
+  customerUses: number;
+  /** Whether the customer has any prior non-cancelled order. */
+  hasPriorOrder: boolean;
+}
+
+export type PromoCheck =
+  | { ok: true; coupon: Coupon; discount: number; freeShipping: boolean }
+  | { ok: false; reason: CouponRejection };
+
+/**
+ * The extended code validation: the base rules plus free-shipping (no money
+ * off, the benefit is the waived fee), per-customer limits and
+ * first-order-only. Usage totals (`used_count`) are read from the coupon row
+ * the caller locked; personal history arrives as a summary so this stays pure.
+ */
+export function checkPromoCode(
+  coupon: Coupon | null,
+  context: CouponContext,
+  usage: PromoUsageSummary,
+): PromoCheck {
+  const base = checkCoupon(coupon, context);
+  if (!base.ok) return base;
+  if (!coupon) return { ok: false, reason: "not_found" };
+  if (
+    coupon.per_customer_limit !== null &&
+    usage.customerUses >= coupon.per_customer_limit
+  ) {
+    return { ok: false, reason: "limit_reached" };
+  }
+  if (coupon.first_order_only && usage.hasPriorOrder) {
+    return { ok: false, reason: "limit_reached" };
+  }
+  return { ok: true, coupon, discount: base.discount, freeShipping: coupon.discount_type === "free_shipping" };
+}
+
+export interface EvaluatedCartLine extends PromotionCartLine {
+  qty: number;
+  unit_price: number;
+  discounted_unit_price: number;
+}
+
+export interface CartPricingInput {
+  /** Campaign-priced lines; the engine writes the discounted prices. */
+  lines: Omit<EvaluatedCartLine, "discounted_unit_price">[];
+  subtotal: number;
+  /** Raw typed code (or null). Normalized here, like the server. */
+  promoCode: string | null;
+  coupons: readonly Coupon[];
+  promotions: readonly Promotion[];
+  targetsByPromotion: ReadonlyMap<string, ReadonlySet<string>>;
+  usageFor: (couponId: string) => PromoUsageSummary;
+  customerKey: string | null;
+  zone: DeliveryZone | null;
+  legacy: { fee: number; minimum: number; threshold: number };
+  deliveryType: DeliveryType;
+  now?: Date;
+}
+
+export interface EvaluatedCart {
+  subtotal: number;
+  autoDiscount: number;
+  autoPromotionId: string | null;
+  autoPromotionName: string | null;
+  promoCode: string | null;
+  promoDiscount: number;
+  promoFreeShipping: boolean;
+  grossShippingFee: number;
+  shippingDiscount: number;
+  shippingSource: string;
+  deliveryFee: number;
+  zoneId: string | null;
+  zoneName: string | null;
+  totalDiscount: number;
+  total: number;
+  lines: EvaluatedCartLine[];
+}
+
+export type CartPricingResult =
+  | { ok: true; pricing: EvaluatedCart }
+  | { ok: false; reason: CouponRejection; message: string };
+
+/**
+ * The combined evaluation — automatic promotion, promo code, stacking,
+ * delivery fee, per-line allocation — mirroring `evaluate_order_pricing`.
+ * Refusals carry the server's wordings so demo and live fail identically.
+ */
+export function evaluateCartPricing(input: CartPricingInput): CartPricingResult {
+  const now = input.now ?? new Date();
+  const subtotal = round2(Math.max(input.subtotal, 0));
+  const lines = input.lines.map((line) => ({ ...line }));
+
+  const auto =
+    input.deliveryType === "pickup" || input.deliveryType === "delivery"
+      ? selectAutomaticPromotion(
+          input.promotions,
+          input.targetsByPromotion,
+          lines,
+          subtotal,
+          now,
+        )
+      : null;
+
+  let code: string | null = null;
+  let promoDiscount = 0;
+  let promoFreeShipping = false;
+  let promoStackable = false;
+  let appliedCoupon: Coupon | null = null;
+  if (input.promoCode) {
+    code = normalizeCouponCode(input.promoCode);
+    if (!code) {
+      return { ok: false, reason: "not_found", message: `Coupon ${input.promoCode} is not valid` };
+    }
+    const coupon = input.coupons.find((candidate) => candidate.code === code) ?? null;
+    const usage = input.usageFor(coupon?.id ?? "");
+    const check = checkPromoCode(
+      coupon,
+      {
+        subtotal,
+        lines: lines.map((line) => ({
+          product_id: line.product_id,
+          category_id: line.category_id,
+          line_total: line.line_total,
+        })),
+        now,
+      },
+      {
+        customerUses: coupon ? usage.customerUses : 0,
+        hasPriorOrder: usage.hasPriorOrder,
+      },
+    );
+    if (!check.ok) {
+      const messages: Record<CouponRejection, string> = {
+        not_found: `Coupon ${code} is not valid`,
+        inactive: `Coupon ${code} is not valid`,
+        not_started: `Coupon ${code} is not active yet`,
+        expired: `Coupon ${code} has expired`,
+        exhausted: `Coupon ${code} has been fully used`,
+        min_subtotal: `Coupon ${code} needs a subtotal of at least ${coupon?.min_subtotal ?? 0}`,
+        not_applicable: `Coupon ${code} does not apply to this cart`,
+        limit_reached: `Coupon ${code} has reached its usage limit`,
+      };
+      return { ok: false, reason: check.reason, message: messages[check.reason] };
+    }
+    promoDiscount = check.discount;
+    promoFreeShipping = check.freeShipping;
+    promoStackable = check.coupon.stackable;
+    appliedCoupon = check.coupon;
+  }
+
+  // Stacking: both only when both agree, else the larger alone (the code wins
+  // ties, exactly like the server).
+  let autoDiscount = auto?.discount ?? 0;
+  let autoId = auto?.promotion.id ?? null;
+  let autoName: string | null = auto ? (auto.promotion.name_en || auto.promotion.name_ar || null) : null;
+  if (code && auto) {
+    if (auto.promotion.stackable && promoStackable) {
+      // both apply
+    } else if (promoDiscount >= autoDiscount) {
+      autoDiscount = 0;
+      autoId = null;
+      autoName = null;
+    } else {
+      promoDiscount = 0;
+      promoFreeShipping = false;
+    }
+  }
+  const goodsDiscount = Math.min(round2(autoDiscount + promoDiscount), subtotal);
+
+  // Delivery fee: the zone's numbers, or the legacy settings', never the cart's.
+  let grossFee = 0;
+  let shipDiscount = 0;
+  let shipSource = "pickup";
+  let zoneId: string | null = null;
+  let zoneName: string | null = null;
+  if (input.deliveryType === "delivery") {
+    const goods = round2(subtotal - goodsDiscount);
+    if (input.zone) {
+      if (!input.zone.enabled) {
+        return { ok: false, reason: "not_applicable", message: "Delivery zone is not available" };
+      }
+      grossFee = round2(Math.max(input.zone.shipping_fee, 0));
+      shipSource = "zone";
+      zoneId = input.zone.id;
+      zoneName = input.zone.name_en || input.zone.name_ar;
+      if (input.zone.minimum_order_amount > 0 && goods < input.zone.minimum_order_amount) {
+        return {
+          ok: false,
+          reason: "not_applicable",
+          message: `Delivery orders need at least ${input.zone.minimum_order_amount}`,
+        };
+      }
+      if (
+        input.zone.free_shipping_threshold !== null &&
+        input.zone.free_shipping_threshold > 0 &&
+        goods >= input.zone.free_shipping_threshold
+      ) {
+        shipDiscount = grossFee;
+        grossFee = 0;
+      }
+    } else {
+      grossFee = round2(Math.max(input.legacy.fee, 0));
+      shipSource = "settings";
+      if (input.legacy.minimum > 0 && goods < input.legacy.minimum) {
+        return {
+          ok: false,
+          reason: "not_applicable",
+          message: `Delivery orders need at least ${input.legacy.minimum}`,
+        };
+      }
+      if (input.legacy.threshold > 0 && goods >= input.legacy.threshold) {
+        shipDiscount = grossFee;
+        grossFee = 0;
+      }
+    }
+    if (promoFreeShipping && grossFee > 0) {
+      shipDiscount = round2(shipDiscount + grossFee);
+      grossFee = 0;
+      shipSource = `${shipSource}+promo`;
+    }
+  }
+
+  const total = round2(subtotal - goodsDiscount + grossFee);
+
+  // Scoped allocation, mirroring the server: each discount spreads over ITS
+  // eligible lines (a category offer never touches an out-of-scope line),
+  // proportionally with the last eligible line taking the remainder, so both
+  // shares sum exactly. The line's total share is what its units cost.
+  const couponTargets = code ? (appliedCoupon?.target_ids ?? []) : [];
+  const couponScope = appliedCoupon?.applies_to ?? "all";
+  const autoTargets = autoId && auto ? (input.targetsByPromotion.get(autoId) ?? new Set<string>()) : new Set<string>();
+  const autoEligible = lines.map(
+    (line) =>
+      autoDiscount > 0 &&
+      autoId !== null &&
+      auto !== null &&
+      promotionApplies(auto.promotion, autoTargets, [line]),
+  );
+  const codeEligible = lines.map((line) => {
+    if (!code || promoDiscount <= 0) return false;
+    if (couponScope === "all") return true;
+    if (couponScope === "products") return couponTargets.includes(line.product_id);
+    return line.category_id !== null && couponTargets.includes(line.category_id);
+  });
+  const shares = new Array<number>(lines.length).fill(0);
+  const spread = (amount: number, eligible: boolean[]) => {
+    const base = round2(
+      lines.reduce((sum, line, i) => (eligible[i] ? sum + line.line_total : sum), 0),
+    );
+    const idx = lines.map((_, i) => i).filter((i) => eligible[i]);
+    let remainder = amount;
+    idx.forEach((i, k) => {
+      if (k < idx.length - 1 && base > 0) {
+        const share = round2((amount * lines[i].line_total) / base);
+        shares[i] = round2(shares[i] + share);
+        remainder = round2(remainder - share);
+      } else if (k === idx.length - 1) {
+        shares[i] = round2(shares[i] + remainder);
+      }
+    });
+  };
+  if (autoDiscount > 0) spread(autoDiscount, autoEligible);
+  if (promoDiscount > 0) spread(promoDiscount, codeEligible);
+  const priced = lines.map((line, index) => {
+    const discounted = round2(
+      Math.max(line.line_total - Math.max(shares[index] ?? 0, 0), 0) / Math.max(line.qty, 1),
+    );
+    return { ...line, discounted_unit_price: discounted };
+  });
+
+  return {
+    ok: true,
+    pricing: {
+      subtotal,
+      autoDiscount: round2(autoDiscount),
+      autoPromotionId: autoId,
+      autoPromotionName: autoName,
+      promoCode: code,
+      promoDiscount: round2(promoDiscount),
+      promoFreeShipping,
+      grossShippingFee: round2(grossFee + shipDiscount),
+      shippingDiscount: round2(shipDiscount),
+      shippingSource: shipSource,
+      deliveryFee: round2(grossFee),
+      zoneId,
+      zoneName,
+      totalDiscount: round2(goodsDiscount),
+      total,
+      lines: priced,
+    },
+  };
+}
+
+/**
+ * The price one unit shows on a card: the best applicable automatic offer with
+ * no cart-level minimum, so the struck-through price is never a promise the
+ * checkout cannot keep. Targeted offers read their rows; the checkout (which
+ * knows the whole cart) is the authority, this is the display.
+ */
+export function promotionUnitPrice(
+  productId: string,
+  variantId: string | null,
+  categoryId: string | null,
+  unitPrice: number,
+  promotions: readonly Promotion[],
+  targetsByPromotion: ReadonlyMap<string, ReadonlySet<string>>,
+  now: Date = new Date(),
+): { unit: number; promotionId: string | null } {
+  const line: PromotionCartLine = {
+    product_id: productId,
+    category_id: categoryId,
+    variant_id: variantId,
+    line_total: unitPrice,
+  };
+  let best: { unit: number; promotionId: string } | null = null;
+  const ordered = [...promotions].sort((a, b) => {
+    if (b.priority !== a.priority) return b.priority - a.priority;
+    return a.created_at.localeCompare(b.created_at);
+  });
+  for (const promotion of ordered) {
+    // Display-only offers: no minimum its cart cannot prove, live, in scope.
+    if (promotion.minimum_order_amount > 0) continue;
+    if (!isPromotionLive(promotion, now)) continue;
+    const targetIds = targetsByPromotion.get(promotion.id) ?? new Set<string>();
+    if (!promotionApplies(promotion, targetIds, [line])) continue;
+    const discount = promotionDiscount(promotion, targetIds, [line], unitPrice);
+    const unit = round2(Math.max(unitPrice - discount, 0));
+    if (!best || unit < best.unit) best = { unit, promotionId: promotion.id };
+  }
+  return best ?? { unit: round2(unitPrice), promotionId: null };
 }
 
 // ── brands ──────────────────────────────────────────────────────────────────

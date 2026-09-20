@@ -20,6 +20,8 @@ import {
 } from "@/modules/approvals/services/approvalService";
 import { getCurrentUser } from "@/modules/inventory/permissions";
 import { getSalesRepository } from "@/modules/pos/data";
+import { getOnlineOrdersRepository } from "@/modules/online/data";
+import { paidUnitOf } from "../validation";
 import { recordAudit } from "@/modules/audit";
 import { AppError } from "@/modules/products/data/repository";
 
@@ -117,9 +119,31 @@ async function estimateRefundAmount(input: CreateReturnInput): Promise<number> {
   try {
     const sale = await getSalesRepository().getSale(input.sale_id);
     if (!sale) return 0;
+    // An online-origin sale refunds at the snapshot's paid prices, like the
+    // write path does — otherwise the cap pre-check and the recorded refund
+    // would disagree about the same discounted line.
+    let paidPrices: { product_id: string; variant_id: string | null; discounted_unit_price: number | null }[] | null =
+      null;
+    if (sale.source === "online") {
+      try {
+        const origin = await getOnlineOrdersRepository().getOrderBySaleId(sale.id);
+        paidPrices =
+          origin?.items.map((item) => ({
+            product_id: item.product_id,
+            variant_id: item.variant_id ?? null,
+            discounted_unit_price: item.discounted_unit_price ?? null,
+          })) ?? null;
+      } catch {
+        paidPrices = null;
+      }
+    }
     return input.items.reduce((sum, item) => {
       const line = sale.items.find((l) => l.id === item.sale_item_id);
-      const unit = line ? Number(line.unit_price) : 0;
+      if (!line) return sum;
+      const unit = paidUnitOf(
+        { product_id: line.product_id, variant_id: line.variant_id ?? null, unit_price: Number(line.unit_price) },
+        paidPrices,
+      );
       const qty = Math.max(0, Math.trunc(Number(item.quantity) || 0));
       return sum + unit * qty;
     }, 0);

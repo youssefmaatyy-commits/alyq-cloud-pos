@@ -43,6 +43,7 @@ import {
 } from "../types";
 import { buildOnlineOrderSheets } from "../services/onlineOrdersExport";
 import { toDateLocal } from "../services/datetime";
+import { toTimestampBounds } from "@/modules/reports/services/dateRanges";
 
 /** Orders that produced revenue: everything except a cancellation. */
 const countsAsRevenue = (status: OnlineOrderStatus) => status !== "cancelled";
@@ -75,9 +76,12 @@ export function OnlineReportsPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
+      // UTC-day edges (shared with the reports): the same picked days query
+      // the same orders on every machine, whatever its timezone.
+      const bounds = toTimestampBounds({ from: from || null, to: to || null });
       const list = await ordersRepository.listOrders({
-        from: from ? new Date(`${from}T00:00:00`).toISOString() : null,
-        to: to ? new Date(`${to}T23:59:59`).toISOString() : null,
+        from: bounds.from ?? null,
+        to: bounds.to ?? null,
         limit: null,
       });
       setOrders(list);
@@ -160,6 +164,50 @@ export function OnlineReportsPage() {
       byPayment,
       byMethod,
       byDay: [...byDay.entries()].sort((a, b) => (a[0] < b[0] ? 1 : -1)),
+    };
+  }, [orders]);
+
+  // Promotions, read off the order snapshots — never off the live promotion
+  // rows, so changing a discount later cannot rewrite this report. Legacy
+  // rows predate snapshots: their code (if any) carries the whole discount.
+  const promos = useMemo(() => {
+    let gross = 0;
+    let given = 0;
+    let fees = 0;
+    let freeShip = 0;
+    let autoOrders = 0;
+    let autoGiven = 0;
+    const byCode = new Map<string, { count: number; revenue: number; discount: number }>();
+    for (const order of orders) {
+      if (!countsAsRevenue(order.status)) continue;
+      gross += order.subtotal;
+      given += order.discount_amount;
+      fees += order.delivery_fee;
+      const snap = order.price_snapshot;
+      freeShip += snap?.shipping_discount ?? 0;
+      if ((snap?.auto_discount ?? 0) > 0) {
+        autoOrders += 1;
+        autoGiven += snap?.auto_discount ?? 0;
+      }
+      if (order.discount_code) {
+        const entry = byCode.get(order.discount_code) ?? { count: 0, revenue: 0, discount: 0 };
+        entry.count += 1;
+        entry.revenue += order.total;
+        entry.discount += snap?.promo_discount ?? order.discount_amount;
+        byCode.set(order.discount_code, entry);
+      }
+    }
+    return {
+      gross,
+      given,
+      net: gross - given,
+      fees,
+      freeShip,
+      autoOrders,
+      autoGiven,
+      byCode: [...byCode.entries()]
+        .map(([code, entry]) => ({ code, ...entry }))
+        .sort((a, b) => b.discount - a.discount || b.count - a.count),
     };
   }, [orders]);
 
@@ -391,11 +439,81 @@ export function OnlineReportsPage() {
                   </p>
                 </div>
               </div>
-              <p className="mt-2 text-[11px] text-slate-500">
-                {t("online.reports.deliveryFees", { value: money(stats.deliveryFees) })}
-              </p>
+            <p className="mt-2 text-[11px] text-slate-500">
+              {t("online.reports.deliveryFees", { value: money(stats.deliveryFees) })}
+            </p>
             </Card>
           </div>
+
+          <Card className="mb-4">
+            <h2 className="text-sm font-bold text-slate-900">{t("online.reports.promosTitle")}</h2>
+            <p className="mt-0.5 text-[11px] font-medium text-slate-500">{t("online.reports.promosHint")}</p>
+            <div className="mt-3 grid grid-cols-2 gap-2 text-xs lg:grid-cols-4">
+              <div className="rounded-xl bg-slate-50 p-2">
+                <p className="font-bold text-slate-700">{t("online.reports.promosGross")}</p>
+                <p className="tabular-nums font-black text-slate-900">{money(promos.gross)}</p>
+              </div>
+              <div className="rounded-xl bg-slate-50 p-2">
+                <p className="font-bold text-slate-700">{t("online.reports.promosGiven")}</p>
+                <p className="tabular-nums font-black text-emerald-700">−{money(promos.given)}</p>
+              </div>
+              <div className="rounded-xl bg-slate-50 p-2">
+                <p className="font-bold text-slate-700">{t("online.reports.promosNet")}</p>
+                <p className="tabular-nums font-black text-slate-900">{money(promos.net)}</p>
+              </div>
+              <div className="rounded-xl bg-slate-50 p-2">
+                <p className="font-bold text-slate-700">{t("online.reports.promosFees")}</p>
+                <p className="tabular-nums text-slate-600">
+                  {money(promos.fees)}
+                  {promos.freeShip > 0 ? ` · ${t("online.reports.promosFreeShip", { value: money(promos.freeShip) })}` : ""}
+                </p>
+              </div>
+            </div>
+            {promos.byCode.length === 0 && promos.autoOrders === 0 ? (
+              <p className="mt-3 text-xs font-semibold text-slate-500">{t("online.reports.promosEmpty")}</p>
+            ) : (
+              <table className="mt-3 w-full border-collapse text-sm">
+                <thead>
+                  <tr className="border-b border-slate-200 text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                    <th className="py-2 text-start font-semibold">{t("online.reports.promosColOffer")}</th>
+                    <th className="py-2 text-end font-semibold">{t("online.reports.promosColOrders")}</th>
+                    <th className="py-2 text-end font-semibold">{t("online.reports.promosColDiscount")}</th>
+                    <th className="py-2 text-end font-semibold">{t("online.reports.revenue")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {promos.autoOrders > 0 ? (
+                    <tr className="border-b border-slate-50">
+                      <td className="py-2 text-xs font-semibold text-slate-900">
+                        {t("online.reports.promosAutomatic")}
+                      </td>
+                      <td className="py-2 text-end text-xs tabular-nums text-slate-600">
+                        {num(promos.autoOrders, 0)}
+                      </td>
+                      <td className="py-2 text-end text-xs font-bold tabular-nums text-emerald-700">
+                        −{money(promos.autoGiven)}
+                      </td>
+                      <td className="py-2 text-end text-xs tabular-nums text-slate-400">—</td>
+                    </tr>
+                  ) : null}
+                  {promos.byCode.map((row) => (
+                    <tr key={row.code} className="border-b border-slate-50 last:border-0">
+                      <td className="py-2 font-mono text-xs font-bold text-slate-900" dir="ltr">
+                        {row.code}
+                      </td>
+                      <td className="py-2 text-end text-xs tabular-nums text-slate-600">{num(row.count, 0)}</td>
+                      <td className="py-2 text-end text-xs font-bold tabular-nums text-emerald-700">
+                        −{money(row.discount)}
+                      </td>
+                      <td className="py-2 text-end text-xs font-bold tabular-nums text-slate-900">
+                        {money(row.revenue)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </Card>
 
           <div className="grid gap-4 lg:grid-cols-2">
             <Card>

@@ -9,13 +9,13 @@
  * document — columns, aspect, fit, alignment, which affordances render — while
  * the price, stock and variant logic stay exactly Phase 43's.
  */
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { cn } from "@/utils/cn";
 import type { CatalogProduct } from "../../services/catalogQuery";
 import { campaignBadgeText } from "../../services/badges";
-import { campaignFor, colorGroupsOf, variantUnitPriceOf } from "../../services/pricing";
+import { campaignFor, colorGroupsOf, promotionUnitPrice, variantUnitPriceOf } from "../../services/pricing";
 import { variantLabelOf } from "../../services/variantLabel";
 import { useStoreCart } from "../../hooks/StoreCartProvider";
 import { useStorefront } from "../../hooks/StorefrontProvider";
@@ -45,7 +45,7 @@ export function ProductCard({
   priority?: boolean;
 }) {
   const { t, pick, money, lang } = useI18n();
-  const { settings, campaigns } = useStorefront();
+  const { settings, campaigns, promotions, promotionTargets } = useStorefront();
   const { add } = useStoreCart();
   const { inWishlist, toggleWishlist, customer } = useStoreAccount();
   // Phase 43: a variant product quick-adds ONE combination — the panel lists
@@ -63,6 +63,34 @@ export function ProductCard({
   const badgeText = campaignBadgeText(product.id, campaigns, (arabic, english) =>
     pick(arabic, english),
   );
+
+  // A real current automatic offer lowers the shown price — struck through,
+  // with a Sale badge — exactly what checkout will charge for this product.
+  // Variant-scoped offers cannot promise a card price (no combination is
+  // chosen here), so they surface on the product page instead.
+  const targetMap = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    for (const row of promotionTargets) {
+      const set = map.get(row.promotion_id) ?? new Set<string>();
+      set.add(`${row.target_kind}:${row.target_id}`);
+      map.set(row.promotion_id, set);
+    }
+    return map;
+  }, [promotionTargets]);
+  const promo = useMemo(
+    () =>
+      promotionUnitPrice(
+        product.id,
+        null,
+        product.category_id,
+        price,
+        promotions,
+        targetMap,
+      ),
+    [price, product.category_id, product.id, promotions, targetMap],
+  );
+  const promoPrice = promo.promotionId !== null && promo.unit < price ? promo.unit : null;
+  const cardBadges = promoPrice !== null && !badges.includes("sale") ? [...badges, "sale" as const] : badges;
 
   const stockLine = !product.stock_tracking_enabled
     ? t("store.product.alwaysAvailable")
@@ -133,10 +161,10 @@ export function ProductCard({
         </div>
 
         {/* badges — only the kinds the settings document still allows */}
-        {card.show_badge && badges.length > 0 ? (
+        {card.show_badge && cardBadges.length > 0 ? (
           <div className="absolute start-2 top-2">
             <ProductBadges
-              badges={badges.filter((badge) =>
+              badges={cardBadges.filter((badge) =>
                 badge === "new"
                   ? settings.badges.show_new
                   : badge === "sale"
@@ -201,9 +229,16 @@ export function ProductCard({
                 <Money value={entry.priceFrom} className="text-sm font-extrabold text-[var(--store-text)]" />
               </p>
             ) : (
-              <p className="flex flex-wrap items-baseline gap-1.5">
-                <Money value={price} className="text-sm font-extrabold text-[var(--store-text)]" />
-                {onSale ? <Money value={listPrice} strike className="text-[11px]" /> : null}
+              <p className="flex flex-wrap items-baseline gap-1.5" data-testid="card-price">
+                <Money
+                  value={promoPrice ?? price}
+                  className="text-sm font-extrabold text-[var(--store-text)]"
+                />
+                {promoPrice !== null ? (
+                  <Money value={price} strike className="text-[11px]" />
+                ) : onSale ? (
+                  <Money value={listPrice} strike className="text-[11px]" />
+                ) : null}
               </p>
             )}
             <p

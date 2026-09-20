@@ -13,12 +13,12 @@
  * What is under test:
  *
  *   1. **Bounds.** The date edges pushed down to SQL are the same instants the
- *      client-side predicate uses: local midnight through local 23:59:59.999,
- *      inclusive at both ends. A `created_at` column is a timestamptz, so a bare
- *      date bound is read in the database's timezone and silently drops the last
- *      day of the range — the day somebody is most likely to be looking at. The
- *      assertions here are written against local clock fields rather than fixed
- *      UTC strings, so they hold whatever timezone the suite runs in.
+ *      client-side predicate uses: UTC midnight through UTC 23:59:59.999,
+ *      inclusive at both ends. A `created_at` column is a timestamptz, so the
+ *      bounds travel as exact ISO instants — the same strings on every
+ *      machine, whatever its timezone. The assertions here are written
+ *      against fixed UTC strings for the same reason: a local-clock
+ *      assertion passes in one timezone and fails in the next.
  *   2. **Paging.** `limit` and `offset` produce disjoint, correctly ordered
  *      pages, and a count ignores paging — otherwise the total would describe
  *      the page instead of the period.
@@ -74,23 +74,15 @@ function localStamp(day: string, hhmmss: string): string {
 }
 
 // ── 1. bounds ─────────────────────────────────────────────────────────────
-test("toTimestampBounds maps a date range to local-day edges, not UTC ones", () => {
+test("toTimestampBounds maps a date range to UTC-day edges, identical everywhere", () => {
   const bounds = toTimestampBounds({ from: "2026-03-01", to: "2026-03-31" });
   assert.ok(bounds.from && bounds.to, "both ends of a closed range produce a bound");
 
-  const start = new Date(bounds.from!);
-  assert.deepEqual(
-    [start.getFullYear(), start.getMonth(), start.getDate(), start.getHours(), start.getMinutes()],
-    [2026, 2, 1, 0, 0],
-    "the lower bound is midnight at the start of the local day",
-  );
-
-  const end = new Date(bounds.to!);
-  assert.deepEqual(
-    [end.getFullYear(), end.getMonth(), end.getDate(), end.getHours(), end.getMinutes(), end.getSeconds()],
-    [2026, 2, 31, 23, 59, 59],
-    "the upper bound is the last second of the local day, so the final day is kept",
-  );
+  // Exact instants, not wall-clock fields: a local-midnight assertion would
+  // pass in one timezone and fail in the next. UTC edges are the same strings
+  // on Windows, Linux, Cairo and UTC.
+  assert.equal(bounds.from, "2026-03-01T00:00:00.000Z", "the lower bound opens the UTC day");
+  assert.equal(bounds.to, "2026-03-31T23:59:59.999Z", "the upper bound keeps the whole final UTC day");
 });
 
 test("an open end stays open instead of collapsing onto the epoch", () => {
@@ -104,12 +96,14 @@ test("an open end stays open instead of collapsing onto the epoch", () => {
 test("the SQL bounds and the client predicate agree at every edge", () => {
   const range = { from: "2026-03-01", to: "2026-03-31" };
   const bounds = toTimestampBounds(range);
+  // UTC instants: the edges mean the same thing in every timezone, so the
+  // predicate and the bounds cannot drift apart per machine.
   const samples = [
-    localStamp("2026-02-28", "23:59:59.999"), // day before: out
-    localStamp("2026-03-01", "00:00:00.000"), // first instant: in
-    localStamp("2026-03-15", "13:45:00.000"), // middle: in
-    localStamp("2026-03-31", "23:59:59.999"), // last instant: in
-    localStamp("2026-04-01", "00:00:00.000"), // day after: out
+    "2026-02-28T23:59:59.999Z", // day before: out
+    "2026-03-01T00:00:00.000Z", // first instant: in
+    "2026-03-15T13:45:00.000Z", // middle: in
+    "2026-03-31T23:59:59.999Z", // last instant: in
+    "2026-04-01T00:00:00.000Z", // day after: out
   ];
   const expected = [false, true, true, true, false];
 
@@ -130,10 +124,10 @@ test("the SQL bounds and the client predicate agree at every edge", () => {
 
 test("date bounds are inclusive on both ends when listing", () => {
   const sales = [
-    saleAt(localStamp("2026-02-28", "23:59:59.999")),
-    saleAt(localStamp("2026-03-01", "00:00:00.000")),
-    saleAt(localStamp("2026-03-31", "23:59:59.999")),
-    saleAt(localStamp("2026-04-01", "00:00:00.000")),
+    saleAt("2026-02-28T23:59:59.999Z"),
+    saleAt("2026-03-01T00:00:00.000Z"),
+    saleAt("2026-03-31T23:59:59.999Z"),
+    saleAt("2026-04-01T00:00:00.000Z"),
   ];
   const bounds = toTimestampBounds({ from: "2026-03-01", to: "2026-03-31" });
   const listed = applySaleListQuery(sales, bounds);

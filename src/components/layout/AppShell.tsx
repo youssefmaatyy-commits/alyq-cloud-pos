@@ -103,12 +103,17 @@ function NavItem({
       />
     ) : null;
 
+  // The count rides WITH the label (`ms-2`), never at the far edge of the row:
+  // on a wide sparse row a far-edge pill reads as a detached floating number —
+  // in RTL it lands on the opposite side from the icon and looks orphaned —
+  // while a label-adjacent pill is attached to its control in both directions.
+  // The collapsed (icons-only) row keeps the overlaid corner badge instead.
   const badgeEl =
     badge > 0 ? (
       <span
         className={cn(
           "shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-black tabular-nums",
-          collapsed ? "absolute end-1 top-1" : "ms-auto",
+          collapsed ? "absolute end-1 top-1" : "ms-2",
           "bg-[#b08d57]/25 text-[#dfc08a] group-hover:bg-[#b08d57]/35",
         )}
       >
@@ -305,6 +310,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           to="/management"
           icon={<BoxIcon />}
           label={t("home.management.title")}
+          // Derived from real capabilities, never from a role name: the door
+          // renders when the session can open at least one gated child of the
+          // workspace (sales, stock, returns, shifts, customers…). Products,
+          // categories and approvals carry no capability by design — they are
+          // open to every signed-in seat — so a seat stripped of every gated
+          // child (e.g. a website-only role) sees no door at all. Admin holds
+          // everything, so the door is always there for an admin.
+          visible={
+            canOpen("/sales") ||
+            canOpen("/inventory") ||
+            canOpen("/returns") ||
+            canOpen("/refunds") ||
+            canOpen("/shifts") ||
+            canOpen("/expenses") ||
+            canOpen("/customers")
+          }
           active={["/management", "/catalog", "/products", "/categories", "/inventory", "/sales", "/pos/sales", "/returns", "/refunds", "/shifts", "/expenses", "/customers", "/approvals"].some((path) => location.pathname === path || location.pathname.startsWith(`${path}/`))}
           badge={pendingApprovals}
           badgeLabel={t("approvals.pendingHint")}

@@ -47,6 +47,11 @@ export const LIVE_TABLES: readonly string[] = [
   "approval_rules",
   "campaigns",
   "coupons",
+  // 0049: per-governorate delivery pricing — a storefront document, no parents.
+  "delivery_zones",
+  // 0050: automatic discounts beside the storefront documents; targets ride
+  // with the order's children below (they point at their promotion).
+  "promotions",
   "store_faqs",
   "website_settings",
   // referenced by others
@@ -69,6 +74,7 @@ export const LIVE_TABLES: readonly string[] = [
   "online_orders",
   "sales_returns",
   // grandchildren
+  "promotion_targets",
   "sale_items",
   "sale_payments",
   "stock_movements",
@@ -80,6 +86,8 @@ export const LIVE_TABLES: readonly string[] = [
   "online_order_items",
   "order_events",
   "stock_reservations",
+  // 0050: usage history belongs to its order; restores with the order's children.
+  "promo_code_usages",
   "return_items",
   "refund_records",
   "approval_requests",
@@ -174,6 +182,13 @@ export const DEMO_STORES: readonly string[] = [
   "alyq.demo.store_reviews.v1",
   "alyq.demo.campaigns.v1",
   "alyq.demo.coupons.v1",
+  // 0049/0050: zones, automatic offers, their targets and the usage history —
+  // a restore without them is a shop that forgot what it charges for shipping
+  // and which discounts it promised.
+  "alyq.demo.delivery_zones.v1",
+  "alyq.demo.promotions.v1",
+  "alyq.demo.promotion_targets.v1",
+  "alyq.demo.promo_code_usages.v1",
   "alyq.demo.website_settings.v1",
   "alyq.demo.online_seeded.v1",
 ];

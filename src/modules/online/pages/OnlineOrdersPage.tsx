@@ -309,18 +309,23 @@ export function OnlineOrdersPage() {
               </option>
             ))}
           </SelectInput>
-          <div className="flex items-center gap-2">
+          {/* The date pair must shrink inside its grid cell: native date
+              controls carry an intrinsic minimum width, and without `min-w-0`
+              the pair forces the whole page wider on a phone. */}
+          <div className="flex min-w-0 items-center gap-2">
             <TextInput
               type="date"
               value={filter.from ?? ""}
               onChange={(event) => setFilter({ from: event.target.value || null })}
               aria-label={t("online.orders.fromDate")}
+              className="min-w-0"
             />
             <TextInput
               type="date"
               value={filter.to ?? ""}
               onChange={(event) => setFilter({ to: event.target.value || null })}
               aria-label={t("online.orders.toDate")}
+              className="min-w-0"
             />
           </div>
         </div>
@@ -536,13 +541,13 @@ export function OnlineOrdersPage() {
                 className="alyq-card w-full space-y-2 p-4 text-start"
               >
                 <div className="flex items-start justify-between gap-2">
-                  <span className="font-mono text-xs font-bold text-[#9a7a49]" dir="ltr">
+                  <span className="break-words font-mono text-xs font-bold text-[#9a7a49]" dir="ltr">
                     {order.order_number}
                   </span>
                   <Badge tone={STATUS_TONE[order.status]}>{t(`online.status.${order.status}`)}</Badge>
                 </div>
-                <p className="text-sm font-semibold text-stone-900">{order.customer_name}</p>
-                <p className="text-xs text-stone-500" dir="ltr">
+                <p className="break-words text-sm font-semibold text-stone-900">{order.customer_name}</p>
+                <p className="break-words text-xs text-stone-500" dir="ltr">
                   {order.customer_phone} · {date(order.created_at)}
                 </p>
                 <div className="flex items-center justify-between gap-2">

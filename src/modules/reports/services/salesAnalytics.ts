@@ -34,6 +34,7 @@
  */
 import { roundMoney } from "@/modules/expenses/validation";
 import { withinDateRange } from "@/lib/export";
+import { addUtcDays, dayStartUtcMs, utcDayKeyOfIso } from "@/lib/dates/calendarDays";
 import { PAYMENT_METHODS, type PaymentMethod, type Sale } from "@/modules/pos/types";
 import type { Product } from "@/modules/products/types";
 import type { Customer } from "@/modules/customers/types";
@@ -268,7 +269,7 @@ export function salesByPaymentMethod(sales: readonly Sale[]): PaymentMethodSales
 
 // ── sales trend ────────────────────────────────────────────────────────────
 export interface TrendPoint {
-  /** `yyyy-mm-dd`, in local time — the unit a shop thinks in. */
+  /** `yyyy-mm-dd`, in UTC — the unit every range, bound and bucket agrees on. */
   date: string;
   invoices: number;
   units: number;
@@ -276,12 +277,9 @@ export interface TrendPoint {
   discounts: number;
 }
 
-/** The local calendar day an ISO timestamp falls in. */
+/** The UTC calendar day an ISO timestamp falls in. */
 export function dayKeyOf(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "";
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  return utcDayKeyOfIso(iso);
 }
 
 /**
@@ -318,18 +316,19 @@ export function salesTrend(sales: readonly Sale[], range?: DateRange): TrendPoin
   }
 
   if (range?.from && range?.to) {
-    const from = new Date(`${range.from}T00:00:00`);
-    const to = new Date(`${range.to}T00:00:00`);
+    // UTC-day stepping (no local-midnight parsing, no DST drift): the fill
+    // keys are built by the same UTC calendar the filter and the buckets use.
+    const fromMs = dayStartUtcMs(range.from);
+    const toMs = dayStartUtcMs(range.to);
     // A guard as much as a limit: a typo'd range of ten years would otherwise
     // build four thousand empty points to draw a flat line.
     const MAX_DAYS = 400;
-    if (!Number.isNaN(from.getTime()) && !Number.isNaN(to.getTime()) && to >= from) {
-      const span = Math.round((to.getTime() - from.getTime()) / 86_400_000) + 1;
+    if (fromMs !== null && toMs !== null && toMs >= fromMs) {
+      const span = Math.round((toMs - fromMs) / 86_400_000) + 1;
       if (span <= MAX_DAYS) {
         for (let index = 0; index < span; index += 1) {
-          const day = new Date(from.getTime() + index * 86_400_000);
-          const pad = (n: number) => String(n).padStart(2, "0");
-          put(`${day.getFullYear()}-${pad(day.getMonth() + 1)}-${pad(day.getDate())}`);
+          const key = addUtcDays(range.from, index);
+          if (key) put(key);
         }
       }
     }

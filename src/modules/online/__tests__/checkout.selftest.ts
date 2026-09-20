@@ -282,6 +282,7 @@ test("a guest order sends the customer's fields and lines, and no price", async 
     address: ADDRESS,
     lines: [{ product_id: "prod-ring", qty: 1 }],
     coupon_code: null,
+    delivery_zone_id: null,
     payment_method: "cod",
     notes: "اتصل قبل التسليم",
   });
@@ -318,6 +319,15 @@ test("a real store_customers.id does travel", async () => {
   await repo(stub).placeOrder(guestOrder({ store_customer_id: id }));
 
   assert.equal((stub.payloads.p_payload as { store_customer_id: string }).store_customer_id, id);
+});
+
+test("a chosen delivery zone travels as delivery_zone_id, never as money", async () => {
+  const stub = makeStub();
+  await repo(stub).placeOrder(guestOrder({ delivery_zone_id: "dz-1" }));
+
+  const payload = stub.payloads.p_payload as Record<string, unknown>;
+  assert.equal(payload.delivery_zone_id, "dz-1");
+  assert.ok(!("delivery_fee" in payload) && !("discount_amount" in payload), "no money travels");
 });
 
 test("toStoreCustomerId accepts only a uuid, trimmed", () => {
@@ -468,6 +478,32 @@ test("a business refusal keeps its meaning instead of collapsing to the db code"
     {
       error: postgrestError({ code: "P0002", message: "Order not found" }),
       code: "order_not_found",
+    },
+    {
+      // The live "Mark completed" bug: the old server cast the action word
+      // straight into `online_order_status` (22P02). The operator reads the
+      // transition refusal, never the enum wording.
+      error: postgrestError({
+        code: "22P02",
+        message: 'invalid input value for enum online_order_status: "complete"',
+      }),
+      code: "status_transition_refused",
+    },
+    {
+      error: postgrestError({ code: "23514", message: "A cancelled order must be approved first" }),
+      code: "status_transition_refused",
+    },
+    {
+      error: postgrestError({ code: "23514", message: "This order is already completed" }),
+      code: "status_transition_refused",
+    },
+    {
+      error: postgrestError({ code: "23514", message: "A ready order cannot go back to processing" }),
+      code: "status_transition_refused",
+    },
+    {
+      error: postgrestError({ code: "23514", message: "Unknown action complete" }),
+      code: "status_transition_refused",
     },
   ];
 

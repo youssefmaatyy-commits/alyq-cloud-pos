@@ -10,13 +10,13 @@
  *   node scripts/test.e2e.mjs crash         # only scripts/crash.flow.mjs
  *   node scripts/test.e2e.mjs reports       # only scripts/reports.aggregates.mjs
  *
- * Each suite imports the bundle from `/tmp/alyq-app.mjs`, so the build step here
+ * Each suite imports the bundle from the OS temp dir (os.tmpdir()), so the build step here
  * is what the header comments of those files describe by hand. The exception is
- * `crash`, which bundles `scripts/lib/crash-entry.ts` to `/tmp/alyq-crash.mjs`
+  * `crash`, which bundles `scripts/lib/crash-entry.ts` to its own temp file
  * because it needs a component that throws on demand and the app has none, and
- * `reports`, which bundles `scripts/lib/reportAggregates-entry.ts` to
- * `/tmp/alyq-reports.mjs` because it compares the database's aggregates against
- * the shipped builder functions rather than against a rendered screen.
+  * `reports`, which bundles `scripts/lib/reportAggregates-entry.ts` to its own temp file because
+  * it compares the database's aggregates against the shipped builder functions rather than
+  * against a rendered screen.
  * Exit code 1 if a suite fails. Exits 2 without a bundle when esbuild is unavailable.
  */
 import { spawnSync } from "node:child_process";
@@ -53,6 +53,11 @@ const SUITES = [
     id: "storefront",
     file: "scripts/storefront.flow.mjs",
     title: "Storefront customization (Phase 45): builder → live shop window, AR/RTL, variant ring sells, checkout copy",
+  },
+  {
+    id: "promotions",
+    file: "scripts/promotions.flow.mjs",
+    title: "Promotions (Parts 9–11, 19–23): zones, automatic discounts, promo codes, discounted returns",
   },
   { id: "backup", file: "scripts/backup.flow.mjs", title: "Backup & recovery flow (snapshot, download, health, schedule, restore, permissions)" },
   {

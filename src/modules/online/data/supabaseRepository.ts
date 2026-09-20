@@ -21,14 +21,20 @@ import type {
   Campaign,
   Coupon,
   CustomerAddress,
+  DeliveryZone,
   OnlineOrder,
   OnlineOrderItem,
   OnlinePaymentMethod,
   OrderEvent,
   PaymentProofInput,
   PlaceOrderInput,
+  PriceSnapshot,
   ProductContent,
   ProductSpec,
+  PromoCodeUsage,
+  Promotion,
+  PromotionTarget,
+  PromotionTargetDraft,
   ResolveOrderInput,
   SettingsSaveInput,
   StockReservation,
@@ -43,6 +49,7 @@ import type {
   WebsiteSettings,
   WebsiteSettingsMeta,
 } from "../types";
+import { normalizeOrderStatus } from "../types";
 import { resolveSettings } from "../services/settingsDefaults";
 import { normalizeCouponCode } from "../services/pricing";
 import { slugifyAscii } from "../services/seo";
@@ -59,6 +66,7 @@ import {
   type CouponCheckReason,
   type CouponCheckResult,
   type CouponDraft,
+  type DeliveryZoneDraft,
   type FaqDraft,
   type MarketingSnapshot,
   type OnlineMode,
@@ -66,7 +74,10 @@ import {
   type OnlineOrdersRepository,
   type OrderCounts,
   type PlaceOrderResult,
+  type PricingPreview,
+  type PricingPreviewInput,
   type ProductContentDraft,
+  type PromotionDraft,
   type ReviewDraft,
   type StoreAccountsRepository,
   type StoreCustomerPatch,
@@ -91,6 +102,8 @@ interface OnlineOrderRow {
   subtotal: Numeric;
   discount_code: string | null;
   discount_amount: Numeric;
+  promotion_id: string | null;
+  price_snapshot: PriceSnapshot | Record<string, never> | null;
   delivery_fee: Numeric;
   total: Numeric;
   payment_method: string;
@@ -132,6 +145,7 @@ interface OnlineOrderItemRow {
   sku: string;
   barcode: string | null;
   unit_price: Numeric;
+  discounted_unit_price: Numeric;
   quantity: number;
   line_total: Numeric;
 }
@@ -195,12 +209,19 @@ interface StoreReviewRow {
 interface CouponRow {
   id: string;
   code: string;
+  title_en: string | null;
+  title_ar: string | null;
+  description_en: string | null;
+  description_ar: string | null;
   discount_type: Coupon["discount_type"];
   value: Numeric;
   min_subtotal: Numeric;
   max_discount: Numeric;
   usage_limit: number | null;
   used_count: number;
+  per_customer_limit: number | null;
+  first_order_only: boolean;
+  stackable: boolean;
   applies_to: Coupon["applies_to"];
   target_ids: string[] | null;
   active: boolean;
@@ -208,6 +229,58 @@ interface CouponRow {
   ends_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+interface DeliveryZoneRow {
+  id: string;
+  key: string;
+  name_en: string;
+  name_ar: string;
+  governorate_key: string | null;
+  shipping_fee: Numeric;
+  minimum_order_amount: Numeric;
+  free_shipping_threshold: Numeric;
+  estimated_delivery_text_en: string | null;
+  estimated_delivery_text_ar: string | null;
+  enabled: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+interface PromotionRow {
+  id: string;
+  enabled: boolean;
+  name_en: string;
+  name_ar: string;
+  description_en: string | null;
+  description_ar: string | null;
+  discount_type: string;
+  value: Numeric;
+  scope: string;
+  minimum_order_amount: Numeric;
+  maximum_discount_amount: Numeric;
+  starts_at: string | null;
+  ends_at: string | null;
+  priority: number;
+  stackable: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+interface PromotionTargetRow {
+  promotion_id: string;
+  target_kind: string;
+  target_id: string;
+  created_at: string;
+}
+
+interface PromoCodeUsageRow {
+  id: string;
+  coupon_id: string;
+  order_id: string;
+  customer_key: string;
+  used_at: string;
 }
 
 interface CampaignRow {
@@ -309,6 +382,10 @@ function mapItem(row: OnlineOrderItemRow): OnlineOrderItem {
     sku: row.sku,
     barcode: row.barcode ?? null,
     unit_price: toNumber(row.unit_price),
+    discounted_unit_price:
+      row.discounted_unit_price === null || row.discounted_unit_price === undefined
+        ? null
+        : toNumber(row.discounted_unit_price),
     quantity: row.quantity,
     line_total: toNumber(row.line_total),
   };
@@ -331,6 +408,13 @@ function mapOrder(
   items: OnlineOrderItemRow[] = [],
   events: OrderEventRow[] = [],
 ): OnlineOrder {
+  // The stored status must be an enum label: a server that still answers with
+  // an action word (or anything unexpected) becomes a typed refusal instead
+  // of a row the screens cannot render. Fail closed, never coerce.
+  const status = normalizeOrderStatus(row.status);
+  if (!status) {
+    throw new OnlineError("status_transition_refused", `Unknown order status: ${String(row.status)}`);
+  }
   return {
     id: row.id,
     order_number: row.order_number,
@@ -344,11 +428,13 @@ function mapOrder(
     subtotal: toNumber(row.subtotal),
     discount_code: row.discount_code ?? null,
     discount_amount: toNumber(row.discount_amount),
+    promotion_id: row.promotion_id ?? null,
+    price_snapshot: toPriceSnapshot(row.price_snapshot),
     delivery_fee: toNumber(row.delivery_fee),
     total: toNumber(row.total),
     payment_method: toOnlinePaymentMethod(row.payment_method),
     payment_status: row.payment_status,
-    status: row.status,
+    status,
     payment_reference: row.payment_reference ?? null,
     payment_proof_url: row.payment_proof_url ?? null,
     payment_submitted_at: row.payment_submitted_at ?? null,
@@ -434,12 +520,19 @@ function mapCoupon(row: CouponRow): Coupon {
   return {
     id: row.id,
     code: row.code,
+    title_en: row.title_en ?? "",
+    title_ar: row.title_ar ?? "",
+    description_en: row.description_en ?? null,
+    description_ar: row.description_ar ?? null,
     discount_type: row.discount_type,
     value: toNumber(row.value),
     min_subtotal: toNumber(row.min_subtotal),
     max_discount: row.max_discount == null ? null : toNumber(row.max_discount),
     usage_limit: row.usage_limit ?? null,
     used_count: row.used_count ?? 0,
+    per_customer_limit: row.per_customer_limit ?? null,
+    first_order_only: row.first_order_only ?? false,
+    stackable: row.stackable ?? false,
     applies_to: row.applies_to,
     target_ids: Array.isArray(row.target_ids) ? row.target_ids : [],
     active: row.active,
@@ -447,6 +540,81 @@ function mapCoupon(row: CouponRow): Coupon {
     ends_at: row.ends_at ?? null,
     created_at: row.created_at,
     updated_at: row.updated_at,
+  };
+}
+
+/** The stored snapshot, or null for legacy rows (written as `{}`). */
+function toPriceSnapshot(raw: unknown): PriceSnapshot | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const record = raw as Record<string, unknown>;
+  if (Object.keys(record).length === 0) return null;
+  return record as unknown as PriceSnapshot;
+}
+
+function mapDeliveryZone(row: DeliveryZoneRow): DeliveryZone {
+  return {
+    id: row.id,
+    key: row.key,
+    name_en: row.name_en,
+    name_ar: row.name_ar,
+    governorate_key: row.governorate_key ?? null,
+    shipping_fee: toNumber(row.shipping_fee),
+    minimum_order_amount: toNumber(row.minimum_order_amount),
+    free_shipping_threshold:
+      row.free_shipping_threshold === null || row.free_shipping_threshold === undefined
+        ? null
+        : toNumber(row.free_shipping_threshold),
+    estimated_delivery_text_en: row.estimated_delivery_text_en ?? null,
+    estimated_delivery_text_ar: row.estimated_delivery_text_ar ?? null,
+    enabled: row.enabled,
+    sort_order: row.sort_order ?? 0,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+function mapPromotion(row: PromotionRow): Promotion {
+  const scope: Promotion["scope"] =
+    row.scope === "category" || row.scope === "product" || row.scope === "variant"
+      ? row.scope
+      : "store";
+  return {
+    id: row.id,
+    enabled: row.enabled,
+    name_en: row.name_en,
+    name_ar: row.name_ar,
+    description_en: row.description_en ?? null,
+    description_ar: row.description_ar ?? null,
+    discount_type: row.discount_type === "fixed" ? "fixed" : "percent",
+    value: toNumber(row.value),
+    scope,
+    minimum_order_amount: toNumber(row.minimum_order_amount),
+    maximum_discount_amount:
+      row.maximum_discount_amount === null || row.maximum_discount_amount === undefined
+        ? null
+        : toNumber(row.maximum_discount_amount),
+    starts_at: row.starts_at ?? null,
+    ends_at: row.ends_at ?? null,
+    priority: row.priority ?? 0,
+    stackable: row.stackable ?? false,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+function mapPromotionTarget(row: PromotionTargetRow): PromotionTarget {
+  const kind: PromotionTarget["target_kind"] =
+    row.target_kind === "product" || row.target_kind === "variant" ? row.target_kind : "category";
+  return { promotion_id: row.promotion_id, target_kind: kind, target_id: row.target_id, created_at: row.created_at };
+}
+
+function mapPromoCodeUsage(row: PromoCodeUsageRow): PromoCodeUsage {
+  return {
+    id: row.id,
+    coupon_id: row.coupon_id,
+    order_id: row.order_id,
+    customer_key: row.customer_key,
+    used_at: row.used_at,
   };
 }
 
@@ -585,6 +753,24 @@ export class SupabaseOnlineRepository
         (itemRows as OnlineOrderItemRow[] | null) ?? [],
         (eventRows as OrderEventRow[] | null) ?? [],
       );
+    } catch (error) {
+      throw toOnlineError(error);
+    }
+  }
+
+  async getOrderBySaleId(saleId: string): Promise<OnlineOrder | null> {
+    try {
+      const client = this.require();
+      const { data, error } = await client
+        .from("online_orders")
+        .select("id")
+        .eq("sale_id", saleId)
+        .limit(1)
+        .maybeSingle();
+      if (error) throw toOnlineError(error);
+      const id = (data as { id?: string } | null)?.id;
+      if (!id) return null;
+      return this.getOrder(id);
     } catch (error) {
       throw toOnlineError(error);
     }
@@ -737,6 +923,9 @@ export class SupabaseOnlineRepository
           address: input.address ?? {},
           lines: input.lines,
           coupon_code: input.coupon_code ? normalizeCouponCode(input.coupon_code) : null,
+          // The zone the customer chose (or null for pickup / legacy shops).
+          // The server prices from the row; no fee ever travels from the browser.
+          delivery_zone_id: input.delivery_zone_id ?? null,
           payment_method: input.payment_method,
           notes: input.notes ?? null,
         },
@@ -884,14 +1073,18 @@ export class SupabaseOnlineRepository
       // five times. Coupons are not read here: they are staff-only rows, and a
       // visitor validates a typed code through `checkCoupon` instead.
       this.require();
-      const [settings, contents, faqs, reviews, campaigns, categoryContents] = await Promise.all([
-        this.readSettingsRow(),
-        this.listProductContents(),
-        this.listFaqs(),
-        this.listReviews(),
-        this.listCampaigns(),
-        this.listCategoryContents(),
-      ]);
+      const [settings, contents, faqs, reviews, campaigns, categoryContents, deliveryZones, promotions, promotionTargets] =
+        await Promise.all([
+          this.readSettingsRow(),
+          this.listProductContents(),
+          this.listFaqs(),
+          this.listReviews(),
+          this.listCampaigns(),
+          this.listCategoryContents(),
+          this.listDeliveryZones(),
+          this.listPromotions(),
+          this.listAllPromotionTargets(),
+        ]);
       return {
         settings: settings.settings,
         meta: settings.meta,
@@ -900,6 +1093,9 @@ export class SupabaseOnlineRepository
         reviews,
         campaigns,
         categoryContents,
+        deliveryZones: deliveryZones.filter((zone) => zone.enabled),
+        promotions,
+        promotionTargets,
       };
     } catch (error) {
       throw toOnlineError(error);
@@ -909,11 +1105,13 @@ export class SupabaseOnlineRepository
   async getMarketing(): Promise<MarketingSnapshot> {
     try {
       this.require();
-      const [coupons, campaigns] = await Promise.all([
+      const [coupons, campaigns, promotions, promotionTargets] = await Promise.all([
         this.listCoupons(),
         this.listCampaigns(),
+        this.listPromotions(),
+        this.listAllPromotionTargets(),
       ]);
-      return { coupons, campaigns };
+      return { coupons, campaigns, promotions, promotionTargets };
     } catch (error) {
       throw toOnlineError(error);
     }
@@ -959,6 +1157,57 @@ export class SupabaseOnlineRepository
         discount: toNumber(result.discount ?? 0),
         discountType: result.discount_type ?? "percent",
         value: toNumber(result.value ?? 0),
+      };
+    } catch (error) {
+      throw toOnlineError(error);
+    }
+  }
+
+  async previewPricing(input: PricingPreviewInput): Promise<PricingPreview> {
+    try {
+      const client = this.require();
+      const { data, error } = await client.rpc("preview_storefront_pricing", {
+        p_lines: input.lines.map((line) => ({
+          product_id: line.product_id,
+          variant_id: line.variant_id ?? null,
+          qty: line.qty,
+        })),
+        p_promo_code: input.couponCode ? normalizeCouponCode(input.couponCode) : null,
+        p_zone_id: input.deliveryZoneId ?? null,
+        p_customer_key: input.customerKey ?? null,
+        p_delivery_type: input.deliveryType,
+      });
+      if (error) throw toOnlineError(error);
+      const breakdown = (data ?? {}) as Record<string, unknown>;
+      const num = (value: unknown): number => toNumber(value as Numeric);
+      const lines = Array.isArray(breakdown.lines)
+        ? (breakdown.lines as Record<string, unknown>[]).map((line) => ({
+            product_id: String(line.product_id ?? ""),
+            variant_id: (line.variant_id as string | null) ?? null,
+            qty: Number(line.qty ?? 0),
+            unit_price: num(line.unit_price),
+            line_total: num(line.line_total),
+            discounted_unit_price: num(line.discounted_unit_price),
+          }))
+        : [];
+      return {
+        subtotal: num(breakdown.subtotal),
+        autoDiscount: num(breakdown.auto_discount),
+        autoPromotionId: (breakdown.auto_promotion_id as string | null) ?? null,
+        autoPromotionName: (breakdown.auto_promotion_name as string | null) ?? null,
+        promoCode: (breakdown.promo_code as string | null) ?? null,
+        promoValid: (breakdown.promo_code as string | null) != null,
+        promoReason: null,
+        promoDiscount: num(breakdown.promo_discount),
+        promoFreeShipping: breakdown.promo_free_shipping === true,
+        deliveryFee: num(breakdown.delivery_fee),
+        shippingDiscount: num(breakdown.shipping_discount),
+        shippingSource: String(breakdown.shipping_source ?? ""),
+        zoneId: (breakdown.zone_id as string | null) ?? null,
+        zoneName: (breakdown.zone_name as string | null) ?? null,
+        totalDiscount: num(breakdown.total_discount),
+        total: num(breakdown.total),
+        lines,
       };
     } catch (error) {
       throw toOnlineError(error);
@@ -1304,11 +1553,18 @@ export class SupabaseOnlineRepository
       const payload = {
         ...(draft.id ? { id: draft.id } : {}),
         code,
+        title_en: draft.title_en ?? "",
+        title_ar: draft.title_ar ?? "",
+        description_en: draft.description_en ?? null,
+        description_ar: draft.description_ar ?? null,
         discount_type: draft.discount_type ?? "percent",
         value: Math.max(draft.value ?? 0, 0),
         min_subtotal: Math.max(draft.min_subtotal ?? 0, 0),
         max_discount: draft.max_discount ?? null,
         usage_limit: draft.usage_limit ?? null,
+        per_customer_limit: draft.per_customer_limit ?? null,
+        first_order_only: draft.first_order_only ?? false,
+        stackable: draft.stackable ?? false,
         applies_to: draft.applies_to ?? "all",
         target_ids: draft.target_ids ?? [],
         active: draft.active ?? true,
@@ -1380,6 +1636,171 @@ export class SupabaseOnlineRepository
       const client = this.require();
       const { error } = await client.from("campaigns").delete().eq("id", id);
       if (error) throw toOnlineError(error);
+    } catch (error) {
+      throw toOnlineError(error);
+    }
+  }
+
+  // ── delivery zones: admin-owned per-governorate pricing ────────────────────
+
+  async listDeliveryZones(): Promise<DeliveryZone[]> {
+    try {
+      const client = this.require();
+      const { data, error } = await client
+        .from("delivery_zones")
+        .select("*")
+        .order("sort_order", { ascending: true });
+      if (error) throw toOnlineError(error);
+      return ((data as DeliveryZoneRow[] | null) ?? []).map(mapDeliveryZone);
+    } catch (error) {
+      throw toOnlineError(error);
+    }
+  }
+
+  async saveDeliveryZone(draft: DeliveryZoneDraft): Promise<DeliveryZone> {
+    try {
+      const client = this.require();
+      const key = (draft.key ?? "").trim().toLowerCase();
+      if (!key) throw new OnlineError("db", "A zone needs a key", { field: "key" });
+      const payload = {
+        ...(draft.id ? { id: draft.id } : {}),
+        key,
+        name_en: draft.name_en ?? "",
+        name_ar: draft.name_ar ?? "",
+        governorate_key: draft.governorate_key ?? null,
+        shipping_fee: Math.max(draft.shipping_fee ?? 0, 0),
+        minimum_order_amount: Math.max(draft.minimum_order_amount ?? 0, 0),
+        free_shipping_threshold: draft.free_shipping_threshold ?? null,
+        estimated_delivery_text_en: draft.estimated_delivery_text_en ?? null,
+        estimated_delivery_text_ar: draft.estimated_delivery_text_ar ?? null,
+        enabled: draft.enabled ?? true,
+        sort_order: draft.sort_order ?? 0,
+        updated_at: new Date().toISOString(),
+      };
+      const { data, error } = await client.from("delivery_zones").upsert(payload).select().single();
+      if (error) throw toOnlineError(error);
+      return mapDeliveryZone(data as DeliveryZoneRow);
+    } catch (error) {
+      throw toOnlineError(error);
+    }
+  }
+
+  async deleteDeliveryZone(id: string): Promise<void> {
+    try {
+      const client = this.require();
+      const { error } = await client.from("delivery_zones").delete().eq("id", id);
+      if (error) throw toOnlineError(error);
+    } catch (error) {
+      throw toOnlineError(error);
+    }
+  }
+
+  // ── automatic promotions ──────────────────────────────────────────────────
+
+  async listPromotions(): Promise<Promotion[]> {
+    try {
+      const client = this.require();
+      const { data, error } = await client
+        .from("promotions")
+        .select("*")
+        .order("priority", { ascending: false });
+      if (error) throw toOnlineError(error);
+      return ((data as PromotionRow[] | null) ?? []).map(mapPromotion);
+    } catch (error) {
+      throw toOnlineError(error);
+    }
+  }
+
+  async listPromotionTargets(promotionId: string): Promise<PromotionTarget[]> {
+    try {
+      const client = this.require();
+      const { data, error } = await client
+        .from("promotion_targets")
+        .select("*")
+        .eq("promotion_id", promotionId);
+      if (error) throw toOnlineError(error);
+      return ((data as PromotionTargetRow[] | null) ?? []).map(mapPromotionTarget);
+    } catch (error) {
+      throw toOnlineError(error);
+    }
+  }
+
+  /** Every target row (the snapshot and marketing screens read the whole map). */
+  private async listAllPromotionTargets(): Promise<PromotionTarget[]> {
+    const client = this.require();
+    const { data, error } = await client.from("promotion_targets").select("*");
+    if (error) throw toOnlineError(error);
+    return ((data as PromotionTargetRow[] | null) ?? []).map(mapPromotionTarget);
+  }
+
+  async savePromotion(draft: PromotionDraft, targets: PromotionTargetDraft[]): Promise<Promotion> {
+    try {
+      const client = this.require();
+      const scope = draft.scope ?? "store";
+      const cleanTargets = (scope === "store" ? [] : targets)
+        .filter((target) => target.target_id.trim())
+        .map((target) => ({ target_kind: target.target_kind, target_id: target.target_id.trim() }));
+      if (scope !== "store" && cleanTargets.length === 0) {
+        throw new OnlineError("db", "A targeted promotion needs at least one target", {
+          field: "scope",
+        });
+      }
+      const payload = {
+        ...(draft.id ? { id: draft.id } : {}),
+        enabled: draft.enabled ?? true,
+        name_en: draft.name_en ?? "",
+        name_ar: draft.name_ar ?? "",
+        description_en: draft.description_en ?? null,
+        description_ar: draft.description_ar ?? null,
+        discount_type: draft.discount_type ?? "percent",
+        value: Math.max(draft.value ?? 0, 0),
+        scope,
+        minimum_order_amount: Math.max(draft.minimum_order_amount ?? 0, 0),
+        maximum_discount_amount: draft.maximum_discount_amount ?? null,
+        starts_at: draft.starts_at ?? null,
+        ends_at: draft.ends_at ?? null,
+        priority: draft.priority ?? 0,
+        stackable: draft.stackable ?? false,
+        updated_at: new Date().toISOString(),
+      };
+      const { data, error } = await client.from("promotions").upsert(payload).select().single();
+      if (error) throw toOnlineError(error);
+      const saved = mapPromotion(data as PromotionRow);
+      const { error: clearError } = await client
+        .from("promotion_targets")
+        .delete()
+        .eq("promotion_id", saved.id);
+      if (clearError) throw toOnlineError(clearError);
+      if (cleanTargets.length > 0) {
+        const { error: insertError } = await client
+          .from("promotion_targets")
+          .insert(cleanTargets.map((target) => ({ promotion_id: saved.id, ...target })));
+        if (insertError) throw toOnlineError(insertError);
+      }
+      return saved;
+    } catch (error) {
+      throw toOnlineError(error);
+    }
+  }
+
+  async deletePromotion(id: string): Promise<void> {
+    try {
+      const client = this.require();
+      const { error } = await client.from("promotions").delete().eq("id", id);
+      if (error) throw toOnlineError(error);
+    } catch (error) {
+      throw toOnlineError(error);
+    }
+  }
+
+  async listPromoCodeUsages(couponId?: string): Promise<PromoCodeUsage[]> {
+    try {
+      const client = this.require();
+      let query = client.from("promo_code_usages").select("*").order("used_at", { ascending: false });
+      if (couponId) query = query.eq("coupon_id", couponId);
+      const { data, error } = await query;
+      if (error) throw toOnlineError(error);
+      return ((data as PromoCodeUsageRow[] | null) ?? []).map(mapPromoCodeUsage);
     } catch (error) {
       throw toOnlineError(error);
     }

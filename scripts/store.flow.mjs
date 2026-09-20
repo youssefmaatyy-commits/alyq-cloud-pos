@@ -24,12 +24,13 @@
  * localStorage-only, so a shopper's browser should never reach a backend here.
  *
  * Build the bundle first, then run this file:
- *   npm run test:bundle                 # → /tmp/alyq-app.mjs
+  *   npm run test:bundle                 # → os.tmpdir()/alyq-app.mjs
  *   node scripts/store.flow.mjs
  * or let the runner do both: `npm run test:e2e store`.
  */
 import { JSDOM } from "jsdom";
 import assert from "node:assert/strict";
+import { bundleFileUrl } from "./lib/app-bundle.mjs";
 
 const dom = new JSDOM('<!doctype html><html lang="en"><body><div id="root"></div></body></html>', {
   url: "http://localhost/",
@@ -132,7 +133,7 @@ process.on("unhandledRejection", (reason) => {
   errors.push(`unhandledRejection: ${reason?.stack ?? String(reason)}`);
 });
 
-await import("/tmp/alyq-app.mjs");
+await import(bundleFileUrl());
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 
@@ -305,6 +306,7 @@ async function placeOrderThroughTheStore({
   fulfilment = "Pickup",
   phone = "01001234567",
   address = null,
+  zone = null,
 } = {}) {
   await navigate("#/store/checkout", 700);
   await waitFor(() => bodyText().includes("Checkout"), { label: "the checkout page" });
@@ -326,6 +328,21 @@ async function placeOrderThroughTheStore({
     setField("input[autocomplete='address-level3']", address.area);
     setField("input[autocomplete='street-address']", address.street);
     await sleep(250);
+  }
+
+  if (zone) {
+    // Delivery zones are an explicit choice: nothing is preselected, so the
+    // order names the zone whose governorate the address is in.
+    const picker = document.querySelector('[data-testid="checkout-zone-picker"]');
+    assert.ok(picker, "the zone picker is offered for delivery");
+    const label = [...picker.querySelectorAll("label")].find((l) =>
+      (l.textContent ?? "").includes(zone),
+    );
+    assert.ok(label, `the ${zone} zone is offered`);
+    const radio = label.querySelector('input[type="radio"]');
+    assert.ok(radio, "the zone radio exists");
+    radio.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+    await sleep(300);
   }
 
   const radio = document.querySelector(`input[name="payment"][value="${payment}"]`);
@@ -1112,8 +1129,23 @@ async function main() {
   const deliveryFee = deliverySettings.fee ?? 0;
   const deliveryThreshold = deliverySettings.free_delivery_threshold;
   const goodsOf = (order) => Math.round((order.subtotal - order.discount_amount) * 100) / 100;
+  // The fee follows the zone the ORDER carries — the one the customer picked —
+  // waived at that zone's threshold. Only a zone-less order falls back to the
+  // legacy shop settings (shops with no zones configured).
+  const deliveryZones = () => readJson("alyq.demo.delivery_zones.v1") ?? [];
   const expectedDeliveryFee = (order) => {
     const goods = goodsOf(order);
+    // The zone rides on the order's address (and its price snapshot), never
+    // as a top-level field.
+    const zoneId = order.address?.zone_id ?? order.price_snapshot?.zone_id ?? null;
+    const zone = deliveryZones().find((z) => z.id === zoneId);
+    if (zone) {
+      const threshold = zone.free_shipping_threshold;
+      if (threshold !== null && threshold !== undefined && threshold > 0 && goods >= threshold) {
+        return 0;
+      }
+      return zone.shipping_fee;
+    }
     if (deliveryThreshold !== null && deliveryThreshold !== undefined && deliveryThreshold > 0 && goods >= deliveryThreshold) {
       return 0;
     }
@@ -1162,7 +1194,7 @@ async function main() {
   console.log("  ✓ with delivery switched off the checkout explains it and offers pickup only");
 
   // Switched back on: both channels are offered, and a delivery order carries
-  // the shop's fee and the whole address.
+  // its chosen zone's fee and the whole address.
   await navigate("#/online/website", 900);
   clickExact("Delivery & payment");
   await waitFor(() => bodyText().includes("Payment methods"), { label: "the payment methods section" });
@@ -1175,6 +1207,7 @@ async function main() {
   const { number: deliveryNumber, order: deliveryOrder } = await placeOrderThroughTheStore({
     fulfilment: "Delivery",
     address: courierAddress,
+    zone: "Cairo",
   });
   assert.ok(deliveryOrder, `${deliveryNumber} was written`);
   assert.equal(deliveryOrder.delivery_type, "delivery");
@@ -1203,6 +1236,7 @@ async function main() {
     payment: "instapay",
     fulfilment: "Delivery",
     address: { city: "الإسماعيلية", area: "حي الأربعين", street: "شارع السلطان حسين" },
+    zone: "Ismailia",
   });
   assert.ok(deliveryPayOrder, `${deliveryPayNumber} was written`);
   assert.equal(deliveryPayOrder.delivery_type, "delivery");

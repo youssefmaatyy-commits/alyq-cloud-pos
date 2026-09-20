@@ -160,6 +160,23 @@ export const AUDIT_ACTIONS = [
   "restore.completed",
   "restore.failed",
   "health.check_run",
+  // Delivery zones (0049). Creating a zone and changing one (fee, minimum,
+  // threshold, deactivation) decide what customers pay, so both are trail
+  // events — written by the website service in demo mode, and by the admin's
+  // own writes through the manage_website RLS gate in live mode.
+  "delivery_zone.created",
+  "delivery_zone.changed",
+  // Promotions (0050). Creating a discount or a code, changing one, and
+  // switching one on or off decide what customers pay — each lands on the
+  // trail with the values in `details`, from the website service in both modes
+  // (admin writes go through the manage_website RLS gate live).
+  "promotion.created",
+  "promotion.changed",
+  "promotion.activated",
+  "promotion.deactivated",
+  "promo_code.created",
+  "promo_code.changed",
+  "promo_code.disabled",
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -201,6 +218,12 @@ export const AUDIT_ENTITIES = [
   "backup",
   /** Phase 47: the Danger Zone — the installation itself (a reset event). */
   "system",
+  /** A delivery zone (`delivery_zones`) — what a governorate pays for shipping. */
+  "delivery_zone",
+  /** An automatic discount (`promotions`) — the storewide sale and its kin. */
+  "promotion",
+  /** A promo code (`coupons`) — created, changed or switched off. */
+  "promo_code",
 ] as const;
 export type AuditEntity = (typeof AUDIT_ENTITIES)[number];
 

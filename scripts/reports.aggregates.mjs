@@ -34,8 +34,10 @@
  *     product a row, so a left join is required, not an inner one;
  *   • an untracked product holding stock — stockValue uses the RAW quantity
  *     while `stock` is gated on tracking, and the two must disagree;
- *   • day bucketing at a non-UTC offset — dayKeyOf() is the shop's local day, so
- *     the database is told the offset rather than left to guess UTC;
+  *   • day bucketing under a non-UTC host timezone — the builders bucket by
+  *     the UTC calendar day, so the database is asked for UTC too, and a
+  *     second query in the host zone proves the zone parameter is
+  *     load-bearing rather than decoration;
  *   • an empty window — zeros and empty arrays, not nulls and not an error;
  *   • who may ask — every RPC is gated by public.can('view_reports').
  *
@@ -47,13 +49,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 // The shop is in Cairo, not in UTC, and the sandbox usually is. Pinning the
-// timezone makes the day-bucketing comparison mean something: `dayKeyOf` and
-// `withinDateRange` are local-day functions, so on a UTC host they would agree
-// with a UTC-bucketing database for the wrong reason and the offset parameter
-// would go untested. Cairo is the interesting choice precisely because Egypt
-// DOES observe daylight saving — +2 in winter, +3 in summer — so a window that
-// spans the change is the one case a fixed UTC offset cannot represent. That is
-// not a hypothetical: it is what the first draft of migration 0032 got wrong.
+// timezone proves the UTC-day contract holds where it matters: `dayKeyOf`,
+// `withinDateRange` and `toTimestampBounds` bucket by the UTC calendar day, so
+// on a Cairo host they must agree with a UTC-bucketing database for the right
+// reason, and the host-zone comparison in §6 must still move invoices between
+// days. Cairo is the interesting choice precisely because Egypt DOES observe
+// daylight saving — +2 in winter, +3 in summer — so the cross-zone proof
+// cannot be faked with a fixed offset. That is not a hypothetical: it is what
+// the first draft of migration 0032 got wrong.
 process.env.TZ = process.env.ALYQ_TEST_TZ || "Africa/Cairo";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -199,12 +202,12 @@ await db.exec(
   "grant insert, update, delete on public.products, public.categories, public.stock_movements, public.expenses to authenticated",
 );
 
-const { buildAppBundle } = await import("./lib/app-bundle.mjs");
+const { buildAppBundle, bundleFileUrl } = await import("./lib/app-bundle.mjs");
 await buildAppBundle({
   outfile: BUNDLE,
   entryPoint: path.join(ROOT, "scripts/lib/reportAggregates-entry.ts"),
 });
-const TS = await import(`${BUNDLE}?run=${Date.now()}`);
+const TS = await import(bundleFileUrl(BUNDLE, `run=${Date.now()}`));
 console.log(`${c.dim("bundled the shipped builders from src/ →")} ${BUNDLE}`);
 
 // The real seeded staff. Fixtures are attributed to actual profiles so the
@@ -671,7 +674,9 @@ for (const { label, range } of RANGES) {
     [
       "sales",
       `select public.reports_sales_summary($1::timestamptz, $2::timestamptz, $3) as reports`,
-      [bounds.from ?? null, bounds.to ?? null, ZONE],
+      // UTC, like the TypeScript builders: the differential compares two
+      // bucketings of the same days, so both sides must bucket the same day.
+      [bounds.from ?? null, bounds.to ?? null, "UTC"],
     ],
     [
       "product",
@@ -681,7 +686,8 @@ for (const { label, range } of RANGES) {
     [
       "expense",
       `select public.reports_expense_summary($1::timestamptz, $2::timestamptz, $3) as reports`,
-      [bounds.from ?? null, bounds.to ?? null, ZONE],
+      // UTC, like the TypeScript builders (see the sales call above).
+      [bounds.from ?? null, bounds.to ?? null, "UTC"],
     ],
   ]);
 
@@ -851,37 +857,37 @@ head("5 · The 1,000-row cap — what the browser sees today vs what the databas
   agree("the database returns the FULL figures, not the truncated ones", tsFull, sqlFull);
 }
 
-// ── 6 · day bucketing is the caller's day, not UTC ──────────────────────────
-head("6 · Day bucketing — the shop's local day, told to the database as a timezone name");
+// ── 6 · day bucketing is the UTC day, and the zone parameter proves it ──────
+head("6 · Day bucketing — the UTC day on both sides, the zone parameter load-bearing");
 {
   const range = { from: "2026-06-01", to: "2026-06-30" };
   const bounds = TS.toTimestampBounds(range);
   const salesW = SALES.filter((s) => inWindow(s.created_at, range));
   const tsTrend = TS.salesTrend(salesW, range);
 
-  const atOffset = (
+  const atUtc = (
     await rpc(ADMIN.id, "authenticated", [
       ["trend", `select public.reports_sales_summary($1::timestamptz,$2::timestamptz,$3) as reports`,
-        [bounds.from, bounds.to, ZONE]],
+        [bounds.from, bounds.to, "UTC"]],
     ])
   ).trend?.byDay;
-  agree(`byDay in the shop's own zone (${ZONE})`, tsTrend, atOffset);
+  agree(`byDay in UTC — the contract both sides share`, tsTrend, atUtc);
 
-  // And the parameter must actually matter: asking for UTC in a shop that is not
-  // in UTC has to move invoices between days, or the zone name is decoration.
+  // And the parameter must actually matter: asking in the shop's own zone has
+  // to move small-hours invoices between days, or the zone name is decoration.
   if (ZONE !== "UTC") {
-    const atUtc = (
+    const atZone = (
       await rpc(ADMIN.id, "authenticated", [
         ["trend", `select public.reports_sales_summary($1::timestamptz,$2::timestamptz,$3) as reports`,
-          [bounds.from, bounds.to, 0]],
+          [bounds.from, bounds.to, ZONE]],
       ])
     ).trend?.byDay;
-    const differs = JSON.stringify(atUtc) !== JSON.stringify(atOffset);
-    if (differs) ok(`p_timezone is load-bearing: bucketing the same window in UTC moves invoices between days`);
+    const differs = JSON.stringify(atZone) !== JSON.stringify(atUtc);
+    if (differs) ok(`p_timezone is load-bearing: bucketing the same window in ${ZONE} moves invoices between days`);
     else
       no(
         "p_timezone changed nothing",
-        "either the window holds no late-evening invoice or the zone name is ignored",
+        "either the window holds no small-hours invoice or the zone name is ignored",
       );
   } else {
     console.log(c.dim("  (host timezone is UTC — the cross-zone comparison is skipped)"));

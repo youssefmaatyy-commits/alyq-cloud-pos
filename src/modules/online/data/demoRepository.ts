@@ -35,13 +35,19 @@ import type {
   Campaign,
   Coupon,
   CustomerAddress,
+  DeliveryZone,
   OnlineOrder,
   OnlineOrderItem,
   OrderEvent,
   OrderEventKind,
   PaymentProofInput,
   PlaceOrderInput,
+  PriceSnapshot,
   ProductContent,
+  PromoCodeUsage,
+  Promotion,
+  PromotionTarget,
+  PromotionTargetDraft,
   ResolveOrderInput,
   SettingsSaveInput,
   StockReservation,
@@ -56,17 +62,17 @@ import type {
   WebsiteSettings,
   WebsiteSettingsMeta,
 } from "../types";
-import { formatOrderNumber } from "../types";
+import { ORDER_ACTION_TO_STATUS, formatOrderNumber } from "../types";
 import {
   DEFAULT_WEBSITE_SETTINGS,
   mergeSettings,
   resolveSettings,
 } from "../services/settingsDefaults";
 import {
-  checkCoupon,
+  checkPromoCode,
+  customerKeyFor,
   deliveryAreaSupported,
-  deliveryFeeFor,
-  deliveryMinimumShortfall,
+  evaluateCartPricing,
   normalizeCouponCode,
   priceCart,
   round2,
@@ -94,12 +100,16 @@ import {
   type CouponCheckReason,
   type CouponCheckResult,
   type CouponDraft,
+  type DeliveryZoneDraft,
   type FaqDraft,
   type MarketingSnapshot,
   type OnlineOrderFilter,
   type OrderCounts,
   type PlaceOrderResult,
+  type PricingPreview,
+  type PricingPreviewInput,
   type ProductContentDraft,
+  type PromotionDraft,
   type ReviewDraft,
   type StoreCustomerPatch,
   type WebsiteSnapshot,
@@ -119,6 +129,10 @@ const KEYS = {
   reviews: "alyq.demo.store_reviews.v1",
   coupons: "alyq.demo.coupons.v1",
   campaigns: "alyq.demo.campaigns.v1",
+  deliveryZones: "alyq.demo.delivery_zones.v1",
+  promotions: "alyq.demo.promotions.v1",
+  promotionTargets: "alyq.demo.promotion_targets.v1",
+  promoUsages: "alyq.demo.promo_code_usages.v1",
   seeded: "alyq.demo.online_seeded.v1",
 } as const;
 
@@ -138,6 +152,24 @@ function resolveValue<T>(value: T): T {
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+/**
+ * Rows written before the promotion fields existed gain their defaults, so an
+ * installation seeded by an older release behaves like a fresh one. New rows
+ * always carry every field (see `saveCoupon`).
+ */
+function normalizeCoupon(stored: Coupon): Coupon {
+  return {
+    ...stored,
+    title_en: stored.title_en ?? "",
+    title_ar: stored.title_ar ?? "",
+    description_en: stored.description_en ?? null,
+    description_ar: stored.description_ar ?? null,
+    per_customer_limit: stored.per_customer_limit ?? null,
+    first_order_only: stored.first_order_only ?? false,
+    stackable: stored.stackable ?? false,
+  };
 }
 
 /** Units an order's lines ask for of one product, or `null` when it is not in the order. */
@@ -280,12 +312,19 @@ function seedContent(products: readonly Product[]) {
       {
         id: newId("cpn"),
         code: "WELCOME10",
+        title_en: "Welcome discount",
+        title_ar: "خصم الترحيب",
+        description_en: null,
+        description_ar: null,
         discount_type: "percent",
         value: 10,
         min_subtotal: 200,
         max_discount: 150,
         usage_limit: 100,
         used_count: 0,
+        per_customer_limit: null,
+        first_order_only: false,
+        stackable: false,
         applies_to: "all",
         target_ids: [],
         active: true,
@@ -296,6 +335,54 @@ function seedContent(products: readonly Product[]) {
       },
     ];
     write(KEYS.coupons, coupons);
+  }
+
+  // The house delivery pricing, mirroring the 0049 seed rows: the demo shop
+  // and a fresh live project open with the same four choices, and the admin
+  // edits them the same way in both modes.
+  if (safeStorage.get(KEYS.deliveryZones) === null) {
+    const at = nowIso();
+    const zones: DeliveryZone[] = [
+      {
+        id: newId("dz"), key: "ismailia", name_en: "Ismailia", name_ar: "الإسماعيلية",
+        governorate_key: "ismailia", shipping_fee: 0, minimum_order_amount: 0,
+        free_shipping_threshold: null, estimated_delivery_text_en: "Same-day delivery",
+        estimated_delivery_text_ar: "توصيل في نفس اليوم", enabled: true, sort_order: 10,
+        created_at: at, updated_at: at,
+      },
+      {
+        id: newId("dz"), key: "cairo", name_en: "Cairo", name_ar: "القاهرة",
+        governorate_key: "cairo", shipping_fee: 70, minimum_order_amount: 0,
+        free_shipping_threshold: null, estimated_delivery_text_en: "1–2 business days",
+        estimated_delivery_text_ar: "١–٢ يوم عمل", enabled: true, sort_order: 20,
+        created_at: at, updated_at: at,
+      },
+      {
+        id: newId("dz"), key: "suez", name_en: "Suez", name_ar: "السويس",
+        governorate_key: "suez", shipping_fee: 50, minimum_order_amount: 0,
+        free_shipping_threshold: null, estimated_delivery_text_en: "1–2 business days",
+        estimated_delivery_text_ar: "١–٢ يوم عمل", enabled: true, sort_order: 30,
+        created_at: at, updated_at: at,
+      },
+      {
+        id: newId("dz"), key: "other", name_en: "Other governorates", name_ar: "باقي المحافظات",
+        governorate_key: null, shipping_fee: 80, minimum_order_amount: 0,
+        free_shipping_threshold: null, estimated_delivery_text_en: "2–4 business days",
+        estimated_delivery_text_ar: "٢–٤ يوم عمل", enabled: true, sort_order: 100,
+        created_at: at, updated_at: at,
+      },
+    ];
+    write(KEYS.deliveryZones, zones);
+  }
+
+  if (safeStorage.get(KEYS.promotions) === null) {
+    write(KEYS.promotions, []);
+  }
+  if (safeStorage.get(KEYS.promotionTargets) === null) {
+    write(KEYS.promotionTargets, []);
+  }
+  if (safeStorage.get(KEYS.promoUsages) === null) {
+    write(KEYS.promoUsages, []);
   }
 
   if (safeStorage.get(KEYS.campaigns) === null && visible.length > 0) {
@@ -420,8 +507,12 @@ export class DemoOnlineRepository
   );
   private faqs: StoreFaq[] = readArray<StoreFaq>(KEYS.faqs);
   private reviews: StoreReview[] = readArray<StoreReview>(KEYS.reviews);
-  private coupons: Coupon[] = readArray<Coupon>(KEYS.coupons);
+  private coupons: Coupon[] = readArray<Coupon>(KEYS.coupons).map(normalizeCoupon);
   private campaigns: Campaign[] = readArray<Campaign>(KEYS.campaigns);
+  private deliveryZones: DeliveryZone[] = readArray<DeliveryZone>(KEYS.deliveryZones);
+  private promotions: Promotion[] = readArray<Promotion>(KEYS.promotions);
+  private promotionTargets: PromotionTarget[] = readArray<PromotionTarget>(KEYS.promotionTargets);
+  private promoUsages: PromoCodeUsage[] = readArray<PromoCodeUsage>(KEYS.promoUsages);
   private seeded = false;
 
   /** Seed once per session, after the catalogue demo repo has its own data. */
@@ -435,8 +526,12 @@ export class DemoOnlineRepository
       this.categoryContents = readArray<StorefrontCategoryContent>(KEYS.categoryContents);
       this.faqs = readArray<StoreFaq>(KEYS.faqs);
       this.reviews = readArray<StoreReview>(KEYS.reviews);
-      this.coupons = readArray<Coupon>(KEYS.coupons);
+      this.coupons = readArray<Coupon>(KEYS.coupons).map(normalizeCoupon);
       this.campaigns = readArray<Campaign>(KEYS.campaigns);
+      this.deliveryZones = readArray<DeliveryZone>(KEYS.deliveryZones);
+      this.promotions = readArray<Promotion>(KEYS.promotions);
+      this.promotionTargets = readArray<PromotionTarget>(KEYS.promotionTargets);
+      this.promoUsages = readArray<PromoCodeUsage>(KEYS.promoUsages);
       this.settingsDoc = readObject(KEYS.settings) ?? this.settingsDoc;
       this.seeded = true;
     } else {
@@ -527,6 +622,11 @@ export class DemoOnlineRepository
     const order = this.orders.find((candidate) => candidate.id === id);
     if (!order) throw new OnlineError("order_not_found", `Order ${id} not found`);
     return delay(order);
+  }
+
+  async getOrderBySaleId(saleId: string): Promise<OnlineOrder | null> {
+    await this.ensureSeeded();
+    return delay(this.orders.find((candidate) => candidate.sale_id === saleId) ?? null);
   }
 
   async listReservations(): Promise<StockReservation[]> {
@@ -828,7 +928,9 @@ export class DemoOnlineRepository
             field: "address",
           });
         }
-        if (!deliveryAreaSupported(settings.delivery, city, area)) {
+        // A named zone replaces the areas list: the zone IS the place the shop
+        // serves. Without one, the legacy list still decides.
+        if (!input.delivery_zone_id && !deliveryAreaSupported(settings.delivery, city, area)) {
           throw new OnlineError(
             "delivery_area_unsupported",
             `Delivery to ${city || area} is not available`,
@@ -970,6 +1072,19 @@ export class DemoOnlineRepository
         }
       }
 
+      // Delivery zone, when the customer chose one: unknown or switched-off
+      // zones are refused, like the server. Without a zone the legacy
+      // settings path (areas list, global fee) applies below.
+      const zoneId = input.delivery_zone_id ?? null;
+      const zone = zoneId
+        ? (this.deliveryZones.find((candidate) => candidate.id === zoneId) ?? null)
+        : null;
+      if (zoneId && (!zone || !zone.enabled)) {
+        throw new OnlineError("delivery_unavailable", "Delivery zone is not available", {
+          field: "delivery_type",
+        });
+      }
+
       // Coupon, validated against its own rules and the recomputed subtotal.
       const couponCode = normalizeCouponCode(input.coupon_code ?? "");
       let coupon: Coupon | null = null;
@@ -1000,67 +1115,55 @@ export class DemoOnlineRepository
           };
         }),
         campaigns: this.campaigns,
-        coupon,
+        // No coupon here: order-level discounts (automatic promotion, promo
+        // code, stacking) are evaluated once below, mirroring the server core.
+        coupon: null,
         delivery: settings.delivery,
         deliveryType: input.delivery_type,
       });
 
-      if (coupon) {
-        const check = checkCoupon(coupon, {
-          subtotal: totals.subtotal,
-          lines: totals.lines.map((line) => ({
-            product_id: line.product_id,
-            category_id: byId.get(line.product_id)?.category_id ?? null,
-            line_total: line.line_total,
-          })),
-        });
-        if (!check.ok) {
-          const codeByReason: Record<string, "coupon_invalid" | "coupon_expired" | "coupon_not_started" | "coupon_limit_reached" | "coupon_min_subtotal"> = {
-            inactive: "coupon_invalid",
-            not_found: "coupon_invalid",
-            not_applicable: "coupon_invalid",
-            expired: "coupon_expired",
-            not_started: "coupon_not_started",
-            exhausted: "coupon_limit_reached",
-            min_subtotal: "coupon_min_subtotal",
-          };
-          throw new OnlineError(
-            codeByReason[check.reason] ?? "coupon_invalid",
-            `Coupon ${coupon.code} cannot be used`,
-            { field: "coupon_code", detail: { reason: check.reason } },
-          );
-        }
-      }
-
-      // The shop's minimum for delivery, measured on the goods total after the
-      // coupon — and only for delivery: collecting in person is how a customer
-      // orders less than the delivery minimum.
-      const goodsTotal = round2(totals.subtotal - totals.discount_amount);
-      const shortfall = deliveryMinimumShortfall(
-        settings.delivery,
-        input.delivery_type,
-        goodsTotal,
+      // The one pricing evaluation: automatic promotion, extended coupon
+      // rules, stacking, zone-aware fee, per-line allocation. Refusals carry
+      // live mode's wording so both modes fail identically.
+      const customerKey = customerKeyFor(
+        input.store_customer_id ?? null,
+        phone,
+        input.client_ref,
       );
-      if (shortfall > 0) {
-        throw new OnlineError(
-          "delivery_minimum_not_met",
-          `Delivery orders need at least ${settings.delivery.minimum_order ?? 0}`,
-          { field: "delivery_type", detail: { minimum: settings.delivery.minimum_order, shortfall } },
-        );
+      const evaluated = evaluateCartPricing({
+        lines: totals.lines.map((line) => ({
+          product_id: line.product_id,
+          category_id: byId.get(line.product_id)?.category_id ?? null,
+          variant_id: line.variant_id,
+          qty: line.quantity,
+          unit_price: line.unit_price,
+          line_total: line.line_total,
+        })),
+        subtotal: totals.subtotal,
+        promoCode: couponCode || null,
+        coupons: this.coupons,
+        promotions: this.promotions,
+        targetsByPromotion: this.targetsByPromotion(),
+        usageFor: (couponId) => this.usageSummary(couponId, customerKey),
+        customerKey,
+        zone,
+        legacy: {
+          fee: settings.delivery.fee,
+          minimum: settings.delivery.minimum_order ?? 0,
+          threshold: settings.delivery.free_delivery_threshold ?? 0,
+        },
+        deliveryType: input.delivery_type,
+      });
+      if (!evaluated.ok) {
+        throw this.pricingRefusal(evaluated.reason, evaluated.message, couponCode || null);
       }
-
-      // The delivery fee is the shop's number, never the cart's.
-      const deliveryFee = deliveryFeeFor(
-        settings.delivery,
-        input.delivery_type,
-        round2(totals.subtotal - totals.discount_amount),
-      );
+      const pricing = evaluated.pricing;
 
       const orderId = newId("ord");
       this.counter += 1;
       const at = nowIso();
 
-      const items: OnlineOrderItem[] = totals.lines.map((line) => {
+      const items: OnlineOrderItem[] = totals.lines.map((line, index) => {
         const product = byId.get(line.product_id) as Product;
         // The snapshot names the COMBINATION's own code — the invoice and the
         // pick list say "ALYQ-G17", not the product's — frozen beside the
@@ -1082,10 +1185,31 @@ export class DemoOnlineRepository
           sku: variant?.sku ?? product.sku,
           barcode: variant?.barcode ?? product.barcode,
           unit_price: line.unit_price,
+          // What this unit actually cost after every order-level discount —
+          // what a return refunds. Allocated proportionally by the engine.
+          discounted_unit_price: pricing.lines[index]?.discounted_unit_price ?? line.unit_price,
           quantity: line.quantity,
           line_total: line.line_total,
         };
       });
+
+      const snapshot: PriceSnapshot = {
+        promo_code: pricing.promoCode,
+        promotion_id: pricing.autoPromotionId,
+        promotion_name: pricing.autoPromotionName,
+        auto_discount: pricing.autoDiscount,
+        promo_discount: pricing.promoDiscount,
+        promo_free_shipping: pricing.promoFreeShipping,
+        original_subtotal: pricing.subtotal,
+        final_subtotal: round2(pricing.subtotal - pricing.totalDiscount),
+        gross_shipping_fee: pricing.grossShippingFee,
+        shipping_discount: pricing.shippingDiscount,
+        shipping_source: pricing.shippingSource,
+        zone_id: pricing.zoneId,
+        zone_name: pricing.zoneName,
+        total_discount: pricing.totalDiscount,
+        final_total: pricing.total,
+      };
 
       const order: OnlineOrder = {
         id: orderId,
@@ -1096,12 +1220,22 @@ export class DemoOnlineRepository
         customer_phone: phone,
         customer_email: input.customer_email?.trim() || null,
         delivery_type: input.delivery_type,
-        address: input.delivery_type === "delivery" ? input.address : null,
-        subtotal: totals.subtotal,
-        discount_code: coupon ? coupon.code : null,
-        discount_amount: totals.discount_amount,
-        delivery_fee: deliveryFee,
-        total: round2(totals.subtotal - totals.discount_amount + deliveryFee),
+        address:
+          input.delivery_type === "delivery"
+            ? {
+                ...(input.address as CustomerAddress),
+                ...(zone
+                  ? { zone_id: zone.id, zone_name: zone.name_en || zone.name_ar }
+                  : {}),
+              }
+            : null,
+        subtotal: pricing.subtotal,
+        discount_code: pricing.promoCode,
+        discount_amount: pricing.totalDiscount,
+        promotion_id: pricing.autoPromotionId,
+        price_snapshot: snapshot,
+        delivery_fee: pricing.deliveryFee,
+        total: pricing.total,
         payment_method: input.payment_method,
         payment_status: initialPaymentStatus(input.payment_method),
         status: "pending",
@@ -1165,14 +1299,33 @@ export class DemoOnlineRepository
         });
       }
 
-      // A code is consumed when it is used, and given back if the order dies.
-      if (coupon) {
-        this.coupons = this.coupons.map((candidate) =>
-          candidate.id === coupon?.id
-            ? { ...candidate, used_count: candidate.used_count + 1, updated_at: at }
-            : candidate,
-        );
-        write(KEYS.coupons, this.coupons);
+      // A code that actually lowered the order (or waived its shipping)
+      // consumes one use — and one history row keyed to this order. A code
+      // that lost the stacking contest consumes nothing. Cancelling gives the
+      // count back; the history row stays and is excluded by filter.
+      if (
+        pricing.promoCode &&
+        (pricing.promoDiscount > 0 || pricing.promoFreeShipping)
+      ) {
+        const used = this.coupons.find((candidate) => candidate.code === pricing.promoCode);
+        if (used) {
+          this.coupons = this.coupons.map((candidate) =>
+            candidate.id === used.id
+              ? { ...candidate, used_count: candidate.used_count + 1, updated_at: at }
+              : candidate,
+          );
+          write(KEYS.coupons, this.coupons);
+        }
+        if (used && customerKey) {
+          this.promoUsages.push({
+            id: newId("pus"),
+            coupon_id: used.id,
+            order_id: orderId,
+            customer_key: customerKey,
+            used_at: at,
+          });
+          write(KEYS.promoUsages, this.promoUsages);
+        }
       }
 
       this.orders.push(order);
@@ -1294,9 +1447,24 @@ export class DemoOnlineRepository
     const order = this.orders[index];
     const check = checkAction(order, input.action, { canVoidSale: true });
     if (!check.ok) {
-      throw new OnlineError("workflow_refused", `Cannot ${input.action} this order`, {
-        detail: { reason: check.reason, action: input.action },
-      });
+      // Transition refusals (wrong state, backwards, unknown) read as "this
+      // order cannot be moved to that status" — the same code live mode maps
+      // the workflow raises to. Capability and payment refusals stay
+      // `workflow_refused`: they are about the actor, not the state.
+      const transition =
+        check.reason === "not_pending" ||
+        check.reason === "already_cancelled" ||
+        check.reason === "already_completed" ||
+        check.reason === "not_approved" ||
+        check.reason === "backwards" ||
+        check.reason === "unknown";
+      throw new OnlineError(
+        transition ? "status_transition_refused" : "workflow_refused",
+        `Cannot ${input.action} this order`,
+        {
+          detail: { reason: check.reason, action: input.action },
+        },
+      );
     }
     const reason = input.reason?.trim() || null;
     if (requiresReason(input.action) && !reason) {
@@ -1439,14 +1607,16 @@ export class DemoOnlineRepository
         }
 
         case "processing":
-          next = { ...next, status: "processing" };
+          // The stored status is the canonical mapping's answer, never the
+          // action word — mirroring what `resolve_online_order` writes.
+          next = { ...next, status: ORDER_ACTION_TO_STATUS.processing ?? "processing" };
           push("processing", "Order is being prepared");
           break;
 
         case "ready":
           next = {
             ...next,
-            status: "ready",
+            status: ORDER_ACTION_TO_STATUS.ready ?? "ready",
           };
           push(
             "ready",
@@ -1457,7 +1627,7 @@ export class DemoOnlineRepository
           break;
 
         case "complete":
-          next = { ...next, status: "completed", completed_at: at };
+          next = { ...next, status: ORDER_ACTION_TO_STATUS.complete ?? "completed", completed_at: at };
           push("completed", "Order completed");
           break;
 
@@ -1552,12 +1722,28 @@ export class DemoOnlineRepository
       reviews: [...this.reviews].sort((a, b) => a.sort_order - b.sort_order),
       campaigns: this.campaigns,
       categoryContents: [...this.categoryContents],
+      deliveryZones: this.sortedZones(),
+      promotions: this.promotions,
+      promotionTargets: this.promotionTargets,
+    });
+  }
+
+  /** Enabled zones first, in the admin's order — the checkout's choices. */
+  private sortedZones(): DeliveryZone[] {
+    return [...this.deliveryZones].sort((a, b) => {
+      if (a.enabled !== b.enabled) return a.enabled ? -1 : 1;
+      return a.sort_order - b.sort_order;
     });
   }
 
   async getMarketing(): Promise<MarketingSnapshot> {
     await this.ensureSeeded();
-    return delay({ coupons: this.coupons, campaigns: this.campaigns });
+    return delay({
+      coupons: this.coupons,
+      campaigns: this.campaigns,
+      promotions: this.promotions,
+      promotionTargets: this.promotionTargets,
+    });
   }
 
   async checkCoupon(input: CouponCheckInput): Promise<CouponCheckResult> {
@@ -1567,14 +1753,18 @@ export class DemoOnlineRepository
     const coupon = this.coupons.find((candidate) => candidate.code === code) ?? null;
     if (!coupon) return { valid: false, reason: "not_found" };
 
-    const check = checkCoupon(coupon, {
-      subtotal: round2(Math.max(input.subtotal, 0)),
-      lines: input.productIds.map((productId, index) => ({
-        product_id: productId,
-        category_id: input.categoryIds[index] ?? null,
-        line_total: 0,
-      })),
-    });
+    const check = checkPromoCode(
+      coupon,
+      {
+        subtotal: round2(Math.max(input.subtotal, 0)),
+        lines: input.productIds.map((productId, index) => ({
+          product_id: productId,
+          category_id: input.categoryIds[index] ?? null,
+          line_total: 0,
+        })),
+      },
+      this.usageSummary(coupon.id, input.customerKey ?? null),
+    );
     if (!check.ok) {
       // The local vocabulary is finer than the storefront's; both mean "no".
       const reason: CouponCheckReason =
@@ -1593,7 +1783,34 @@ export class DemoOnlineRepository
       discount: check.discount,
       discountType: coupon.discount_type,
       value: coupon.value,
+      ...(check.freeShipping ? { freeShipping: true as const } : {}),
     };
+  }
+
+  /**
+   * Personal history for one code: non-cancelled uses by this customer, and
+   * whether they have any prior non-cancelled order. Cancelled orders are
+   * excluded by filter — the history stays the history, like the SQL join.
+   */
+  private usageSummary(
+    couponId: string,
+    customerKey: string | null,
+  ): { customerUses: number; hasPriorOrder: boolean } {
+    if (!customerKey) return { customerUses: 0, hasPriorOrder: false };
+    const live = (order: OnlineOrder) => order.status !== "cancelled";
+    const customerUses = this.promoUsages.filter(
+      (usage) =>
+        usage.coupon_id === couponId &&
+        usage.customer_key === customerKey &&
+        this.orders.some((order) => order.id === usage.order_id && live(order)),
+    ).length;
+    const hasPriorOrder = this.orders.some(
+      (order) =>
+        live(order) &&
+        (order.store_customer_id === customerKey ||
+          customerKeyFor(null, order.customer_phone) === customerKey),
+    );
+    return { customerUses, hasPriorOrder };
   }
 
   async bestSellers(limit = 8): Promise<BestSellerRow[]> {
@@ -1806,12 +2023,19 @@ export class DemoOnlineRepository
     const next: Coupon = {
       id: existing?.id ?? newId("cpn"),
       code,
+      title_en: draft.title_en ?? existing?.title_en ?? "",
+      title_ar: draft.title_ar ?? existing?.title_ar ?? "",
+      description_en: draft.description_en ?? existing?.description_en ?? null,
+      description_ar: draft.description_ar ?? existing?.description_ar ?? null,
       discount_type: draft.discount_type ?? existing?.discount_type ?? "percent",
       value: Math.max(draft.value ?? existing?.value ?? 0, 0),
       min_subtotal: Math.max(draft.min_subtotal ?? existing?.min_subtotal ?? 0, 0),
       max_discount: draft.max_discount ?? existing?.max_discount ?? null,
       usage_limit: draft.usage_limit ?? existing?.usage_limit ?? null,
       used_count: existing?.used_count ?? 0,
+      per_customer_limit: draft.per_customer_limit ?? existing?.per_customer_limit ?? null,
+      first_order_only: draft.first_order_only ?? existing?.first_order_only ?? false,
+      stackable: draft.stackable ?? existing?.stackable ?? false,
       applies_to: draft.applies_to ?? existing?.applies_to ?? "all",
       target_ids: draft.target_ids ?? existing?.target_ids ?? [],
       active: draft.active ?? existing?.active ?? true,
@@ -1824,13 +2048,41 @@ export class DemoOnlineRepository
       ? this.coupons.map((coupon) => (coupon.id === next.id ? next : coupon))
       : [...this.coupons, next];
     write(KEYS.coupons, this.coupons);
+    const wasActive = existing?.active ?? true;
+    void recordAudit({
+      action: !existing
+        ? "promo_code.created"
+        : wasActive && !next.active
+          ? "promo_code.disabled"
+          : "promo_code.changed",
+      entity: "promo_code",
+      entity_id: next.id,
+      entity_label: next.code,
+      details: {
+        discount_type: next.discount_type,
+        value: next.value,
+        active: next.active,
+        stackable: next.stackable,
+        first_order_only: next.first_order_only,
+      },
+    });
     return delay(next);
   }
 
   async deleteCoupon(id: string): Promise<void> {
     await this.ensureSeeded();
+    const removed = this.coupons.find((coupon) => coupon.id === id) ?? null;
     this.coupons = this.coupons.filter((coupon) => coupon.id !== id);
     write(KEYS.coupons, this.coupons);
+    if (removed) {
+      void recordAudit({
+        action: "promo_code.changed",
+        entity: "promo_code",
+        entity_id: removed.id,
+        entity_label: removed.code,
+        details: { deleted: true },
+      });
+    }
     await delay(null);
   }
 
@@ -1878,6 +2130,339 @@ export class DemoOnlineRepository
     this.campaigns = this.campaigns.filter((campaign) => campaign.id !== id);
     write(KEYS.campaigns, this.campaigns);
     await delay(null);
+  }
+
+  // ── advisory pricing: the checkout preview, nothing written ───────────────
+
+  async previewPricing(input: PricingPreviewInput): Promise<PricingPreview> {
+    await this.ensureSeeded();
+    const products = await getDemoRepository().listProducts();
+    const byId = new Map(products.map((product) => [product.id, product]));
+    const variants = await getDemoRepository().listVariants();
+    const variantById = new Map(variants.map((variant) => [variant.id, variant]));
+    const priced = input.lines.map((line) => {
+      const product = byId.get(line.product_id);
+      if (!product) {
+        throw new OnlineError("product_not_found", `Product ${line.product_id} not found`, {
+          field: "lines",
+        });
+      }
+      const variant = line.variant_id ? (variantById.get(line.variant_id) ?? null) : null;
+      const now = new Date();
+      const live = this.campaigns
+        .filter(
+          (campaign) =>
+            campaign.active &&
+            Date.parse(campaign.starts_at) <= now.getTime() &&
+            Date.parse(campaign.ends_at) >= now.getTime() &&
+            (campaign.product_ids.length === 0 || campaign.product_ids.includes(product.id)),
+        )
+        .sort((a, b) => b.discount_value - a.discount_value)[0];
+      let unit = variant?.price_override ?? product.selling_price;
+      if ((variant?.price_override ?? null) === null && live) {
+        unit =
+          live.discount_type === "percent"
+            ? round2((unit * (100 - live.discount_value)) / 100)
+            : round2(Math.max(unit - live.discount_value, 0));
+      }
+      const qty = Math.max(0, Math.trunc(line.qty) || 0);
+      return {
+        product_id: product.id,
+        category_id: product.category_id,
+        variant_id: variant?.id ?? null,
+        qty,
+        unit_price: unit,
+        line_total: round2(unit * qty),
+      };
+    });
+    const subtotal = round2(priced.reduce((sum, line) => sum + line.line_total, 0));
+    const zone = input.deliveryZoneId
+      ? (this.deliveryZones.find((candidate) => candidate.id === input.deliveryZoneId) ?? null)
+      : null;
+    if (input.deliveryZoneId && !zone) {
+      throw new OnlineError("delivery_unavailable", "Delivery zone is not available", {
+        field: "delivery_type",
+      });
+    }
+    const settings = resolveSettings(this.settingsDoc.settings).delivery;
+    const evaluated = evaluateCartPricing({
+      lines: priced,
+      subtotal,
+      promoCode: input.couponCode ?? null,
+      coupons: this.coupons,
+      promotions: this.promotions,
+      targetsByPromotion: this.targetsByPromotion(),
+      usageFor: (couponId) => this.usageSummary(couponId, input.customerKey ?? null),
+      customerKey: input.customerKey ?? null,
+      zone,
+      legacy: {
+        fee: settings.fee,
+        minimum: settings.minimum_order ?? 0,
+        threshold: settings.free_delivery_threshold ?? 0,
+      },
+      deliveryType: input.deliveryType,
+    });
+    if (!evaluated.ok) {
+      throw this.pricingRefusal(evaluated.reason, evaluated.message, input.couponCode);
+    }
+    const pricing = evaluated.pricing;
+    return delay({
+      subtotal: pricing.subtotal,
+      autoDiscount: pricing.autoDiscount,
+      autoPromotionId: pricing.autoPromotionId,
+      autoPromotionName: pricing.autoPromotionName,
+      promoCode: pricing.promoCode,
+      promoValid: pricing.promoCode !== null,
+      promoReason: null,
+      promoDiscount: pricing.promoDiscount,
+      promoFreeShipping: pricing.promoFreeShipping,
+      deliveryFee: pricing.deliveryFee,
+      shippingDiscount: pricing.shippingDiscount,
+      shippingSource: pricing.shippingSource,
+      zoneId: pricing.zoneId,
+      zoneName: pricing.zoneName,
+      totalDiscount: pricing.totalDiscount,
+      total: pricing.total,
+      lines: pricing.lines.map((line) => ({
+        product_id: line.product_id,
+        variant_id: line.variant_id,
+        qty: line.qty,
+        unit_price: line.unit_price,
+        line_total: line.line_total,
+        discounted_unit_price: line.discounted_unit_price,
+      })),
+    });
+  }
+
+  /** Targets grouped by promotion as `kind:id`, for the pricing engine. */
+  private targetsByPromotion(): Map<string, Set<string>> {
+    const plain = new Map<string, Set<string>>();
+    for (const target of this.promotionTargets) {
+      const set = plain.get(target.promotion_id) ?? new Set<string>();
+      set.add(`${target.target_kind}:${target.target_id}`);
+      plain.set(target.promotion_id, set);
+    }
+    return plain;
+  }
+
+  /** A pricing refusal with live mode's code and wording. */
+  private pricingRefusal(reason: string, message: string, code?: string | null): OnlineError {
+    // The zone/legacy minimum speaks for itself in both modes (the server
+    // raises the same sentence, mapped to the same code).
+    if (message.startsWith("Delivery orders need at least")) {
+      const minimum = Number(/at least ([\d.]+)/.exec(message)?.[1] ?? 0);
+      return new OnlineError("delivery_minimum_not_met", message, {
+        field: "delivery_type",
+        detail: { minimum: Number.isFinite(minimum) ? minimum : 0 },
+      });
+    }
+    if (reason === "not_applicable" && !code) {
+      return new OnlineError("delivery_unavailable", message, { field: "delivery_type" });
+    }
+    if (reason === "not_applicable" && !code) {
+      return new OnlineError("delivery_unavailable", message, { field: "delivery_type" });
+    }
+    if (reason === "limit_reached") {
+      return new OnlineError("coupon_limit_reached", message, { field: "coupon_code" });
+    }
+    const couponCodes: Record<string, OnlineError["code"]> = {
+      not_found: "coupon_invalid",
+      inactive: "coupon_invalid",
+      not_started: "coupon_not_started",
+      expired: "coupon_expired",
+      exhausted: "coupon_limit_reached",
+      min_subtotal: "coupon_min_subtotal",
+      not_applicable: "coupon_not_applicable",
+    };
+    return new OnlineError(couponCodes[reason] ?? "coupon_invalid", message, {
+      field: "coupon_code",
+      detail: { reason },
+    });
+  }
+
+  // ── delivery zones: the admin owns the per-governorate pricing ────────────
+
+  async listDeliveryZones(): Promise<DeliveryZone[]> {
+    await this.ensureSeeded();
+    return delay(this.sortedZones());
+  }
+
+  async saveDeliveryZone(draft: DeliveryZoneDraft): Promise<DeliveryZone> {
+    await this.ensureSeeded();
+    const at = nowIso();
+    const existing = draft.id
+      ? (this.deliveryZones.find((zone) => zone.id === draft.id) ?? null)
+      : null;
+    const key = (draft.key ?? existing?.key ?? "").trim().toLowerCase();
+    if (!key) throw new OnlineError("db", "A zone needs a key", { field: "key" });
+    if (this.deliveryZones.some((zone) => zone.key === key && zone.id !== existing?.id)) {
+      throw new OnlineError("db", "That zone key already exists", { field: "key" });
+    }
+    const next: DeliveryZone = {
+      id: existing?.id ?? newId("dz"),
+      key,
+      name_en: draft.name_en ?? existing?.name_en ?? "",
+      name_ar: draft.name_ar ?? existing?.name_ar ?? "",
+      governorate_key: draft.governorate_key ?? existing?.governorate_key ?? null,
+      shipping_fee: Math.max(draft.shipping_fee ?? existing?.shipping_fee ?? 0, 0),
+      minimum_order_amount: Math.max(draft.minimum_order_amount ?? existing?.minimum_order_amount ?? 0, 0),
+      free_shipping_threshold:
+        draft.free_shipping_threshold ?? existing?.free_shipping_threshold ?? null,
+      estimated_delivery_text_en:
+        draft.estimated_delivery_text_en ?? existing?.estimated_delivery_text_en ?? null,
+      estimated_delivery_text_ar:
+        draft.estimated_delivery_text_ar ?? existing?.estimated_delivery_text_ar ?? null,
+      enabled: draft.enabled ?? existing?.enabled ?? true,
+      sort_order: draft.sort_order ?? existing?.sort_order ?? 0,
+      created_at: existing?.created_at ?? at,
+      updated_at: at,
+    };
+    if (!next.name_en.trim() || !next.name_ar.trim()) {
+      throw new OnlineError("db", "A zone needs names in both languages", { field: "name_en" });
+    }
+    this.deliveryZones = existing
+      ? this.deliveryZones.map((zone) => (zone.id === next.id ? next : zone))
+      : [...this.deliveryZones, next];
+    write(KEYS.deliveryZones, this.deliveryZones);
+    void recordAudit({
+      action: existing ? "delivery_zone.changed" : "delivery_zone.created",
+      entity: "delivery_zone",
+      entity_id: next.id,
+      entity_label: next.name_en,
+      details: { key: next.key, shipping_fee: next.shipping_fee, enabled: next.enabled },
+    });
+    return delay(next);
+  }
+
+  async deleteDeliveryZone(id: string): Promise<void> {
+    await this.ensureSeeded();
+    const removed = this.deliveryZones.find((zone) => zone.id === id) ?? null;
+    this.deliveryZones = this.deliveryZones.filter((zone) => zone.id !== id);
+    write(KEYS.deliveryZones, this.deliveryZones);
+    if (removed) {
+      void recordAudit({
+        action: "delivery_zone.changed",
+        entity: "delivery_zone",
+        entity_id: removed.id,
+        entity_label: removed.name_en,
+        details: { key: removed.key, deleted: true },
+      });
+    }
+    await delay(null);
+  }
+
+  // ── automatic promotions: codeless discounts ──────────────────────────────
+
+  async listPromotions(): Promise<Promotion[]> {
+    await this.ensureSeeded();
+    return delay(this.promotions);
+  }
+
+  async listPromotionTargets(promotionId: string): Promise<PromotionTarget[]> {
+    await this.ensureSeeded();
+    return delay(this.promotionTargets.filter((target) => target.promotion_id === promotionId));
+  }
+
+  async savePromotion(draft: PromotionDraft, targets: PromotionTargetDraft[]): Promise<Promotion> {
+    await this.ensureSeeded();
+    const at = nowIso();
+    const existing = draft.id
+      ? (this.promotions.find((promotion) => promotion.id === draft.id) ?? null)
+      : null;
+    const startsAt = draft.starts_at ?? existing?.starts_at ?? null;
+    const endsAt = draft.ends_at ?? existing?.ends_at ?? null;
+    if (startsAt && endsAt && Date.parse(endsAt) < Date.parse(startsAt)) {
+      throw new OnlineError("db", "A promotion must end after it starts", { field: "ends_at" });
+    }
+    const scope = draft.scope ?? existing?.scope ?? "store";
+    const cleanTargets =
+      scope === "store"
+        ? []
+        : targets.filter((target) => target.target_id.trim()).map((target) => ({
+            promotion_id: "",
+            target_kind: target.target_kind,
+            target_id: target.target_id.trim(),
+            created_at: at,
+          }));
+    if (scope !== "store" && cleanTargets.length === 0) {
+      throw new OnlineError("db", "A targeted promotion needs at least one target", {
+        field: "scope",
+      });
+    }
+    const wasEnabled = existing?.enabled ?? false;
+    const next: Promotion = {
+      id: existing?.id ?? newId("prm"),
+      enabled: draft.enabled ?? existing?.enabled ?? true,
+      name_en: draft.name_en ?? existing?.name_en ?? "",
+      name_ar: draft.name_ar ?? existing?.name_ar ?? "",
+      description_en: draft.description_en ?? existing?.description_en ?? null,
+      description_ar: draft.description_ar ?? existing?.description_ar ?? null,
+      discount_type: draft.discount_type ?? existing?.discount_type ?? "percent",
+      value: Math.max(draft.value ?? existing?.value ?? 0, 0),
+      scope,
+      minimum_order_amount: Math.max(draft.minimum_order_amount ?? existing?.minimum_order_amount ?? 0, 0),
+      maximum_discount_amount: draft.maximum_discount_amount ?? existing?.maximum_discount_amount ?? null,
+      starts_at: startsAt,
+      ends_at: endsAt,
+      priority: draft.priority ?? existing?.priority ?? 0,
+      stackable: draft.stackable ?? existing?.stackable ?? false,
+      created_at: existing?.created_at ?? at,
+      updated_at: at,
+    };
+    if (!next.name_en.trim() || !next.name_ar.trim()) {
+      throw new OnlineError("db", "A promotion needs names in both languages", { field: "name_en" });
+    }
+    if (next.value <= 0) throw new OnlineError("db", "A promotion needs a value", { field: "value" });
+    this.promotions = existing
+      ? this.promotions.map((promotion) => (promotion.id === next.id ? next : promotion))
+      : [...this.promotions, next];
+    this.promotionTargets = [
+      ...this.promotionTargets.filter((target) => target.promotion_id !== next.id),
+      ...cleanTargets.map((target) => ({ ...target, promotion_id: next.id })),
+    ];
+    write(KEYS.promotions, this.promotions);
+    write(KEYS.promotionTargets, this.promotionTargets);
+    const statusFlipped = existing && wasEnabled !== next.enabled;
+    void recordAudit({
+      action: !existing
+        ? "promotion.created"
+        : statusFlipped
+          ? next.enabled
+            ? "promotion.activated"
+            : "promotion.deactivated"
+          : "promotion.changed",
+      entity: "promotion",
+      entity_id: next.id,
+      entity_label: next.name_en,
+      details: { scope: next.scope, value: next.value, enabled: next.enabled },
+    });
+    return delay(next);
+  }
+
+  async deletePromotion(id: string): Promise<void> {
+    await this.ensureSeeded();
+    const removed = this.promotions.find((promotion) => promotion.id === id) ?? null;
+    this.promotions = this.promotions.filter((promotion) => promotion.id !== id);
+    this.promotionTargets = this.promotionTargets.filter((target) => target.promotion_id !== id);
+    write(KEYS.promotions, this.promotions);
+    write(KEYS.promotionTargets, this.promotionTargets);
+    if (removed) {
+      void recordAudit({
+        action: "promotion.changed",
+        entity: "promotion",
+        entity_id: removed.id,
+        entity_label: removed.name_en,
+        details: { scope: removed.scope, deleted: true },
+      });
+    }
+    await delay(null);
+  }
+
+  async listPromoCodeUsages(couponId?: string): Promise<PromoCodeUsage[]> {
+    await this.ensureSeeded();
+    return delay(
+      couponId ? this.promoUsages.filter((usage) => usage.coupon_id === couponId) : this.promoUsages,
+    );
   }
 
   // ── website accounts ──────────────────────────────────────────────────────
