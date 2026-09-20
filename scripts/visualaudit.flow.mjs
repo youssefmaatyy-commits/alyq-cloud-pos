@@ -69,11 +69,29 @@ const checks = [
       assert.ok(testid("dash-recent-orders"), "dashboard: recent sales render");
     },
   },
-  {
+{
     path: "#/products",
     name: "Products",
-    check: () => {
-      const headers = [...document.querySelectorAll("th")].map((th) => th.textContent ?? "").join(" ");
+    check: async () => {
+      await waitFor(() => document.querySelector("table"), { label: "products table", timeout: 20000 });
+      // Debug: log all table headers
+      await waitFor(() => {
+        const tables = document.querySelectorAll("table");
+        for (const table of tables) {
+          const headers = [...table.querySelectorAll("th")].map((th) => th.textContent ?? "").join(" ");
+          console.log("[DEBUG] Table headers:", headers);
+          if (headers.includes("SKU") && headers.includes("Stock")) return true;
+        }
+        return false;
+      }, { label: "products table headers (SKU, Stock)", timeout: 20000 });
+      // Get headers from the specific products table
+      const productsTable = [...document.querySelectorAll("table")].find(t => 
+        [...t.querySelectorAll("th")].some(th => th.textContent?.includes("SKU"))
+      );
+      const headers = productsTable 
+        ? [...productsTable.querySelectorAll("th")].map((th) => th.textContent ?? "").join(" ")
+        : [...document.querySelectorAll("th")].map((th) => th.textContent ?? "").join(" ");
+      console.log("[DEBUG] Final headers:", headers);
       assert.ok(headers.includes("SKU"), "products: the catalogue table has SKU");
       assert.ok(headers.includes("Stock"), "products: the catalogue table has Stock");
     },
@@ -252,9 +270,10 @@ checks.splice(2, 0, {
 });
 
 for (const { path, name, check } of checks) {
-  await navigate(path, 800);
+  const settle = path === "#/products" ? 3000 : 800;
+  await navigate(path, settle);
   assertShell(name);
-  check();
+  await check();
   // RTL pass: flip the language, assert the shell mirrors, flip back
   clickExact("العربية");
   await sleep(500);

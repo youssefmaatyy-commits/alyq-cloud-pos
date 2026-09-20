@@ -287,6 +287,7 @@ async function main() {
 
   // 4 ─ create: empty submit blocked
   await navigate("#/products/new");
+  await waitFor(() => document.querySelector("#name_en") && document.querySelector("#name_ar"), { label: "bilingual name fields" });
   assert.ok(document.querySelector("#name_en") && document.querySelector("#name_ar"), "bilingual name fields rendered");
   click("Save");
   await sleep(250);
@@ -470,6 +471,7 @@ async function main() {
   click("Save");
   await sleep(450);
   assert.ok(bodyText().includes("Smoke test product v2"), "edit flow persists changes");
+  await waitFor(() => bodyText().includes("Hidden on website"), { label: "website visibility flag" });
   assert.ok(bodyText().includes("Hidden on website"), "website visibility flag saved + shown");
   // toggle it back on to keep the demo data clean
   click("Edit");
@@ -482,8 +484,15 @@ async function main() {
 
   // 10 ─ categories
   await navigate("#/categories");
-  assert.ok(bodyText().includes("Earrings"), "category tree rendered");
+  await waitFor(() => bodyText().includes("Earrings"), { label: "category tree" });
+  await waitFor(() => {
+    const btn = [...document.querySelectorAll("button")].find(
+      (b) => (b.textContent ?? "").trim() === "Add category"
+    );
+    return btn && !btn.disabled;
+  }, { label: "Add category button" });
   click("Add category");
+  await waitFor(() => document.querySelector("#cat-name-en"), { label: "category modal name field" });
   await sleep(250);
   assert.ok(document.querySelector("#cat-name-en"), "category modal rendered");
   click("Save");
@@ -499,6 +508,13 @@ async function main() {
   // 11 ─ the lifecycle dialog on a category that holds products (Phase 44):
   //      the delete is anticipated with the client's counts, and the dialog
   //      offers the two safe routes — move-and-delete, or archive.
+  await waitFor(() => {
+    const btn = [...document.querySelectorAll('button[title="Delete"]')].find((btn) => {
+      const row = btn.closest(".group");
+      return row && (row.textContent ?? "").includes("Earrings");
+    });
+    return !!btn;
+  }, { label: "delete button for Earrings category" });
   const populatedDelete = [...document.querySelectorAll('button[title="Delete"]')].find((btn) => {
     const row = btn.closest(".group");
     return row && (row.textContent ?? "").includes("Earrings");
@@ -588,6 +604,7 @@ async function main() {
 
   // h) Edit Product keeps a manual barcode in manual mode
   await navigate("#/products");
+  await waitFor(() => document.querySelector('input[type="search"]'), { label: "search input" });
   setField('input[type="search"]', "ALYQ-1001");
   await sleep(250);
   const editLink = [...document.querySelectorAll("tbody a[href*='/edit']")][0];
@@ -766,6 +783,7 @@ async function main() {
 
   // ── Phase 3 · Inventory module ──
   await navigate("#/inventory/stock");
+  await waitFor(() => bodyText().includes("Inventory dashboard"), { label: "inventory dashboard" });
   assert.ok(bodyText().includes("Inventory dashboard"), "inventory dashboard loads");
   assert.ok(bodyText().includes("ALYQ-1001"), "stock list shows demo products");
   console.log("  ✓ inventory dashboard + current stock list");
