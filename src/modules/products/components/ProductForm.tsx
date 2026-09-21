@@ -31,6 +31,20 @@ import { BarcodePreview } from "./BarcodePreview";
 import { deriveBarcodeFromSku, isDerivedFromSku } from "../services/barcode";
 import { buildBarcodeLabelHtml } from "../services/barcodeLabel";
 import { StockBadge } from "./ProductTable";
+// import {
+//   generateVariants,
+//   enableVariants,
+//   saveVariant,
+//   type GenerateVariantRow,
+// } from "../services/variantService";
+import {
+  generateCombinations as _generateCombinations,
+  parseSizes as _parseSizes,
+  formatSizes as _formatSizes,
+  colorKeyOf as _colorKeyOf,
+  type VariantColorDraft,
+} from "../variants";
+import { type GenerateVariantRow } from "../services/variantService";
 
 export function ProductForm({ productId }: { productId?: string }) {
   const { t, pick, money, num, isRTL } = useI18n();
@@ -56,6 +70,39 @@ export function ProductForm({ productId }: { productId?: string }) {
   const [submitAttempted, setSubmitAttempted] = useState(false);
   const [saving, setSaving] = useState(false);
   const [printCopies, setPrintCopies] = useState("1");
+
+  // ── Variant workflow state ────────────────────────────────────────────────
+  type VariantMode = "none" | "colors" | "sizes" | "colors_sizes";
+  type VariantDraft = {
+    color_ar: string;
+    color_en: string;
+    color_hex: string;
+    size_mode: "number" | "label";
+    size: string;
+    size_label: string;
+    sku: string;
+    barcode: string;
+    price_override: string;
+    cost_override: string;
+    low_stock_level: string;
+    active: boolean;
+    image_url: string;
+  };
+  const [_variantMode, _setVariantMode] = useState<VariantMode>("none");
+  const [_colors, _setColors] = useState<VariantColorDraft[]>([]);
+  const [_sizes, _setSizes] = useState<number[]>([]);
+  const [_generatedCombinations, _setGeneratedCombinations] = useState<GenerateVariantRow[]>([]);
+  const [_variantDrafts, _setVariantDrafts] = useState<Record<string, VariantDraft>>({});
+  const [_colorsText, _setColorsText] = useState("");
+  const [_sizesText, _setSizesText] = useState("");
+  const [_generating, _setGenerating] = useState(false);
+  const [_savingVariants, _setSavingVariants] = useState(false);
+  const [_enablingVariants, _setEnablingVariants] = useState(false);
+  const [_openingQuantities, _setOpeningQuantities] = useState<Record<string, number>>({});
+  const [_generationLowStock, _setGenerationLowStock] = useState("0");
+  const [_enabling, _setEnabling] = useState(false);
+  const [_opening, _setOpening] = useState<Record<string, string>>({});
+  const [_enablingLowStock, _setEnablingLowStock] = useState("0");
   /**
    * `auto` keeps the barcode mirrored from the SKU; `manual` means the admin
    * entered a manufacturer barcode which must survive later SKU edits.
