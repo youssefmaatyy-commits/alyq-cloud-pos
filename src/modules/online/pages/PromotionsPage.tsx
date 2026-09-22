@@ -80,6 +80,7 @@ export function PromotionsPage() {
     setDraft({
       id: "",
       enabled: true,
+      channel: "both",
       name_en: "",
       name_ar: "",
       description_en: null,
@@ -205,6 +206,7 @@ export function PromotionsPage() {
             <thead>
               <tr className="border-b border-stone-200 bg-stone-50 text-[11px] font-bold uppercase tracking-wider text-stone-600">
                 <th className="px-4 py-3 text-start font-semibold">{t("online.promos.colName")}</th>
+                <th className="px-3 py-3 text-start font-semibold">Channel</th>
                 <th className="px-3 py-3 text-start font-semibold">{t("online.promos.colType")}</th>
                 <th className="px-3 py-3 text-start font-semibold">{t("online.promos.colScope")}</th>
                 <th className="px-3 py-3 text-end font-semibold">{t("online.promos.colValue")}</th>
@@ -230,6 +232,9 @@ export function PromotionsPage() {
                         ? ` · ${t("online.promos.targetCount", { count: num(targetCount(promotion.id), 0) })}`
                         : ""}
                     </p>
+                  </td>
+                  <td className="px-3 py-3 text-xs font-semibold text-stone-700">
+                    {promotion.channel === "both" ? "Online + POS" : promotion.channel === "pos" ? "POS" : "Online"}
                   </td>
                   <td className="px-3 py-3 text-xs text-stone-700">
                     {promotion.discount_type === "percent"
@@ -331,6 +336,17 @@ export function PromotionsPage() {
                   value={draft.name_ar}
                   onChange={(event) => setDraft({ ...draft, name_ar: event.target.value })}
                 />
+              </Field>
+              <Field label="Channel / القناة">
+                <SelectInput
+                  value={draft.channel ?? "both"}
+                  onChange={(event) => setDraft({ ...draft, channel: event.target.value as Promotion["channel"] })}
+                  data-testid="promo-channel"
+                >
+                  <option value="online">Online Store only</option>
+                  <option value="pos">POS only</option>
+                  <option value="both">Online Store + POS</option>
+                </SelectInput>
               </Field>
               <Field label={t("online.promos.type")}>
                 <SelectInput

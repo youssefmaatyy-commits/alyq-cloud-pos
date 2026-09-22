@@ -88,6 +88,7 @@ import { variantLabelOf } from "../services/variantLabel";
 import type { ProductVariant } from "@/modules/products/variants";
 import { unitsSold } from "../services/badges";
 import { checkAction, initialPaymentStatus, requiresReason } from "../services/orderWorkflow";
+import { sanitizeSettings } from "../services/settingsDefaults";
 import { slugifyAscii } from "../services/seo";
 import { getLocalStoreAccounts, normalizePhone } from "./localAccounts";
 import {
@@ -347,28 +348,28 @@ function seedContent(products: readonly Product[]) {
         id: newId("dz"), key: "ismailia", name_en: "Ismailia", name_ar: "الإسماعيلية",
         governorate_key: "ismailia", shipping_fee: 0, minimum_order_amount: 0,
         free_shipping_threshold: null, estimated_delivery_text_en: "Same-day delivery",
-        estimated_delivery_text_ar: "توصيل في نفس اليوم", enabled: true, sort_order: 10,
+        estimated_delivery_text_ar: "توصيل في نفس اليوم", show_estimated_delivery: true, enabled: true, sort_order: 10,
         created_at: at, updated_at: at,
       },
       {
         id: newId("dz"), key: "cairo", name_en: "Cairo", name_ar: "القاهرة",
         governorate_key: "cairo", shipping_fee: 70, minimum_order_amount: 0,
         free_shipping_threshold: null, estimated_delivery_text_en: "1–2 business days",
-        estimated_delivery_text_ar: "١–٢ يوم عمل", enabled: true, sort_order: 20,
+        estimated_delivery_text_ar: "١–٢ يوم عمل", show_estimated_delivery: true, enabled: true, sort_order: 20,
         created_at: at, updated_at: at,
       },
       {
         id: newId("dz"), key: "suez", name_en: "Suez", name_ar: "السويس",
         governorate_key: "suez", shipping_fee: 50, minimum_order_amount: 0,
         free_shipping_threshold: null, estimated_delivery_text_en: "1–2 business days",
-        estimated_delivery_text_ar: "١–٢ يوم عمل", enabled: true, sort_order: 30,
+        estimated_delivery_text_ar: "١–٢ يوم عمل", show_estimated_delivery: true, enabled: true, sort_order: 30,
         created_at: at, updated_at: at,
       },
       {
         id: newId("dz"), key: "other", name_en: "Other governorates", name_ar: "باقي المحافظات",
         governorate_key: null, shipping_fee: 80, minimum_order_amount: 0,
         free_shipping_threshold: null, estimated_delivery_text_en: "2–4 business days",
-        estimated_delivery_text_ar: "٢–٤ يوم عمل", enabled: true, sort_order: 100,
+        estimated_delivery_text_ar: "٢–٤ يوم عمل", show_estimated_delivery: true, enabled: true, sort_order: 100,
         created_at: at, updated_at: at,
       },
     ];
@@ -1235,6 +1236,10 @@ export class DemoOnlineRepository
         promotion_id: pricing.autoPromotionId,
         price_snapshot: snapshot,
         delivery_fee: pricing.deliveryFee,
+        delivery_zone_id: zone?.id ?? null,
+        delivery_zone_name_en: zone?.name_en ?? null,
+        delivery_zone_name_ar: zone?.name_ar ?? null,
+        delivery_free_shipping: input.delivery_type === "delivery" && pricing.deliveryFee === 0,
         total: pricing.total,
         payment_method: input.payment_method,
         payment_status: initialPaymentStatus(input.payment_method),
@@ -1844,7 +1849,7 @@ export class DemoOnlineRepository
     await this.ensureSeeded();
     // Stored as given; read back through `resolveSettings`, so a document from an
     // older release still renders and gains whatever it is missing.
-    const merged = mergeSettings(DEFAULT_WEBSITE_SETTINGS, input.settings as unknown);
+    const merged = sanitizeSettings(mergeSettings(DEFAULT_WEBSITE_SETTINGS, input.settings as unknown));
     const meta: WebsiteSettingsMeta = {
       updated_at: nowIso(),
       updated_by_name: input.user_name || null,
@@ -2321,6 +2326,7 @@ export class DemoOnlineRepository
         draft.estimated_delivery_text_en ?? existing?.estimated_delivery_text_en ?? null,
       estimated_delivery_text_ar:
         draft.estimated_delivery_text_ar ?? existing?.estimated_delivery_text_ar ?? null,
+      show_estimated_delivery: draft.show_estimated_delivery ?? existing?.show_estimated_delivery ?? true,
       enabled: draft.enabled ?? existing?.enabled ?? true,
       sort_order: draft.sort_order ?? existing?.sort_order ?? 0,
       created_at: existing?.created_at ?? at,
@@ -2402,6 +2408,7 @@ export class DemoOnlineRepository
     const next: Promotion = {
       id: existing?.id ?? newId("prm"),
       enabled: draft.enabled ?? existing?.enabled ?? true,
+      channel: draft.channel ?? existing?.channel ?? "both",
       name_en: draft.name_en ?? existing?.name_en ?? "",
       name_ar: draft.name_ar ?? existing?.name_ar ?? "",
       description_en: draft.description_en ?? existing?.description_en ?? null,

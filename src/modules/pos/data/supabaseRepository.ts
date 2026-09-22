@@ -23,6 +23,11 @@ interface SaleRow {
   discount_type: Sale["discount_type"];
   discount_value: number | string;
   discount_amount: number | string;
+  item_discount_amount?: number | string | null;
+  total_discount_amount?: number | string | null;
+  automatic_discount_amount?: number | string | null;
+  automatic_promotion_id?: string | null;
+  automatic_promotion_name?: string | null;
   total: number | string;
   amount_received: number | string | null;
   change: number | string | null;
@@ -70,6 +75,13 @@ interface SaleItemRow {
   unit_price: number | string;
   quantity: number;
   line_total: number | string;
+  gross_total?: number | string | null;
+  discount_type?: SaleItem["discount_type"] | null;
+  discount_value?: number | string | null;
+  discount_amount?: number | string | null;
+  automatic_promotion_id?: string | null;
+  automatic_promotion_name?: string | null;
+  automatic_discount_amount?: number | string | null;
 }
 
 function toNumber(value: number | string | null | undefined): number {
@@ -103,6 +115,11 @@ function mapSale(row: SaleRow, items: SaleItemRow[] = [], payments: SalePaymentR
     discount_type: row.discount_type,
     discount_value: toNumber(row.discount_value),
     discount_amount: toNumber(row.discount_amount),
+    item_discount_amount: row.item_discount_amount == null ? undefined : toNumber(row.item_discount_amount),
+    total_discount_amount: row.total_discount_amount == null ? undefined : toNumber(row.total_discount_amount),
+    automatic_discount_amount: row.automatic_discount_amount == null ? undefined : toNumber(row.automatic_discount_amount),
+    automatic_promotion_id: row.automatic_promotion_id ?? null,
+    automatic_promotion_name: row.automatic_promotion_name ?? null,
     total: toNumber(row.total),
     amount_received: row.amount_received == null ? null : toNumber(row.amount_received),
     change: row.change == null ? null : toNumber(row.change),
@@ -126,7 +143,14 @@ function mapSale(row: SaleRow, items: SaleItemRow[] = [], payments: SalePaymentR
       barcode: i.barcode,
       unit_price: toNumber(i.unit_price),
       quantity: i.quantity,
+      gross_total: i.gross_total == null ? undefined : toNumber(i.gross_total),
       line_total: toNumber(i.line_total),
+      discount_type: i.discount_type ?? "none",
+      discount_value: i.discount_value == null ? 0 : toNumber(i.discount_value),
+      discount_amount: i.discount_amount == null ? 0 : toNumber(i.discount_amount),
+      automatic_promotion_id: i.automatic_promotion_id ?? null,
+      automatic_promotion_name: i.automatic_promotion_name ?? null,
+      automatic_discount_amount: i.automatic_discount_amount == null ? 0 : toNumber(i.automatic_discount_amount),
     })),
     payments: payments.map(mapPayment),
     customer_id: row.customer_id ?? null,

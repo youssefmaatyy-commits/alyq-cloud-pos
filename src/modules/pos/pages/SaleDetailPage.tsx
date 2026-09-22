@@ -273,6 +273,7 @@ export function SaleDetailPage() {
                   <td className="py-2.5 text-center text-sm font-bold tabular-nums">{item.quantity}</td>
                   <td className="py-2.5 text-end text-xs tabular-nums text-slate-600">
                     {num(item.unit_price, 2)}
+                    {item.discount_amount ? <span className="block text-[10px] text-rose-600">−{num(item.discount_amount, 2)} item</span> : null}
                   </td>
                   <td className="py-2.5 text-end text-sm font-bold tabular-nums text-slate-900">
                     {num(item.line_total, 2)}
@@ -292,7 +293,11 @@ export function SaleDetailPage() {
                 <dd className="tabular-nums">{num(sale.subtotal, 2)}</dd>
               </div>
               <div className="flex justify-between text-slate-600">
-                <dt>{t("pos.discount")}</dt>
+                <dt>Item discounts / خصم الأصناف</dt>
+                <dd className="tabular-nums text-rose-600">−{num(sale.item_discount_amount ?? 0, 2)}</dd>
+              </div>
+              <div className="flex justify-between text-slate-600">
+                <dt>Invoice discount / خصم الفاتورة</dt>
                 <dd className="tabular-nums text-rose-600">−{num(sale.discount_amount, 2)}</dd>
               </div>
               <div className="flex justify-between border-t border-slate-200 pt-2 text-base font-extrabold text-slate-900">

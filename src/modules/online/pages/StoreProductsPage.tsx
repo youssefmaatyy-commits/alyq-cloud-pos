@@ -95,9 +95,24 @@ export function StoreProductsPage() {
     [catalogContext, filters, products],
   );
 
+  const variantFacets = useMemo(() => {
+    const colors = new Map<string, string>();
+    const sizes = new Set<number>();
+    for (const variants of catalogContext.variants?.values() ?? []) {
+      for (const variant of variants) {
+        if (!variant.active) continue;
+        colors.set(variant.color_key, pick(variant.color_ar, variant.color_en) || variant.color_key);
+        if (variant.size !== null) sizes.add(variant.size);
+      }
+    }
+    return { colors: [...colors.entries()].sort((a, b) => a[1].localeCompare(b[1])), sizes: [...sizes].sort((a, b) => a - b) };
+  }, [catalogContext.variants, pick]);
+
   const activeFilterCount =
     (filters.categoryId !== "all" ? 1 : 0) +
     (filters.brand ? 1 : 0) +
+    (filters.color ? 1 : 0) +
+    (filters.size !== null ? 1 : 0) +
     (filters.minPrice !== null || filters.maxPrice !== null ? 1 : 0) +
     (filters.availability !== "any" ? 1 : 0);
 
@@ -184,6 +199,33 @@ export function StoreProductsPage() {
               </button>
             ))}
           </div>
+        </div>
+      ) : null}
+
+      {variantFacets.colors.length > 0 ? (
+        <div>
+          <p className="mb-2 text-xs font-black uppercase tracking-widest text-[var(--store-muted)]">{t("store.filters.color")}</p>
+          <select
+            value={filters.color ?? ""}
+            onChange={(event) => apply({ color: event.target.value || null })}
+            className="w-full rounded-lg border border-[var(--store-border)] bg-[var(--store-surface)] px-2.5 py-2 text-sm font-semibold text-[var(--store-text)] outline-none focus:border-[var(--store-primary)]"
+          >
+            <option value="">{t("common.all")}</option>
+            {variantFacets.colors.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+          </select>
+        </div>
+      ) : null}
+      {variantFacets.sizes.length > 0 ? (
+        <div>
+          <p className="mb-2 text-xs font-black uppercase tracking-widest text-[var(--store-muted)]">{t("store.filters.size")}</p>
+          <select
+            value={filters.size === null ? "" : String(filters.size)}
+            onChange={(event) => apply({ size: event.target.value ? Number(event.target.value) : null })}
+            className="w-full rounded-lg border border-[var(--store-border)] bg-[var(--store-surface)] px-2.5 py-2 text-sm font-semibold text-[var(--store-text)] outline-none focus:border-[var(--store-primary)]"
+          >
+            <option value="">{t("common.all")}</option>
+            {variantFacets.sizes.map((size) => <option key={size} value={size}>{size}</option>)}
+          </select>
         </div>
       ) : null}
 

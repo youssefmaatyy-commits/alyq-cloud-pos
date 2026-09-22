@@ -50,6 +50,7 @@ import {
 import { campaignBadgeText } from "../services/badges";
 import { Money, ProductBadges, QuantityStepper, StarRating, StoreImage } from "../components/storefront/StorePrimitives";
 import { ProductCard, ProductGrid } from "../components/storefront/ProductCard";
+import { rememberViewed } from "../services/shopperMemory";
 
 /** How far the zoomed image follows the pointer. */
 const ZOOM = 2;
@@ -285,10 +286,20 @@ export function StoreProductPage() {
     ? categories.find((candidate) => candidate.id === product.category_id) ?? null
     : null;
 
+  const [recentIds, setRecentIds] = useState<string[]>([]);
+  useEffect(() => {
+    if (!product) return;
+    setRecentIds(rememberViewed(product.id));
+  }, [product]);
+
   const related = useMemo(
     () => (product ? relatedProducts(product, products, catalogContext, 4) : []),
     [catalogContext, product, products],
   );
+  const recentlyViewed = useMemo(() => {
+    const entries = searchCatalog(products, { ...EMPTY_CATALOG_FILTERS, productIds: recentIds, sort: "featured" }, catalogContext);
+    return recentIds.map((id) => entries.find((entry) => entry.product.id === id && entry.product.id !== product?.id)).filter(Boolean).slice(0, 4) as typeof entries;
+  }, [catalogContext, product?.id, products, recentIds]);
 
   const productReviews = useMemo(
     () => (product ? reviews.filter((review) => review.product_id === product.id && review.visible) : []),
@@ -765,6 +776,15 @@ export function StoreProductPage() {
             {related.map((candidate) => (
               <ProductCard key={candidate.product.id} entry={candidate} compact />
             ))}
+          </ProductGrid>
+        </section>
+      ) : null}
+
+      {recentlyViewed.length > 0 ? (
+        <section className="mt-12">
+          <h2 className="mb-4 text-lg font-black tracking-tight text-[var(--store-text)]">{t("store.product.recentlyViewed")}</h2>
+          <ProductGrid className="lg:grid-cols-4">
+            {recentlyViewed.map((candidate) => <ProductCard key={candidate.product.id} entry={candidate} compact />)}
           </ProductGrid>
         </section>
       ) : null}

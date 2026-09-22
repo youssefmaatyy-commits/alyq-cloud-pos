@@ -61,7 +61,15 @@ export interface SaleItem {
   barcode: string | null;
   unit_price: number;
   quantity: number;
+  /** Gross line total before manual item discount. */
+  gross_total?: number;
   line_total: number;
+  discount_type?: DiscountType;
+  discount_value?: number;
+  discount_amount?: number;
+  automatic_promotion_id?: string | null;
+  automatic_promotion_name?: string | null;
+  automatic_discount_amount?: number;
 }
 
 /**
@@ -103,7 +111,14 @@ export interface Sale {
   subtotal: number;
   discount_type: DiscountType;
   discount_value: number;
+  /** Invoice-level discount (legacy fields remain invoice discount fields). */
   discount_amount: number;
+  /** Manual item discounts, kept separate from invoice discounts. */
+  item_discount_amount?: number;
+  total_discount_amount?: number;
+  automatic_discount_amount?: number;
+  automatic_promotion_id?: string | null;
+  automatic_promotion_name?: string | null;
   total: number;
   user_id: string;
   user_name: string;
@@ -144,7 +159,14 @@ export interface CompleteSaleInput {
    * Only product ids + quantities come from the client. Prices, names and
    * totals are re-read/recalculated on the authoritative side.
    */
-  lines: { product_id: string; qty: number; variant_id?: string | null }[];
+  lines: {
+    product_id: string;
+    qty: number;
+    variant_id?: string | null;
+    /** Discount intent only; authoritative service recalculates the amount. */
+    discount_type?: DiscountType;
+    discount_value?: number;
+  }[];
   discount_type: DiscountType;
   discount_value: number;
   /** One or more payments whose amounts sum exactly to the sale total. */
@@ -198,6 +220,7 @@ export interface CartLine {
   max_qty: number;
   qty: number;
   image_url: string | null;
+  item_discount?: CartDiscount;
 }
 
 /**

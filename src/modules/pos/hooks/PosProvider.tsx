@@ -39,6 +39,9 @@ import {
 } from "../types";
 import type { Customer } from "@/modules/customers/types";
 import { EMPTY_DISCOUNT, newClientRef } from "../types";
+import { getWebsiteRepository } from "@/modules/online/data";
+import { promotionUnitPrice } from "@/modules/online/services/pricing";
+import type { Promotion, PromotionTarget } from "@/modules/online/types";
 
 export interface PosContextValue {
   mode: "supabase" | "demo";
@@ -76,6 +79,7 @@ export interface PosContextValue {
   increase: (key: string) => void;
   decrease: (key: string) => void;
   removeLine: (key: string) => void;
+  setLineDiscount: (key: string, discount: CartDiscount) => void;
   setDiscount: (discount: CartDiscount) => void;
   clearCart: () => void;
   // completion
@@ -126,6 +130,8 @@ const PosContext = createContext<PosContextValue | null>(null);
 export function PosProvider({ children }: { children: ReactNode }) {
   const [products, setProducts] = useState<Product[]>([]);
   const [variants, setVariants] = useState<ProductVariant[]>([]);
+  const [promotions, setPromotions] = useState<Promotion[]>([]);
+  const [promotionTargets, setPromotionTargets] = useState<PromotionTarget[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<AppError | null>(null);
   const [lines, setLines] = useState<CartLine[]>([]);
@@ -163,12 +169,15 @@ export function PosProvider({ children }: { children: ReactNode }) {
       isSupabaseConfigured && getSupabaseClient()
         ? getSupabaseRepository()
         : getDemoRepository();
-    const [list, combinations] = await Promise.all([
+    const [list, combinations, website] = await Promise.all([
       repo.listProducts(),
       repo.listVariants(),
+      getWebsiteRepository().getSnapshot().catch(() => null),
     ]);
     setProducts(list);
     setVariants([...combinations].sort(compareVariants));
+    setPromotions(website?.promotions ?? []);
+    setPromotionTargets(website?.promotionTargets ?? []);
     return list;
   }, []);
 
@@ -241,6 +250,16 @@ export function PosProvider({ children }: { children: ReactNode }) {
    * of one product are two lines — they never merge, and neither inherits the
    * other's stock.
    */
+  const posPromotionTargets = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    for (const target of promotionTargets) {
+      const ids = map.get(target.promotion_id) ?? new Set<string>();
+      ids.add(`${target.target_kind}:${target.target_id}`);
+      map.set(target.promotion_id, ids);
+    }
+    return map;
+  }, [promotionTargets]);
+
   const addLine = useCallback(
     (product: Product, variant: ProductVariant | null = null) => {
       if (!product.active || !product.stock_tracking_enabled) return false;
@@ -257,6 +276,17 @@ export function PosProvider({ children }: { children: ReactNode }) {
       const maxQty = variant ? variant.stock_quantity : product.stock_quantity;
       if (maxQty <= 0) return false;
 
+      const officialUnit = variant ? variantPrice(variant, product) : product.selling_price;
+      const effective = promotionUnitPrice(
+        product.id,
+        variant?.id ?? null,
+        product.category_id ?? null,
+        officialUnit,
+        promotions,
+        posPromotionTargets,
+        new Date(),
+        "pos",
+      );
       const line: CartLine = {
         product_id: product.id,
         variant_id: variant?.id ?? null,
@@ -269,10 +299,11 @@ export function PosProvider({ children }: { children: ReactNode }) {
         name_ar: product.name_ar,
         name_en: product.name_en,
         barcode: variant?.barcode ?? product.barcode,
-        unit_price: variant ? variantPrice(variant, product) : product.selling_price,
+        unit_price: effective.unit,
         max_qty: maxQty,
         qty: 1,
         image_url: variant?.image_url ?? product.image_url,
+        item_discount: { ...EMPTY_DISCOUNT },
       };
 
       let added = false;
@@ -289,7 +320,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       });
       return added;
     },
-    [variants],
+    [variants, promotions, posPromotionTargets],
   );
 
   /**
@@ -340,6 +371,14 @@ export function PosProvider({ children }: { children: ReactNode }) {
     setLines((prev) => prev.filter((l) => lineKey(l) !== key));
   }, []);
 
+  const setLineDiscount = useCallback(
+    (key: string, next: CartDiscount) => {
+      if (!canDiscount || validateDiscount(next.type, next.value)) return;
+      setLines((prev) => prev.map((line) => (lineKey(line) === key ? { ...line, item_discount: next } : line)));
+    },
+    [canDiscount],
+  );
+
   const setDiscount = useCallback(
     (next: CartDiscount) => {
       if (!canDiscount) return;
@@ -378,6 +417,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
             product_id: l.product_id,
             qty: l.qty,
             variant_id: l.variant_id,
+            discount_type: l.item_discount?.type ?? "none",
+            discount_value: l.item_discount?.value ?? 0,
           })),
           discount_type: discount.type,
           discount_value: discount.value,
@@ -438,6 +479,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       increase,
       decrease,
       removeLine,
+      setLineDiscount,
       setDiscount,
       clearCart,
       completing,
@@ -473,6 +515,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       increase,
       decrease,
       removeLine,
+      setLineDiscount,
       setDiscount,
       clearCart,
       completing,

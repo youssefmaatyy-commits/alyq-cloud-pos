@@ -28,6 +28,7 @@ import type {
   DeliveryZone,
   ProductContent,
   Promotion,
+  PromotionChannel,
 } from "../types";
 
 /** Money is Egyptian pounds, rounded to piastres. */
@@ -652,6 +653,7 @@ export function selectAutomaticPromotion(
   lines: readonly PromotionCartLine[],
   subtotal: number,
   now: Date = new Date(),
+  channel: PromotionChannel = "online",
 ): { promotion: Promotion; discount: number } | null {
   const ordered = [...promotions].sort((a, b) => {
     if (b.priority !== a.priority) return b.priority - a.priority;
@@ -660,6 +662,7 @@ export function selectAutomaticPromotion(
   let best: { promotion: Promotion; discount: number } | null = null;
   for (const promotion of ordered) {
     if (!isPromotionLive(promotion, now)) continue;
+    if (promotion.channel && promotion.channel !== "both" && promotion.channel !== channel) continue;
     if (subtotal < promotion.minimum_order_amount) continue;
     const targetIds = targetsByPromotion.get(promotion.id) ?? new Set<string>();
     if (!promotionApplies(promotion, targetIds, lines)) continue;
@@ -727,6 +730,8 @@ export interface CartPricingInput {
   legacy: { fee: number; minimum: number; threshold: number };
   deliveryType: DeliveryType;
   now?: Date;
+  /** Storefront defaults to online; POS supplies pos explicitly. */
+  channel?: PromotionChannel;
 }
 
 export interface EvaluatedCart {
@@ -770,6 +775,7 @@ export function evaluateCartPricing(input: CartPricingInput): CartPricingResult 
           lines,
           subtotal,
           now,
+          input.channel ?? "online",
         )
       : null;
 
@@ -977,6 +983,7 @@ export function promotionUnitPrice(
   promotions: readonly Promotion[],
   targetsByPromotion: ReadonlyMap<string, ReadonlySet<string>>,
   now: Date = new Date(),
+  channel: PromotionChannel = "online",
 ): { unit: number; promotionId: string | null } {
   const line: PromotionCartLine = {
     product_id: productId,
@@ -993,6 +1000,7 @@ export function promotionUnitPrice(
     // Display-only offers: no minimum its cart cannot prove, live, in scope.
     if (promotion.minimum_order_amount > 0) continue;
     if (!isPromotionLive(promotion, now)) continue;
+    if (promotion.channel && promotion.channel !== "both" && promotion.channel !== channel) continue;
     const targetIds = targetsByPromotion.get(promotion.id) ?? new Set<string>();
     if (!promotionApplies(promotion, targetIds, [line])) continue;
     const discount = promotionDiscount(promotion, targetIds, [line], unitPrice);

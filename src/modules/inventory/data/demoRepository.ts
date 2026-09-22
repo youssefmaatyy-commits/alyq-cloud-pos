@@ -1,5 +1,5 @@
 import type { Product, ProductPatch } from "@/modules/products/types";
-import type { ProductVariant } from "@/modules/products/variants";
+import { variantLabel, type ProductVariant } from "@/modules/products/variants";
 import { AppError } from "@/modules/products/data/repository";
 import { buildDemoCategories, buildDemoProducts, safeStorage } from "@/modules/products/data/demoSeed";
 import { getDemoRepository as getCatalogDemo } from "@/modules/products/data/demoRepository";
@@ -173,7 +173,15 @@ export async function applyDemoAdjustment(
       );
     }
     const variantBefore = variant.stock_quantity;
-    const variantAfter = Math.max(0, variantBefore + signedDelta(args.type, args.quantity));
+    const delta = signedDelta(args.type, args.quantity);
+    if (delta < 0 && Math.abs(delta) > variantBefore) {
+      throw new AppError(
+        "VARIANT_STOCK_INSUFFICIENT",
+        `Only ${variantBefore} of ${variantLabel(variant)} in stock`,
+        "quantity",
+      );
+    }
+    const variantAfter = variantBefore + delta;
     const movement: StockMovement = {
       id: newId("mov"),
       product_id: current.id,
@@ -199,7 +207,11 @@ export async function applyDemoAdjustment(
   }
 
   const quantityBefore = current.stock_quantity;
-  const newQty = Math.max(0, quantityBefore + signedDelta(args.type, args.quantity));
+  const delta = signedDelta(args.type, args.quantity);
+  if (delta < 0 && Math.abs(delta) > quantityBefore) {
+    throw new AppError("VALIDATION", `Only ${quantityBefore} of ${current.sku} in stock`, "quantity");
+  }
+  const newQty = quantityBefore + delta;
   // Pre-compute the snapshot so the movement is durable in one read.
   const movement: StockMovement = {
     id: newId("mov"),

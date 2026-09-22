@@ -30,6 +30,7 @@ import { toOnlineError } from "../data/repository";
 import type { OnlineErrorCode, StoreCustomerPatch } from "../data/repository";
 import type { CustomerAddress, OnlineOrder, StoreCustomer } from "../types";
 import { normalizeAddresses } from "../data/demoRepository";
+import { readGuestWishlist, toggleGuestWishlist } from "../services/shopperMemory";
 
 export interface StoreAccountContextValue {
   customer: StoreCustomer | null;
@@ -92,6 +93,9 @@ export function StoreAccountProvider({ children }: { children: ReactNode }) {
   const [history, setHistory] = useState<OnlineOrder[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [tracked, setTracked] = useState<OnlineOrder | null>(null);
+  const [guestWishlist, setGuestWishlist] = useState<string[]>([]);
+
+  useEffect(() => { setGuestWishlist(readGuestWishlist()); }, []);
 
   // Restore a session on first paint, so a returning shopper is not signed out
   // by a reload in the middle of a checkout.
@@ -243,7 +247,7 @@ export function StoreAccountProvider({ children }: { children: ReactNode }) {
     [addresses, persistAddresses],
   );
 
-  const wishlist = useMemo(() => customer?.wishlist ?? [], [customer?.wishlist]);
+  const wishlist = useMemo(() => customer?.wishlist ?? guestWishlist, [customer?.wishlist, guestWishlist]);
 
   const inWishlist = useCallback(
     (productId: string) => wishlist.includes(productId),
@@ -253,8 +257,8 @@ export function StoreAccountProvider({ children }: { children: ReactNode }) {
   const toggleWishlist = useCallback(
     async (productId: string) => {
       if (!customer) {
-        setError("not_signed_in");
-        return false;
+        setGuestWishlist(toggleGuestWishlist(productId));
+        return true;
       }
       const next = wishlist.includes(productId)
         ? wishlist.filter((id) => id !== productId)

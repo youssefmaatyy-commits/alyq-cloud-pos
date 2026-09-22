@@ -54,6 +54,7 @@ export const PREVIEW_SCREENS: readonly PreviewScreen[] = [
   { path: "/categories", labelKey: "nav.categories" },
   { path: "/inventory", labelKey: "nav.inventory" },
   { path: "/inventory/movements", labelKey: "nav.movements" },
+  { path: "/inventory/stocktake", labelKey: "inventory.stocktake.title" },
   { path: "/shifts", labelKey: "nav.shifts" },
   { path: "/shifts/history", labelKey: "nav.shiftHistory" },
   { path: "/expenses", labelKey: "nav.expenses" },

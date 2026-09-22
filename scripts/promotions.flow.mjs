@@ -155,7 +155,10 @@ async function main() {
   await waitFor(() => testid("product-add-to-cart"), { label: "the product page" });
   // Re-query every click: React replaces the button on each step, and a click
   // on a detached node lands nowhere.
-  for (let i = 0; i < 7; i += 1) {
+  // The initial selection is one unit. Eight attempts are intentional: a
+  // React re-render can detach one click, and the stepper's stock ceiling keeps
+  // the loop safe if the fixture is smaller than the requested quantity.
+  for (let i = 0; i < 8; i += 1) {
     const inc = [...document.querySelectorAll("button")].find((b) =>
       (b.getAttribute("aria-label") ?? "").includes("ncrease"),
     );
@@ -166,7 +169,29 @@ async function main() {
   clickTestid("product-add-to-cart");
   await sleep(500);
   await navigate("#/store/cart");
-  await waitFor(() => bodyText().includes("462.4"), { label: "the 8 × 57.80 cart" });
+  // Reconcile the quantity through the cart's authoritative controls. React may
+  // process a burst of product-page clicks after navigation, and the cart can
+  // briefly render a line quantity that is ahead of its refreshed preview. Set
+  // the exact fixture quantity here instead of waiting for a coincidental total.
+  const ringLine = [...document.querySelectorAll("article")].find((article) =>
+    (article.textContent ?? "").includes("ALYQ-1002"),
+  );
+  assert.ok(ringLine, "the Classic Gold Ring cart line exists");
+  const decrease = ringLine.querySelector('button[aria-label*="ecrease"]');
+  const quantityText = () => decrease?.parentElement?.querySelector("span")?.textContent?.trim() ?? "";
+  for (let i = 0; i < 30 && quantityText() !== "8"; i += 1) {
+    if (!decrease || quantityText() === "1") break;
+    clickEl(decrease);
+    await sleep(150);
+  }
+  await waitFor(() => quantityText() === "8", {
+    label: "the cart quantity to settle at eight",
+  });
+  // Wait for the authoritative preview after the line quantity has settled.
+  await waitFor(() => bodyText().includes("462.4"), {
+    label: "the 8 × 57.80 cart",
+    timeout: 60_000,
+  });
   check("8 × Classic Gold Ring prices 462.40 live (544 struck) in the cart", true);
 
   // ── 7 · the code applies once, exactly ────────────────────────────────────

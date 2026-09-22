@@ -1,4 +1,4 @@
-import { settingsForRemoteSave } from "../services/settingsDefaults";
+import { sanitizeSettings, settingsForRemoteSave } from "../services/settingsDefaults";
 /**
  * Live Supabase implementation of the online storefront repositories.
  *
@@ -105,6 +105,10 @@ interface OnlineOrderRow {
   promotion_id: string | null;
   price_snapshot: PriceSnapshot | Record<string, never> | null;
   delivery_fee: Numeric;
+  delivery_zone_id?: string | null;
+  delivery_zone_name_en?: string | null;
+  delivery_zone_name_ar?: string | null;
+  delivery_free_shipping?: boolean | null;
   total: Numeric;
   payment_method: string;
   payment_status: OnlineOrder["payment_status"];
@@ -242,6 +246,7 @@ interface DeliveryZoneRow {
   free_shipping_threshold: Numeric;
   estimated_delivery_text_en: string | null;
   estimated_delivery_text_ar: string | null;
+  show_estimated_delivery?: boolean | null;
   enabled: boolean;
   sort_order: number;
   created_at: string;
@@ -251,6 +256,7 @@ interface DeliveryZoneRow {
 interface PromotionRow {
   id: string;
   enabled: boolean;
+  channel?: string | null;
   name_en: string;
   name_ar: string;
   description_en: string | null;
@@ -431,6 +437,11 @@ function mapOrder(
     promotion_id: row.promotion_id ?? null,
     price_snapshot: toPriceSnapshot(row.price_snapshot),
     delivery_fee: toNumber(row.delivery_fee),
+    delivery_zone_id:
+      row.delivery_zone_id ?? ((row.address as Record<string, unknown> | null)?.zone_id as string | null | undefined) ?? null,
+    delivery_zone_name_en: row.delivery_zone_name_en ?? null,
+    delivery_zone_name_ar: row.delivery_zone_name_ar ?? null,
+    delivery_free_shipping: row.delivery_free_shipping ?? toNumber(row.delivery_fee) === 0,
     total: toNumber(row.total),
     payment_method: toOnlinePaymentMethod(row.payment_method),
     payment_status: row.payment_status,
@@ -566,6 +577,7 @@ function mapDeliveryZone(row: DeliveryZoneRow): DeliveryZone {
         : toNumber(row.free_shipping_threshold),
     estimated_delivery_text_en: row.estimated_delivery_text_en ?? null,
     estimated_delivery_text_ar: row.estimated_delivery_text_ar ?? null,
+    show_estimated_delivery: row.show_estimated_delivery !== false,
     enabled: row.enabled,
     sort_order: row.sort_order ?? 0,
     created_at: row.created_at,
@@ -581,6 +593,7 @@ function mapPromotion(row: PromotionRow): Promotion {
   return {
     id: row.id,
     enabled: row.enabled,
+    channel: row.channel === "online" || row.channel === "pos" ? row.channel : "both",
     name_en: row.name_en,
     name_ar: row.name_ar,
     description_en: row.description_en ?? null,
@@ -1268,7 +1281,7 @@ export class SupabaseOnlineRepository
       const { error } = await client.from("website_settings").upsert(
         {
           id: 1,
-          settings: settingsForRemoteSave(input.settings, window.location.origin) as unknown as Record<string, unknown>,
+          settings: settingsForRemoteSave(sanitizeSettings(input.settings), window.location.origin) as unknown as Record<string, unknown>,
           updated_by: input.user_id || null,
           updated_by_name: input.user_name || null,
         },
@@ -1673,6 +1686,7 @@ export class SupabaseOnlineRepository
         free_shipping_threshold: draft.free_shipping_threshold ?? null,
         estimated_delivery_text_en: draft.estimated_delivery_text_en ?? null,
         estimated_delivery_text_ar: draft.estimated_delivery_text_ar ?? null,
+        show_estimated_delivery: draft.show_estimated_delivery ?? true,
         enabled: draft.enabled ?? true,
         sort_order: draft.sort_order ?? 0,
         updated_at: new Date().toISOString(),
@@ -1748,6 +1762,7 @@ export class SupabaseOnlineRepository
       const payload = {
         ...(draft.id ? { id: draft.id } : {}),
         enabled: draft.enabled ?? true,
+        channel: draft.channel ?? "both",
         name_en: draft.name_en ?? "",
         name_ar: draft.name_ar ?? "",
         description_en: draft.description_en ?? null,

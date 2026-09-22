@@ -26,6 +26,17 @@ export function paidUnitOf(
   return Math.max(0, match.discounted_unit_price);
 }
 
+/** POS returns use the sold net line and allocate the invoice discount
+ * proportionally, so a refund can never exceed what was actually paid. */
+export function paidUnitOfSale(sale: Sale, saleItem: Sale["items"][number], paidPrices?: readonly PaidUnitPrice[] | null): number {
+  if (paidPrices) return paidUnitOf(saleItem, paidPrices);
+  const qty = Math.max(1, saleItem.quantity);
+  const lineNet = Number.isFinite(saleItem.line_total) ? Math.max(0, saleItem.line_total) : saleItem.unit_price * qty;
+  const base = sale.items.reduce((sum, item) => sum + Math.max(0, item.line_total), 0);
+  const invoiceFactor = base > 0 ? Math.max(0, 1 - Math.min(Math.max(0, sale.discount_amount), base) / base) : 1;
+  return round2((lineNet / qty) * invoiceFactor);
+}
+
 export interface ItemReturnValidation {
   sale_item_id: string;
   product_id: string;
@@ -163,7 +174,7 @@ export function validateReturnDraft(
       errors[`item_${saleItem.id}`] = "qtyExceedsSold";
     }
 
-    const itemRefund = round2(paidUnitOf(saleItem, paidPrices) * qty);
+    const itemRefund = round2(paidUnitOfSale(sale, saleItem, paidPrices) * qty);
     totalRefund += itemRefund;
 
     itemValidations.push({
@@ -180,7 +191,7 @@ export function validateReturnDraft(
       name_en: saleItem.name_en,
       sku: saleItem.sku,
       barcode: saleItem.barcode,
-      unit_price: paidUnitOf(saleItem, paidPrices),
+      unit_price: paidUnitOfSale(sale, saleItem, paidPrices),
       sold_quantity: saleItem.quantity,
       previously_returned: saleItem.quantity - returnable,
       returnable_quantity: returnable,

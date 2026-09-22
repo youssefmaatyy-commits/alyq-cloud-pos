@@ -13,6 +13,7 @@ import { ProductGrid } from "../components/ProductGrid";
 import { CartPanel } from "../components/CartPanel";
 import { PaymentPanel } from "../components/PaymentPanel";
 import { SaleCompletedModal } from "../components/SaleCompletedModal";
+import { CustomerSearchSelect } from "@/modules/customers/components/CustomerSearchSelect";
 
 /**
  * POS register screen.
@@ -45,6 +46,7 @@ export function PosPage() {
   const onScan = (code: string) => {
     const added = addBySku(code);
     if (!added) {
+      toast.error(`${t("pos.barcodeNotFound")} · ${t("pos.barcodeNotFoundAr")}`);
       // small non-blocking visual cue: shake the search box via a class
       const input = document.querySelector<HTMLInputElement>(
         'input[aria-label="' + t("pos.search") + '"]',
@@ -186,7 +188,7 @@ export function PosPage() {
  */
 function MobileCartSheet() {
   const { t, num } = useI18n();
-  const { lines, totals, isEmpty } = usePos();
+  const { lines, totals, isEmpty, selectedCustomer, setSelectedCustomer } = usePos();
   const [open, setOpen] = useState(false);
   const count = lines.reduce((sum, line) => sum + line.qty, 0);
 
@@ -196,7 +198,16 @@ function MobileCartSheet() {
     if (isEmpty) setOpen(false);
   }, [isEmpty]);
 
-  if (isEmpty) return null;
+  if (isEmpty) {
+    return (
+      <div className="sticky bottom-0 z-30 -mx-3 mt-3 border-t border-stone-200 bg-white/95 px-3 py-2.5 backdrop-blur lg:hidden">
+        <CustomerSearchSelect
+          selectedCustomerId={selectedCustomer?.id ?? null}
+          onSelect={(customer) => setSelectedCustomer(customer)}
+        />
+      </div>
+    );
+  }
 
   return (
     <>

@@ -228,6 +228,10 @@ export interface OnlineOrder {
    * for the goods and the fee stays here — online reports show both.
    */
   delivery_fee: number;
+  delivery_zone_id?: string | null;
+  delivery_zone_name_en?: string | null;
+  delivery_zone_name_ar?: string | null;
+  delivery_free_shipping?: boolean;
   total: number;
 
   payment_method: OnlinePaymentMethod;
@@ -479,6 +483,8 @@ export interface DeliveryZone {
   free_shipping_threshold: number | null;
   estimated_delivery_text_en: string | null;
   estimated_delivery_text_ar: string | null;
+  /** Optional for legacy fixtures; missing means shown. */
+  show_estimated_delivery?: boolean;
   enabled: boolean;
   sort_order: number;
   created_at: string;
@@ -488,6 +494,7 @@ export interface DeliveryZone {
 // ── automatic promotions ───────────────────────────────────────────────────
 
 export type PromotionScope = "store" | "category" | "product" | "variant";
+export type PromotionChannel = "online" | "pos" | "both";
 
 /**
  * An automatic (codeless) discount: the storewide sale, a category offer, a
@@ -498,6 +505,8 @@ export type PromotionScope = "store" | "category" | "product" | "variant";
 export interface Promotion {
   id: string;
   enabled: boolean;
+  /** Explicit sales channel; old rows default to both. */
+  channel?: PromotionChannel;
   name_en: string;
   name_ar: string;
   description_en: string | null;

@@ -24,6 +24,7 @@ import {
   InventoryPage,
   InventoryProvider,
   MovementsPage,
+  StocktakePage,
 } from "@/modules/inventory";
 import { PosPage, PosProvider, SaleDetailPage, SalesHistoryPage } from "@/modules/pos";
 import {
@@ -265,6 +266,7 @@ function AuthenticatedApp() {
                             <Route path="/inventory" element={<InventoryHome />} />
                             <Route path="/inventory/stock" element={<InventoryPage />} />
                             <Route path="/inventory/movements" element={<MovementsPage />} />
+                            <Route path="/inventory/stocktake" element={<StocktakePage />} />
                             {/* The till is the one screen where a blank page stops trade, so it
                                 gets a boundary of its own inside the shell: the crash is contained,
                                 the navigation survives, and the cashier is told what to do. Same

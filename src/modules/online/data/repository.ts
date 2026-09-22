@@ -113,6 +113,7 @@ export const ONLINE_ERROR_CODES = [
   "upload_failed",
   "network",
   "not_configured",
+  "settings_invalid",
   "db",
 ] as const;
 export type OnlineErrorCode = (typeof ONLINE_ERROR_CODES)[number];
@@ -224,6 +225,9 @@ export function toOnlineError(error: unknown): OnlineError {
 
   if (/SUPABASE_NOT_CONFIGURED|NOT_CONFIGURED/i.test(message)) {
     return new OnlineError("not_configured", message);
+  }
+  if (/website settings|theme\.|unsafe configured URL|settings document/i.test(message)) {
+    return new OnlineError("settings_invalid", message, { field: "theme" });
   }
   if (/fetch|network|Failed to fetch/i.test(message)) {
     return new OnlineError("network", message);

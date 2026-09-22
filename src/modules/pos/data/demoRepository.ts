@@ -10,9 +10,11 @@ import { AppError } from "@/modules/products/data/repository";
 import { getDemoRepository } from "@/modules/products/data/demoRepository";
 import { applyDemoAdjustment } from "@/modules/inventory/data/demoRepository";
 import { variantLabel } from "@/modules/products/variants";
+import { getWebsiteRepository } from "@/modules/online/data";
+import { promotionUnitPrice } from "@/modules/online/services/pricing";
 import { getDemoShiftRepository } from "@/modules/shifts/data/demoRepository";
 import { safeStorage } from "@/modules/products/data/demoSeed";
-import { cartTotals, lineTotal, round2, validateDiscount } from "../services/posMath";
+import { cartTotals, lineTotals, round2, validateDiscount } from "../services/posMath";
 import type { SaleListQuery, SalesRepository } from "./repository";
 
 const SALES_KEY = "alyq.demo.sales.v1";
@@ -120,6 +122,13 @@ export class DemoSalesRepository implements SalesRepository {
       const freshVariants = await catalog.listVariants();
 
       const items: SaleItem[] = [];
+      const promotionSnapshot = input.source === "online" ? null : await getWebsiteRepository().getSnapshot();
+      const promotionTargets = new Map<string, Set<string>>();
+      for (const target of promotionSnapshot?.promotionTargets ?? []) {
+        const ids = promotionTargets.get(target.promotion_id) ?? new Set<string>();
+        ids.add(`${target.target_kind}:${target.target_id}`);
+        promotionTargets.set(target.promotion_id, ids);
+      }
       for (const line of input.lines) {
         const product = fresh.find((p) => p.id === line.product_id);
         if (!product) throw new AppError("NOT_FOUND", `Product ${line.product_id} not found`, "cart");
@@ -180,6 +189,32 @@ export class DemoSalesRepository implements SalesRepository {
           );
         }
 
+        const officialUnit = unit;
+        const promotion = promotionSnapshot
+          ? promotionUnitPrice(
+              product.id,
+              variant?.id ?? null,
+              product.category_id ?? null,
+              officialUnit,
+              promotionSnapshot.promotions,
+              promotionTargets,
+              new Date(),
+              "pos",
+            )
+          : { unit: officialUnit, promotionId: null };
+        unit = promotion.unit;
+        const automaticDiscount = round2(Math.max(0, officialUnit - unit) * qty);
+        const promotionName = promotion.promotionId
+          ? promotionSnapshot?.promotions.find((entry) => entry.id === promotion.promotionId)?.name_en ?? null
+          : null;
+        const itemDiscount = {
+          type: line.discount_type ?? "none",
+          value: Number(line.discount_value ?? 0),
+        } as const;
+        if (validateDiscount(itemDiscount.type, itemDiscount.value)) {
+          throw new AppError("VALIDATION", "Invalid item discount", "discount");
+        }
+        const calculated = lineTotals({ unit_price: unit, qty, item_discount: itemDiscount });
         items.push({
           id: `sli-${items.length}-${Date.now()}`,
           sale_id: "pending",
@@ -195,7 +230,14 @@ export class DemoSalesRepository implements SalesRepository {
           barcode: variant?.barcode ?? product.barcode,
           unit_price: unit,
           quantity: qty,
-          line_total: lineTotal(unit, qty),
+          gross_total: calculated.gross,
+          line_total: calculated.net,
+          discount_type: itemDiscount.type,
+          discount_value: itemDiscount.value,
+          discount_amount: calculated.discount,
+          automatic_promotion_id: promotion.promotionId,
+          automatic_promotion_name: promotionName,
+          automatic_discount_amount: automaticDiscount,
         });
       }
 
@@ -204,7 +246,7 @@ export class DemoSalesRepository implements SalesRepository {
         throw new AppError("VALIDATION", "Invalid discount", "discount");
       }
       const totals = cartTotals(
-        items.map((i) => ({ unit_price: i.unit_price, qty: i.quantity })),
+        items.map((i) => ({ unit_price: i.unit_price, qty: i.quantity, item_discount: { type: i.discount_type ?? "none", value: i.discount_value ?? 0 } })),
         { type: input.discount_type, value: input.discount_value },
       );
 
@@ -285,7 +327,12 @@ export class DemoSalesRepository implements SalesRepository {
         subtotal: totals.subtotal,
         discount_type: input.discount_type,
         discount_value: round2(input.discount_value || 0),
-        discount_amount: totals.discountAmount,
+        discount_amount: totals.invoiceDiscountAmount,
+        item_discount_amount: totals.itemDiscountAmount,
+        total_discount_amount: round2(totals.discountAmount + items.reduce((sum, item) => sum + (item.automatic_discount_amount ?? 0), 0)),
+        automatic_discount_amount: round2(items.reduce((sum, item) => sum + (item.automatic_discount_amount ?? 0), 0)),
+        automatic_promotion_id: items.find((item) => item.automatic_promotion_id)?.automatic_promotion_id ?? null,
+        automatic_promotion_name: items.find((item) => item.automatic_promotion_name)?.automatic_promotion_name ?? null,
         total: totals.total,
         amount_received: amountReceived,
         change,

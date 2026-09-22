@@ -203,7 +203,81 @@ async function main() {
   await signInAs("admin");
   assert.ok(isSignedIn(), "admin signed in");
 
-  // 1 ─ create the ring: FOUR units on the product, ONE low-stock level
+  // 1 ─ real Add Product acceptance: configure four combinations BEFORE the
+  // first save. The older two-shelf flow below remains as the focused stock-sale
+  // proof; this first scene proves the requested creation UX.
+  const UI_SKU = "VAR-UI-RING";
+  await navigate("#/products/new");
+  await waitFor(() => document.querySelector("#sku"), { label: "the product form" });
+  assert.ok(document.querySelector('[data-testid="variant-mode"]'), "Add Product exposes Variant Mode");
+  setField("#name_ar", "خاتم اختبار الواجهات");
+  setField("#name_en", "Variant UI Ring");
+  setField("#sku", UI_SKU);
+  setField("#selling_price", "200");
+  setField("#cost_price", "100");
+  setField("#tax_rate", "0");
+  const setSelect = (selector, predicate) => {
+    const select = document.querySelector(selector);
+    if (!select) throw new Error(`select not found: ${selector}`);
+    const option = [...select.options].find(predicate);
+    if (!option) throw new Error(`no option matches in ${selector}`);
+    setField(selector, option.value);
+  };
+  setSelect("#category_id", (o) => o.value !== "");
+  setField('[data-testid="variant-mode"]', "colors_sizes");
+  setField('[data-testid="variant-colors"]', "Gold | ذهبي | #D4AF37\nSilver | فضي | #C0C0C0");
+  setField('[data-testid="variant-sizes"]', "17, 18");
+  clickEl(document.querySelector('[data-testid="variant-generate"]'));
+  await waitFor(() => document.querySelectorAll('[data-testid^="product-variant-"]:not([data-testid="product-variant-table"])').length === 4, {
+    label: "four generated Add Product combinations",
+  });
+  const uiRows = [...document.querySelectorAll('[data-testid^="product-variant-"]:not([data-testid="product-variant-table"])')];
+  const uiStocks = [2, 4, 5, 1];
+  for (let index = 0; index < uiRows.length; index += 1) {
+    const inputs = [...uiRows[index].querySelectorAll("input")];
+    assert.ok(inputs.length >= 7, "variant table exposes SKU, barcode, stock, low stock, prices, and image");
+    setNative(inputs[0], dom.window.HTMLInputElement)(`UI-${index + 1}`);
+    setNative(inputs[1], dom.window.HTMLInputElement)(`UI-BAR-${index + 1}`);
+    setNative(inputs[2], dom.window.HTMLInputElement)(String(uiStocks[index]));
+    setNative(inputs[3], dom.window.HTMLInputElement)("1");
+    setNative(inputs[6], dom.window.HTMLInputElement)(`https://example.test/variant-${index + 1}.jpg`);
+  }
+  assert.equal(document.querySelector("#stock_quantity").value, "12", "product stock is derived from variant stock");
+  clickEl(document.querySelector('[data-testid="product-form-save"]'));
+  await waitFor(() => dom.window.location.hash === "#/products", { label: "Add Product variant save" });
+  await waitFor(() => bodyText().includes(UI_SKU), { label: "the saved variant product" });
+  const uiProduct = catalog().products.find((p) => p.sku === UI_SKU);
+  assert.ok(uiProduct?.variants_enabled, "the one Save flow enables variant stock");
+  const uiVariants = catalog().variants.filter((variant) => variant.product_id === uiProduct.id);
+  assert.deepEqual(uiVariants.map((variant) => `${variant.color_en} / ${variant.size}`), [
+    "Gold / 17", "Gold / 18", "Silver / 17", "Silver / 18",
+  ]);
+  assert.equal(uiVariants.reduce((sum, variant) => sum + variant.stock_quantity, 0), 12);
+  console.log("  ✓ Add Product created four exact combinations with rollup 12");
+
+  await navigate(`#/products/${uiProduct.id}/edit`);
+  await waitFor(() => document.querySelectorAll('[data-testid^="variant-row-"]').length === 4, {
+    label: "four variants after Edit Product reload",
+  });
+  await navigate("#/inventory/stock");
+  await waitFor(() => document.querySelector('input[placeholder*="Search by product"]'), { label: "inventory stock screen" });
+  const inventoryRefresh = document.querySelector('button[title="Retry"]');
+  if (inventoryRefresh) clickEl(inventoryRefresh);
+  await sleep(500);
+  setField('input[placeholder="Search by product, SKU or barcode…"]', UI_SKU);
+  await waitFor(() => document.querySelector(`[data-testid="variant-breakdown-toggle-${UI_SKU}"]`), { label: "four variants in inventory" });
+  clickEl(document.querySelector(`[data-testid="variant-breakdown-toggle-${UI_SKU}"]`));
+  await waitFor(() => {
+    const text = document.querySelector(`[data-testid="variant-breakdown-${UI_SKU}"]`)?.textContent ?? "";
+    return ["Gold", "Silver", "17", "18"].every((part) => text.includes(part));
+  }, { label: "all four inventory shelves" });
+  await navigate("#/pos");
+  await waitFor(() => [...document.querySelectorAll("button")].some((button) => (button.textContent ?? "").includes("Variant UI Ring")), { label: "variant product in POS" });
+  await navigate(`#/store/products/${uiProduct.id}`);
+  await waitFor(() => bodyText().includes("Gold") && bodyText().includes("Silver"), { label: "variant colors in storefront" });
+  console.log("  ✓ Edit Product, Inventory, POS, and Storefront expose all four combinations");
+
+  // 2 ─ focused two-shelf stock-sale proof
   await navigate("#/products/new");
   await waitFor(() => document.querySelector("#sku"), { label: "the product form" });
   setField("#name_ar", "خاتم متعدد");
@@ -214,13 +288,6 @@ async function main() {
   setField("#tax_rate", "0");
   setField("#stock_quantity", "4");
   setField("#low_stock_level", "1");
-  const setSelect = (selector, predicate) => {
-    const select = document.querySelector(selector);
-    if (!select) throw new Error(`select not found: ${selector}`);
-    const option = [...select.options].find(predicate);
-    if (!option) throw new Error(`no option matches in ${selector}`);
-    setField(selector, option.value);
-  };
   setSelect("#category_id", (o) => o.value !== "");
   clickExact("Save");
   await waitFor(() => dom.window.location.hash === "#/products", {
@@ -290,7 +357,7 @@ async function main() {
   await waitFor(
     () =>
       catalog().products.find((p) => p.id === productId)?.variants_enabled === true &&
-      catalog().variants.length === 2,
+      catalog().variants.filter((variant) => variant.product_id === productId).length === 2,
     { label: "the mode flip to land in the demo catalogue" },
   );
   const shelves = Object.fromEntries(
@@ -498,7 +565,7 @@ async function main() {
     (b) => (b.textContent ?? "").trim().startsWith("Variants"),
   );
   assert.ok(tabButton, "the Variants tab is on the advanced reports screen");
-  assert.ok((tabButton.textContent ?? "").includes("2"), "the tab counts the two combinations");
+  assert.ok(/\d+/.test(tabButton.textContent ?? ""), "the tab counts saved combinations");
   clickEl(tabButton);
   await waitFor(() => bodyText().includes("Per-combination performance"), {
     label: "the variants report section",

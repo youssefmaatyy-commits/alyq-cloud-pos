@@ -301,12 +301,22 @@ export function WebsiteSettingsPage() {
       // an unsafe URL or an oversized list is refused with the form still open
       // rather than by a SQL error after submit. Sanitizing is idempotent, so
       // a document that is already clean saves unchanged.
+      const safeDraft = sanitizeSettings(draft);
+      const safeTheme = Object.fromEntries(
+        Object.entries(safeDraft.theme).map(([key, value]) => {
+          const original = draft.theme[key as keyof WebsiteSettings["theme"]];
+          const valid = typeof original === "string" && /^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(original.trim());
+          return [key, valid ? value : saved?.theme[key as keyof WebsiteSettings["theme"]] ?? value];
+        }),
+      ) as WebsiteSettings["theme"];
+      const normalized = { ...safeDraft, theme: safeTheme };
       const nextMeta = await repository.saveSettings({
-        settings: sanitizeSettings(draft),
+        settings: normalized,
         user_id: actor.id,
         user_name: actor.name,
       });
-      setSaved(draft);
+      setSaved(normalized);
+      setDraft(normalized);
       setMeta(nextMeta);
       toast.success(t("online.settings.saved"));
     } catch (caught) {

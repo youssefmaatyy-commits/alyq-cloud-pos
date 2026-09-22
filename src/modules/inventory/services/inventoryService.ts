@@ -81,6 +81,23 @@ export function assertCanImportStock(): void {
   assertSensitiveAction("stock.import");
 }
 
+export async function adjustStockToCount(args: {
+  productId: string;
+  variantId?: string | null;
+  physicalQuantity: number;
+  notes?: string | null;
+}): Promise<InventoryAdjustmentResult> {
+  const repository = getInventoryRepository();
+  const [products, variants] = await Promise.all([repository.listProducts(), repository.listVariants()]);
+  const product = products.find((item) => item.id === args.productId);
+  if (!product) throw new AppError("NOT_FOUND");
+  const variant = args.variantId ? variants.find((item) => item.id === args.variantId) : null;
+  const current = variant?.stock_quantity ?? product.stock_quantity;
+  const target = Math.max(0, Math.trunc(args.physicalQuantity));
+  if (target === current) return { product, movement: { id: "", product_id: product.id, variant_id: variant?.id ?? null, variant_color_ar: variant?.color_ar ?? null, variant_color_en: variant?.color_en ?? null, variant_size: variant?.size ?? null, variant_size_label: variant?.size_label ?? null, delta: 0, quantity_before: current, quantity_after: current, type: "correction", reason: "recount", notes: args.notes ?? null, user_id: getCurrentUser().id, user_name: getCurrentUser().name, created_at: new Date().toISOString() }, variant: variant ?? null, status: deriveStatus(product, variants) };
+  return adjustStock({ productId: args.productId, variantId: args.variantId, type: target > current ? "adjustment_in" : "adjustment_out", reason: "recount", quantity: Math.abs(target - current), notes: args.notes ?? `Stocktake absolute count: ${target}` });
+}
+
 export async function adjustStock(args: {
   productId: string;
   /**

@@ -140,6 +140,7 @@ export function DeliveryZonesPage() {
                 free_shipping_threshold: null,
                 estimated_delivery_text_en: null,
                 estimated_delivery_text_ar: null,
+                show_estimated_delivery: true,
                 enabled: true,
                 sort_order: zones.length * 10,
                 created_at: new Date().toISOString(),
@@ -176,6 +177,7 @@ export function DeliveryZonesPage() {
                 <th className="px-3 py-3 text-end font-semibold">{t("online.zones.colFee")}</th>
                 <th className="px-3 py-3 text-end font-semibold">{t("online.zones.colMinimum")}</th>
                 <th className="px-3 py-3 text-end font-semibold">{t("online.zones.colFreeAbove")}</th>
+                <th className="px-3 py-3 text-start font-semibold">{t("online.zones.colEstimate")}</th>
                 <th className="px-3 py-3 text-start font-semibold">{t("online.zones.colStatus")}</th>
                 <th className="px-4 py-3 text-end font-semibold">{t("common.actions")}</th>
               </tr>
@@ -206,6 +208,9 @@ export function DeliveryZonesPage() {
                   </td>
                   <td className="px-3 py-3 text-end text-xs tabular-nums text-stone-600">
                     {zone.free_shipping_threshold !== null ? money(zone.free_shipping_threshold) : "—"}
+                  </td>
+                  <td className="px-3 py-3 text-xs text-stone-600">
+                    {zone.show_estimated_delivery ? (zone.estimated_delivery_text_en || zone.estimated_delivery_text_ar || "—") : t("online.zones.hidden")}
                   </td>
                   <td className="px-3 py-3">
                     <Badge tone={zone.enabled ? "success" : "danger"}>
@@ -363,12 +368,20 @@ export function DeliveryZonesPage() {
               </Field>
             </div>
 
-            <ToggleSwitch
-              checked={draft.enabled}
-              onChange={(checked) => setDraft({ ...draft, enabled: checked })}
-              label={t("online.zones.enabled")}
-              hint={t("online.zones.enableHint")}
-            />
+            <div className="space-y-2">
+              <ToggleSwitch
+                checked={draft.enabled}
+                onChange={(checked) => setDraft({ ...draft, enabled: checked })}
+                label={t("online.zones.enabled")}
+                hint={t("online.zones.enableHint")}
+              />
+              <ToggleSwitch
+                checked={draft.show_estimated_delivery !== false}
+                onChange={(checked) => setDraft({ ...draft, show_estimated_delivery: checked })}
+                label={t("online.zones.showEstimate")}
+                hint={t("online.zones.showEstimateHint")}
+              />
+            </div>
           </div>
         ) : null}
       </Modal>

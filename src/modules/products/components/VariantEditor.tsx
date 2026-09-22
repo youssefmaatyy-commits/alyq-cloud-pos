@@ -27,6 +27,7 @@ import {
   SelectInput,
   TextArea,
   TextInput,
+  ToggleSwitch,
   useToast,
 } from "@/components/ui";
 import { AppError, type VariantOpening } from "../data/repository";
@@ -51,6 +52,7 @@ import {
   type VariantColorDraft,
 } from "../variants";
 import type { Product } from "../types";
+import { buildBarcodeLabelHtml } from "../services/barcodeLabel";
 
 // ── small shared bits ───────────────────────────────────────────────────────
 
@@ -89,6 +91,7 @@ interface VariantFormState {
   price_override: string;
   cost_override: string;
   low_stock_level: string;
+  image_url: string;
   active: boolean;
 }
 
@@ -104,6 +107,7 @@ const EMPTY_VARIANT_FORM: VariantFormState = {
   price_override: "",
   cost_override: "",
   low_stock_level: "0",
+  image_url: "",
   active: true,
 };
 
@@ -147,6 +151,7 @@ function VariantFormModal({
             price_override: current.price_override !== null ? String(current.price_override) : "",
             cost_override: current.cost_override !== null ? String(current.cost_override) : "",
             low_stock_level: String(current.low_stock_level),
+            image_url: current.image_url ?? "",
             active: current.active,
           }
         : EMPTY_VARIANT_FORM,
@@ -176,7 +181,7 @@ function VariantFormModal({
             values.size_mode === "label" && values.size_label.trim() !== ""
               ? values.size_label.trim()
               : null,
-          image_url: current?.image_url ?? null,
+          image_url: values.image_url.trim() || null,
           // New combinations start empty: the shelf is filled by the inventory
           // screen, never by a form field.
           stock_quantity: current?.stock_quantity ?? 0,
@@ -351,6 +356,25 @@ function VariantFormModal({
             disabled={!allowed}
           />
         </Field>
+        <Field label={t("products.imageUrl")} hint={t("products.variants.imageHint")}>
+          <TextInput
+            dir="ltr"
+            type="url"
+            value={values.image_url}
+            onChange={(e) => set("image_url", e.target.value)}
+            placeholder="https://…"
+            disabled={!allowed}
+          />
+        </Field>
+        <div className="sm:col-span-2">
+          <ToggleSwitch
+            label={t("common.active")}
+            hint={!values.active ? t("products.inactiveBadge") : undefined}
+            checked={values.active}
+            onChange={(checked) => set("active", checked)}
+            disabled={!allowed}
+          />
+        </div>
       </div>
       {combinationLabel ? (
         <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700">
@@ -542,6 +566,17 @@ export function VariantEditor({
   const { t, num, pick, isRTL } = useI18n();
   const toast = useToast();
   const lang = isRTL ? "ar" : "en";
+  const printVariant = (variant: ProductVariant) => {
+    if (!variant.barcode?.trim()) { toast.error(t("barcode.needsValue")); return; }
+    const html = buildBarcodeLabelHtml({
+      nameAr: product.name_ar, nameEn: product.name_en, sku: variant.sku, barcode: variant.barcode,
+      color: pick(variant.color_ar, variant.color_en), size: sizeLabelOf(variant.size, variant.size_label),
+      price: `${num(variant.price_override ?? product.selling_price, 2)} EGP`, direction: isRTL ? "rtl" : "ltr",
+    }, { documentTitle: t("barcode.printTitle"), skuLabel: t("products.sku"), priceLabel: t("products.sellingPrice"), printAction: t("barcode.print"), unsupported: t("barcode.unsupported") });
+    const win = window.open("", "_blank", "width=720,height=640");
+    if (!win) { toast.error(t("barcode.printBlocked")); return; }
+    win.document.open(); win.document.write(html); win.document.close();
+  };
 
   const canEdit = canAct("edit_product");
   const canDelete = canAct("delete_product");
@@ -634,6 +669,9 @@ export function VariantEditor({
 
   const archivedCount = variants.filter((variant) => !variant.active).length;
   const unitsTotal = shelfTotal;
+  const hasColors = variants.some((variant) => Boolean(variant.color_key));
+  const hasSizes = variants.some((variant) => variant.size !== null || Boolean(variant.size_label));
+  const mode = !variants.length ? "none" : hasColors && hasSizes ? "colors_sizes" : hasColors ? "colors" : "sizes";
 
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-4" data-testid="variant-editor">
@@ -642,7 +680,15 @@ export function VariantEditor({
           <h2 className="text-sm font-bold text-slate-900">{t("products.variants.title")}</h2>
           <p className="mt-0.5 text-xs font-medium text-slate-600">{t("products.variants.subtitle")}</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Field label={t("products.variants.mode.label")} className="min-w-40">
+            <SelectInput value={mode} disabled aria-label={t("products.variants.mode.label")}>
+              <option value="none">{t("products.variants.mode.none")}</option>
+              <option value="colors">{t("products.variants.mode.colors")}</option>
+              <option value="sizes">{t("products.variants.mode.sizes")}</option>
+              <option value="colors_sizes">{t("products.variants.mode.colors_sizes")}</option>
+            </SelectInput>
+          </Field>
           {product.variants_enabled ? (
             <Badge tone="info">
               {t("products.variants.countBadge", {
@@ -807,6 +853,14 @@ export function VariantEditor({
                     </td>
                     <td className="px-3 py-2">
                       <div className="flex items-center justify-end gap-1">
+                        <button
+                          type="button"
+                          onClick={() => printVariant(variant)}
+                          className="rounded-md px-1.5 py-1 font-bold text-slate-600 hover:bg-slate-100"
+                          title={t("barcode.print")}
+                        >
+                          {t("barcode.print")}
+                        </button>
                         {canEdit ? (
                           <>
                             <button

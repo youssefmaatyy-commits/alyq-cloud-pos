@@ -31,26 +31,14 @@ import { BarcodePreview } from "./BarcodePreview";
 import { deriveBarcodeFromSku, isDerivedFromSku } from "../services/barcode";
 import { buildBarcodeLabelHtml } from "../services/barcodeLabel";
 import { StockBadge } from "./ProductTable";
-// import {
-//   generateVariants,
-//   enableVariants,
-//   saveVariant,
-//   type GenerateVariantRow,
-// } from "../services/variantService";
-import {
-  generateCombinations as _generateCombinations,
-  parseSizes as _parseSizes,
-  formatSizes as _formatSizes,
-  colorKeyOf as _colorKeyOf,
-  type VariantColorDraft,
-} from "../variants";
-import { type GenerateVariantRow } from "../services/variantService";
+import { ProductVariantsForm, EMPTY_PRODUCT_VARIANT_FORM, type ProductVariantFormValue } from "./ProductVariantsForm";
+import { enableVariants, saveVariant } from "../services/variantService";
 
 export function ProductForm({ productId }: { productId?: string }) {
   const { t, pick, money, num, isRTL } = useI18n();
   const toast = useToast();
   const navigate = useNavigate();
-  const { products, categories, tree, loading, saveProduct } = useCatalog();
+  const { products, categories, tree, loading, saveProduct, refresh } = useCatalog();
 
   const existing = useMemo(
     () => (productId ? products.find((p) => p.id === productId) : undefined),
@@ -70,39 +58,12 @@ export function ProductForm({ productId }: { productId?: string }) {
   const [submitAttempted, setSubmitAttempted] = useState(false);
   const [saving, setSaving] = useState(false);
   const [printCopies, setPrintCopies] = useState("1");
+  const [labelOptions, setLabelOptions] = useState({ name: true, color: true, size: true, sku: true, price: true, number: true });
 
-  // ── Variant workflow state ────────────────────────────────────────────────
-  type VariantMode = "none" | "colors" | "sizes" | "colors_sizes";
-  type VariantDraft = {
-    color_ar: string;
-    color_en: string;
-    color_hex: string;
-    size_mode: "number" | "label";
-    size: string;
-    size_label: string;
-    sku: string;
-    barcode: string;
-    price_override: string;
-    cost_override: string;
-    low_stock_level: string;
-    active: boolean;
-    image_url: string;
-  };
-  const [_variantMode, _setVariantMode] = useState<VariantMode>("none");
-  const [_colors, _setColors] = useState<VariantColorDraft[]>([]);
-  const [_sizes, _setSizes] = useState<number[]>([]);
-  const [_generatedCombinations, _setGeneratedCombinations] = useState<GenerateVariantRow[]>([]);
-  const [_variantDrafts, _setVariantDrafts] = useState<Record<string, VariantDraft>>({});
-  const [_colorsText, _setColorsText] = useState("");
-  const [_sizesText, _setSizesText] = useState("");
-  const [_generating, _setGenerating] = useState(false);
-  const [_savingVariants, _setSavingVariants] = useState(false);
-  const [_enablingVariants, _setEnablingVariants] = useState(false);
-  const [_openingQuantities, _setOpeningQuantities] = useState<Record<string, number>>({});
-  const [_generationLowStock, _setGenerationLowStock] = useState("0");
-  const [_enabling, _setEnabling] = useState(false);
-  const [_opening, _setOpening] = useState<Record<string, string>>({});
-  const [_enablingLowStock, _setEnablingLowStock] = useState("0");
+  // Variant setup is part of the initial product draft. The saved-product
+  // VariantEditor remains the editor for later changes; this state is the
+  // single pre-save source of truth for the Add Product workflow.
+  const [variantConfig, setVariantConfig] = useState<ProductVariantFormValue>(EMPTY_PRODUCT_VARIANT_FORM);
   /**
    * `auto` keeps the barcode mirrored from the SKU; `manual` means the admin
    * entered a manufacturer barcode which must survive later SKU edits.
@@ -178,6 +139,8 @@ export function ProductForm({ productId }: { productId?: string }) {
         barcode: barcodeValue,
         price: money(Number(values.selling_price.replace(/,/g, ".")) || 0),
         copies,
+        showName: labelOptions.name, showColor: labelOptions.color, showSize: labelOptions.size,
+        showSku: labelOptions.sku, showPrice: labelOptions.price, showNumber: labelOptions.number,
         direction: isRTL ? "rtl" : "ltr",
       },
       {
@@ -196,7 +159,7 @@ export function ProductForm({ productId }: { productId?: string }) {
     win.document.open();
     win.document.write(html);
     win.document.close();
-  }, [values, printCopies, money, t, toast, isRTL]);
+  }, [values, printCopies, labelOptions, money, t, toast, isRTL]);
 
   // Phase 44: archived categories are not offered. A product already sitting
   // in an archived category keeps its label visible (so an edit can be saved
@@ -244,6 +207,11 @@ export function ProductForm({ productId }: { productId?: string }) {
   });
 
   const isEdit = Boolean(productId);
+  const variantTotal = useMemo(
+    () => variantConfig.rows.reduce((sum, row) => sum + Math.max(0, Math.trunc(Number(row.stock_quantity) || 0)), 0),
+    [variantConfig.rows],
+  );
+  const hasNewVariants = !isEdit && variantConfig.mode !== "none";
   const dirty = useMemo(() => {
     const baseline = existing ? productToForm(existing) : EMPTY_PRODUCT_FORM;
     return JSON.stringify(baseline) !== JSON.stringify(values);
@@ -259,6 +227,61 @@ export function ProductForm({ productId }: { productId?: string }) {
 
   const handleBlur = (field: string) => () => setTouched((prev) => ({ ...prev, [field]: true }));
 
+  const changeVariantConfig = (next: ProductVariantFormValue) => {
+    setVariantConfig(next);
+    if (next.mode !== "none") {
+      const total = next.rows.reduce((sum, row) => sum + Math.max(0, Math.trunc(Number(row.stock_quantity) || 0)), 0);
+      setValues((previous) => ({ ...previous, stock_quantity: String(total) }));
+    }
+  };
+
+  const saveDraftAndVariants = async () => {
+    if (hasNewVariants && variantConfig.rows.length === 0) {
+      throw new Error(t("products.variants.nothingToGenerate"));
+    }
+    const productValues = hasNewVariants
+      ? { ...values, stock_quantity: String(variantTotal), stock_tracking_enabled: true }
+      : values;
+    const result = await saveProduct(productValues, productId);
+    if (!hasNewVariants || !result.isNew) return result;
+
+    const created = [] as Awaited<ReturnType<typeof saveVariant>>["variant"][];
+    for (const row of variantConfig.rows) {
+      const saved = await saveVariant({
+        product: result.product,
+        siblings: created,
+        values: {
+          sku: row.sku,
+          barcode: row.barcode.trim() || null,
+          color_key: undefined,
+          color_ar: row.color_ar.trim() || null,
+          color_en: row.color_en.trim() || null,
+          color_hex: row.color_hex.trim() || null,
+          size: row.size.trim() ? Number(row.size.replace(",", ".")) : null,
+          size_label: row.size.trim() ? null : row.size_label.trim() || null,
+          image_url: row.image_url.trim() || null,
+          price_override: row.price_override.trim() ? Number(row.price_override) : null,
+          cost_override:
+            canAct("change_cost") && row.cost_override.trim() ? Number(row.cost_override) : null,
+          stock_quantity: 0,
+          low_stock_level: Math.max(0, Math.trunc(Number(row.low_stock_level) || 0)),
+          active: row.active,
+          sort_order: created.length + 1,
+        },
+      });
+      created.push(saved.variant);
+    }
+    await enableVariants(
+      result.product.id,
+      created.map((variant, index) => ({
+        variantId: variant.id,
+        quantity: Math.max(0, Math.trunc(Number(variantConfig.rows[index].stock_quantity) || 0)),
+      })),
+    );
+    await refresh();
+    return result;
+  };
+
   const goBack = useCallback(() => {
     navigate(productId ? `/products/${productId}` : "/products");
   }, [navigate, productId]);
@@ -273,7 +296,7 @@ export function ProductForm({ productId }: { productId?: string }) {
     }
     setSaving(true);
     try {
-      const { product, isNew } = await saveProduct(values, productId);
+      const { product, isNew } = await saveDraftAndVariants();
       toast.success(t(isNew ? "products.createdToast" : "products.updatedToast"));
       if (isNew) {
         navigate(`/products/${product.id}/edit`);
@@ -306,7 +329,7 @@ export function ProductForm({ productId }: { productId?: string }) {
     }
     setSaving(true);
     try {
-      const { isNew } = await saveProduct(values, productId);
+      const { isNew } = await saveDraftAndVariants();
       toast.success(t(isNew ? "products.createdToast" : "products.updatedToast"));
       navigate(isNew ? "/products" : `/products/${productId}`);
     } catch (error) {
@@ -565,6 +588,12 @@ export function ProductForm({ productId }: { productId?: string }) {
                       onChange={(e) => setPrintCopies(e.target.value)}
                     />
                   </label>
+                  <div className="flex flex-wrap items-center gap-2 text-[10px]">
+                    {(["name", "color", "size", "sku", "price", "number"] as const).map((key) => <label key={key} className="flex items-center gap-1"><input type="checkbox" checked={labelOptions[key]} onChange={(event) => setLabelOptions((current) => ({ ...current, [key]: event.target.checked }))} />{key}</label>)}
+                  </div>
+                  <Button variant="ghost" size="sm" type="button" onClick={() => setPrintCopies(String(Math.max(1, Number(values.stock_quantity) || 1)))}>
+                    {t("barcode.byStock")}
+                  </Button>
                   <Button variant="secondary" size="sm" type="button" onClick={generateBarcode}>
                     {t("barcode.generate")}
                   </Button>
@@ -582,6 +611,16 @@ export function ProductForm({ productId }: { productId?: string }) {
               <BarcodePreview value={values.barcode} />
             </div>
           </Card>
+
+          {!isEdit ? (
+            <ProductVariantsForm
+              value={variantConfig}
+              productSku={values.sku}
+              productSellingPrice={values.selling_price}
+              productCostPrice={values.cost_price}
+              onChange={changeVariantConfig}
+            />
+          ) : null}
 
           {/* Pricing + Stock */}
           <Card>
@@ -661,7 +700,8 @@ export function ProductForm({ productId }: { productId?: string }) {
                     name="stock_quantity"
                     dir="ltr"
                     inputMode="numeric"
-                    value={values.stock_quantity}
+                    readOnly={hasNewVariants}
+                    value={hasNewVariants ? String(variantTotal) : values.stock_quantity}
                     invalid={Boolean(showError("stock_quantity"))}
                     onBlur={handleBlur("stock_quantity")}
                     onChange={(e) => set("stock_quantity", e.target.value)}
@@ -810,15 +850,17 @@ export function ProductForm({ productId }: { productId?: string }) {
           </Button>
           {!isEdit ? (
             <>
-              <Button
-                variant="secondary"
-                type="button"
-                onClick={() => void handleSaveAndEditVariants()}
-                disabled={saving}
-                className="max-sm:w-full"
-              >
-                {t("products.saveAndEditVariants")}
-              </Button>
+              {!hasNewVariants ? (
+                <Button
+                  variant="secondary"
+                  type="button"
+                  onClick={() => void handleSaveAndEditVariants()}
+                  disabled={saving}
+                  className="max-sm:w-full"
+                >
+                  {t("products.saveAndEditVariants")}
+                </Button>
+              ) : null}
               <Button type="submit" size="lg" loading={saving} className="max-sm:w-full" data-testid="product-form-save">
                 {saving ? t("common.saving") : t("common.save")}
               </Button>

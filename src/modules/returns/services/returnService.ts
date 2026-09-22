@@ -21,7 +21,7 @@ import {
 import { getCurrentUser } from "@/modules/inventory/permissions";
 import { getSalesRepository } from "@/modules/pos/data";
 import { getOnlineOrdersRepository } from "@/modules/online/data";
-import { paidUnitOf } from "../validation";
+import { paidUnitOfSale } from "../validation";
 import { recordAudit } from "@/modules/audit";
 import { AppError } from "@/modules/products/data/repository";
 
@@ -140,10 +140,7 @@ async function estimateRefundAmount(input: CreateReturnInput): Promise<number> {
     return input.items.reduce((sum, item) => {
       const line = sale.items.find((l) => l.id === item.sale_item_id);
       if (!line) return sum;
-      const unit = paidUnitOf(
-        { product_id: line.product_id, variant_id: line.variant_id ?? null, unit_price: Number(line.unit_price) },
-        paidPrices,
-      );
+      const unit = paidUnitOfSale(sale, line, paidPrices);
       const qty = Math.max(0, Math.trunc(Number(item.quantity) || 0));
       return sum + unit * qty;
     }, 0);

@@ -177,6 +177,13 @@ export function InventoryHome({ embedded = false }: { embedded?: boolean }) {
           title: t("nav.movements"),
           description: t("home.inventory.movements.desc"),
         },
+        {
+          key: "stocktake",
+          to: "/inventory/stocktake",
+          icon: <ClipboardIcon />,
+          title: t("inventory.stocktake.title"),
+          description: t("inventory.stocktake.subtitle"),
+        },
         { key: "adjustments", to: "/inventory/stock", capability: "adjust_stock", icon: <EditIcon />, title: t("inventory.adjust"), description: t("home.management.adjustments") },
         { key: "suppliers", to: "/reports?section=suppliers", icon: <ClipboardIcon />, title: t("reports.suppliersTitle"), description: t("reports.suppliersHint") },
       ]}

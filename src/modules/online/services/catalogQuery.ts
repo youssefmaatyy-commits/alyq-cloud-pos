@@ -51,6 +51,10 @@ export interface CatalogFilters {
   categoryId: string;
   /** Normalized brand name, or `null` for every brand. */
   brand: string | null;
+  /** Exact variant color key, or null for every color. */
+  color: string | null;
+  /** Exact numeric variant size, or null for every size. */
+  size: number | null;
   /** Inclusive price bounds on the effective price; `null` = unbounded. */
   minPrice: number | null;
   maxPrice: number | null;
@@ -66,6 +70,8 @@ export const EMPTY_CATALOG_FILTERS: CatalogFilters = {
   search: "",
   categoryId: "all",
   brand: null,
+  color: null,
+  size: null,
   minPrice: null,
   maxPrice: null,
   availability: "any",
@@ -248,6 +254,8 @@ export function searchCatalog(
   const identifier = filters.search.trim().toLowerCase();
   const wantedIds = filters.productIds ? new Set(filters.productIds) : null;
   const brandNeedle = filters.brand ? normalizeText(filters.brand) : null;
+  const wantedColor = filters.color ? normalizeText(filters.color) : null;
+  const wantedSize = filters.size !== null && Number.isFinite(filters.size) ? filters.size : null;
   const min = filters.minPrice !== null && Number.isFinite(filters.minPrice) ? filters.minPrice : null;
   const max = filters.maxPrice !== null && Number.isFinite(filters.maxPrice) ? filters.maxPrice : null;
 
@@ -259,6 +267,14 @@ export function searchCatalog(
     const entry = toCatalogProduct(product, context);
 
     if (brandNeedle && entry.brand !== brandNeedle) continue;
+    if (wantedColor || wantedSize !== null) {
+      const exact = entry.variants.some((variant) => {
+        const colorMatches = !wantedColor || [variant.color_key, variant.color_en ?? "", variant.color_ar ?? ""].some((value) => normalizeText(value) === wantedColor);
+        const sizeMatches = wantedSize === null || variant.size === wantedSize;
+        return colorMatches && sizeMatches;
+      });
+      if (!exact) continue;
+    }
     if (min !== null && entry.price < min) continue;
     if (max !== null && entry.price > max) continue;
 
@@ -460,6 +476,8 @@ export function filtersFromSearchParams(params: URLSearchParams): CatalogFilters
     search: params.get("q") ?? "",
     categoryId: params.get("category") ?? "all",
     brand: params.get("brand"),
+    color: params.get("color"),
+    size: params.get("size") !== null && Number.isFinite(Number(params.get("size"))) ? Number(params.get("size")) : null,
     minPrice: params.get("min") !== null && Number.isFinite(min) ? min : null,
     maxPrice: params.get("max") !== null && Number.isFinite(max) ? max : null,
     availability: availability && AVAILABILITY_FILTERS.includes(availability) ? availability : "any",
@@ -475,6 +493,8 @@ export function filtersToSearchParams(filters: CatalogFilters): URLSearchParams 
   if (filters.search.trim()) params.set("q", filters.search.trim());
   if (filters.categoryId !== "all") params.set("category", filters.categoryId);
   if (filters.brand) params.set("brand", filters.brand);
+  if (filters.color) params.set("color", filters.color);
+  if (filters.size !== null) params.set("size", String(filters.size));
   if (filters.minPrice !== null) params.set("min", String(filters.minPrice));
   if (filters.maxPrice !== null) params.set("max", String(filters.maxPrice));
   if (filters.availability !== "any") params.set("availability", filters.availability);

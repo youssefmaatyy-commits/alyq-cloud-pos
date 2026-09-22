@@ -387,7 +387,7 @@ export function StoreCheckoutPage() {
                   <p className="text-sm font-black text-[var(--store-text)]">{t("store.checkout.delivery")}</p>
                   <p className="mt-0.5 text-xs text-[var(--store-muted)]">
                     {(shown?.deliveryFee ?? totals.delivery_fee) > 0
-                      ? t("store.checkout.deliveryFeeAmount", { amount: money(activeZone?.shipping_fee ?? settings.delivery.fee) })
+                      ? t("store.checkout.deliveryFeeAmount", { amount: money(shown?.deliveryFee ?? activeZone?.shipping_fee ?? settings.delivery.fee) })
                       : t("store.cart.freeDeliveryReached")}
                   </p>
                 </button>
@@ -420,7 +420,9 @@ export function StoreCheckoutPage() {
                 <div className="flex flex-col gap-2" data-testid="checkout-zone-picker">
                   {enabledZones.map((zone) => {
                     const selected = zone.id === deliveryZoneId;
-                    const eta = pick(zone.estimated_delivery_text_ar, zone.estimated_delivery_text_en);
+                    const eta = zone.show_estimated_delivery !== false
+                      ? pick(zone.estimated_delivery_text_ar, zone.estimated_delivery_text_en)
+                      : null;
                     return (
                       <label
                         key={zone.id}

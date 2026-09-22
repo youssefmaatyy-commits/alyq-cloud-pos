@@ -5,14 +5,15 @@ type Variant = "primary" | "secondary" | "ghost" | "danger" | "subtle";
 type Size = "sm" | "md" | "lg" | "icon";
 
 const VARIANTS: Record<Variant, string> = {
-  // Primary stays unmistakable: filled indigo, semibold, elevated.
-  primary: "alyq-btn-primary focus-visible:outline-indigo-600",
+  // Primary is charcoal with a restrained gold focus ring: clear in a busy
+  // register without turning the application into a saturated colour system.
+  primary: "alyq-btn-primary focus-visible:outline-[#b08d57]",
   secondary:
-    "bg-white text-slate-800 ring-1 ring-slate-300 hover:bg-slate-50 hover:ring-slate-400 focus-visible:outline-slate-500",
-  ghost: "text-slate-700 hover:bg-slate-100 focus-visible:outline-slate-500",
+    "bg-white text-stone-800 ring-1 ring-stone-300 hover:bg-[#faf7f2] hover:ring-stone-400 focus-visible:outline-stone-500",
+  ghost: "text-stone-700 hover:bg-stone-100 focus-visible:outline-stone-500",
   danger:
     "bg-rose-600 text-white font-semibold shadow-md shadow-rose-200 hover:bg-rose-700 focus-visible:outline-rose-600",
-  subtle: "bg-indigo-50 text-indigo-800 ring-1 ring-indigo-200 hover:bg-indigo-100 focus-visible:outline-indigo-500",
+  subtle: "bg-[#faf5ec] text-stone-800 ring-1 ring-[#d9c7a5] hover:bg-[#f4eadb] focus-visible:outline-[#b08d57]",
 };
 
 const SIZES: Record<Size, string> = {
