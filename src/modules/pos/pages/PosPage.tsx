@@ -46,7 +46,7 @@ export function PosPage() {
   const onScan = (code: string) => {
     const added = addBySku(code);
     if (!added) {
-      toast.error(`${t("pos.barcodeNotFound")} · ${t("pos.barcodeNotFoundAr")}`);
+      toast.error(t("pos.codeUnavailable"));
       // small non-blocking visual cue: shake the search box via a class
       const input = document.querySelector<HTMLInputElement>(
         'input[aria-label="' + t("pos.search") + '"]',

@@ -4673,7 +4673,9 @@ begin
   ) values
     (v_gold,   v_product, 'SCN-VAR-GOLD-17',   'gold',   'ذهبي', 'Gold',   '#d4af37', 17, null, 0, 1, true, 1),
     (v_silver, v_product, 'SCN-VAR-SILVER-17', 'silver', 'فضي',  'Silver', '#c0c0c0', 17, null, 0, 1, true, 2)
-  on conflict (id) do update set active = true, stock_quantity = 0;
+  on conflict (id) do update set stock_quantity = 0;
+  perform public.set_variant_active(v_gold, true);
+  perform public.set_variant_active(v_silver, true);
 
   -- 1. drafting combinations must not zero the product the conversion splits
   select stock_quantity into v_stock from public.products where id = v_product;
@@ -4855,10 +4857,15 @@ begin
   exception when insufficient_privilege then
     null;
   end;
-  delete from public.product_variants where id = v_gold;
-  get diagnostics v_rows = row_count;
-  if v_rows <> 0 then
-    raise exception 'RLS let an adjust_stock-only seat delete a combination';
+  -- 0061 removes browser DELETE privilege entirely (the guarded RPC is the
+  -- only normal delete path); a denied clerk now receives 42501, not 0 rows.
+  begin
+    delete from public.product_variants where id = v_gold;
+    raise exception 'direct variant DELETE bypassed the lifecycle RPC';
+  exception when insufficient_privilege then null;
+  end;
+  if not exists (select 1 from public.product_variants where id = v_gold) then
+    raise exception 'the denied direct DELETE removed the combination';
   end if;
 
   -- the denial is lifted, exactly as it was put in place
@@ -4931,6 +4938,72 @@ begin
 end
 $$;
 
+-- 0061: an ARCHIVED sibling cannot satisfy a last-active-shelf deletion guard.
+-- Use a zero-stock, unreferenced product, so history does not mask the rule.
+do $$
+declare
+  v_admin   uuid := '00000000-0000-4000-8000-0000000000a1';
+  v_product uuid := '00000000-0000-4000-8000-0000000061a0';
+  v_gold    uuid := '00000000-0000-4000-8000-0000000061a1';
+  v_silver  uuid := '00000000-0000-4000-8000-0000000061a2';
+begin
+  perform pg_temp.become(v_admin);
+  insert into public.products (id, sku, name_ar, name_en, category_id,
+                               selling_price, cost_price, stock_quantity, show_on_website)
+  values (v_product, 'SCN-LAST-ACTIVE', 'اختبار آخر رف', 'Last active shelf',
+          '00000000-0000-4000-8000-0000000000f1', 100, 50, 0, false);
+  insert into public.product_variants (id, product_id, sku, color_en, size, stock_quantity, active)
+  values (v_gold, v_product, 'SCN-LAST-GOLD', 'Gold', 17, 0, true),
+         (v_silver, v_product, 'SCN-LAST-SILVER', 'Silver', 17, 0, true);
+  perform public.enable_product_variants(v_product,
+    jsonb_build_object(v_gold::text, 0, v_silver::text, 0), v_admin::text, 'Amina Admin');
+  perform public.set_variant_active(v_silver, false);
+
+  -- A browser may edit metadata, but not bypass the guard with raw
+  -- UPDATE(active) or DELETE even when its user holds edit/delete_product.
+  update public.product_variants set color_en = 'Gold' where id = v_gold;
+  begin
+    update public.product_variants set active = false where id = v_gold;
+    raise exception 'direct active UPDATE bypassed the guarded archive RPC';
+  exception when insufficient_privilege then null;
+  end;
+  begin
+    delete from public.product_variants where id = v_gold;
+    raise exception 'direct DELETE bypassed the guarded delete RPC';
+  exception when insufficient_privilege then null;
+  end;
+
+  begin
+    perform public.delete_variant(v_gold);
+    raise exception 'an archived sibling allowed the last active shelf to be deleted';
+  exception when check_violation then null;
+  end;
+  begin
+    perform public.set_variant_active(v_gold, false);
+    raise exception 'an archived sibling allowed the last active shelf to be archived';
+  exception when check_violation then null;
+  end;
+  if (select count(*) from public.product_variants where product_id = v_product and active) <> 1 then
+    raise exception 'last-active refusal changed the available shelves';
+  end if;
+
+  perform public.set_variant_active(v_silver, true);
+  perform public.delete_variant(v_gold);
+  if (select count(*) from public.product_variants where product_id = v_product and active) <> 1 then
+    raise exception 'safe unreferenced delete should leave one active sibling';
+  end if;
+  begin
+    perform public.set_variant_active(v_silver, false);
+    raise exception 'archiving the new last active shelf succeeded';
+  exception when check_violation then null;
+  end;
+  delete from public.products where id = v_product;
+  if exists (select 1 from public.products where id = v_product) then
+    raise exception 'last-active fixture was not cleaned up';
+  end if;
+  raise notice 'variant lifecycle (0061) — archived siblings cannot hide a last-active delete or archive; reactivation permits safe deletion and the remaining shelf stays sellable';
+end
+$$;
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Phase 44 — category lifecycle: safe delete, move, archive (0044)
@@ -5302,7 +5375,9 @@ begin
   values
     (v_gold,   v_varprod, 'DZ-GOLD',   'Gold',   'ذهبي',   17, 0, true),
     (v_silver, v_varprod, 'DZ-SILVER', 'Silver', 'فضي', 17, 0, true)
-  on conflict (id) do update set stock_quantity = 0, active = true;
+  on conflict (id) do update set stock_quantity = 0;
+  perform public.set_variant_active(v_gold, true);
+  perform public.set_variant_active(v_silver, true);
 
   perform public.enable_product_variants(
     v_varprod,
@@ -5711,7 +5786,8 @@ begin
     17, null, 0, 1, true, 1, 300.00
   )
   on conflict (id) do update
-    set active = true, stock_quantity = 0, price_override = 300.00;
+    set stock_quantity = 0, price_override = 300.00;
+  perform public.set_variant_active(v_gold, true);
   perform public.enable_product_variants(
     v_varprod, jsonb_build_object(v_gold::text, 10), v_admin::text, 'Amina Admin');
 
@@ -5724,7 +5800,8 @@ begin
     (v_gold, v_varprod, 'SCN-P50-GOLD-17', 'gold', 'ذهبي', 'Gold', '#d4af37',
      17, null, 10, 1, true, 1, 300.00)
   on conflict (id) do update
-    set active = true, stock_quantity = 10, price_override = 300.00;
+    set stock_quantity = 10, price_override = 300.00;
+  perform public.set_variant_active(v_gold, true);
 
   insert into public.coupons
     (code, discount_type, value, min_subtotal, max_discount, usage_limit, used_count,
@@ -6489,6 +6566,22 @@ begin
        and pg_get_functiondef(p.oid) ilike '%insert into public.stock_movements%'
   ) then
     raise exception 'a stocktake trigger writes the ledger, so a restore could replay movements';
+  end if;
+
+  -- 0061 must keep 0060's history rule: silver has a stocktake snapshot but
+  -- no sale/return/movement reference, so only the stocktake guard blocks its
+  -- ordinary deletion. The owner-run factory reset below remains possible.
+  perform pg_temp.become(v_admin, 'authenticated');
+  begin
+    perform public.delete_variant(v_silver);
+    raise exception 'stocktake history allowed an ordinary variant delete';
+  exception when restrict_violation then
+    if SQLERRM not like '%stocktake%' then
+      raise exception 'variant delete lost the stocktake-specific refusal: %', SQLERRM;
+    end if;
+  end;
+  if not exists (select 1 from public.product_variants where id = v_silver) then
+    raise exception 'refused stocktake variant delete removed the shelf';
   end if;
 
   -- Factory reset deletes variants before products. The finalized line must let

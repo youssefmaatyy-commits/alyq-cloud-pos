@@ -264,10 +264,13 @@ export class DemoRepository implements CatalogRepository {
     }
     if (patch.barcode) this.assertUniqueVariantCode("barcode", patch.barcode.trim(), id);
 
+    // Omitted patch fields stay on the shelf. In particular an explicitly
+    // undefined stock field must never erase the current quantity (or poison
+    // the parent's derived stock with NaN). The live JSON update also omits it.
+    const definedPatch = Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined)) as ProductVariantPatch;
     const next: ProductVariant = {
       ...current,
-      ...patch,
-      // The identity is captured once and never rewritten by a rename.
+      ...definedPatch,
       // The identity is captured once and never rewritten by a rename.
       color_key: current.color_key,
       updated_at: nowIso(),
@@ -305,12 +308,22 @@ export class DemoRepository implements CatalogRepository {
       );
     }
 
+    if (current.active && !next.active && this.state.products.find((p) => p.id === current.product_id)?.variants_enabled &&
+        !this.state.variants.some((sibling) => sibling.product_id === current.product_id && sibling.id !== id && sibling.active)) {
+      throw new AppError("VARIANT_REQUIRED", `Product must keep at least one active combination`, "active");
+    }
     this.assertVariantIdentityFree(next, id);
     const updated = [...this.state.variants];
     updated[index] = next;
     this.state.variants = updated;
     this.persist();
     return delay(next, 60);
+  }
+
+  async setVariantActive(id: string, active: boolean): Promise<ProductVariant> {
+    // updateVariant enforces the same last-active-shelf rule as the live RPC,
+    // including callers that skip the service or the page entirely.
+    return this.updateVariant(id, { active });
   }
 
   async deleteVariant(id: string): Promise<void> {
@@ -320,10 +333,12 @@ export class DemoRepository implements CatalogRepository {
 
     if (product?.variants_enabled) {
       const siblings = this.state.variants.filter((v) => v.product_id === variant.product_id);
-      if (siblings.length <= 1) {
+      // An archived sibling is not a sellable replacement. Deleting the only
+      // active shelf would strand the enabled product even though rows remain.
+      if (siblings.length <= 1 || (variant.active && !siblings.some((other) => other.id !== id && other.active))) {
         throw new AppError(
           "VARIANT_REQUIRED",
-          `Product ${product.sku} sells by variant and must keep at least one variant`,
+          `Product ${product.sku} must keep at least one active combination`,
         );
       }
     }

@@ -21,7 +21,7 @@ import { cn } from "@/utils/cn";
 import { useStorefront } from "../../hooks/StorefrontProvider";
 import { useStoreCart } from "../../hooks/StoreCartProvider";
 import { useStoreAccount } from "../../hooks/StoreAccountProvider";
-import { storefrontSurfaceStyle } from "../../services/theme";
+import { announcementStyle, storefrontSurfaceStyle } from "../../services/theme";
 import {
   announcementIntervalMs,
   configuredHref,
@@ -136,9 +136,6 @@ function AnnouncementBar() {
   const shown = messages.length > 0 ? messages[index % messages.length] : null;
   if (!shown) return null;
 
-  const background = settings.announcement.bg_color?.trim() || "var(--store-secondary)";
-  const color =
-    settings.announcement.text_color?.trim() || "var(--store-on-secondary)";
   const scrolling = mode === "scroll" && messages.length > 1;
 
   return (
@@ -146,7 +143,7 @@ function AnnouncementBar() {
       role="region"
       aria-label={t("store.announcements.label")}
       className="relative overflow-hidden px-4 py-2 text-center text-[11px] font-bold tracking-wide"
-      style={{ backgroundColor: background, color }}
+      style={announcementStyle(settings)}
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
     >
@@ -176,7 +173,7 @@ function AnnouncementBar() {
                 <span
                   key={message.id}
                   className="h-1 w-1 rounded-full"
-                  style={{ backgroundColor: color, opacity: i === index % messages.length ? 1 : 0.35 }}
+                  style={{ backgroundColor: "currentColor", opacity: i === index % messages.length ? 1 : 0.35 }}
                 />
               ))}
             </span>
@@ -222,7 +219,7 @@ export function SocialRow({ size = "md" }: { size?: "sm" | "md" }) {
           rel="noopener noreferrer"
           aria-label={label}
           className={cn(
-            "grid place-items-center rounded-full border border-[var(--store-hairline)] text-[var(--store-muted)] transition hover:border-[var(--store-text)] hover:text-[var(--store-text)]",
+            "grid place-items-center rounded-full border border-[var(--store-hairline)] text-[var(--store-text-secondary)] transition hover:border-[var(--store-text-primary)] hover:text-[var(--store-text-primary)]",
             size === "sm" ? "h-8 w-8" : "h-9 w-9",
           )}
         >
@@ -240,7 +237,7 @@ export function SocialRow({ size = "md" }: { size?: "sm" | "md" }) {
         rel="noopener noreferrer"
         aria-label={label}
         className={cn(
-          "grid place-items-center rounded-full border border-[var(--store-hairline)] text-[var(--store-muted)] transition hover:border-[var(--store-text)] hover:text-[var(--store-text)]",
+          "grid place-items-center rounded-full border border-[var(--store-hairline)] text-[var(--store-text-secondary)] transition hover:border-[var(--store-text-primary)] hover:text-[var(--store-text-primary)]",
           size === "sm" ? "h-8 w-8" : "h-9 w-9",
         )}
       >
@@ -282,7 +279,7 @@ function Header({
   };
 
   const iconButton =
-    "grid h-11 w-11 shrink-0 place-items-center text-[var(--store-text)] transition hover:text-[var(--store-accent)]";
+    "grid h-11 w-11 shrink-0 place-items-center text-[var(--store-text-primary)] transition hover:text-[var(--store-accent)]";
 
   return (
     <header
@@ -334,25 +331,25 @@ function Header({
           >
             <Link
               to="/store/products"
-              className="inline-flex min-h-11 items-center whitespace-nowrap text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--store-text)] transition hover:text-[var(--store-accent)]"
+              className="inline-flex min-h-11 items-center whitespace-nowrap text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--store-text-primary)] transition hover:text-[var(--store-accent)]"
             >
               {t("store.nav.products")}
             </Link>
             <Link
               to="/store/products?sort=newest"
-              className="inline-flex min-h-11 items-center whitespace-nowrap text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--store-muted)] transition hover:text-[var(--store-text)]"
+              className="inline-flex min-h-11 items-center whitespace-nowrap text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--store-text-secondary)] transition hover:text-[var(--store-text-primary)]"
             >
               {t("store.nav.new")}
             </Link>
             <Link
               to="/store/about"
-              className="inline-flex min-h-11 items-center whitespace-nowrap text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--store-muted)] transition hover:text-[var(--store-text)]"
+              className="inline-flex min-h-11 items-center whitespace-nowrap text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--store-text-secondary)] transition hover:text-[var(--store-text-primary)]"
             >
               {t("store.nav.about")}
             </Link>
             <Link
               to="/store/contact"
-              className="inline-flex min-h-11 items-center whitespace-nowrap text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--store-muted)] transition hover:text-[var(--store-text)]"
+              className="inline-flex min-h-11 items-center whitespace-nowrap text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--store-text-secondary)] transition hover:text-[var(--store-text-primary)]"
             >
               {t("store.nav.contact")}
             </Link>
@@ -376,7 +373,7 @@ function Header({
           ) : (
             <span
               dir="ltr"
-              className="block max-w-full truncate text-center text-xl font-medium uppercase leading-none tracking-[0.32em] text-[var(--store-text)]"
+              className="block max-w-full truncate text-center text-xl font-medium uppercase leading-none tracking-[0.32em] text-[var(--store-text-primary)]"
               style={{ fontFamily: "var(--store-font-display)" }}
             >
               {storeName}
@@ -439,7 +436,7 @@ function Header({
           <button
             type="button"
             onClick={toggleLang}
-            className="hidden h-10 items-center px-2 text-[11px] font-bold uppercase tracking-widest text-[var(--store-muted)] transition hover:text-[var(--store-text)] sm:grid"
+            className="hidden h-10 items-center px-2 text-[11px] font-bold uppercase tracking-widest text-[var(--store-text-secondary)] transition hover:text-[var(--store-text-primary)] sm:grid"
             aria-label={t("store.nav.changeLanguage")}
           >
             {lang === "en" ? "عربي" : "EN"}
@@ -462,7 +459,7 @@ function Header({
             onChange={(event) => setSearch(event.target.value)}
             placeholder={t("store.search.placeholder")}
             aria-label={t("store.search.label")}
-            className="w-full border-0 border-b border-[var(--store-hairline)] bg-transparent px-1 py-2 text-sm tracking-wide text-[var(--store-text)] outline-none placeholder:text-[var(--store-muted)] focus:border-[var(--store-text)]"
+            className="w-full border-0 border-b border-[var(--store-hairline)] bg-transparent px-1 py-2 text-sm tracking-wide text-[var(--store-text-primary)] outline-none placeholder:text-[var(--store-text-secondary)] focus:border-[var(--store-text-primary)]"
           />
         </form>
       ) : null}
@@ -507,7 +504,7 @@ function MenuDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
   };
 
   const item =
-    "block w-full px-6 py-3 text-start text-sm font-semibold tracking-wide text-[var(--store-text)] transition hover:bg-[var(--store-primary-soft)]";
+    "block w-full px-6 py-3 text-start text-sm font-semibold tracking-wide text-[var(--store-text-primary)] transition hover:bg-[var(--store-primary-soft)]";
 
   return (
     <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true" aria-label={t("store.nav.menu")}>
@@ -526,7 +523,7 @@ function MenuDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
         <div className="flex items-center justify-between border-b border-[var(--store-hairline)] px-6 py-4">
           <span
             dir="ltr"
-            className="text-base font-black uppercase tracking-[0.3em] text-[var(--store-text)]"
+            className="text-base font-black uppercase tracking-[0.3em] text-[var(--store-text-primary)]"
             style={{ fontFamily: "var(--store-font-display)" }}
           >
             {pick(settings.contact.store_name_ar, settings.contact.store_name_en) || "ALYQ"}
@@ -535,7 +532,7 @@ function MenuDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
             type="button"
             onClick={onClose}
             aria-label={t("common.close")}
-            className="grid h-9 w-9 place-items-center text-[var(--store-muted)] hover:text-[var(--store-text)]"
+            className="grid h-9 w-9 place-items-center text-[var(--store-text-secondary)] hover:text-[var(--store-text-primary)]"
           >
             <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden>
               <path
@@ -564,7 +561,7 @@ function MenuDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
             </button>
           ) : null}
 
-          <p className="px-6 pb-1 pt-5 text-[10px] font-black uppercase tracking-[0.22em] text-[var(--store-muted)]">
+          <p className="px-6 pb-1 pt-5 text-[10px] font-black uppercase tracking-[0.22em] text-[var(--store-text-secondary)]">
             {t("store.nav.categories")}
           </p>
           {categoriesList.map((category) => {
@@ -573,7 +570,7 @@ function MenuDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
               <button
                 key={category.id}
                 type="button"
-                className={cn(item, "py-2.5 text-[13px] font-medium text-[var(--store-muted)]")}
+                className={cn(item, "py-2.5 text-[13px] font-medium text-[var(--store-text-secondary)]")}
                 onClick={() => go(`/store/products?category=${encodeURIComponent(category.id)}`)}
               >
                 {pick(content?.title_ar ?? category.name_ar, content?.title_en ?? category.name_en)}
@@ -581,7 +578,7 @@ function MenuDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
             );
           })}
 
-          <p className="px-6 pb-1 pt-5 text-[10px] font-black uppercase tracking-[0.22em] text-[var(--store-muted)]">
+          <p className="px-6 pb-1 pt-5 text-[10px] font-black uppercase tracking-[0.22em] text-[var(--store-text-secondary)]">
             {t("store.footer.shop")}
           </p>
           <button type="button" className={item} onClick={() => go("/store/about")}>
@@ -603,7 +600,7 @@ function MenuDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
           <button
             type="button"
             onClick={toggleLang}
-            className="text-[11px] font-bold uppercase tracking-widest text-[var(--store-muted)]"
+            className="text-[11px] font-bold uppercase tracking-widest text-[var(--store-text-secondary)]"
           >
             {lang === "en" ? "العربية" : "English"}
           </button>
@@ -628,7 +625,7 @@ function CampaignBanners() {
       {banners.slice(0, 2).map((campaign) => {
         const href = configuredHref(campaign.cta_href);
         const body = (
-          <div className="flex items-center justify-center gap-3 bg-[var(--store-primary-soft)] px-4 py-2 text-center text-xs font-bold tracking-wide text-[var(--store-text)]">
+          <div className="flex items-center justify-center gap-3 bg-[var(--store-primary-soft)] px-4 py-2 text-center text-xs font-bold tracking-wide text-[var(--store-text-primary)]">
             <span>{pick(campaign.title_ar, campaign.title_en)}</span>
             {pick(campaign.cta_ar, campaign.cta_en) ? (
               <span className="underline underline-offset-4">
@@ -664,7 +661,7 @@ export function StoreLayout({ children }: { children: ReactNode }) {
 
   return (
     <div
-      className="flex min-h-screen flex-col text-[var(--store-text)]"
+      className="flex min-h-screen flex-col text-[var(--store-text-primary)]"
       style={storefrontSurfaceStyle(settings)}
       dir={dir}
     >
@@ -729,13 +726,13 @@ function SiteFooter() {
         <div className="border-b border-[var(--store-hairline)]">
           <div className="mx-auto flex w-full max-w-[var(--store-max-width)] flex-col items-center gap-4 px-6 py-10 text-center">
             <p
-              className="text-lg font-bold tracking-wide text-[var(--store-text)]"
+              className="text-lg font-bold tracking-wide text-[var(--store-text-primary)]"
               style={{ fontFamily: "var(--store-font-display)" }}
             >
               {t("store.footer.newsletterTitle")}
             </p>
             {pick(footer.newsletter_note_ar, footer.newsletter_note_en) ? (
-              <p className="max-w-md text-xs leading-relaxed text-[var(--store-muted)]">
+              <p className="max-w-md text-xs leading-relaxed text-[var(--store-text-secondary)]">
                 {pick(footer.newsletter_note_ar, footer.newsletter_note_en)}
               </p>
             ) : null}
@@ -749,7 +746,7 @@ function SiteFooter() {
                 type="email"
                 required
                 placeholder={t("store.footer.emailPlaceholder")}
-                className="min-w-0 flex-1 border-0 border-b border-[var(--store-hairline)] bg-transparent px-1 py-2 text-sm text-[var(--store-text)] outline-none placeholder:text-[var(--store-muted)] focus:border-[var(--store-text)]"
+                className="min-w-0 flex-1 border-0 border-b border-[var(--store-hairline)] bg-transparent px-1 py-2 text-sm text-[var(--store-text-primary)] outline-none placeholder:text-[var(--store-text-secondary)] focus:border-[var(--store-text-primary)]"
               />
               <button
                 type="submit"
@@ -767,15 +764,15 @@ function SiteFooter() {
         <div className="col-span-2 lg:col-span-1">
           <p
             dir="ltr"
-            className="text-lg font-black uppercase tracking-[0.3em] text-[var(--store-text)]"
+            className="text-lg font-black uppercase tracking-[0.3em] text-[var(--store-text-primary)]"
             style={{ fontFamily: "var(--store-font-display)" }}
           >
             {storeName}
           </p>
           {description ? (
-            <p className="mt-3 max-w-xs text-xs leading-relaxed text-[var(--store-muted)]">{description}</p>
+            <p className="mt-3 max-w-xs text-xs leading-relaxed text-[var(--store-text-secondary)]">{description}</p>
           ) : (
-            <p className="mt-3 max-w-xs text-xs leading-relaxed text-[var(--store-muted)]">
+            <p className="mt-3 max-w-xs text-xs leading-relaxed text-[var(--store-text-secondary)]">
               {pick(settings.contact.tagline_ar, settings.contact.tagline_en)}
             </p>
           )}
@@ -785,7 +782,7 @@ function SiteFooter() {
         </div>
 
         <div>
-          <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[var(--store-muted)]">
+          <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[var(--store-text-secondary)]">
             {t("store.footer.shop")}
           </p>
           <ul className="mt-4 space-y-1 text-sm md:space-y-2.5">
@@ -801,14 +798,14 @@ function SiteFooter() {
                           ? "/store/products?sort=best"
                           : "/store/products"
                     }
-                    className="inline-flex min-h-11 items-center break-words text-[var(--store-muted)] transition hover:text-[var(--store-text)] md:min-h-0"
+                    className="inline-flex min-h-11 items-center break-words text-[var(--store-text-secondary)] transition hover:text-[var(--store-text-primary)] md:min-h-0"
                   >
                     {pick(section.title_ar, section.title_en) || t(`store.section.${section.key}` as never)}
                   </Link>
                 </li>
               ))}
             <li>
-              <Link to="/store/track" className="inline-flex min-h-11 items-center break-words text-[var(--store-muted)] transition hover:text-[var(--store-text)] md:min-h-0">
+              <Link to="/store/track" className="inline-flex min-h-11 items-center break-words text-[var(--store-text-secondary)] transition hover:text-[var(--store-text-primary)] md:min-h-0">
                 {t("store.nav.track")}
               </Link>
             </li>
@@ -816,17 +813,17 @@ function SiteFooter() {
         </div>
 
         <div>
-          <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[var(--store-muted)]">
+          <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[var(--store-text-secondary)]">
             {t("store.footer.info")}
           </p>
           <ul className="mt-4 space-y-1 text-sm md:space-y-2.5">
             <li>
-              <Link to="/store/about" className="inline-flex min-h-11 items-center break-words text-[var(--store-muted)] transition hover:text-[var(--store-text)] md:min-h-0">
+              <Link to="/store/about" className="inline-flex min-h-11 items-center break-words text-[var(--store-text-secondary)] transition hover:text-[var(--store-text-primary)] md:min-h-0">
                 {t("store.nav.about")}
               </Link>
             </li>
             <li>
-              <Link to="/store/contact" className="inline-flex min-h-11 items-center break-words text-[var(--store-muted)] transition hover:text-[var(--store-text)] md:min-h-0">
+              <Link to="/store/contact" className="inline-flex min-h-11 items-center break-words text-[var(--store-text-secondary)] transition hover:text-[var(--store-text-primary)] md:min-h-0">
                 {t("store.nav.contact")}
               </Link>
             </li>
@@ -834,7 +831,7 @@ function SiteFooter() {
               <li>
                 <a
                   href={`tel:${settings.contact.phone}`}
-                  className="inline-flex min-h-11 items-center break-words text-[var(--store-muted)] transition hover:text-[var(--store-text)] md:min-h-0"
+                  className="inline-flex min-h-11 items-center break-words text-[var(--store-text-secondary)] transition hover:text-[var(--store-text-primary)] md:min-h-0"
                 >
                   {settings.contact.phone}
                 </a>
@@ -844,14 +841,14 @@ function SiteFooter() {
               <li>
                 <a
                   href={`mailto:${email}`}
-                  className="inline-flex min-h-11 items-center break-words text-[var(--store-muted)] transition hover:text-[var(--store-text)] md:min-h-0"
+                  className="inline-flex min-h-11 items-center break-words text-[var(--store-text-secondary)] transition hover:text-[var(--store-text-primary)] md:min-h-0"
                 >
                   {email}
                 </a>
               </li>
             ) : null}
             {pick(settings.contact.address_ar, settings.contact.address_en) ? (
-              <li className="text-[var(--store-muted)]">
+              <li className="text-[var(--store-text-secondary)]">
                 {pick(settings.contact.address_ar, settings.contact.address_en)}
               </li>
             ) : null}
@@ -861,7 +858,7 @@ function SiteFooter() {
                   href={mapLink}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-[var(--store-muted)] underline underline-offset-4 transition hover:text-[var(--store-text)]"
+                  className="text-[var(--store-text-secondary)] underline underline-offset-4 transition hover:text-[var(--store-text-primary)]"
                 >
                   {t("store.contact.openMap")}
                 </a>
@@ -871,10 +868,10 @@ function SiteFooter() {
         </div>
 
         <div>
-          <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[var(--store-muted)]">
+          <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[var(--store-text-secondary)]">
             {t("store.footer.delivery")}
           </p>
-          <ul className="mt-4 space-y-2.5 text-sm text-[var(--store-muted)]">
+          <ul className="mt-4 space-y-2.5 text-sm text-[var(--store-text-secondary)]">
             {settings.delivery.enabled ? (
               <li>
                 {t("store.footer.deliveryFee", {
@@ -888,7 +885,7 @@ function SiteFooter() {
           </ul>
           {policies.length > 0 ? (
             <>
-              <p className="mt-6 text-[10px] font-black uppercase tracking-[0.22em] text-[var(--store-muted)]">
+              <p className="mt-6 text-[10px] font-black uppercase tracking-[0.22em] text-[var(--store-text-secondary)]">
                 {t("store.footer.policies")}
               </p>
               <ul className="mt-4 space-y-1 text-sm md:space-y-2.5">
@@ -899,7 +896,7 @@ function SiteFooter() {
                       {href.startsWith("#") ? (
                         <Link
                           to={href.slice(1)}
-                          className="inline-flex min-h-11 items-center break-words text-[var(--store-muted)] transition hover:text-[var(--store-text)] md:min-h-0"
+                          className="inline-flex min-h-11 items-center break-words text-[var(--store-text-secondary)] transition hover:text-[var(--store-text-primary)] md:min-h-0"
                         >
                           {pick(link.label_ar, link.label_en)}
                         </Link>
@@ -908,7 +905,7 @@ function SiteFooter() {
                           href={href}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="inline-flex min-h-11 items-center break-words text-[var(--store-muted)] transition hover:text-[var(--store-text)] md:min-h-0"
+                          className="inline-flex min-h-11 items-center break-words text-[var(--store-text-secondary)] transition hover:text-[var(--store-text-primary)] md:min-h-0"
                         >
                           {pick(link.label_ar, link.label_en)}
                         </a>
@@ -922,7 +919,7 @@ function SiteFooter() {
         </div>
       </div>
 
-      <div className="border-t border-[var(--store-hairline)] px-6 py-4 text-center text-[11px] tracking-wide text-[var(--store-muted)]" dir={dir}>
+      <div className="border-t border-[var(--store-hairline)] px-6 py-4 text-center text-[11px] tracking-wide text-[var(--store-text-secondary)]" dir={dir}>
         {copyright || `© ${new Date().getFullYear()} ${storeName} — ${t("store.footer.rights")}`}
       </div>
     </footer>

@@ -342,7 +342,7 @@ export class SupabaseRepository implements CatalogRepository {
    *      · "conversion must neither create nor destroy" → VARIANTS_STOCK_MISMATCH
    *      · "sells by variant"                            → VARIANT_STOCK_READONLY
    *      · "no longer sold"                              → VARIANT_UNAVAILABLE
-   *      · "must keep at least one"                      → VARIANT_REQUIRED
+   *      · "must keep at least one" / "nothing left to sell" → VARIANT_REQUIRED
    *      · anything else about stock/units                → VARIANT_STOCK_INSUFFICIENT
    */
   private rethrowVariant(error: unknown): never {
@@ -366,7 +366,7 @@ export class SupabaseRepository implements CatalogRepository {
       if (/is no longer sold/i.test(message)) {
         throw new AppError("VARIANT_UNAVAILABLE", message, undefined, pgCode);
       }
-      if (/must keep at least one/i.test(message)) {
+      if (/must keep at least one|nothing left to sell/i.test(message)) {
         throw new AppError("VARIANT_REQUIRED", message, undefined, pgCode);
       }
       throw new AppError("VARIANT_STOCK_INSUFFICIENT", message, undefined, pgCode);
@@ -425,6 +425,11 @@ export class SupabaseRepository implements CatalogRepository {
           "23514",
         );
       }
+      if (patch.active !== undefined) {
+        // Even a caller that skips saveVariant must use the locking archive
+        // RPC, not an unguarded PostgREST metadata UPDATE.
+        throw new AppError("VALIDATION", "Use setVariantActive to archive or reactivate a combination", "active");
+      }
       const { data, error } = await this.require()
         .from("product_variants")
         .update(patch)
@@ -432,6 +437,23 @@ export class SupabaseRepository implements CatalogRepository {
         .select(VARIANTS_SELECT)
         .single();
       if (error) this.rethrowVariant(error);
+      return mapVariant(data as VariantRow);
+    } catch (error) {
+      this.rethrowVariant(error);
+    }
+  }
+
+  async setVariantActive(id: string, active: boolean): Promise<ProductVariant> {
+    try {
+      // Unlike a direct UPDATE, this RPC refuses to archive the product's last
+      // active combination. History stays attached to its original ID.
+      const { error } = await this.require().rpc("set_variant_active", {
+        p_variant_id: id, p_active: active,
+      });
+      if (error) this.rethrowVariant(error);
+      const { data, error: readError } = await this.require().from("product_variants")
+        .select(VARIANTS_SELECT).eq("id", id).single();
+      if (readError) this.rethrowVariant(readError);
       return mapVariant(data as VariantRow);
     } catch (error) {
       this.rethrowVariant(error);

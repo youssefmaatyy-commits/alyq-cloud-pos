@@ -45,7 +45,7 @@ export function StoreAboutPage() {
   return (
     <div className="mx-auto w-full max-w-[var(--store-max-width)] px-4 py-12 sm:px-6 lg:grid lg:grid-cols-2 lg:items-center lg:gap-x-16" data-testid="store-about">
       <h1
-        className="text-4xl font-normal tracking-tight text-[var(--store-text)] md:text-4xl"
+        className="text-4xl font-normal tracking-tight text-[var(--store-text-primary)] md:text-4xl"
         style={{ fontFamily: "var(--store-font-display)" }}
       >
         {title}
@@ -56,7 +56,7 @@ export function StoreAboutPage() {
         ) : null}
       </div>
       {body ? (
-        <div className="mt-8 space-y-4 text-[15px] leading-loose text-[var(--store-muted)]">
+        <div className="mt-8 space-y-4 text-[15px] leading-loose text-[var(--store-text-secondary)]">
           {body
             .split(/\n{2,}/)
             .map((paragraph) => paragraph.trim())
@@ -66,7 +66,7 @@ export function StoreAboutPage() {
             ))}
         </div>
       ) : (
-        <p className="mt-6 text-sm leading-relaxed text-[var(--store-muted)]">
+        <p className="mt-6 text-sm leading-relaxed text-[var(--store-text-secondary)]">
           {pick(settings.contact.tagline_ar, settings.contact.tagline_en)}
         </p>
       )}
@@ -94,7 +94,7 @@ export function StoreAboutPage() {
       <div className="mt-10 lg:col-span-2 border-t border-[var(--store-hairline)] pt-6">
         <Link
           to="/store/products"
-          className="text-[11px] font-black uppercase tracking-[0.2em] text-[var(--store-muted)] transition hover:text-[var(--store-text)]"
+          className="text-[11px] font-black uppercase tracking-[0.2em] text-[var(--store-text-secondary)] transition hover:text-[var(--store-text-primary)]"
         >
           {t("store.product.browseAll")}
         </Link>

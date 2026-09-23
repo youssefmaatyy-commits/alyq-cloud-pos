@@ -128,7 +128,7 @@ export function StoreProductsPage() {
   const filterPanel = (
     <div className="flex flex-col gap-5">
       <div>
-        <p className="mb-2 text-xs font-black uppercase tracking-widest text-[var(--store-muted)]">
+        <p className="mb-2 text-xs font-black uppercase tracking-widest text-[var(--store-text-secondary)]">
           {t("store.filters.category")}
         </p>
         <div className="flex flex-col gap-1">
@@ -139,7 +139,7 @@ export function StoreProductsPage() {
               "rounded-lg px-2.5 py-1.5 text-start text-sm font-semibold transition",
               filters.categoryId === "all"
                 ? "bg-[var(--store-primary-soft)] text-[var(--store-primary)]"
-                : "text-[var(--store-text)] hover:bg-[var(--store-surface-alt)]",
+                : "text-[var(--store-text-primary)] hover:bg-[var(--store-surface-muted)]",
             )}
           >
             {t("common.all")}
@@ -155,7 +155,7 @@ export function StoreProductsPage() {
                   "rounded-lg px-2.5 py-1.5 text-start text-sm font-semibold transition",
                   filters.categoryId === category.id
                     ? "bg-[var(--store-primary-soft)] text-[var(--store-primary)]"
-                    : "text-[var(--store-text)] hover:bg-[var(--store-surface-alt)]",
+                    : "text-[var(--store-text-primary)] hover:bg-[var(--store-surface-muted)]",
                 )}
               >
                 {pick(category.name_ar, category.name_en)}
@@ -166,7 +166,7 @@ export function StoreProductsPage() {
 
       {brandsFacet.length > 0 ? (
         <div>
-          <p className="mb-2 text-xs font-black uppercase tracking-widest text-[var(--store-muted)]">
+          <p className="mb-2 text-xs font-black uppercase tracking-widest text-[var(--store-text-secondary)]">
             {t("store.filters.brand")}
           </p>
           <div className="flex flex-wrap gap-1.5">
@@ -177,7 +177,7 @@ export function StoreProductsPage() {
                 "rounded-full border px-2.5 py-1 text-xs font-bold transition",
                 filters.brand === null
                   ? "border-[var(--store-primary)] bg-[var(--store-primary-soft)] text-[var(--store-primary)]"
-                  : "border-[var(--store-border)] text-[var(--store-muted)]",
+                  : "border-[var(--store-border)] text-[var(--store-text-secondary)]",
               )}
             >
               {t("common.all")}
@@ -191,7 +191,7 @@ export function StoreProductsPage() {
                   "rounded-full border px-2.5 py-1 text-xs font-bold transition",
                   filters.brand === brand.key
                     ? "border-[var(--store-primary)] bg-[var(--store-primary-soft)] text-[var(--store-primary)]"
-                    : "border-[var(--store-border)] text-[var(--store-muted)]",
+                    : "border-[var(--store-border)] text-[var(--store-text-secondary)]",
                 )}
               >
                 {brand.label}
@@ -204,11 +204,11 @@ export function StoreProductsPage() {
 
       {variantFacets.colors.length > 0 ? (
         <div>
-          <p className="mb-2 text-xs font-black uppercase tracking-widest text-[var(--store-muted)]">{t("store.filters.color")}</p>
+          <p className="mb-2 text-xs font-black uppercase tracking-widest text-[var(--store-text-secondary)]">{t("store.filters.color")}</p>
           <select
             value={filters.color ?? ""}
             onChange={(event) => apply({ color: event.target.value || null })}
-            className="w-full rounded-lg border border-[var(--store-border)] bg-[var(--store-surface)] px-2.5 py-2 text-sm font-semibold text-[var(--store-text)] outline-none focus:border-[var(--store-primary)]"
+            className="w-full rounded-lg border border-[var(--store-border)] bg-[var(--store-surface)] px-2.5 py-2 text-sm font-semibold text-[var(--store-text-primary)] outline-none focus:border-[var(--store-primary)]"
           >
             <option value="">{t("common.all")}</option>
             {variantFacets.colors.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
@@ -217,11 +217,11 @@ export function StoreProductsPage() {
       ) : null}
       {variantFacets.sizes.length > 0 ? (
         <div>
-          <p className="mb-2 text-xs font-black uppercase tracking-widest text-[var(--store-muted)]">{t("store.filters.size")}</p>
+          <p className="mb-2 text-xs font-black uppercase tracking-widest text-[var(--store-text-secondary)]">{t("store.filters.size")}</p>
           <select
             value={filters.size === null ? "" : String(filters.size)}
             onChange={(event) => apply({ size: event.target.value ? Number(event.target.value) : null })}
-            className="w-full rounded-lg border border-[var(--store-border)] bg-[var(--store-surface)] px-2.5 py-2 text-sm font-semibold text-[var(--store-text)] outline-none focus:border-[var(--store-primary)]"
+            className="w-full rounded-lg border border-[var(--store-border)] bg-[var(--store-surface)] px-2.5 py-2 text-sm font-semibold text-[var(--store-text-primary)] outline-none focus:border-[var(--store-primary)]"
           >
             <option value="">{t("common.all")}</option>
             {variantFacets.sizes.map((size) => <option key={size} value={size}>{size}</option>)}
@@ -231,7 +231,7 @@ export function StoreProductsPage() {
 
       {priceRange ? (
         <div>
-          <p className="mb-2 text-xs font-black uppercase tracking-widest text-[var(--store-muted)]">
+          <p className="mb-2 text-xs font-black uppercase tracking-widest text-[var(--store-text-secondary)]">
             {t("store.filters.price")}
           </p>
           <div className="flex items-center gap-2">
@@ -247,7 +247,7 @@ export function StoreProductsPage() {
                 className="w-full rounded-lg border border-[var(--store-border)] bg-[var(--store-surface)] px-2 py-1.5 text-sm outline-none focus:border-[var(--store-primary)]"
               />
             </label>
-            <span className="text-[var(--store-muted)]">–</span>
+            <span className="text-[var(--store-text-secondary)]">–</span>
             <label className="flex-1">
               <span className="sr-only">{t("store.filters.maxPrice")}</span>
               <input
@@ -261,7 +261,7 @@ export function StoreProductsPage() {
               />
             </label>
           </div>
-          <p className="mt-1.5 text-[11px] font-medium text-[var(--store-muted)]">
+          <p className="mt-1.5 text-[11px] font-medium text-[var(--store-text-secondary)]">
             <Money value={priceRange.min} /> – <Money value={priceRange.max} />
           </p>
         </div>
@@ -270,7 +270,7 @@ export function StoreProductsPage() {
       <div>
         <p
           id="store-availability-label"
-          className="mb-2 text-xs font-black uppercase tracking-widest text-[var(--store-muted)]"
+          className="mb-2 text-xs font-black uppercase tracking-widest text-[var(--store-text-secondary)]"
         >
           {t("store.filters.availability")}
         </p>
@@ -280,7 +280,7 @@ export function StoreProductsPage() {
           {(["any", "in_stock", "out_of_stock"] as AvailabilityFilter[]).map((option) => (
             <label
               key={option}
-              className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm font-semibold text-[var(--store-text)] hover:bg-[var(--store-surface-alt)]"
+              className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm font-semibold text-[var(--store-text-primary)] hover:bg-[var(--store-surface-muted)]"
             >
               <input
                 type="radio"
@@ -304,7 +304,7 @@ export function StoreProductsPage() {
               replace: true,
             });
           }}
-          className="rounded-lg border border-[var(--store-border)] px-3 py-2 text-xs font-bold text-[var(--store-muted)] transition hover:text-[var(--store-primary)]"
+          className="rounded-lg border border-[var(--store-border)] px-3 py-2 text-xs font-bold text-[var(--store-text-secondary)] transition hover:text-[var(--store-primary)]"
         >
           {t("store.filters.clear")}
         </button>
@@ -316,12 +316,12 @@ export function StoreProductsPage() {
     <div className="mx-auto w-full max-w-[var(--store-max-width,72rem)] px-4 py-6 sm:px-6">
       <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-black tracking-tight text-[var(--store-text)]">
+          <h1 className="text-2xl font-black tracking-tight text-[var(--store-text-primary)]">
             {filters.search
               ? t("store.products.resultsFor", { query: filters.search })
               : t("store.products.title")}
           </h1>
-          <p className="mt-1 text-xs font-semibold text-[var(--store-muted)]">
+          <p className="mt-1 text-xs font-semibold text-[var(--store-text-secondary)]">
             {loading
               ? t("common.loading")
               : t("store.products.count", { count: results.length })}
@@ -332,7 +332,7 @@ export function StoreProductsPage() {
           <button
             type="button"
             onClick={() => setFiltersOpen((open) => !open)}
-            className="relative rounded-lg border border-[var(--store-border)] px-3 py-2 text-xs font-bold text-[var(--store-text)] lg:hidden"
+            className="relative rounded-lg border border-[var(--store-border)] px-3 py-2 text-xs font-bold text-[var(--store-text-primary)] lg:hidden"
             aria-expanded={filtersOpen}
           >
             {t("store.filters.title")}
@@ -348,7 +348,7 @@ export function StoreProductsPage() {
             <select
               value={filters.sort}
               onChange={(event) => apply({ sort: event.target.value as StorefrontSort })}
-              className="rounded-lg border border-[var(--store-border)] bg-[var(--store-surface)] px-3 py-2 text-xs font-bold text-[var(--store-text)] outline-none focus:border-[var(--store-primary)]"
+              className="rounded-lg border border-[var(--store-border)] bg-[var(--store-surface)] px-3 py-2 text-xs font-bold text-[var(--store-text-primary)] outline-none focus:border-[var(--store-primary)]"
             >
               {STOREFRONT_SORTS.map((sort) => (
                 <option key={sort} value={sort}>
@@ -384,8 +384,8 @@ export function StoreProductsPage() {
         <div>
           {results.length === 0 ? (
             <div className="border border-dashed border-[var(--store-border)] bg-[var(--store-surface)] p-10 text-center" style={{ borderRadius: "var(--store-radius)" }}>
-              <p className="text-sm font-bold text-[var(--store-text)]">{t("store.products.noResults")}</p>
-              <p className="mt-1 text-xs text-[var(--store-muted)]">{t("store.products.noResultsHint")}</p>
+              <p className="text-sm font-bold text-[var(--store-text-primary)]">{t("store.products.noResults")}</p>
+              <p className="mt-1 text-xs text-[var(--store-text-secondary)]">{t("store.products.noResultsHint")}</p>
               <button
                 type="button"
                 onClick={() => setParams(new URLSearchParams(), { replace: true })}

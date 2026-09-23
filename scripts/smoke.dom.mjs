@@ -468,9 +468,10 @@ async function main() {
   setField("#name_en", "Smoke test product v2");
   toggleSwitch("Show on website");
   await sleep(150);
-  click("Save");
-  await sleep(450);
-  assert.ok(bodyText().includes("Smoke test product v2"), "edit flow persists changes");
+  // The combination editor appears above the product form on Edit. Its
+  // disabled "Save combinations" button is not this product's save action.
+  clickExact("Save");
+  await waitFor(() => bodyText().includes("Smoke test product v2") && !document.querySelector("#name_en"), { label: "edit flow persists changes" });
   await waitFor(() => bodyText().includes("Hidden on website"), { label: "website visibility flag" });
   assert.ok(bodyText().includes("Hidden on website"), "website visibility flag saved + shown");
   // toggle it back on to keep the demo data clean
@@ -478,8 +479,8 @@ async function main() {
   await sleep(300);
   toggleSwitch("Show on website");
   await sleep(150);
-  click("Save");
-  await sleep(450);
+  clickExact("Save");
+  await waitFor(() => !document.querySelector("#name_en"), { label: "restored website visibility" });
   console.log("  ✓ edit flow saves changes; show/hide on website works");
 
   // 10 ─ categories
@@ -1111,18 +1112,19 @@ async function main() {
   cartItem = [...document.querySelectorAll("aside ul li")].find((li) =>
     (li.textContent ?? "").includes("ALYQ-1001"),
   );
-  const plus = cartItem.querySelector('button[aria-label="+"]');
-  const minus = cartItem.querySelector('button[aria-label="−"], button[aria-label="-"]');
+  const plus = cartItem.querySelector('button[aria-label="Increase quantity"]');
+  const minus = cartItem.querySelector('button[aria-label="Decrease quantity"]');
+  assert.ok(plus && minus, "accessible quantity controls appear on the exact cart row");
   plus.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
   await sleep(200);
-  assert.ok((cartItem.textContent ?? "").includes("2"), "qty increased");
+  assert.equal(cartItem.querySelector('[data-testid^="cart-quantity-"]')?.textContent, "2", "qty increased");
   minus.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
   await sleep(200);
-  assert.ok((cartItem.textContent ?? "").includes("1"), "qty decreased");
+  assert.equal(cartItem.querySelector('[data-testid^="cart-quantity-"]')?.textContent, "1", "qty decreased");
   console.log("  ✓ cart add / increase / decrease");
 
   // Discount (percent) — admin is allowed
-  const discountSelect = document.querySelector('select[aria-label="Discount"]');
+  const discountSelect = document.querySelector('select[aria-label="Invoice discount"]');
   Object.getOwnPropertyDescriptor(dom.window.HTMLSelectElement.prototype, "value").set.call(
     discountSelect,
     "percent",
@@ -1432,12 +1434,16 @@ async function main() {
   );
   console.log("  ✓ customer details + purchase history");
 
-  // Link customer to a POS sale (clear any leftover cart lines first)
+  // Link customer to a POS sale (clear any leftover cart lines first). The
+  // row remove control is now labelled by product, so use the dedicated
+  // clear-items action and verify the next sale really begins empty.
   await navigate("#/pos");
-  for (const rm of [...document.querySelectorAll('aside ul li button[aria-label="×"]')]) {
-    rm.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
-    await sleep(120);
+  const clearItems = document.querySelector('aside [data-testid="pos-clear-cart"]');
+  if (clearItems) {
+    clearItems.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+    await sleep(200);
   }
+  assert.equal(document.querySelectorAll('aside [data-testid^="cart-line-"]').length, 0, "old cart lines cleared before the linked sale");
   const smokeCard = [...document.querySelectorAll("button")].find((b) =>
     (b.textContent ?? "").includes("Classic Gold Ring"),
   );
@@ -1445,7 +1451,7 @@ async function main() {
   smokeCard.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
   await sleep(250);
   // buy 2 units so a later over-return attempt still has a returnable row
-  const plusBtn = [...document.querySelectorAll('aside ul li button[aria-label="+"]')][0];
+  const plusBtn = [...document.querySelectorAll('aside ul li button[aria-label="Increase quantity"]')][0];
   plusBtn.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
   await sleep(200);
   const custSelect = document.querySelector("#customer-select");

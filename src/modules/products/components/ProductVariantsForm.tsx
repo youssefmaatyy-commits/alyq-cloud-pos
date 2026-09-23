@@ -1,256 +1,261 @@
-import { useMemo } from "react";
+import { useRef, useState } from "react";
 import { useI18n } from "@/lib/i18n/I18nProvider";
-import { Button, Card, Field, SectionTitle, SelectInput, TextArea, TextInput, ToggleSwitch } from "@/components/ui";
+import { Button, Card, Field, SectionTitle, TextInput, useToast } from "@/components/ui";
+import { canAct } from "@/lib/permissions/enforce";
+import { uploadProductImage, validateImageFile } from "../services/imageStorage";
 import {
-  formatSizes,
-  generateCombinations,
-  parseSizes,
-  sizeLabelOf,
-  suggestVariantSku,
-  variantLabel,
-  type VariantColorDraft,
-} from "../variants";
+  EMPTY_PRODUCT_VARIANT_FORM, reconcileVariantDraft, usesColors, usesSizes,
+  validateVariantDraft, variantDraftTotal,
+  type ProductVariantDraft, type ProductVariantFormValue, type ProductVariantMode, type VariantColorRow,
+} from "../services/variantDraft";
+import { parseSizes, sizeLabelOf, suggestVariantSku, variantLabel } from "../variants";
 
-export type ProductVariantMode = "none" | "colors" | "sizes" | "colors_sizes";
-
-export interface ProductVariantDraft {
-  id: string;
-  color_ar: string;
-  color_en: string;
-  color_hex: string;
-  size: string;
-  size_label: string;
-  sku: string;
-  barcode: string;
-  stock_quantity: string;
-  low_stock_level: string;
-  price_override: string;
-  cost_override: string;
-  image_url: string;
-  active: boolean;
-}
-
-export interface ProductVariantFormValue {
-  mode: ProductVariantMode;
-  colorsText: string;
-  sizesText: string;
-  rows: ProductVariantDraft[];
-}
-
-export const EMPTY_PRODUCT_VARIANT_FORM: ProductVariantFormValue = {
-  mode: "none",
-  colorsText: "",
-  sizesText: "",
-  rows: [],
-};
+export { EMPTY_PRODUCT_VARIANT_FORM };
+export type { ProductVariantDraft, ProductVariantFormValue, ProductVariantMode };
 
 interface Props {
   value: ProductVariantFormValue;
   productSku: string;
   productSellingPrice: string;
   productCostPrice: string;
+  productBarcode?: string;
+  editing?: boolean;
+  /** Creation partially saved: keep the combination identities and opening
+   * quantities fixed until a retry finishes, while allowing code corrections. */
+  structureLocked?: boolean;
+  /** Existing variants have an inventory ledger: never edit their stock as a form field. */
+  stockEditable?: boolean;
   onChange: (value: ProductVariantFormValue) => void;
 }
 
-function parseColors(input: string): { colors: VariantColorDraft[]; imageByKey: Map<string, string> } {
-  const imageByKey = new Map<string, string>();
-  const colors = input
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const [en = "", ar = "", hex = "", image = ""] = line.split("|").map((part) => part.trim());
-      const color: VariantColorDraft = {
-        color_en: en || null,
-        color_ar: ar || null,
-        color_hex: /^#[0-9a-fA-F]{6}$/.test(hex) ? hex.toLowerCase() : null,
-      };
-      const key = (color.color_en || color.color_ar || "").trim().replace(/\s+/g, " ").toLowerCase();
-      if (key && image) imageByKey.set(key, image);
-      return color;
-    })
-    .filter((color) => Boolean(color.color_en || color.color_ar));
-  return { colors, imageByKey };
-}
+const newColorId = () => `color:${typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : Math.random().toString(36).slice(2)}`;
 
-function combinationKey(row: Pick<ProductVariantDraft, "color_en" | "color_ar" | "size" | "size_label">): string {
-  const color = (row.color_en || row.color_ar).trim().replace(/\s+/g, " ").toLowerCase();
-  const size = row.size.trim() !== "" ? Number(row.size.replace(",", ".")) : `label:${row.size_label.trim()}`;
-  return `${color}|${size}`;
-}
-
-function blankRow(
-  productSku: string,
-  combination: { color: VariantColorDraft | null; size: number | null; size_label: string | null },
-  taken: string[],
-  imageUrl = "",
-): ProductVariantDraft {
-  const colorEn = combination.color?.color_en ?? "";
-  const colorAr = combination.color?.color_ar ?? "";
-  return {
-    id: `${combination.color ? (colorEn || colorAr).trim().toLowerCase() : "size"}|${combination.size ?? combination.size_label ?? ""}`,
-    color_ar: colorAr,
-    color_en: colorEn,
-    color_hex: combination.color?.color_hex ?? "",
-    size: combination.size === null ? "" : sizeLabelOf(combination.size, null),
-    size_label: combination.size_label ?? "",
-    sku: suggestVariantSku(productSku, combination.color, combination.size, combination.size_label, taken),
-    barcode: "",
-    stock_quantity: "0",
-    low_stock_level: "0",
-    price_override: "",
-    cost_override: "",
-    image_url: imageUrl,
-    active: true,
-  };
-}
-
+/** One visible, non-technical color/size workflow used on both Add and Edit. */
 export function ProductVariantsForm({
-  value,
-  productSku,
-  productSellingPrice,
-  productCostPrice,
-  onChange,
+  value, productSku, productSellingPrice, productCostPrice, productBarcode = "",
+  editing = false, structureLocked = false, stockEditable = true, onChange,
 }: Props) {
-  const { t, num } = useI18n();
-  const parsed = useMemo(() => parseColors(value.colorsText), [value.colorsText]);
-  const sizes = useMemo(() => parseSizes(value.sizesText), [value.sizesText]);
-  const total = useMemo(
-    () => value.rows.reduce((sum, row) => sum + Math.max(0, Math.trunc(Number(row.stock_quantity) || 0)), 0),
-    [value.rows],
-  );
+  const { t, num, lang } = useI18n();
+  const toast = useToast();
+  const valueRef = useRef(value);
+  valueRef.current = value;
+  const [sizeEntry, setSizeEntry] = useState("");
+  const [bulkStock, setBulkStock] = useState("");
+  const [bulkLow, setBulkLow] = useState("");
+  const [uploading, setUploading] = useState<string | null>(null);
+  const hasSaved = editing && value.rows.some((row) => row.persistedId);
+  const requiresColors = usesColors(value.mode);
+  const requiresSizes = usesSizes(value.mode);
+  const displayed = value.mode === "none" ? [] : value.rows;
+  const error = validateVariantDraft(value, productSku, productBarcode);
 
-  const set = (patch: Partial<ProductVariantFormValue>) => onChange({ ...value, ...patch });
+  const change = (next: ProductVariantFormValue) => onChange(reconcileVariantDraft(next, productSku));
+  const updateColor = (id: string, patch: Partial<VariantColorRow>) => change({
+    ...value, colors: value.colors.map((color) => color.id === id ? { ...color, ...patch } : color),
+  });
+  const updateRow = (id: string, patch: Partial<ProductVariantDraft>) => onChange({
+    ...value, rows: value.rows.map((row) => row.id === id ? { ...row, ...patch } : row),
+  });
 
-  const generate = () => {
-    const combinations = generateCombinations(
-      value.mode === "sizes" ? [] : parsed.colors,
-      value.mode === "colors" ? [] : sizes,
-    );
-    const existing = new Map(value.rows.map((row) => [combinationKey(row), row]));
-    const taken = value.rows.map((row) => row.sku);
-    const rows = combinations.map((combination) => {
-      const candidate = blankRow(
-        productSku,
-        combination,
-        taken,
-        combination.color ? parsed.imageByKey.get((combination.color.color_en || combination.color.color_ar || "").toLowerCase()) ?? "" : "",
-      );
-      return existing.get(combinationKey(candidate)) ?? candidate;
-    });
-    set({ rows });
+  const removeColor = (id: string) => {
+    if (value.rows.some((row) => row.color_id === id && row.persistedId)) {
+      toast.error(t("products.simple.archiveOption"));
+      return;
+    }
+    change({ ...value, colors: value.colors.filter((color) => color.id !== id) });
+  };
+  const removeSize = (size: number) => {
+    if (value.rows.some((row) => row.size === String(size) && row.persistedId)) {
+      toast.error(t("products.simple.archiveOption"));
+      return;
+    }
+    change({ ...value, sizes: value.sizes.filter((entry) => entry !== size) });
+  };
+  const addSizes = () => {
+    const parsed = parseSizes(sizeEntry);
+    if (!parsed.length || /[^\d\s.,;\u066B\u060C\u066C]/.test(sizeEntry)) {
+      toast.error(t("products.simple.invalidSizes"));
+      return;
+    }
+    change({ ...value, sizes: [...new Set([...value.sizes, ...parsed])].sort((a, b) => a - b) });
+    setSizeEntry("");
   };
 
-  const updateRow = (id: string, patch: Partial<ProductVariantDraft>) =>
-    set({ rows: value.rows.map((row) => (row.id === id ? { ...row, ...patch } : row)) });
+  /** One upload per colour; every new size of that colour reuses the URL. */
+  const upload = async (file: File | undefined, key: string, colorId?: string) => {
+    if (!file) return;
+    const invalid = validateImageFile(file);
+    if (invalid) { toast.error(t(invalid === "type" ? "validation.imageType" : "validation.imageSize", { max: 5 })); return; }
+    setUploading(key);
+    try {
+      const url = await uploadProductImage(file);
+      const current = valueRef.current;
+      if (colorId) {
+        onChange({ ...current, colors: current.colors.map((color) => color.id === colorId ? { ...color, image_url: url } : color) });
+      } else {
+        onChange({ ...current, rows: current.rows.map((row) => row.id === key ? { ...row, image_url: url } : row) });
+      }
+    } catch {
+      toast.error(t("products.simple.imageError"));
+    } finally {
+      setUploading(null);
+    }
+  };
 
-  const modeRequiresColors = value.mode === "colors" || value.mode === "colors_sizes";
-  const modeRequiresSizes = value.mode === "sizes" || value.mode === "colors_sizes";
+  const targets = value.rows.filter((row) => !editing || !row.persistedId);
+  const bulk = (field: "stock_quantity" | "low_stock_level", raw: string) => {
+    if (!/^(0|[1-9]\d*)$/.test(raw)) { toast.error(t("products.simple.invalidQuantity")); return; }
+    if (field === "stock_quantity" && !stockEditable) return;
+    if (targets.some((row) => row[field] !== "0" && row[field] !== raw) && !window.confirm(t("products.simple.bulkReplace"))) return;
+    onChange({ ...value, rows: value.rows.map((row) =>
+      targets.some((target) => target.id === row.id) ? { ...row, [field]: raw } : row,
+    ) });
+  };
+  const generateMissingSku = () => {
+    const taken = value.rows.map((row) => row.sku).filter(Boolean);
+    onChange({ ...value, rows: value.rows.map((row) => {
+      if (row.sku.trim()) return row;
+      const color = value.colors.find((entry) => entry.id === row.color_id);
+      const sku = suggestVariantSku(productSku, color ? { color_ar: color.color_ar, color_en: color.color_en } : null,
+        row.size ? Number(row.size) : null, row.size_label || null, taken);
+      taken.push(sku);
+      return { ...row, sku };
+    }) });
+  };
 
   return (
-    <Card data-testid="product-variants-form">
+    <Card data-testid="product-variants-form" className="min-w-0">
       <SectionTitle>{t("products.variants.title")}</SectionTitle>
-      <p className="mb-3 text-xs font-medium text-slate-600">{t("products.variants.subtitle")}</p>
-      <Field label={t("products.variants.mode.label")}>
-        <SelectInput
-          value={value.mode}
-          onChange={(event) => {
-            const mode = event.target.value as ProductVariantMode;
-            set({ mode, rows: mode === "none" ? [] : value.rows });
-          }}
-          data-testid="variant-mode"
-        >
-          <option value="none">{t("products.variants.mode.none")}</option>
-          <option value="colors">{t("products.variants.mode.colors")}</option>
-          <option value="sizes">{t("products.variants.mode.sizes")}</option>
-          <option value="colors_sizes">{t("products.variants.mode.colors_sizes")}</option>
-        </SelectInput>
-      </Field>
+      <p className="mb-4 text-xs font-medium text-slate-600">{t("products.simple.intro")}</p>
+
+      <div role="group" aria-label={t("products.variants.mode.label")} data-testid="variant-mode" className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+        {(["none", "colors", "sizes", "colors_sizes"] as const).map((mode) => (
+          <button key={mode} type="button" data-testid={`variant-mode-${mode}`}
+            aria-pressed={value.mode === mode} disabled={(hasSaved || structureLocked) && mode !== value.mode}
+            onClick={() => change({ ...value, mode })}
+            className={`min-h-14 rounded-xl border px-3 py-2 text-start text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-50 ${
+              mode === value.mode ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-700 hover:border-slate-500"
+            }`}
+          >{t(`products.variants.mode.${mode}`)}</button>
+        ))}
+      </div>
+      {(hasSaved || structureLocked) && <p className="mt-2 text-xs font-semibold text-amber-800">{t(structureLocked ? "products.simple.retrySaved" : "products.simple.modeLocked")}</p>}
 
       {value.mode !== "none" ? (
-        <>
-          <div className="mt-3 grid gap-3 md:grid-cols-2">
-            {modeRequiresColors ? (
-              <Field
-                label={t("products.variants.colorsInput")}
-                hint="English | العربية | #hex | image URL"
-                className={modeRequiresSizes ? "md:col-span-2" : undefined}
-              >
-                <TextArea
-                  rows={4}
-                  value={value.colorsText}
-                  onChange={(event) => set({ colorsText: event.target.value })}
-                  placeholder="Gold | ذهبي | #D4AF37 | https://…\nSilver | فضي | #C0C0C0"
-                  data-testid="variant-colors"
-                />
-              </Field>
-            ) : null}
-            {modeRequiresSizes ? (
-              <Field label={t("products.variants.sizesInput")} hint={t("products.variants.sizesHint")}>
-                <TextInput
-                  dir="ltr"
-                  value={value.sizesText}
-                  onChange={(event) => set({ sizesText: event.target.value })}
-                  placeholder="17, 18"
-                  data-testid="variant-sizes"
-                />
-              </Field>
-            ) : null}
-            <div className="flex items-end gap-2">
-              <Button type="button" onClick={generate} data-testid="variant-generate">
-                {t("products.variants.generate")}
-              </Button>
-              <span className="pb-2 text-xs font-semibold text-slate-600">
-                {value.rows.length} · {sizes.length ? formatSizes(sizes) : t("products.variants.mode.colorsHint")}
-              </span>
-            </div>
-          </div>
+        <div className="mt-5 space-y-5">
+          {requiresColors && (
+            <section data-testid="variant-color-list" className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-sm font-bold text-slate-900">{t("products.simple.colors")}</h3>
+                <Button size="sm" variant="secondary" type="button" data-testid="variant-add-color" disabled={structureLocked} onClick={() =>
+                  change({ ...value, colors: [...value.colors, { id: newColorId(), color_ar: "", color_en: "", color_hex: "", image_url: "" }] })
+                }>+ {t("products.simple.addColor")}</Button>
+              </div>
+              {value.colors.map((color, index) => (
+                <div key={color.id} data-testid={`variant-color-${index}`} className="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
+                  <div className="mb-2 flex justify-between gap-2">
+                    <p className="text-xs font-bold text-slate-800">{t("products.simple.colorNumber", { count: index + 1 })}</p>
+                    <button type="button" disabled={structureLocked} onClick={() => removeColor(color.id)} className="text-xs font-bold text-rose-700 hover:underline" aria-label={`${t("products.simple.removeColor")} ${color.color_en || color.color_ar || index + 1}`}>
+                      {t("products.simple.removeColor")}
+                    </button>
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                    <Field label={t("products.variants.colorAr")}><TextInput dir="rtl" disabled={structureLocked} value={color.color_ar} onChange={(event) => updateColor(color.id, { color_ar: event.target.value })} placeholder="ذهبي" data-testid={`variant-color-ar-${index}`} /></Field>
+                    <Field label={t("products.variants.colorEn")}><TextInput dir="ltr" disabled={structureLocked} value={color.color_en} onChange={(event) => updateColor(color.id, { color_en: event.target.value })} placeholder="Gold" data-testid={`variant-color-en-${index}`} /></Field>
+                    <Field label={t("products.variants.colorHex")}>
+                      <div className="flex items-center gap-2">
+                        <input type="color" disabled={structureLocked} className="h-10 w-12 shrink-0 cursor-pointer rounded-md border border-slate-200 bg-white p-1" aria-label={`${t("products.variants.colorHex")} ${index + 1}`} value={/^#[0-9a-fA-F]{6}$/.test(color.color_hex) ? color.color_hex : "#d4af37"} onChange={(event) => updateColor(color.id, { color_hex: event.target.value })} />
+                        <TextInput dir="ltr" disabled={structureLocked} className="min-w-0 font-mono text-xs" placeholder="#D4AF37" value={color.color_hex} onChange={(event) => updateColor(color.id, { color_hex: event.target.value })} data-testid={`variant-color-hex-${index}`} />
+                      </div>
+                    </Field>
+                    <Field label={t("products.simple.colorImage")}>
+                      <div className="flex min-w-0 items-center gap-2">
+                        {color.image_url && <img src={color.image_url} className="h-10 w-10 shrink-0 rounded-md object-cover" alt="" />}
+                        <label className="cursor-pointer rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs font-semibold hover:bg-slate-100">
+                          {uploading === color.id ? t("common.loading") : t("products.simple.uploadImage")}
+                          <input type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/avif,image/bmp" className="sr-only" disabled={structureLocked || uploading !== null} onChange={(event) => { void upload(event.target.files?.[0], color.id, color.id); event.target.value = ""; }} />
+                        </label>
+                        {color.image_url && <button type="button" disabled={structureLocked} className="text-xs text-rose-700" onClick={() => updateColor(color.id, { image_url: "" })}>{t("products.simple.removeColor")}</button>}
+                      </div>
+                    </Field>
+                  </div>
+                </div>
+              ))}
+              {!value.colors.length && <p className="text-xs text-slate-600">{t("products.simple.addColorHint")}</p>}
+            </section>
+          )}
 
-          <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200">
-            <table className="min-w-[1180px] w-full text-xs" data-testid="product-variant-table">
-              <thead>
-                <tr className="border-b border-slate-100 bg-slate-50 text-start text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                  <th className="px-2 py-2 text-start">{t("products.variants.colCombination")}</th>
-                  <th className="px-2 py-2 text-start">{t("products.sku")}</th>
-                  <th className="px-2 py-2 text-start">{t("products.barcode")}</th>
-                  <th className="px-2 py-2 text-end">{t("products.variants.colStock")}</th>
-                  <th className="px-2 py-2 text-end">{t("products.variants.lowStock")}</th>
-                  <th className="px-2 py-2 text-end">{t("products.variants.colPrice")}</th>
-                  <th className="px-2 py-2 text-end">{t("products.variants.colCost")}</th>
-                  <th className="px-2 py-2 text-start">{t("products.imageUrl")}</th>
-                  <th className="px-2 py-2 text-center">{t("common.active")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {value.rows.map((row) => (
-                  <tr key={row.id} className="border-b border-slate-50 last:border-0" data-testid={`product-variant-${row.id}`}>
-                    <td className="whitespace-nowrap px-2 py-2 font-bold">
-                      {variantLabel({ color_en: row.color_en || null, color_ar: row.color_ar || null, size: row.size ? Number(row.size.replace(",", ".")) : null, size_label: row.size_label || null })}
-                    </td>
-                    <td className="px-2 py-2"><TextInput className="w-32 font-mono" value={row.sku} onChange={(e) => updateRow(row.id, { sku: e.target.value })} /></td>
-                    <td className="px-2 py-2"><TextInput className="w-32 font-mono" value={row.barcode} onChange={(e) => updateRow(row.id, { barcode: e.target.value })} /></td>
-                    <td className="px-2 py-2"><TextInput className="w-20" dir="ltr" inputMode="numeric" value={row.stock_quantity} onChange={(e) => updateRow(row.id, { stock_quantity: e.target.value })} /></td>
-                    <td className="px-2 py-2"><TextInput className="w-20" dir="ltr" inputMode="numeric" value={row.low_stock_level} onChange={(e) => updateRow(row.id, { low_stock_level: e.target.value })} /></td>
-                    <td className="px-2 py-2"><TextInput className="w-24" dir="ltr" inputMode="decimal" placeholder={productSellingPrice} value={row.price_override} onChange={(e) => updateRow(row.id, { price_override: e.target.value })} /></td>
-                    <td className="px-2 py-2"><TextInput className="w-24" dir="ltr" inputMode="decimal" placeholder={productCostPrice} value={row.cost_override} onChange={(e) => updateRow(row.id, { cost_override: e.target.value })} /></td>
-                    <td className="px-2 py-2"><TextInput className="w-44" dir="ltr" type="url" placeholder={t("products.imageUrl")} value={row.image_url} onChange={(e) => updateRow(row.id, { image_url: e.target.value })} /></td>
-                    <td className="px-2 py-2 text-center"><ToggleSwitch label="" checked={row.active} onChange={(active) => updateRow(row.id, { active })} /></td>
-                  </tr>
+          {requiresSizes && (
+            <section data-testid="variant-size-list" className="space-y-2">
+              <h3 className="text-sm font-bold text-slate-900">{t("products.variants.sizesInput")}</h3>
+              <div className="flex flex-wrap items-center gap-2">
+                {value.sizes.map((size) => (
+                  <span key={size} className="inline-flex min-h-10 items-center gap-2 rounded-full border border-slate-300 bg-white px-3 text-sm font-bold tabular-nums text-slate-900" data-testid={`variant-size-${size}`}>
+                    {sizeLabelOf(size, null)}
+                    <button type="button" disabled={structureLocked} onClick={() => removeSize(size)} className="text-rose-700 hover:text-rose-900" aria-label={`${t("products.simple.removeSize")} ${size}`} title={t("products.simple.removeSize")}>×</button>
+                  </span>
                 ))}
-                {value.rows.length === 0 ? (
-                  <tr><td colSpan={9} className="px-3 py-5 text-center text-xs text-slate-500">{t("products.variants.emptyEnabled")}</td></tr>
-                ) : null}
-              </tbody>
-            </table>
-          </div>
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-900">
-            <span>{t("products.variants.countBadge", { count: value.rows.length, units: num(total, 0) })}</span>
-            <span>{t("products.variants.enableHint")}</span>
-          </div>
-        </>
-      ) : (
-        <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">{t("products.variants.mode.noneHint")}</p>
-      )}
+              </div>
+              <div className="flex max-w-md min-w-0 flex-wrap gap-2">
+                <TextInput dir="ltr" className="min-w-32 flex-1" disabled={structureLocked} value={sizeEntry} onChange={(event) => setSizeEntry(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addSizes(); } }} placeholder="17, 18, 19, 20" aria-label={t("products.simple.quickSizes")} data-testid="variant-size-entry" />
+                <Button type="button" variant="secondary" onClick={addSizes} disabled={structureLocked} data-testid="variant-add-sizes">+ {t("products.simple.addSizes")}</Button>
+              </div>
+              <p className="text-xs text-slate-600">{t("products.simple.quickSizesHint")}</p>
+            </section>
+          )}
+
+          <section>
+            <h3 className="text-sm font-bold text-slate-900">{t("products.simple.combinations", { count: displayed.length })}</h3>
+            <p className="mb-2 text-xs text-slate-600">{editing ? t("products.simple.editStockHint") : t("products.simple.autoHint")}</p>
+            {displayed.length > 0 && (
+              <div className="mb-3 flex flex-wrap items-end gap-2 rounded-xl bg-slate-50 p-3 text-xs">
+                <Field label={t("products.simple.bulkStock")}><TextInput dir="ltr" inputMode="numeric" className="w-24" value={bulkStock} onChange={(event) => setBulkStock(event.target.value)} data-testid="variant-bulk-stock" /></Field>
+                <Button size="sm" variant="secondary" type="button" onClick={() => bulk("stock_quantity", bulkStock)} disabled={!stockEditable || targets.length === 0} data-testid="variant-bulk-stock-apply">{t("products.simple.setAll")}</Button>
+                <Field label={t("products.simple.bulkLow")}><TextInput dir="ltr" inputMode="numeric" className="w-24" value={bulkLow} onChange={(event) => setBulkLow(event.target.value)} data-testid="variant-bulk-low" /></Field>
+                <Button size="sm" variant="secondary" type="button" onClick={() => bulk("low_stock_level", bulkLow)} disabled={targets.length === 0} data-testid="variant-bulk-low-apply">{t("products.simple.setAll")}</Button>
+                <Button size="sm" variant="ghost" type="button" onClick={generateMissingSku}>{t("products.simple.generateMissingSku")}</Button>
+                <Button size="sm" variant="ghost" type="button" disabled={!targets.length} onClick={() => onChange({ ...value, rows: value.rows.map((row) => row.persistedId ? row : { ...row, active: true }) })}>{t("products.simple.activateNew")}</Button>
+              </div>
+            )}
+            <div className="max-w-full overflow-x-auto rounded-xl border border-slate-200" data-testid="variant-table-scroll">
+              <table className="w-full min-w-[1000px] text-xs" data-testid="product-variant-table">
+                <thead className="bg-slate-50 text-start text-[11px] font-bold text-slate-600"><tr className="border-b border-slate-200">
+                  <th className="p-2 text-start">{t("products.variants.colCombination")}</th>
+                  <th className="p-2 text-start">{t("products.sku")}</th>
+                  <th className="p-2 text-start">{t("products.barcode")}</th>
+                  <th className="p-2 text-start">{t("products.variants.colStock")}</th>
+                  <th className="p-2 text-start">{t("products.variants.lowStock")}</th>
+                  <th className="p-2 text-start">{t("products.variants.colPrice")}</th>
+                  {canAct("view_cost") && <th className="p-2 text-start">{t("products.variants.colCost")}</th>}
+                  <th className="p-2 text-start">{t("products.simple.variantImage")}</th>
+                  <th className="p-2 text-center">{t("common.active")}</th>
+                </tr></thead>
+                <tbody>{displayed.map((row) => {
+                  const color = value.colors.find((entry) => entry.id === row.color_id);
+                  const archived = row.persistedId && !row.active;
+                  return <tr key={row.id} data-testid={`product-variant-${row.id}`} className={`border-b border-slate-100 last:border-0 ${archived ? "bg-slate-50 text-slate-500" : ""}`}>
+                    <td className="min-w-32 p-2 font-bold">{variantLabel({ color_ar: row.color_ar, color_en: row.color_en, size: row.size ? Number(row.size) : null, size_label: row.size_label }, lang) || "—"}</td>
+                    <td className="p-2"><TextInput className="w-32 font-mono text-xs" value={row.sku} onChange={(event) => updateRow(row.id, { sku: event.target.value })} aria-label={`${t("products.sku")} ${row.id}`} data-testid={`variant-field-sku-${row.id}`} /></td>
+                    <td className="p-2"><TextInput className="w-32 font-mono text-xs" value={row.barcode} onChange={(event) => updateRow(row.id, { barcode: event.target.value })} aria-label={`${t("products.barcode")} ${row.id}`} data-testid={`variant-field-barcode-${row.id}`} /></td>
+                    <td className="p-2"><TextInput dir="ltr" inputMode="numeric" className="w-16 text-xs" value={row.stock_quantity} readOnly={!stockEditable || Boolean(row.persistedId)} onChange={(event) => updateRow(row.id, { stock_quantity: event.target.value })} aria-label={`${t("products.variants.colStock")} ${row.id}`} data-testid={`variant-field-stock-${row.id}`} /></td>
+                    <td className="p-2"><TextInput dir="ltr" inputMode="numeric" className="w-16 text-xs" value={row.low_stock_level} onChange={(event) => updateRow(row.id, { low_stock_level: event.target.value })} aria-label={`${t("products.variants.lowStock")} ${row.id}`} data-testid={`variant-field-low-${row.id}`} /></td>
+                    <td className="p-2"><TextInput dir="ltr" inputMode="decimal" className="w-20 text-xs" placeholder={productSellingPrice} value={row.price_override} onChange={(event) => updateRow(row.id, { price_override: event.target.value })} aria-label={`${t("products.variants.colPrice")} ${row.id}`} data-testid={`variant-field-price-${row.id}`} /></td>
+                    {canAct("view_cost") && <td className="p-2"><TextInput dir="ltr" inputMode="decimal" className="w-20 text-xs" readOnly={!canAct("change_cost")} placeholder={productCostPrice} value={row.cost_override} onChange={(event) => updateRow(row.id, { cost_override: event.target.value })} aria-label={`${t("products.variants.colCost")} ${row.id}`} data-testid={`variant-field-cost-${row.id}`} /></td>}
+                    <td className="p-2"><div className="flex items-center gap-1"><TextInput dir="ltr" type="url" className="w-28 text-xs" placeholder={color?.image_url ? t("products.simple.inheritsColor") : t("products.imageUrl")} value={row.image_url} onChange={(event) => updateRow(row.id, { image_url: event.target.value })} aria-label={`${t("products.simple.variantImage")} ${row.id}`} data-testid={`variant-field-image-${row.id}`} />
+                      <label className="cursor-pointer rounded border border-slate-200 px-1.5 py-2 text-xs" title={t("products.simple.uploadImage")}>↑<input type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/avif,image/bmp" className="sr-only" disabled={uploading !== null} onChange={(event) => { void upload(event.target.files?.[0], row.id); event.target.value = ""; }} /></label>
+                    </div></td>
+                    <td className="p-2 text-center"><input type="checkbox" aria-label={`${t("common.active")} ${row.id}`} checked={row.active} disabled={Boolean(row.persistedId)} onChange={(event) => updateRow(row.id, { active: event.target.checked })} title={row.persistedId ? t("products.simple.archiveOption") : undefined} /></td>
+                  </tr>;
+                })}
+                {!displayed.length && <tr><td colSpan={9} className="p-6 text-center text-xs text-slate-600">{t("products.simple.waiting")}</td></tr>}
+                </tbody>
+              </table>
+            </div>
+            <p className="mt-3 text-xs font-semibold text-slate-700" data-testid="variant-derived-stock">{t("products.variants.countBadge", { count: displayed.length, units: num(variantDraftTotal(displayed), 0) })}</p>
+            {error && <p role="alert" className="mt-2 text-xs font-semibold text-rose-700">{t(`products.simple.${error}` as never)}</p>}
+          </section>
+        </div>
+      ) : <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">{t("products.variants.mode.noneHint")}</p>}
     </Card>
   );
 }

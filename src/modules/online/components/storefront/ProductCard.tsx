@@ -130,7 +130,7 @@ export function ProductCard({
     >
       <Link
         to={to}
-        className="relative block overflow-hidden bg-[var(--store-surface-alt)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--store-text)]"
+        className="relative block overflow-hidden bg-[var(--store-surface-muted)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--store-text-primary)]"
         style={{ borderRadius: "var(--store-radius)" }}
         aria-label={name}
       >
@@ -190,8 +190,8 @@ export function ProductCard({
           title={customer ? undefined : t("store.wishlist.signInHint")}
           data-testid="card-wishlist"
           className={cn(
-            "-mt-12 relative z-10 ms-auto grid h-11 w-11 place-items-center self-end rounded-full bg-white/85 shadow-sm transition",
-            wished ? "text-rose-500" : "text-slate-400 hover:text-rose-500",
+            "-mt-12 relative z-10 ms-auto grid h-11 w-11 place-items-center self-end rounded-full bg-[var(--store-surface)] shadow-sm transition",
+            wished ? "text-rose-500" : "text-[var(--store-text-secondary)] hover:text-rose-500",
           )}
           style={{ insetInlineEnd: "0.5rem" }}
         >
@@ -208,10 +208,10 @@ export function ProductCard({
 
       <div className={cn("mt-1.5 flex flex-1 flex-col gap-1", align)}>
         {brand ? (
-          <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-[var(--store-muted)]">{brand}</p>
+          <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-[var(--store-text-secondary)]">{brand}</p>
         ) : null}
 
-        <h3 className="line-clamp-2 text-[13px] font-semibold leading-snug text-[var(--store-text)]">
+        <h3 className="line-clamp-2 text-[13px] font-semibold leading-snug text-[var(--store-text-primary)]">
           <Link to={to} className="transition hover:text-[var(--store-accent)]">
             {name}
           </Link>
@@ -223,16 +223,16 @@ export function ProductCard({
                 when the combinations disagree, one price when they do not. */}
             {entry.needsVariantChoice && entry.priceFrom !== null && entry.priceFrom !== price ? (
               <p className="flex flex-wrap items-baseline gap-1">
-                <span className="text-[9px] font-bold uppercase tracking-wide text-[var(--store-muted)]">
+                <span className="text-[9px] font-bold uppercase tracking-wide text-[var(--store-text-secondary)]">
                   {t("store.variants.from")}
                 </span>
-                <Money value={entry.priceFrom} className="text-sm font-extrabold text-[var(--store-text)]" />
+                <Money value={entry.priceFrom} className="text-sm font-extrabold text-[var(--store-text-primary)]" />
               </p>
             ) : (
               <p className="flex flex-wrap items-baseline gap-1.5" data-testid="card-price">
                 <Money
                   value={promoPrice ?? price}
-                  className="text-sm font-extrabold text-[var(--store-text)]"
+                  className="text-sm font-extrabold text-[var(--store-text-primary)]"
                 />
                 {promoPrice !== null ? (
                   <Money value={price} strike className="text-[11px]" />
@@ -244,7 +244,7 @@ export function ProductCard({
             <p
               className={cn(
                 "mt-0.5 text-[10px] font-semibold",
-                inStock ? "text-[var(--store-muted)]" : "text-[var(--store-muted)]",
+                inStock ? "text-[var(--store-text-secondary)]" : "text-[var(--store-text-secondary)]",
               )}
             >
               {stockLine}
@@ -278,8 +278,8 @@ export function ProductCard({
               className={cn(
                 "min-h-11 w-full border px-3 py-2 text-[11px] font-bold tracking-wide transition disabled:cursor-not-allowed",
                 inStock
-                  ? "border-[var(--store-hairline)] bg-transparent text-[var(--store-text)] hover:border-[var(--store-primary)] hover:bg-[var(--store-primary)] hover:text-[var(--store-on-primary)]"
-                  : "border-[var(--store-border)] bg-transparent text-[var(--store-muted)]",
+                  ? "border-[var(--store-hairline)] bg-transparent text-[var(--store-text-primary)] hover:border-[var(--store-primary)] hover:bg-[var(--store-primary)] hover:text-[var(--store-on-primary)]"
+                  : "border-[var(--store-border)] bg-transparent text-[var(--store-text-secondary)]",
               )}
               style={{ borderRadius: "var(--store-radius-button)" }}
             >
@@ -294,8 +294,8 @@ export function ProductCard({
               className={cn(
                 "min-h-11 w-full border px-3 py-2 text-[11px] font-bold tracking-wide transition disabled:cursor-not-allowed",
                 inStock
-                  ? "border-[var(--store-hairline)] bg-transparent text-[var(--store-text)] hover:border-[var(--store-primary)] hover:bg-[var(--store-primary)] hover:text-[var(--store-on-primary)]"
-                  : "border-[var(--store-border)] bg-transparent text-[var(--store-muted)]",
+                  ? "border-[var(--store-hairline)] bg-transparent text-[var(--store-text-primary)] hover:border-[var(--store-primary)] hover:bg-[var(--store-primary)] hover:text-[var(--store-on-primary)]"
+                  : "border-[var(--store-border)] bg-transparent text-[var(--store-text-secondary)]",
               )}
               style={{ borderRadius: "var(--store-radius-button)" }}
             >
@@ -313,7 +313,7 @@ export function ProductCard({
               style={{ borderRadius: "var(--store-radius)" }}
               data-testid="card-quick-add-panel"
             >
-              <p className="mb-1.5 text-[9px] font-black uppercase tracking-[0.18em] text-[var(--store-muted)]">
+              <p className="mb-1.5 text-[9px] font-black uppercase tracking-[0.18em] text-[var(--store-text-secondary)]">
                 {t("store.variants.pickShelf")}
               </p>
               <div className="flex max-h-36 flex-wrap gap-1.5 overflow-y-auto">
@@ -336,8 +336,8 @@ export function ProductCard({
                       onClick={() => quickAdd(variant.id)}
                       className={`min-h-11 border px-2 py-1 text-[11px] font-bold transition ${
                         soldOut
-                          ? "cursor-not-allowed border-[var(--store-border)] text-[var(--store-muted)] line-through opacity-50"
-                          : "border-[var(--store-hairline)] text-[var(--store-text)] hover:border-[var(--store-primary)] hover:text-[var(--store-primary)]"
+                          ? "cursor-not-allowed border-[var(--store-border)] text-[var(--store-text-secondary)] line-through opacity-50"
+                          : "border-[var(--store-hairline)] text-[var(--store-text-primary)] hover:border-[var(--store-primary)] hover:text-[var(--store-primary)]"
                       }`}
                       style={{ borderRadius: "var(--store-radius-button)" }}
                     >

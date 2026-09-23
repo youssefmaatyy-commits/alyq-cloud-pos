@@ -52,7 +52,8 @@ import {
 } from "../services/receipt";
 import { salesReceiptStrings, returnReceiptStrings } from "../services/receiptStrings";
 import { en, ar } from "@/lib/i18n/dictionary";
-import type { CartLine, SalePaymentInput } from "../types";
+import { lineKey, type CartLine, type SalePaymentInput } from "../types";
+import { addCartLine, changeCartQuantity, discountCartLine, removeCartLine } from "../services/cartOperations";
 
 function money2(value: number): string {
   return value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -100,6 +101,27 @@ console.log("\nPOS · cart math");
 
 test("setup: open the till shift the till needs (Phase 27)", async () => {
   await openTestShift();
+});
+
+test("cart controls use exact variant IDs and never borrow a sibling's stock", () => {
+  const gold = line({ product_id: "ring", variant_id: "gold-17", sku: "G17", qty: 1, max_qty: 2, color_en: "Gold", size: 17 });
+  const silver = line({ product_id: "ring", variant_id: "silver-17", sku: "S17", qty: 1, max_qty: 5, color_en: "Silver", size: 17 });
+  assert.notEqual(lineKey(gold), lineKey(silver));
+  let cart = addCartLine([], gold).lines;
+  cart = addCartLine(cart, silver).lines;
+  assert.equal(cart.length, 2, "same product and size but different variant IDs do not merge");
+  cart = addCartLine(cart, gold).lines;
+  assert.equal(cart[0].qty, 2);
+  assert.equal(addCartLine(cart, gold).added, false, "third Gold/17 refused although Silver has five");
+  cart = changeCartQuantity(cart, lineKey(silver), 1);
+  assert.deepEqual(cart.map((entry) => entry.qty), [2, 2], "increase changes only the selected shelf");
+  cart = discountCartLine(cart, lineKey(gold), { type: "fixed", value: 3 });
+  assert.equal(cart[0].item_discount?.value, 3);
+  assert.notEqual(cart[1].item_discount?.value, 3);
+  cart = changeCartQuantity(cart, lineKey(gold), -1);
+  cart = changeCartQuantity(cart, lineKey(gold), -1);
+  assert.deepEqual(cart.map((entry) => entry.variant_id), ["silver-17"], "decrease to zero removes only Gold");
+  assert.deepEqual(removeCartLine(cart, lineKey(silver)), [], "remove acts on the exact line");
 });
 
 test("line total + subtotal with rounding", () => {

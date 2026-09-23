@@ -16,7 +16,7 @@
  * The shelf itself is not edited here: stock moves through the inventory
  * screen (`adjust_stock`), which is the same authority a physical recount has.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { canAct } from "@/lib/permissions/enforce";
 import {
@@ -36,12 +36,14 @@ import {
   disableVariants,
   enableVariants,
   generateVariants,
+  listVariants,
   labelOf,
   saveVariant,
   setVariantActive,
   type GenerateVariantRow,
 } from "../services/variantService";
 import {
+  colorKeyOf,
   formatSizes,
   generateCombinations,
   parseSizes,
@@ -53,6 +55,9 @@ import {
 } from "../variants";
 import type { Product } from "../types";
 import { buildBarcodeLabelHtml } from "../services/barcodeLabel";
+import { ProductVariantsForm } from "./ProductVariantsForm";
+import { variantDraftFromSaved, validateVariantDraft } from "../services/variantDraft";
+import { adjustStock } from "@/modules/inventory/services/inventoryService";
 
 // ── small shared bits ───────────────────────────────────────────────────────
 
@@ -369,10 +374,10 @@ function VariantFormModal({
         <div className="sm:col-span-2">
           <ToggleSwitch
             label={t("common.active")}
-            hint={!values.active ? t("products.inactiveBadge") : undefined}
+            hint={current ? t("products.simple.archiveOption") : !values.active ? t("products.inactiveBadge") : undefined}
             checked={values.active}
             onChange={(checked) => set("active", checked)}
-            disabled={!allowed}
+            disabled={!allowed || Boolean(current)}
           />
         </div>
       </div>
@@ -585,6 +590,20 @@ export function VariantEditor({
   const [editing, setEditing] = useState<ProductVariant | null>(null);
   const [generatorOpen, setGeneratorOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [simple, setSimple] = useState(() => variantDraftFromSaved(variants));
+  const sourceSignature = JSON.stringify(variants);
+  const previousSource = useRef(sourceSignature);
+  const locallyEdited = useRef(false);
+  useEffect(() => {
+    if (sourceSignature === previousSource.current) return;
+    if (!locallyEdited.current) setSimple(variantDraftFromSaved(variants));
+    previousSource.current = sourceSignature;
+  }, [sourceSignature, variants]);
+  const changeSimple = (next: typeof simple) => { locallyEdited.current = true; setSimple(next); };
+  const canStock = canAct("adjust_stock");
+  const canCreate = canAct("add_product");
+  const simpleError = validateVariantDraft(simple, product.sku, product.barcode ?? "");
+  const simpleDirty = JSON.stringify(simple) !== JSON.stringify(variantDraftFromSaved(variants));
 
   // ── enable flow ──
   const [enabling, setEnabling] = useState(false);
@@ -638,6 +657,79 @@ export function VariantEditor({
     [busy, onChanged, t, toast],
   );
 
+  const saveSimple = async () => {
+    if (busy || !canEdit || !simpleDirty) return;
+    if (simpleError) { toast.error(t(`products.simple.${simpleError}` as never)); return; }
+    const pending = simple.rows.filter((row) => !row.persistedId);
+    if (pending.length && !canCreate) { toast.error(t("products.variants.noPermission")); return; }
+    if (pending.some((row) => Number(row.stock_quantity) > 0) && (!canStock || !product.variants_enabled)) {
+      toast.error(t(!canStock ? "products.simple.stockRights" : "products.simple.enableFirst"));
+      return;
+    }
+    setBusy(true);
+    try {
+      const siblings = (await listVariants()).filter((row) => row.product_id === product.id);
+      for (const row of simple.rows) {
+        const before = siblings.find((entry) => entry.id === row.persistedId);
+        const color = simple.colors.find((entry) => entry.id === row.color_id);
+        // A retry after a partial network failure must not create a duplicate.
+        const twin = before ?? (!row.persistedId ? siblings.find((entry) =>
+          entry.color_key === (row.color_key || (color ? colorKeyOf(color) : "")) &&
+          entry.size === (row.size ? Number(row.size) : null) &&
+          (row.size || (entry.size_label ?? "") === row.size_label),
+        ) : null);
+        const previous = before ?? twin ?? null;
+        const desired = {
+          sku: row.sku.trim(), barcode: row.barcode.trim() || null,
+          color_key: (previous?.color_key ?? row.color_key) || undefined,
+          color_ar: row.color_ar.trim() || null, color_en: row.color_en.trim() || null,
+          color_hex: row.color_hex.trim() || null,
+          size: previous?.size ?? (row.size ? Number(row.size) : null),
+          size_label: previous?.size_label ?? (row.size ? null : row.size_label.trim() || null),
+          image_url: row.image_url.trim() || (previous ? null : color?.image_url || null),
+          price_override: row.price_override.trim() ? Number(row.price_override) : null,
+          cost_override: canAct("change_cost")
+            ? (row.cost_override.trim() ? Number(row.cost_override) : null)
+            : previous?.cost_override ?? null,
+          stock_quantity: 0, // existing stock is ALWAYS read-only in this form
+          low_stock_level: Number(row.low_stock_level),
+          active: previous?.active ?? row.active,
+          sort_order: previous?.sort_order ?? siblings.length + 1,
+        };
+        // No write for an untouched saved shelf: preserves history and avoids
+        // incidental metadata changes when adding just one new size.
+        if (previous && row.persistedId &&
+            previous.sku === desired.sku && previous.barcode === desired.barcode &&
+            previous.color_ar === desired.color_ar && previous.color_en === desired.color_en &&
+            previous.color_hex === desired.color_hex && previous.image_url === desired.image_url &&
+            previous.price_override === desired.price_override && previous.cost_override === desired.cost_override &&
+            previous.low_stock_level === desired.low_stock_level) continue;
+
+        const saved = await saveVariant({ product, siblings, currentId: previous?.id, values: desired });
+        if (!previous) siblings.push(saved.variant);
+        if (!row.persistedId && Number(row.stock_quantity) > saved.variant.stock_quantity) {
+          // Inventory service writes a movement and updates only this shelf;
+          // changing a product/variant stock field directly is forbidden.
+          await adjustStock({ productId: product.id, variantId: saved.variant.id,
+            type: "adjustment_in", reason: "other",
+            quantity: Number(row.stock_quantity) - saved.variant.stock_quantity,
+            notes: `Opening stock for new combination ${saved.variant.sku}` });
+        }
+      }
+      toast.success(t("products.simple.saved"));
+      locallyEdited.current = false;
+      const fresh = (await listVariants()).filter((row) => row.product_id === product.id);
+      setSimple(variantDraftFromSaved(fresh));
+      previousSource.current = JSON.stringify(fresh);
+      await onChanged();
+    } catch (err) {
+      toast.error(err instanceof AppError ? err.message : String(err));
+      await onChanged(); // show any rows written before a transient failure
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const toggleVariants = () => {
     if (!canEdit || busy) return;
     if (!product.variants_enabled) {
@@ -668,11 +760,8 @@ export function VariantEditor({
     });
 
   const archivedCount = variants.filter((variant) => !variant.active).length;
+  const activeCount = variants.length - archivedCount;
   const unitsTotal = shelfTotal;
-  const hasColors = variants.some((variant) => Boolean(variant.color_key));
-  const hasSizes = variants.some((variant) => variant.size !== null || Boolean(variant.size_label));
-  const mode = !variants.length ? "none" : hasColors && hasSizes ? "colors_sizes" : hasColors ? "colors" : "sizes";
-
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-4" data-testid="variant-editor">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -681,14 +770,6 @@ export function VariantEditor({
           <p className="mt-0.5 text-xs font-medium text-slate-600">{t("products.variants.subtitle")}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Field label={t("products.variants.mode.label")} className="min-w-40">
-            <SelectInput value={mode} disabled aria-label={t("products.variants.mode.label")}>
-              <option value="none">{t("products.variants.mode.none")}</option>
-              <option value="colors">{t("products.variants.mode.colors")}</option>
-              <option value="sizes">{t("products.variants.mode.sizes")}</option>
-              <option value="colors_sizes">{t("products.variants.mode.colors_sizes")}</option>
-            </SelectInput>
-          </Field>
           {product.variants_enabled ? (
             <Badge tone="info">
               {t("products.variants.countBadge", {
@@ -701,24 +782,6 @@ export function VariantEditor({
               BEFORE the mode is switched on (that is what emptyDisabled says),
               and it stays possible while disabled so a product can be prepared
               or re-prepared. Only the shelves wait for the conversion. */}
-          {canEdit ? (
-            <>
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={() => {
-                  setEditing(null);
-                  setFormOpen(true);
-                }}
-                data-testid="variant-add"
-              >
-                + {t("products.variants.addOne")}
-              </Button>
-              <Button size="sm" variant="secondary" onClick={() => setGeneratorOpen(true)} data-testid="variant-generate">
-                {t("products.variants.generate")}
-              </Button>
-            </>
-          ) : null}
           {canEdit && (product.variants_enabled || variants.length > 0) ? (
             <Button size="sm" variant="ghost" onClick={toggleVariants} disabled={busy} data-testid="variant-mode-toggle">
               {product.variants_enabled ? t("products.variants.disable") : t("products.variants.enable")}
@@ -726,6 +789,32 @@ export function VariantEditor({
           ) : null}
         </div>
       </div>
+
+      <div className="mt-4" data-testid="variant-simple-editor">
+        <ProductVariantsForm
+          value={simple} productSku={product.sku} productBarcode={product.barcode ?? ""}
+          productSellingPrice={String(product.selling_price)} productCostPrice={String(product.cost_price)}
+          editing stockEditable={canStock && product.variants_enabled} onChange={changeSimple}
+        />
+        {canEdit && (
+          <div className="mt-2 flex justify-end">
+            <Button type="button" onClick={() => void saveSimple()} loading={busy}
+              disabled={!simpleDirty || Boolean(simpleError)} data-testid="variant-simple-save">
+              {t("products.simple.saveCombinations")}
+            </Button>
+          </div>
+        )}
+      </div>
+
+      {/* Kept only for unusual legacy one-shelf or conversion cases. The normal
+          employee uses the simple controls above, not pipe-delimited text. */}
+      {canEdit && <details className="mt-3 rounded-xl border border-slate-200 px-3 py-2" data-testid="variant-advanced">
+        <summary className="cursor-pointer text-xs font-bold text-slate-600">{t("products.simple.advanced")}</summary>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Button size="sm" variant="secondary" onClick={() => { setEditing(null); setFormOpen(true); }} data-testid="variant-add">+ {t("products.variants.addOne")}</Button>
+          <Button size="sm" variant="secondary" onClick={() => setGeneratorOpen(true)} data-testid="variant-generate">{t("products.variants.generate")}</Button>
+        </div>
+      </details>}
 
       {/* ── enable: the opening distribution ── */}
       {enabling && !product.variants_enabled ? (
@@ -826,6 +915,7 @@ export function VariantEditor({
             <tbody>
               {variants.map((variant) => {
                 const referenced = (references[variant.id] ?? 0) > 0;
+                const lastSellable = product.variants_enabled && (variants.length <= 1 || (variant.active && activeCount <= 1));
                 return (
                   <tr key={variant.id} className="border-b border-slate-50 last:border-0" data-testid={`variant-row-${variant.sku}`}>
                     <td className="px-3 py-2">
@@ -888,13 +978,11 @@ export function VariantEditor({
                         {canDelete ? (
                           <button
                             type="button"
-                            disabled={busy || referenced}
+                            disabled={busy || referenced || lastSellable}
                             title={
                               referenced
-                                ? t("products.variants.referenced", {
-                                    count: references[variant.id] ?? 0,
-                                  })
-                                : undefined
+                                ? t("products.variants.referenced", { count: references[variant.id] ?? 0 })
+                                : lastSellable ? t("products.variants.lastActive") : undefined
                             }
                             onClick={() => void run(() => deleteVariant(variant.id), "products.variants.deleted")}
                             className="rounded-md px-1.5 py-1 font-bold text-rose-600 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40"

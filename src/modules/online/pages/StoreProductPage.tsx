@@ -85,7 +85,7 @@ function ContentAccordions({
   return (
     <div className="mt-5">
       {shortDescription && shortDescription !== "—" ? (
-        <p className="text-sm font-medium leading-relaxed text-[var(--store-text)]">{shortDescription}</p>
+        <p className="text-sm font-medium leading-relaxed text-[var(--store-text-primary)]">{shortDescription}</p>
       ) : null}
       {rows.length > 0 ? (
         <div className="mt-3 divide-y divide-[var(--store-hairline)] border-y border-[var(--store-hairline)]">
@@ -98,18 +98,18 @@ function ContentAccordions({
                   onClick={() => setOpen(isOpen ? null : row.key)}
                   aria-expanded={isOpen}
                   data-testid={`product-content-${row.key}`}
-                  className="flex w-full items-center justify-between gap-3 py-3 text-start text-[11px] font-black uppercase tracking-[0.18em] text-[var(--store-text)]"
+                  className="flex w-full items-center justify-between gap-3 py-3 text-start text-[11px] font-black uppercase tracking-[0.18em] text-[var(--store-text-primary)]"
                 >
                   {row.title}
                   <span
                     aria-hidden
-                    className={cn("text-[var(--store-muted)] transition-transform", isOpen && "rotate-45")}
+                    className={cn("text-[var(--store-text-secondary)] transition-transform", isOpen && "rotate-45")}
                   >
                     +
                   </span>
                 </button>
                 {isOpen ? (
-                  <div className="space-y-2 pb-4 text-sm leading-relaxed text-[var(--store-muted)]">
+                  <div className="space-y-2 pb-4 text-sm leading-relaxed text-[var(--store-text-secondary)]">
                     {row.body
                       .split(/\n{2,}/)
                       .map((paragraph) => paragraph.trim())
@@ -379,8 +379,8 @@ export function StoreProductPage() {
   if (!product || !entry) {
     return (
       <div className="mx-auto w-full max-w-3xl px-4 py-20 text-center">
-        <p className="text-lg font-black text-[var(--store-text)]">{t("common.notFound")}</p>
-        <p className="mt-2 text-sm text-[var(--store-muted)]">{t("store.product.notFoundHint")}</p>
+        <p className="text-lg font-black text-[var(--store-text-primary)]">{t("common.notFound")}</p>
+        <p className="mt-2 text-sm text-[var(--store-text-secondary)]">{t("store.product.notFoundHint")}</p>
         <Link
           to="/store/products"
           className="mt-6 inline-block bg-[var(--store-primary)] px-5 py-2.5 text-sm font-bold text-[var(--store-on-primary)]"
@@ -421,7 +421,7 @@ export function StoreProductPage() {
 
   return (
     <div className="mx-auto w-full max-w-[var(--store-max-width,72rem)] px-4 py-6 sm:px-6">
-      <nav className="mb-4 flex flex-wrap items-center gap-1.5 text-xs font-semibold text-[var(--store-muted)]" aria-label={t("store.product.breadcrumb")}>
+      <nav className="mb-4 flex flex-wrap items-center gap-1.5 text-xs font-semibold text-[var(--store-text-secondary)]" aria-label={t("store.product.breadcrumb")}>
         <Link to="/store" className="hover:text-[var(--store-primary)]">{t("store.nav.home")}</Link>
         <span aria-hidden>/</span>
         <Link to="/store/products" className="hover:text-[var(--store-primary)]">{t("store.nav.products")}</Link>
@@ -437,7 +437,7 @@ export function StoreProductPage() {
           </>
         ) : null}
         <span aria-hidden>/</span>
-        <span className="truncate text-[var(--store-text)]">{name}</span>
+        <span className="truncate text-[var(--store-text-primary)]">{name}</span>
       </nav>
 
       <div className="grid gap-8 lg:grid-cols-2">
@@ -510,19 +510,19 @@ export function StoreProductPage() {
             </div>
           ) : null}
           {gallery.length > 0 ? (
-            <p className="mt-2 text-[11px] font-medium text-[var(--store-muted)]">{t("store.product.zoomHint")}</p>
+            <p className="mt-2 text-[11px] font-medium text-[var(--store-text-secondary)]">{t("store.product.zoomHint")}</p>
           ) : null}
         </div>
 
         <div className="lg:sticky lg:top-28 lg:self-start">
           {brand ? (
-            <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[var(--store-muted)]">{brand}</p>
+            <p className="text-[10px] font-black uppercase tracking-[0.22em] text-[var(--store-text-secondary)]">{brand}</p>
           ) : null}
-          <h1 style={{ fontFamily: "var(--store-font-display)" }} className="mt-1 text-3xl font-normal leading-tight tracking-tight text-[var(--store-text)] sm:text-4xl">
+          <h1 style={{ fontFamily: "var(--store-font-display)" }} className="mt-1 text-3xl font-normal leading-tight tracking-tight text-[var(--store-text-primary)] sm:text-4xl">
             {name}
           </h1>
 
-          <div className="mt-2 flex flex-wrap items-center gap-3 text-xs font-semibold text-[var(--store-muted)]">
+          <div className="mt-2 flex flex-wrap items-center gap-3 text-xs font-semibold text-[var(--store-text-secondary)]">
             <span>{t("store.product.sku")}: {product.sku}</span>
             {product.barcode ? <span>{t("store.product.barcode")}: {product.barcode}</span> : null}
             {productReviews.length > 0 ? (
@@ -542,7 +542,7 @@ export function StoreProductPage() {
             <span data-testid="product-price">
               <Money
                 value={promoShelfPrice ?? shelfPrice}
-                className="text-2xl font-medium text-[var(--store-text)]"
+                className="text-2xl font-medium text-[var(--store-text-primary)]"
               />
             </span>
             {promoShelfPrice !== null ? (
@@ -559,7 +559,7 @@ export function StoreProductPage() {
               </>
             ) : null}
           </div>
-          <p className="mt-1 text-[11px] font-medium text-[var(--store-muted)]">{t("store.product.taxIncluded")}</p>
+          <p className="mt-1 text-[11px] font-medium text-[var(--store-text-secondary)]">{t("store.product.taxIncluded")}</p>
 
           {/* The combination's own selector, before any buying control: colour
               first, then that colour's NUMERIC sizes (16 → 16.5 → 17), each
@@ -611,7 +611,7 @@ export function StoreProductPage() {
               disabled={!shelfInStock}
               data-testid="product-add-to-cart"
               onClick={addToCart}
-              className="min-h-11 min-w-40 flex-1 bg-[var(--store-primary)] px-6 py-3 text-sm font-black text-[var(--store-on-primary)] transition hover:bg-[var(--store-primary-hover)] disabled:cursor-not-allowed disabled:bg-[var(--store-border)] disabled:text-[var(--store-muted)] sm:flex-none"
+              className="min-h-11 min-w-40 flex-1 bg-[var(--store-primary)] px-6 py-3 text-sm font-black text-[var(--store-on-primary)] transition hover:bg-[var(--store-primary-hover)] disabled:cursor-not-allowed disabled:bg-[var(--store-border)] disabled:text-[var(--store-text-secondary)] sm:flex-none"
               style={{ borderRadius: "var(--store-radius-button)" }}
             >
               {!shelfInStock
@@ -641,7 +641,7 @@ export function StoreProductPage() {
                 "w-full border px-5 py-3 text-center text-sm font-bold transition sm:w-auto",
                 shelfInStock
                   ? "border-[var(--store-primary)] text-[var(--store-primary)] hover:bg-[var(--store-primary-soft)]"
-                  : "pointer-events-none border-[var(--store-border)] text-[var(--store-muted)]",
+                  : "pointer-events-none border-[var(--store-border)] text-[var(--store-text-secondary)]",
               )}
               style={{ borderRadius: "var(--store-radius-button)" }}
             >
@@ -650,9 +650,9 @@ export function StoreProductPage() {
           </div>
 
           {chosenVariant ? (
-            <p className="text-xs font-bold text-[var(--store-muted)]" data-testid="product-chosen-variant">
+            <p className="text-xs font-bold text-[var(--store-text-secondary)]" data-testid="product-chosen-variant">
               {t("store.variants.chosen")}:{" "}
-              <span className="text-[var(--store-text)]">
+              <span className="text-[var(--store-text-primary)]">
                 {variantLabelOf(chosenVariant, lang)}
               </span>
             </p>
@@ -663,16 +663,16 @@ export function StoreProductPage() {
               type="button"
               onClick={() => void toggleWishlist(product.id)}
               aria-pressed={wished}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--store-border)] px-3 py-2 text-xs font-bold text-[var(--store-text)] transition hover:border-[var(--store-primary)]"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--store-border)] px-3 py-2 text-xs font-bold text-[var(--store-text-primary)] transition hover:border-[var(--store-primary)]"
             >
               <span aria-hidden>{wished ? "♥" : "♡"}</span>
               {wished ? t("store.wishlist.remove") : t("store.wishlist.add")}
-              {!customer ? <span className="text-[var(--store-muted)]">· {t("store.wishlist.signInHint")}</span> : null}
+              {!customer ? <span className="text-[var(--store-text-secondary)]">· {t("store.wishlist.signInHint")}</span> : null}
             </button>
             <button
               type="button"
               onClick={() => void share()}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--store-border)] px-3 py-2 text-xs font-bold text-[var(--store-text)] transition hover:border-[var(--store-primary)]"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--store-border)] px-3 py-2 text-xs font-bold text-[var(--store-text-primary)] transition hover:border-[var(--store-primary)]"
             >
               {copied ? t("store.product.linkCopied") : t("store.product.share")}
             </button>
@@ -682,15 +682,15 @@ export function StoreProductPage() {
             <dl className="mt-6 divide-y divide-[var(--store-border)] border border-[var(--store-border)] bg-[var(--store-surface)] text-sm" style={{ borderRadius: "var(--store-radius)" }}>
               {settings.delivery.enabled ? (
                 <div className="flex gap-3 px-4 py-3">
-                  <dt className="w-28 shrink-0 text-xs font-black uppercase tracking-wide text-[var(--store-muted)]">
+                  <dt className="w-28 shrink-0 text-xs font-black uppercase tracking-wide text-[var(--store-text-secondary)]">
                     {t("store.checkout.delivery")}
                   </dt>
-                  <dd className="text-[var(--store-text)]">
+                  <dd className="text-[var(--store-text-primary)]">
                     {settings.delivery.fee > 0
                       ? t("store.footer.deliveryFee", { amount: settings.delivery.fee.toString() })
                       : t("store.cart.freeDeliveryReached")}
                     {settings.delivery.free_delivery_threshold ? (
-                      <span className="ms-1 text-[var(--store-muted)]">
+                      <span className="ms-1 text-[var(--store-text-secondary)]">
                         {t("store.cart.freeDeliveryAt", {
                           amount: String(settings.delivery.free_delivery_threshold),
                         })}
@@ -701,10 +701,10 @@ export function StoreProductPage() {
               ) : null}
               {settings.delivery.pickup_enabled ? (
                 <div className="flex gap-3 px-4 py-3">
-                  <dt className="w-28 shrink-0 text-xs font-black uppercase tracking-wide text-[var(--store-muted)]">
+                  <dt className="w-28 shrink-0 text-xs font-black uppercase tracking-wide text-[var(--store-text-secondary)]">
                     {t("store.checkout.pickup")}
                   </dt>
-                  <dd className="text-[var(--store-text)]">
+                  <dd className="text-[var(--store-text-primary)]">
                     {pick(settings.delivery.pickup_address_ar, settings.delivery.pickup_address_en) ||
                       t("store.footer.pickupAvailable")}
                   </dd>
@@ -724,16 +724,16 @@ export function StoreProductPage() {
 
           {specs.length > 0 ? (
             <div className="mt-6">
-              <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-muted)]">
+              <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-text-secondary)]">
                 {t("store.product.specs")}
               </h2>
               <dl className="mt-2 divide-y divide-[var(--store-border)] border border-[var(--store-border)] bg-[var(--store-surface)]" style={{ borderRadius: "var(--store-radius)" }}>
                 {specs.map((spec) => (
                   <div key={spec.id} className="flex gap-3 px-4 py-2.5 text-sm">
-                    <dt className="w-32 shrink-0 font-bold text-[var(--store-muted)]">
+                    <dt className="w-32 shrink-0 font-bold text-[var(--store-text-secondary)]">
                       {pick(spec.label_ar, spec.label_en)}
                     </dt>
-                    <dd className="font-semibold text-[var(--store-text)]">{pick(spec.value_ar, spec.value_en)}</dd>
+                    <dd className="font-semibold text-[var(--store-text-primary)]">{pick(spec.value_ar, spec.value_en)}</dd>
                   </div>
                 ))}
               </dl>
@@ -744,7 +744,7 @@ export function StoreProductPage() {
 
       {productReviews.length > 0 ? (
         <section className="mt-12">
-          <h2 className="text-lg font-black tracking-tight text-[var(--store-text)]">
+          <h2 className="text-lg font-black tracking-tight text-[var(--store-text-primary)]">
             {t("store.product.reviews")}
           </h2>
           <div className="mt-3 grid gap-3 md:grid-cols-2">
@@ -755,10 +755,10 @@ export function StoreProductPage() {
                 style={{ borderRadius: "var(--store-radius)" }}
               >
                 <StarRating value={review.rating} />
-                <blockquote className="mt-2 text-sm leading-relaxed text-[var(--store-text)]">
+                <blockquote className="mt-2 text-sm leading-relaxed text-[var(--store-text-primary)]">
                   “{review.body}”
                 </blockquote>
-                <figcaption className="mt-2 text-xs font-bold text-[var(--store-muted)]">
+                <figcaption className="mt-2 text-xs font-bold text-[var(--store-text-secondary)]">
                   {review.author_name}
                 </figcaption>
               </figure>
@@ -769,7 +769,7 @@ export function StoreProductPage() {
 
       {related.length > 0 ? (
         <section className="mt-12">
-          <h2 className="mb-4 text-lg font-black tracking-tight text-[var(--store-text)]">
+          <h2 className="mb-4 text-lg font-black tracking-tight text-[var(--store-text-primary)]">
             {t("store.product.related")}
           </h2>
           <ProductGrid className="lg:grid-cols-4">
@@ -782,7 +782,7 @@ export function StoreProductPage() {
 
       {recentlyViewed.length > 0 ? (
         <section className="mt-12">
-          <h2 className="mb-4 text-lg font-black tracking-tight text-[var(--store-text)]">{t("store.product.recentlyViewed")}</h2>
+          <h2 className="mb-4 text-lg font-black tracking-tight text-[var(--store-text-primary)]">{t("store.product.recentlyViewed")}</h2>
           <ProductGrid className="lg:grid-cols-4">
             {recentlyViewed.map((candidate) => <ProductCard key={candidate.product.id} entry={candidate} compact />)}
           </ProductGrid>

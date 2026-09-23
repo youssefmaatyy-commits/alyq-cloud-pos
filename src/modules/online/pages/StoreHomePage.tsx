@@ -194,7 +194,7 @@ export function StoreHomePage() {
 
   if (loading && products.length === 0) {
     return (
-      <div className="mx-auto w-full max-w-[var(--store-max-width,72rem)] px-4 py-20 text-center text-sm font-semibold text-[var(--store-muted)] sm:px-6">
+      <div className="mx-auto w-full max-w-[var(--store-max-width,72rem)] px-4 py-20 text-center text-sm font-semibold text-[var(--store-text-secondary)] sm:px-6">
         {t("common.loading")}
       </div>
     );
@@ -230,7 +230,7 @@ export function StoreHomePage() {
             // An empty image uses the configured paper surface, not a dark color slab.
             className="relative overflow-hidden"
             style={{
-              backgroundColor: "var(--store-bg)",
+              backgroundColor: "var(--store-background)",
             }}
             onMouseEnter={() => setPaused(true)}
             onMouseLeave={() => setPaused(false)}
@@ -274,14 +274,14 @@ export function StoreHomePage() {
               <div className="max-w-md py-12 md:py-16">
                 {slide.title ? (
                   <h1
-                    className={cn("text-4xl font-normal leading-[1.05] tracking-tight sm:text-5xl lg:text-6xl", hasImage ? "text-white" : "text-[var(--store-text)]")}
+                    className={cn("text-4xl font-normal leading-[1.05] tracking-tight sm:text-5xl lg:text-6xl", hasImage ? "text-white" : "text-[var(--store-text-primary)]")}
                     style={{ fontFamily: "var(--store-font-display)" }}
                   >
                     {slide.title}
                   </h1>
                 ) : null}
                 {slide.subtitle ? (
-                  <p className={cn("mt-4 max-w-xs text-sm leading-relaxed sm:text-base", hasImage ? "text-white/90" : "text-[var(--store-muted)]")}>
+                  <p className={cn("mt-4 max-w-xs text-sm leading-relaxed sm:text-base", hasImage ? "text-white/90" : "text-[var(--store-text-secondary)]")}>
                     {slide.subtitle}
                   </p>
                 ) : null}
@@ -294,7 +294,7 @@ export function StoreHomePage() {
                         // "#javascript:…" slice bypass — falls back to the shop's
                         // own products route rather than rendering an unsafe href.
                         to={ctaHref}
-                        className="inline-block bg-white px-7 py-3 text-xs font-black uppercase tracking-[0.18em] text-[var(--store-text)] transition hover:bg-[var(--store-secondary)] hover:text-[var(--store-on-secondary)]"
+                        className="inline-block bg-[var(--store-primary)] px-7 py-3 text-xs font-black uppercase tracking-[0.18em] text-[var(--store-on-primary)] transition hover:bg-[var(--store-primary-hover)]"
                         style={{ borderRadius: "var(--store-radius-button)" }}
                       >
                         {slide.ctaLabel}
@@ -303,7 +303,7 @@ export function StoreHomePage() {
                     {secondaryLabel && secondaryHref ? (
                       <Link
                         to={secondaryHref}
-                        className={cn("inline-block border px-7 py-3 text-xs font-bold uppercase tracking-[0.18em] transition", hasImage ? "border-white/60 text-white hover:bg-white/10" : "border-[var(--store-hairline)] text-[var(--store-text)]")}
+                        className={cn("inline-block border px-7 py-3 text-xs font-bold uppercase tracking-[0.18em] transition", hasImage ? "border-white/60 text-white hover:bg-white/10" : "border-[var(--store-hairline)] text-[var(--store-text-primary)]")}
                         style={{ borderRadius: "var(--store-radius-button)" }}
                       >
                         {secondaryLabel}
@@ -373,7 +373,7 @@ export function StoreHomePage() {
             <Link
               key={row.category.id}
               to={`/store/products?category=${encodeURIComponent(row.category.id)}`}
-              className="group relative block overflow-hidden bg-[var(--store-surface-alt)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--store-text)]"
+              className="group relative block overflow-hidden bg-[var(--store-surface-muted)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--store-text-primary)]"
               style={{ borderRadius: "var(--store-radius)" }}
             >
               <div className="aspect-[3/4] w-full">
@@ -610,23 +610,23 @@ export function StoreHomePage() {
                     <div className={cn("relative flex flex-1 flex-col items-start justify-center gap-4 p-8 md:p-16", full && "mx-auto w-full max-w-[var(--store-max-width)]")}>
 
                       <h3
-                        className={cn("max-w-md text-4xl font-normal leading-tight md:text-5xl", full ? "text-white" : "text-[var(--store-text)]")}
+                        className={cn("max-w-md text-4xl font-normal leading-tight md:text-5xl", full ? "text-white" : "text-[var(--store-text-primary)]")}
                         style={{ fontFamily: "var(--store-font-display)" }}
                       >
                         {title}
                       </h3>
                       {subtitle ? (
-                        <p className={cn("max-w-xs text-sm leading-relaxed", full ? "text-white/90" : "text-[var(--store-muted)]")}>{subtitle}</p>
+                        <p className={cn("max-w-xs text-sm leading-relaxed", full ? "text-white/90" : "text-[var(--store-text-secondary)]")}>{subtitle}</p>
                       ) : null}
                       {ctaLabel && href ? (
-                        <span className={cn("mt-4 border-b pb-2 text-[11px] font-bold uppercase tracking-[0.2em]", full ? "border-white text-white" : "border-[var(--store-text)] text-[var(--store-text)]")}>
+                        <span className={cn("mt-4 border-b pb-2 text-[11px] font-bold uppercase tracking-[0.2em]", full ? "border-white text-white" : "border-[var(--store-text-primary)] text-[var(--store-text-primary)]")}>
                           {ctaLabel}
                         </span>
                       ) : null}
                     </div>
                   </>
                 );
-                const shell = cn("relative flex min-h-80 flex-col overflow-hidden bg-[var(--store-surface-alt)] md:flex-row", full ? "min-h-[60vh] md:min-h-[65vh]" : "mx-auto max-w-[var(--store-max-width)]", campaign.layout === "alternating" && "md:flex-row-reverse");
+                const shell = cn("relative flex min-h-80 flex-col overflow-hidden bg-[var(--store-surface-muted)] md:flex-row", full ? "min-h-[60vh] md:min-h-[65vh]" : "mx-auto max-w-[var(--store-max-width)]", campaign.layout === "alternating" && "md:flex-row-reverse");
                 return href && href.startsWith("#") ? (
                   <Link
                     key={campaign.id}
@@ -672,7 +672,7 @@ export function StoreHomePage() {
           <section key={key} id={key} className="mx-auto w-full max-w-[var(--store-max-width)] px-4 py-[calc(var(--store-space-section)/2)] sm:px-6">
             {title && key !== "textImage" ? (
               <h2
-                className="mb-8 text-center text-3xl font-normal tracking-tight text-[var(--store-text)] md:text-3xl"
+                className="mb-8 text-center text-3xl font-normal tracking-tight text-[var(--store-text-primary)] md:text-3xl"
                 style={{ fontFamily: "var(--store-font-display)" }}
               >
                 {title}
@@ -696,14 +696,14 @@ export function StoreHomePage() {
               <div className="text-center md:text-start">
                 {key === "textImage" && title ? (
                   <h2
-                    className="text-2xl font-black tracking-tight text-[var(--store-text)] md:text-3xl"
+                    className="text-2xl font-black tracking-tight text-[var(--store-text-primary)] md:text-3xl"
                     style={{ fontFamily: "var(--store-font-display)" }}
                   >
                     {title}
                   </h2>
                 ) : null}
                 {body ? (
-                  <p className={cn("text-sm leading-loose text-[var(--store-muted)] md:text-[15px]", key === "textImage" && "mt-4")}>
+                  <p className={cn("text-sm leading-loose text-[var(--store-text-secondary)] md:text-[15px]", key === "textImage" && "mt-4")}>
                     {body}
                   </p>
                 ) : null}
@@ -711,7 +711,7 @@ export function StoreHomePage() {
                   (cta.to.startsWith("#") || cta.to.startsWith("/")) ? (
                     <Link
                       to={cta.to.startsWith("#") ? cta.to.slice(1) : cta.to}
-                      className="mt-6 inline-block border-b border-[var(--store-text)] pb-0.5 text-[11px] font-black uppercase tracking-[0.2em] text-[var(--store-text)]"
+                      className="mt-6 inline-block border-b border-[var(--store-text-primary)] pb-0.5 text-[11px] font-black uppercase tracking-[0.2em] text-[var(--store-text-primary)]"
                     >
                       {cta.label}
                     </Link>
@@ -720,7 +720,7 @@ export function StoreHomePage() {
                       href={cta.to}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="mt-6 inline-block border-b border-[var(--store-text)] pb-0.5 text-[11px] font-black uppercase tracking-[0.2em] text-[var(--store-text)]"
+                      className="mt-6 inline-block border-b border-[var(--store-text-primary)] pb-0.5 text-[11px] font-black uppercase tracking-[0.2em] text-[var(--store-text-primary)]"
                     >
                       {cta.label}
                     </a>
@@ -745,17 +745,17 @@ export function StoreHomePage() {
             <div className="grid items-center gap-6 md:grid-cols-2 md:gap-10">
               <div className="order-2 text-center md:order-1 md:text-start">
                 <h2
-                  className="text-2xl font-black tracking-tight text-[var(--store-text)] md:text-3xl"
+                  className="text-2xl font-black tracking-tight text-[var(--store-text-primary)] md:text-3xl"
                   style={{ fontFamily: "var(--store-font-display)" }}
                 >
                   {pick(about.title_ar, about.title_en).trim() || title}
                 </h2>
                 {body ? (
-                  <p className="mt-4 text-sm leading-loose text-[var(--store-muted)] md:text-[15px]">{body}</p>
+                  <p className="mt-4 text-sm leading-loose text-[var(--store-text-secondary)] md:text-[15px]">{body}</p>
                 ) : null}
                 <Link
                   to={href.startsWith("#") ? href.slice(1) : href}
-                  className="mt-6 inline-block border-b border-[var(--store-text)] pb-0.5 text-[11px] font-black uppercase tracking-[0.2em] text-[var(--store-text)]"
+                  className="mt-6 inline-block border-b border-[var(--store-text-primary)] pb-0.5 text-[11px] font-black uppercase tracking-[0.2em] text-[var(--store-text-primary)]"
                 >
                   {ctaLabel || t("store.about.shopCta")}
                 </Link>
@@ -788,11 +788,11 @@ export function StoreHomePage() {
                     <TrustGlyph icon={item.icon} />
                   </span>
                   <div>
-                    <p className="text-xs font-bold text-[var(--store-text)]">
+                    <p className="text-xs font-bold text-[var(--store-text-primary)]">
                       {pick(item.title_ar, item.title_en)}
                     </p>
                     {pick(item.desc_ar, item.desc_en).trim() ? (
-                      <p className="mt-0.5 text-[11px] leading-relaxed text-[var(--store-muted)]">
+                      <p className="mt-0.5 text-[11px] leading-relaxed text-[var(--store-text-secondary)]">
                         {pick(item.desc_ar, item.desc_en)}
                       </p>
                     ) : null}
@@ -829,7 +829,7 @@ export function StoreHomePage() {
                     href={href}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="border border-[var(--store-hairline)] px-5 py-2.5 text-[11px] font-black uppercase tracking-[0.2em] text-[var(--store-text)] transition hover:border-[var(--store-text)] hover:bg-[var(--store-primary-soft)]"
+                    className="border border-[var(--store-hairline)] px-5 py-2.5 text-[11px] font-black uppercase tracking-[0.2em] text-[var(--store-text-primary)] transition hover:border-[var(--store-text-primary)] hover:bg-[var(--store-primary-soft)]"
                     style={{ borderRadius: "var(--store-radius-button)" }}
                   >
                     {label}
@@ -851,12 +851,12 @@ export function StoreHomePage() {
               style={{ borderRadius: "var(--store-radius)" }}
             >
               <h2
-                className="text-xl font-black tracking-tight text-[var(--store-text)] md:text-2xl"
+                className="text-xl font-black tracking-tight text-[var(--store-text-primary)] md:text-2xl"
                 style={{ fontFamily: "var(--store-font-display)" }}
               >
                 {heading("newsletter", "store.section.newsletter")}
               </h2>
-              {body ? <p className="max-w-md text-sm text-[var(--store-muted)]">{body}</p> : null}
+              {body ? <p className="max-w-md text-sm text-[var(--store-text-secondary)]">{body}</p> : null}
               <form
                 className="flex w-full max-w-sm items-center gap-2"
                 onSubmit={(event) => {
@@ -881,7 +881,7 @@ export function StoreHomePage() {
                   type="email"
                   required
                   placeholder={t("store.footer.emailPlaceholder")}
-                  className="min-w-0 flex-1 border-0 border-b border-[var(--store-hairline)] bg-transparent px-1 py-2 text-sm text-[var(--store-text)] outline-none placeholder:text-[var(--store-muted)] focus:border-[var(--store-text)]"
+                  className="min-w-0 flex-1 border-0 border-b border-[var(--store-hairline)] bg-transparent px-1 py-2 text-sm text-[var(--store-text-primary)] outline-none placeholder:text-[var(--store-text-secondary)] focus:border-[var(--store-text-primary)]"
                 />
                 <button
                   type="submit"
@@ -905,11 +905,11 @@ export function StoreHomePage() {
                 <Link
                   key={brand.name_en || brand.name_ar}
                   to={`/store/products?brand=${encodeURIComponent(brand.name_en || brand.name_ar)}`}
-                  className="border border-[var(--store-hairline)] bg-[var(--store-surface)] px-4 py-2 text-xs font-bold text-[var(--store-text)] transition hover:border-[var(--store-text)]"
+                  className="border border-[var(--store-hairline)] bg-[var(--store-surface)] px-4 py-2 text-xs font-bold text-[var(--store-text-primary)] transition hover:border-[var(--store-text-primary)]"
                   style={{ borderRadius: "9999px" }}
                 >
                   {pick(brand.name_ar, brand.name_en)}
-                  <span className="ms-1.5 text-[var(--store-muted)]">{brand.count}</span>
+                  <span className="ms-1.5 text-[var(--store-text-secondary)]">{brand.count}</span>
                 </Link>
               ))}
             </div>
@@ -930,10 +930,10 @@ export function StoreHomePage() {
                   style={{ borderRadius: "var(--store-radius)" }}
                 >
                   <StarRating value={review.rating} />
-                  <blockquote className="flex-1 text-sm leading-relaxed text-[var(--store-text)]">
+                  <blockquote className="flex-1 text-sm leading-relaxed text-[var(--store-text-primary)]">
                     “{review.body}”
                   </blockquote>
-                  <figcaption className="text-xs font-bold text-[var(--store-muted)]">
+                  <figcaption className="text-xs font-bold text-[var(--store-text-secondary)]">
                     {review.author_name}
                   </figcaption>
                 </figure>
@@ -957,7 +957,7 @@ export function StoreHomePage() {
                       type="button"
                       onClick={() => setOpenFaq(open ? null : faq.id)}
                       aria-expanded={open}
-                      className="flex w-full items-center justify-between gap-3 px-4 py-3 text-start text-sm font-bold text-[var(--store-text)]"
+                      className="flex w-full items-center justify-between gap-3 px-4 py-3 text-start text-sm font-bold text-[var(--store-text-primary)]"
                     >
                       {pick(faq.question_ar, faq.question_en)}
                       <span className={cn("shrink-0 text-[var(--store-primary)] transition", open && "rotate-45")}>
@@ -965,7 +965,7 @@ export function StoreHomePage() {
                       </span>
                     </button>
                     {open ? (
-                      <p className="px-4 pb-4 text-sm leading-relaxed text-[var(--store-muted)]">
+                      <p className="px-4 pb-4 text-sm leading-relaxed text-[var(--store-text-secondary)]">
                         {pick(faq.answer_ar, faq.answer_en)}
                       </p>
                     ) : null}
@@ -995,7 +995,7 @@ export function StoreHomePage() {
             >
               {settings.contact.phone ? (
                 <div>
-                  <p className="text-xs font-black uppercase tracking-widest text-[var(--store-muted)]">
+                  <p className="text-xs font-black uppercase tracking-widest text-[var(--store-text-secondary)]">
                     {t("store.contact.phone")}
                   </p>
                   <a href={`tel:${settings.contact.phone}`} className="mt-1 block text-sm font-bold text-[var(--store-primary)]">
@@ -1005,7 +1005,7 @@ export function StoreHomePage() {
               ) : null}
               {settings.contact.email ? (
                 <div>
-                  <p className="text-xs font-black uppercase tracking-widest text-[var(--store-muted)]">
+                  <p className="text-xs font-black uppercase tracking-widest text-[var(--store-text-secondary)]">
                     {t("store.contact.email")}
                   </p>
                   <a href={`mailto:${settings.contact.email}`} className="mt-1 block text-sm font-bold text-[var(--store-primary)]">
@@ -1015,11 +1015,11 @@ export function StoreHomePage() {
               ) : null}
               {address ? (
                 <div>
-                  <p className="text-xs font-black uppercase tracking-widest text-[var(--store-muted)]">
+                  <p className="text-xs font-black uppercase tracking-widest text-[var(--store-text-secondary)]">
                     {t("store.contact.address")}
                   </p>
-                  <p className="mt-1 text-sm font-medium text-[var(--store-text)]">{address}</p>
-                  {hours ? <p className="mt-0.5 text-xs text-[var(--store-muted)]">{hours}</p> : null}
+                  <p className="mt-1 text-sm font-medium text-[var(--store-text-primary)]">{address}</p>
+                  {hours ? <p className="mt-0.5 text-xs text-[var(--store-text-secondary)]">{hours}</p> : null}
                 </div>
               ) : null}
             </div>
@@ -1036,7 +1036,7 @@ export function StoreHomePage() {
     <>
       {rendered}
       {campaigns.some((campaign) => campaign.active) ? (
-        <p className="pb-8 text-center text-xs font-medium text-[var(--store-muted)]">
+        <p className="pb-8 text-center text-xs font-medium text-[var(--store-text-secondary)]">
           {t("store.section.campaignNote")}
         </p>
       ) : null}

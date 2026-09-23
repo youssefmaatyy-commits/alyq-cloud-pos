@@ -16,6 +16,7 @@
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import type { WebsiteSettings } from "../../types";
 import {
+  announcementStyle,
   badgeStyle,
   cardStyle,
   fontStackOf,
@@ -44,10 +45,7 @@ export function StorefrontPreview({ settings }: { settings: WebsiteSettings }) {
       {settings.announcement.enabled ? (
         <p
           className="px-3 py-1.5 text-center text-[11px] font-bold"
-          style={{
-            background: "var(--store-secondary)",
-            color: "var(--store-on-secondary)",
-          }}
+          style={announcementStyle(settings)}
         >
           {pick(settings.announcement.text_ar, settings.announcement.text_en) ||
             t("online.preview.announcement")}
@@ -83,18 +81,18 @@ export function StorefrontPreview({ settings }: { settings: WebsiteSettings }) {
             </span>
           )}
           <span>
-            <span className="block text-sm font-black" style={{ color: "var(--store-text)" }}>
+            <span className="block text-sm font-black" style={{ color: "var(--store-text-primary)" }}>
               {storeName}
             </span>
             {tagline ? (
-              <span className="block text-[10px]" style={{ color: "var(--store-muted)" }}>
+              <span className="block text-[10px]" style={{ color: "var(--store-text-secondary)" }}>
                 {tagline}
               </span>
             ) : null}
           </span>
         </span>
         <span className="flex items-center gap-2">
-          <span className="text-[10px] font-bold" style={{ color: "var(--store-muted)" }}>
+          <span className="text-[10px] font-bold" style={{ color: "var(--store-text-secondary)" }}>
             {t("online.preview.cart")}
           </span>
           <span
@@ -115,7 +113,7 @@ export function StorefrontPreview({ settings }: { settings: WebsiteSettings }) {
           className="relative grid min-h-[9rem] place-items-center bg-cover bg-center px-4 py-8 text-center"
           style={{
             backgroundImage: heroImage ? `url("${heroImage}")` : undefined,
-            backgroundColor: "var(--store-bg)",
+            backgroundColor: "var(--store-background)",
           }}
         >
           <div
@@ -124,10 +122,10 @@ export function StorefrontPreview({ settings }: { settings: WebsiteSettings }) {
             aria-hidden
           />
           <div className="relative">
-            <p className="text-base font-black text-white">
+            <p className={`text-base font-black ${heroImage ? "text-white" : "text-[var(--store-text-primary)]"}`}>
               {slide?.title ?? t("online.preview.heroTitle")}
             </p>
-            <p className="mt-1 text-[11px] font-medium text-white/85">
+            <p className={`mt-1 text-[11px] font-medium ${heroImage ? "text-white/85" : "text-[var(--store-text-secondary)]"}`}>
               {slide?.subtitle ?? t("online.preview.heroSubtitle")}
             </p>
             <span
@@ -140,10 +138,10 @@ export function StorefrontPreview({ settings }: { settings: WebsiteSettings }) {
         </div>
       ) : null}
 
-      <div className="px-4 py-4" style={{ background: "var(--store-surface-alt)" }}>
+      <div className="px-4 py-4" style={{ background: "var(--store-surface-muted)" }}>
         <p
           className="text-[10px] font-black uppercase tracking-widest"
-          style={{ color: "var(--store-muted)" }}
+          style={{ color: "var(--store-text-secondary)" }}
         >
           {t("online.preview.featured")}
         </p>
@@ -165,7 +163,7 @@ export function StorefrontPreview({ settings }: { settings: WebsiteSettings }) {
                 ) : null}
               </div>
               <div className="p-2">
-                <p className="text-[11px] font-bold" style={{ color: "var(--store-text)" }}>
+                <p className="text-[11px] font-bold" style={{ color: "var(--store-text-primary)" }}>
                   {index === 0 ? t("online.preview.sampleProduct") : t("online.preview.sampleProduct2")}
                 </p>
                 <p className="text-[11px] font-black" style={{ color: "var(--store-primary)" }}>
@@ -188,7 +186,7 @@ export function StorefrontPreview({ settings }: { settings: WebsiteSettings }) {
         style={{
           background: "var(--store-surface)",
           borderTop: "1px solid var(--store-border)",
-          color: "var(--store-muted)",
+          color: "var(--store-text-secondary)",
         }}
       >
         <span>{storeName}</span>

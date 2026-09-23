@@ -23,12 +23,12 @@ export function ProductFormPage({ mode }: { mode: "create" | "edit" }) {
           existing ? `${existing.sku} · ${existing.name_en}` : t("products.subtitle")
         }
       />
-      <ProductForm productId={mode === "edit" ? id : undefined} />
-      {/* The variant lifecycle lives beside the form, not inside it: enabling,
-          generating and archiving combinations are their own acts with their
-          own guards, and a product has to exist before it can have them. */}
+      {/* The same simple colour/size editor used by Add Product is a first-class
+          section on Edit Product, not hidden below the long product form or
+          folded into an advanced modal. It saves separately because each
+          existing shelf has its own identity, stock ledger and archive guard. */}
       {existing ? (
-        <div className="mt-4">
+        <div className="mb-4">
           <VariantEditor
             product={existing}
             variants={variantsByProduct.get(existing.id) ?? []}
@@ -36,6 +36,7 @@ export function ProductFormPage({ mode }: { mode: "create" | "edit" }) {
           />
         </div>
       ) : null}
+      <ProductForm productId={mode === "edit" ? id : undefined} />
     </div>
   );
 }

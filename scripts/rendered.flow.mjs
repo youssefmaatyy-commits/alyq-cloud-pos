@@ -75,10 +75,18 @@ async function ensureServer() {
 await ensureServer();
 const output = 'coverage/visual';
 await mkdir(output, { recursive: true });
-const browser = await chromium.launch({
-  executablePath: process.env.CHROMIUM_EXECUTABLE || undefined,
-  args: ['--no-sandbox', '--disable-dev-shm-usage'],
-});
+let browser;
+try {
+  browser = await chromium.launch({
+    executablePath: process.env.CHROMIUM_EXECUTABLE || undefined,
+    args: ['--no-sandbox', '--disable-dev-shm-usage'],
+  });
+} catch (error) {
+  // A missing Chromium installation still must not orphan the managed Vite
+  // server; otherwise a later visual run could silently hit stale code.
+  if (server) { try { server.kill('SIGKILL'); } catch { /* already gone */ } }
+  throw error;
+}
 const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
 page.setDefaultTimeout(15000);
 const errors = [];
@@ -159,6 +167,9 @@ try {
   await page.waitForURL('**/#/products');
   const productId = await page.evaluate(() => JSON.parse(localStorage.getItem('alyq.demo.catalog.v1')).products.find((p) => p.sku === 'RENDER-RING').id);
   await go(`/products/${productId}/edit`);
+  // The legacy generator is intentionally inside an Advanced disclosure now;
+  // real browser clicks cannot reach a collapsed details element.
+  await page.getByTestId('variant-advanced').locator('summary').click();
   await page.getByTestId('variant-generate').click();
   await page.getByRole('dialog').locator('textarea').fill('Gold | ذهبي | #d4af37\nSilver | فضي | #c0c0c0');
   await page.getByRole('dialog').getByPlaceholder('16, 16.5', { exact: false }).fill('17');
@@ -242,6 +253,21 @@ try {
         await go(route);
         if (name === 'home') {
           await expect(page.locator('main section').first().locator('img:visible')).toHaveCount(1);
+          if (lang === 'en' && width === 1440) {
+            const palette = await page.evaluate(() => {
+              const vars = getComputedStyle(document.documentElement);
+              return {
+                primary: vars.getPropertyValue('--store-primary').trim(),
+                background: vars.getPropertyValue('--store-background').trim(),
+                surface: vars.getPropertyValue('--store-surface').trim(),
+                accent: vars.getPropertyValue('--store-accent').trim(),
+                pageBackground: getComputedStyle(document.querySelector('header').parentElement).backgroundColor,
+              };
+            });
+            assert.deepEqual(palette, { primary: '#202427', background: '#f8f9f6', surface: '#ffffff',
+              accent: '#a48d59', pageBackground: 'rgb(248, 249, 246)' },
+              'the real storefront renders the ivory/white/charcoal/gold default');
+          }
           const grid = await page.getByTestId('product-grid').first().evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(' ').length);
           assert.equal(grid, width === 1440 ? 4 : 2, 'actual rendered product columns');
           const logo = await page.locator('header a[href="#/store"]').boundingBox();
@@ -277,6 +303,39 @@ try {
       }
     }
   }
+  // Admin customization must survive a REAL reload and affect rendered pages,
+  // not just the builder's preview or the default theme used above.
+  await page.evaluate(() => localStorage.setItem('alyq.lang', 'en'));
+  await page.reload();
+  await go('/online/website?tab=theme');
+  await expect(page.getByTestId('theme-presets')).toBeVisible();
+  await page.locator('input[aria-label="Primary"]:not([type="color"])').fill('#0f766e');
+  await page.locator('input[aria-label="Background"]:not([type="color"])').fill('#f1fbf6');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem('alyq.demo.website_settings.v1'))?.settings?.theme?.primary_color === '#0f766e');
+  await expect(page.getByRole('button', { name: 'Save', exact: true }).locator('.animate-spin')).toHaveCount(0);
+  await go('/store');
+  await page.reload();
+  await page.waitForFunction(() => getComputedStyle(document.documentElement).getPropertyValue('--store-primary').trim() === '#0f766e');
+  for (const width of [1440, 375]) {
+    await page.setViewportSize({ width, height: width === 1440 ? 1000 : 844 });
+    for (const [route, name] of [['/store', 'home'], ['/store/products', 'listing']]) {
+      await go(route);
+      const palette = await page.evaluate(() => {
+        const vars = getComputedStyle(document.documentElement);
+        return {
+          primary: vars.getPropertyValue('--store-primary').trim(),
+          background: vars.getPropertyValue('--store-background').trim(),
+          pageBackground: getComputedStyle(document.querySelector('header').parentElement).backgroundColor,
+        };
+      });
+      assert.deepEqual(palette, { primary: '#0f766e', background: '#f1fbf6', pageBackground: 'rgb(241, 251, 246)' },
+        `saved settings render after reload on ${width}px ${name}`);
+      await layout(`saved-en-${width}-${name}`);
+    }
+  }
+  await go('/pos');
+  await expect(page.locator('#alyq-store-theme')).toHaveCount(0);
   assert.deepEqual(errors, [], 'no browser errors');
   await writeFile(`${output}/measurements.json`, JSON.stringify(results, null, 2));
   console.log(`Rendered acceptance: ${results.length} screens passed; EN/AR at 1440, 375, 390, 430.`);

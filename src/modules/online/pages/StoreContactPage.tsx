@@ -67,22 +67,22 @@ export function StoreContactPage() {
 
   return (
     <div className="mx-auto w-full max-w-4xl px-4 py-8 sm:px-6">
-      <h1 className="text-2xl font-black tracking-tight text-[var(--store-text)] sm:text-3xl">
+      <h1 className="text-2xl font-black tracking-tight text-[var(--store-text-primary)] sm:text-3xl">
         {t("store.contact.title")}
       </h1>
-      <p className="mt-1 text-sm text-[var(--store-muted)]">
+      <p className="mt-1 text-sm text-[var(--store-text-secondary)]">
         {pick(contact.tagline_ar, contact.tagline_en) || t("store.contact.subtitle")}
       </p>
 
       <div className="mt-6 grid gap-4 md:grid-cols-2">
         <section className={cardClass} style={{ borderRadius: "var(--store-radius)" }}>
-          <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-muted)]">
+          <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-text-secondary)]">
             {t("store.contact.details")}
           </h2>
           <dl className="mt-3 flex flex-col gap-3 text-sm">
             {contact.phone ? (
               <div className="flex gap-3">
-                <dt className="w-24 shrink-0 text-xs font-black uppercase tracking-wide text-[var(--store-muted)]">
+                <dt className="w-24 shrink-0 text-xs font-black uppercase tracking-wide text-[var(--store-text-secondary)]">
                   {t("store.contact.phone")}
                 </dt>
                 <dd>
@@ -94,7 +94,7 @@ export function StoreContactPage() {
             ) : null}
             {contact.email ? (
               <div className="flex gap-3">
-                <dt className="w-24 shrink-0 text-xs font-black uppercase tracking-wide text-[var(--store-muted)]">
+                <dt className="w-24 shrink-0 text-xs font-black uppercase tracking-wide text-[var(--store-text-secondary)]">
                   {t("store.contact.email")}
                 </dt>
                 <dd>
@@ -106,10 +106,10 @@ export function StoreContactPage() {
             ) : null}
             {address ? (
               <div className="flex gap-3">
-                <dt className="w-24 shrink-0 text-xs font-black uppercase tracking-wide text-[var(--store-muted)]">
+                <dt className="w-24 shrink-0 text-xs font-black uppercase tracking-wide text-[var(--store-text-secondary)]">
                   {t("store.contact.address")}
                 </dt>
-                <dd className="text-[var(--store-text)]">
+                <dd className="text-[var(--store-text-primary)]">
                   {address}
                   {mapLink ? (
                     <a
@@ -126,26 +126,26 @@ export function StoreContactPage() {
             ) : null}
             {hours ? (
               <div className="flex gap-3">
-                <dt className="w-24 shrink-0 text-xs font-black uppercase tracking-wide text-[var(--store-muted)]">
+                <dt className="w-24 shrink-0 text-xs font-black uppercase tracking-wide text-[var(--store-text-secondary)]">
                   {t("store.contact.hours")}
                 </dt>
-                <dd className="whitespace-pre-line text-[var(--store-text)]">{hours}</dd>
+                <dd className="whitespace-pre-line text-[var(--store-text-primary)]">{hours}</dd>
               </div>
             ) : null}
           </dl>
         </section>
 
         <section className={cardClass} style={{ borderRadius: "var(--store-radius)" }}>
-          <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-muted)]">
+          <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-text-secondary)]">
             {t("store.contact.sendMessage")}
           </h2>
           <label className="mt-3 block">
-            <span className="mb-1 block text-xs font-bold text-[var(--store-text)]">{t("store.contact.message")}</span>
+            <span className="mb-1 block text-xs font-bold text-[var(--store-text-primary)]">{t("store.contact.message")}</span>
             <textarea
               value={message}
               onChange={(event) => setMessage(event.target.value)}
               rows={4}
-              className="w-full rounded-lg border border-[var(--store-border)] bg-[var(--store-surface)] px-3 py-2 text-sm text-[var(--store-text)] outline-none transition focus:border-[var(--store-primary)]"
+              className="w-full rounded-lg border border-[var(--store-border)] bg-[var(--store-surface)] px-3 py-2 text-sm text-[var(--store-text-primary)] outline-none transition focus:border-[var(--store-primary)]"
               placeholder={t("store.contact.messagePlaceholder")}
             />
           </label>
@@ -160,11 +160,11 @@ export function StoreContactPage() {
               {t("store.contact.sendOnWhatsapp")}
             </a>
           ) : (
-            <p className="mt-3 text-xs font-semibold text-[var(--store-muted)]">
+            <p className="mt-3 text-xs font-semibold text-[var(--store-text-secondary)]">
               {t("store.contact.noWhatsapp")}
             </p>
           )}
-          <p className="mt-2 text-[11px] leading-relaxed text-[var(--store-muted)]">
+          <p className="mt-2 text-[11px] leading-relaxed text-[var(--store-text-secondary)]">
             {t("store.contact.whatsappNote")}
           </p>
         </section>
@@ -172,7 +172,7 @@ export function StoreContactPage() {
 
       {channels.length > 0 ? (
         <section className="mt-4 border border-[var(--store-border)] bg-[var(--store-surface)] p-4" style={{ borderRadius: "var(--store-radius)" }}>
-          <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-muted)]">
+          <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-text-secondary)]">
             {t("store.contact.followUs")}
           </h2>
           <div className="mt-3 flex flex-wrap gap-2">
@@ -182,7 +182,7 @@ export function StoreContactPage() {
                 href={channel.href}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="rounded-lg border border-[var(--store-border)] px-3 py-2 text-xs font-black text-[var(--store-text)] transition hover:border-[var(--store-primary)] hover:text-[var(--store-primary)]"
+                className="rounded-lg border border-[var(--store-border)] px-3 py-2 text-xs font-black text-[var(--store-text-primary)] transition hover:border-[var(--store-primary)] hover:text-[var(--store-primary)]"
               >
                 {channel.label}
               </a>
@@ -194,10 +194,10 @@ export function StoreContactPage() {
       <section className="mt-4 grid gap-4 md:grid-cols-2">
         {settings.delivery.enabled || settings.delivery.pickup_enabled ? (
           <div className={cardClass} style={{ borderRadius: "var(--store-radius)" }}>
-            <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-muted)]">
+            <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-text-secondary)]">
               {t("store.footer.delivery")}
             </h2>
-            <ul className="mt-3 flex flex-col gap-2 text-sm text-[var(--store-text)]">
+            <ul className="mt-3 flex flex-col gap-2 text-sm text-[var(--store-text-primary)]">
               {settings.delivery.enabled ? (
                 <li>
                   <span className="font-bold">{t("store.checkout.delivery")}: </span>
@@ -205,7 +205,7 @@ export function StoreContactPage() {
                     ? t("store.footer.deliveryFee", { amount: String(settings.delivery.fee) })
                     : t("store.checkout.free")}
                   {settings.delivery.free_delivery_threshold ? (
-                    <span className="block text-xs text-[var(--store-muted)]">
+                    <span className="block text-xs text-[var(--store-text-secondary)]">
                       {t("store.cart.freeDeliveryAt", {
                         amount: String(settings.delivery.free_delivery_threshold),
                       })}
@@ -221,7 +221,7 @@ export function StoreContactPage() {
                 </li>
               ) : null}
               {pick(settings.delivery.note_ar, settings.delivery.note_en) ? (
-                <li className="text-xs text-[var(--store-muted)]">
+                <li className="text-xs text-[var(--store-text-secondary)]">
                   {pick(settings.delivery.note_ar, settings.delivery.note_en)}
                 </li>
               ) : null}
@@ -231,16 +231,16 @@ export function StoreContactPage() {
 
         {settings.delivery.instapay_enabled && (social.instapay_account || social.instapay_link) ? (
           <div className={cardClass} style={{ borderRadius: "var(--store-radius)" }}>
-            <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-muted)]">
+            <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-text-secondary)]">
               {t("store.checkout.instapay")}
             </h2>
             {social.instapay_holder ? (
-              <p className="mt-3 text-xs font-semibold text-[var(--store-muted)]">
+              <p className="mt-3 text-xs font-semibold text-[var(--store-text-secondary)]">
                 {t("store.checkout.instapayHolder")}: {social.instapay_holder}
               </p>
             ) : null}
             {social.instapay_account ? (
-              <p className="mt-1 text-sm font-black text-[var(--store-text)]">{social.instapay_account}</p>
+              <p className="mt-1 text-sm font-black text-[var(--store-text-primary)]">{social.instapay_account}</p>
             ) : null}
             {social.instapay_qr_url ? (
               <img
@@ -251,7 +251,7 @@ export function StoreContactPage() {
                 className="mt-3 h-28 w-28 rounded-lg border border-[var(--store-border)] bg-white object-contain p-1"
               />
             ) : null}
-            <p className="mt-3 text-xs leading-relaxed text-[var(--store-muted)]">
+            <p className="mt-3 text-xs leading-relaxed text-[var(--store-text-secondary)]">
               {t("store.contact.instapayNote")}
             </p>
             <Link

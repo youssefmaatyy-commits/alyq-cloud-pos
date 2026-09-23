@@ -64,12 +64,12 @@ export function StoreTrackPage() {
   }, []);
 
   const inputClass =
-    "w-full rounded-lg border border-[var(--store-border)] bg-[var(--store-surface)] px-3 py-2 text-sm text-[var(--store-text)] outline-none transition focus:border-[var(--store-primary)]";
+    "w-full rounded-lg border border-[var(--store-border)] bg-[var(--store-surface)] px-3 py-2 text-sm text-[var(--store-text-primary)] outline-none transition focus:border-[var(--store-primary)]";
 
   return (
     <div className="mx-auto w-full max-w-3xl px-4 py-8 sm:px-6">
-      <h1 className="text-2xl font-black tracking-tight text-[var(--store-text)]">{t("store.track.title")}</h1>
-      <p className="mt-1 text-sm text-[var(--store-muted)]">{t("store.track.hint")}</p>
+      <h1 className="text-2xl font-black tracking-tight text-[var(--store-text-primary)]">{t("store.track.title")}</h1>
+      <p className="mt-1 text-sm text-[var(--store-text-secondary)]">{t("store.track.hint")}</p>
 
       <form
         className="mt-5 grid gap-3 sm:grid-cols-[1fr_1fr_auto]"
@@ -80,7 +80,7 @@ export function StoreTrackPage() {
         }}
       >
         <label className="block">
-          <span className="mb-1 block text-xs font-bold text-[var(--store-text)]">{t("store.track.orderNumber")}</span>
+          <span className="mb-1 block text-xs font-bold text-[var(--store-text-primary)]">{t("store.track.orderNumber")}</span>
           <input
             value={number}
             onChange={(event) => setNumber(event.target.value)}
@@ -90,7 +90,7 @@ export function StoreTrackPage() {
           />
         </label>
         <label className="block">
-          <span className="mb-1 block text-xs font-bold text-[var(--store-text)]">{t("store.checkout.phone")}</span>
+          <span className="mb-1 block text-xs font-bold text-[var(--store-text-primary)]">{t("store.checkout.phone")}</span>
           <input value={phone} onChange={(event) => setPhone(event.target.value)} className={inputClass} inputMode="tel" autoComplete="off" />
         </label>
         <button
@@ -115,11 +115,11 @@ export function StoreTrackPage() {
           <section className="border border-[var(--store-border)] bg-[var(--store-surface)] p-4" style={{ borderRadius: "var(--store-radius)" }}>
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <p className="text-[11px] font-black uppercase tracking-widest text-[var(--store-muted)]">
+                <p className="text-[11px] font-black uppercase tracking-widest text-[var(--store-text-secondary)]">
                   {t("store.confirmation.orderNumber")}
                 </p>
-                <p className="text-xl font-black tabular-nums text-[var(--store-text)]">{order.order_number}</p>
-                <p className="mt-0.5 text-xs text-[var(--store-muted)]">
+                <p className="text-xl font-black tabular-nums text-[var(--store-text-primary)]">{order.order_number}</p>
+                <p className="mt-0.5 text-xs text-[var(--store-text-secondary)]">
                   {new Date(order.created_at).toLocaleString(pick("ar-EG", "en-GB"))}
                 </p>
               </div>
@@ -129,7 +129,7 @@ export function StoreTrackPage() {
               </div>
             </div>
 
-            <p className="mt-3 text-sm font-semibold text-[var(--store-muted)]">
+            <p className="mt-3 text-sm font-semibold text-[var(--store-text-secondary)]">
               {t(deliveryHintKey(order))}
             </p>
 
@@ -153,7 +153,7 @@ export function StoreTrackPage() {
                           "grid h-8 w-8 place-items-center rounded-full border-2 text-xs font-black transition",
                           reached
                             ? "border-[var(--store-primary)] bg-[var(--store-primary)] text-[var(--store-on-primary)]"
-                            : "border-[var(--store-border)] text-[var(--store-muted)]",
+                            : "border-[var(--store-border)] text-[var(--store-text-secondary)]",
                         )}
                         aria-hidden
                       >
@@ -162,7 +162,7 @@ export function StoreTrackPage() {
                       <span
                         className={cn(
                           "text-[10px] font-bold leading-tight",
-                          reached ? "text-[var(--store-text)]" : "text-[var(--store-muted)]",
+                          reached ? "text-[var(--store-text-primary)]" : "text-[var(--store-text-secondary)]",
                         )}
                       >
                         {t(`online.status.${status}` as never)}
@@ -198,7 +198,7 @@ export function StoreTrackPage() {
           ) : null}
 
           <section className="border border-[var(--store-border)] bg-[var(--store-surface)] p-4" style={{ borderRadius: "var(--store-radius)" }}>
-            <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-muted)]">
+            <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-text-secondary)]">
               {t("store.track.items")}
             </h2>
             <ul className="mt-3 flex flex-col gap-3">
@@ -214,11 +214,11 @@ export function StoreTrackPage() {
                     sizes="48px"
                   />
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-bold text-[var(--store-text)]">
+                    <span className="block truncate text-sm font-bold text-[var(--store-text-primary)]">
                       {pick(item.name_ar, item.name_en)}
                     </span>
                     {item.variant_id ? (
-                      <span className="block text-xs font-bold text-[var(--store-text)]">
+                      <span className="block text-xs font-bold text-[var(--store-text-primary)]">
                         {pick(item.variant_color_ar, item.variant_color_en)}
                         {item.variant_size !== null
                           ? ` / ${Math.round(item.variant_size * 100) / 100}`
@@ -227,11 +227,11 @@ export function StoreTrackPage() {
                             : ""}
                       </span>
                     ) : null}
-                    <span className="block text-xs text-[var(--store-muted)]">
+                    <span className="block text-xs text-[var(--store-text-secondary)]">
                       {t("store.checkout.quantityTimes", { count: item.quantity })} · {item.sku}
                     </span>
                   </span>
-                  <Money value={item.line_total} className="shrink-0 text-sm font-black text-[var(--store-text)]" />
+                  <Money value={item.line_total} className="shrink-0 text-sm font-black text-[var(--store-text-primary)]" />
                 </li>
               ))}
             </ul>
@@ -246,22 +246,22 @@ export function StoreTrackPage() {
           </section>
 
           <section className="border border-[var(--store-border)] bg-[var(--store-surface)] p-4" style={{ borderRadius: "var(--store-radius)" }}>
-            <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-muted)]">
+            <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-text-secondary)]">
               {t("store.confirmation.details")}
             </h2>
             <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
               <div>
-                <dt className="text-xs font-bold text-[var(--store-muted)]">{t("store.checkout.contactSection")}</dt>
-                <dd className="font-semibold text-[var(--store-text)]">
+                <dt className="text-xs font-bold text-[var(--store-text-secondary)]">{t("store.checkout.contactSection")}</dt>
+                <dd className="font-semibold text-[var(--store-text-primary)]">
                   {order.customer_name}
-                  <span className="block text-xs font-medium text-[var(--store-muted)]">{order.customer_phone}</span>
+                  <span className="block text-xs font-medium text-[var(--store-text-secondary)]">{order.customer_phone}</span>
                 </dd>
               </div>
               <div>
-                <dt className="text-xs font-bold text-[var(--store-muted)]">
+                <dt className="text-xs font-bold text-[var(--store-text-secondary)]">
                   {order.delivery_type === "pickup" ? t("store.checkout.pickup") : t("store.checkout.delivery")}
                 </dt>
-                <dd className="text-xs font-semibold text-[var(--store-text)]">
+                <dd className="text-xs font-semibold text-[var(--store-text-primary)]">
                   {order.delivery_type === "pickup"
                     ? pick(settings.delivery.pickup_address_ar, settings.delivery.pickup_address_en) ||
                       t("store.footer.pickupAvailable")
@@ -273,21 +273,21 @@ export function StoreTrackPage() {
                 </dd>
               </div>
               <div>
-                <dt className="text-xs font-bold text-[var(--store-muted)]">{t("store.checkout.payment")}</dt>
-                <dd className="font-semibold text-[var(--store-text)]">
+                <dt className="text-xs font-bold text-[var(--store-text-secondary)]">{t("store.checkout.payment")}</dt>
+                <dd className="font-semibold text-[var(--store-text-primary)]">
                   {order.payment_method === "instapay" ? t("store.checkout.instapay") : t("store.checkout.cod")}
                 </dd>
               </div>
               {order.sale_number ? (
                 <div>
-                  <dt className="text-xs font-bold text-[var(--store-muted)]">{t("store.track.posSale")}</dt>
-                  <dd className="font-semibold text-[var(--store-text)]">{order.sale_number}</dd>
+                  <dt className="text-xs font-bold text-[var(--store-text-secondary)]">{t("store.track.posSale")}</dt>
+                  <dd className="font-semibold text-[var(--store-text-primary)]">{order.sale_number}</dd>
                 </div>
               ) : null}
               {order.notes ? (
                 <div className="sm:col-span-2">
-                  <dt className="text-xs font-bold text-[var(--store-muted)]">{t("store.checkout.orderNotes")}</dt>
-                  <dd className="text-xs text-[var(--store-text)]">{order.notes}</dd>
+                  <dt className="text-xs font-bold text-[var(--store-text-secondary)]">{t("store.checkout.orderNotes")}</dt>
+                  <dd className="text-xs text-[var(--store-text-primary)]">{order.notes}</dd>
                 </div>
               ) : null}
             </dl>
@@ -295,7 +295,7 @@ export function StoreTrackPage() {
 
           {order.events.length > 0 ? (
             <section className="border border-[var(--store-border)] bg-[var(--store-surface)] p-4" style={{ borderRadius: "var(--store-radius)" }}>
-              <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-muted)]">
+              <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-text-secondary)]">
                 {t("store.track.history")}
               </h2>
               <ol className="mt-3 flex flex-col gap-2">
@@ -305,14 +305,14 @@ export function StoreTrackPage() {
                   .map((event) => (
                     <li key={event.id} className="flex items-start justify-between gap-3 text-xs">
                       <span>
-                        <span className="block font-black text-[var(--store-text)]">
+                        <span className="block font-black text-[var(--store-text-primary)]">
                           {t(`store.track.event.${event.kind}` as never)}
                         </span>
                         {event.note ? (
-                          <span className="block text-[var(--store-muted)]">{event.note}</span>
+                          <span className="block text-[var(--store-text-secondary)]">{event.note}</span>
                         ) : null}
                       </span>
-                      <span className="shrink-0 font-semibold text-[var(--store-muted)]">
+                      <span className="shrink-0 font-semibold text-[var(--store-text-secondary)]">
                         {new Date(event.created_at).toLocaleString(pick("ar-EG", "en-GB"))}
                       </span>
                     </li>
@@ -323,7 +323,7 @@ export function StoreTrackPage() {
 
           <Link
             to="/store/products"
-            className="self-start border border-[var(--store-border)] px-4 py-2.5 text-sm font-black text-[var(--store-text)]"
+            className="self-start border border-[var(--store-border)] px-4 py-2.5 text-sm font-black text-[var(--store-text-primary)]"
             style={{ borderRadius: "var(--store-radius-button)" }}
           >
             {t("store.cart.continueShopping")}

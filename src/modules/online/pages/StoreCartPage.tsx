@@ -52,8 +52,8 @@ export function StoreCartPage() {
   if (isEmpty) {
     return (
       <div className="mx-auto w-full max-w-2xl px-4 py-20 text-center">
-        <p className="text-lg font-black text-[var(--store-text)]">{t("store.cart.empty")}</p>
-        <p className="mt-2 text-sm text-[var(--store-muted)]">{t("store.cart.emptyHint")}</p>
+        <p className="text-lg font-black text-[var(--store-text-primary)]">{t("store.cart.empty")}</p>
+        <p className="mt-2 text-sm text-[var(--store-text-secondary)]">{t("store.cart.emptyHint")}</p>
         <Link
           to="/store/products"
           className="mt-6 inline-block bg-[var(--store-primary)] px-6 py-3 text-sm font-black text-[var(--store-on-primary)]"
@@ -67,8 +67,8 @@ export function StoreCartPage() {
 
   return (
     <div className="mx-auto w-full max-w-[var(--store-max-width,72rem)] px-4 py-6 sm:px-6">
-      <h1 className="text-2xl font-black tracking-tight text-[var(--store-text)]">{t("store.cart.title")}</h1>
-      <p className="mt-1 text-xs font-semibold text-[var(--store-muted)]">
+      <h1 className="text-2xl font-black tracking-tight text-[var(--store-text-primary)]">{t("store.cart.title")}</h1>
+      <p className="mt-1 text-xs font-semibold text-[var(--store-text-secondary)]">
         {t("store.cart.itemCount", { count: totals.unit_count })}
       </p>
 
@@ -110,14 +110,14 @@ export function StoreCartPage() {
                   <div className="flex items-start justify-between gap-2">
                     <Link
                       to={`/store/products/${encodeURIComponent(entry.content?.slug?.trim() || entry.product.id)}`}
-                      className="line-clamp-2 text-sm font-bold text-[var(--store-text)] hover:text-[var(--store-primary)]"
+                      className="line-clamp-2 text-sm font-bold text-[var(--store-text-primary)] hover:text-[var(--store-primary)]"
                     >
                       {pick(entry.product.name_ar, entry.product.name_en)}
                     </Link>
                     <button
                       type="button"
                       onClick={() => remove(entry.product.id, entry.variant?.id ?? null)}
-                      className="shrink-0 text-xs font-bold text-[var(--store-muted)] hover:text-rose-600"
+                      className="shrink-0 text-xs font-bold text-[var(--store-text-secondary)] hover:text-rose-600"
                       aria-label={t("store.cart.remove")}
                     >
                       {t("store.cart.remove")}
@@ -126,14 +126,14 @@ export function StoreCartPage() {
 
                   {entry.variantLabel ? (
                     <p
-                      className="text-xs font-black text-[var(--store-text)]"
+                      className="text-xs font-black text-[var(--store-text-primary)]"
                       data-testid="cart-line-variant"
                     >
                       {entry.variantLabel}
                     </p>
                   ) : null}
 
-                  <p className="text-[11px] font-semibold text-[var(--store-muted)]">
+                  <p className="text-[11px] font-semibold text-[var(--store-text-secondary)]">
                     {entry.variant?.sku ?? entry.product.sku}
                     {entry.content?.brand_en || entry.content?.brand_ar
                       ? ` · ${pick(entry.content?.brand_ar ?? null, entry.content?.brand_en ?? null)}`
@@ -145,12 +145,12 @@ export function StoreCartPage() {
                       <button
                         type="button"
                         onClick={() => decrease(entry.product.id, entry.variant?.id ?? null)}
-                        className="grid h-8 w-8 place-items-center rounded-lg border border-[var(--store-border)] font-bold text-[var(--store-muted)]"
+                        className="grid h-8 w-8 place-items-center rounded-lg border border-[var(--store-border)] font-bold text-[var(--store-text-secondary)]"
                         aria-label={t("store.cart.decrease")}
                       >
                         −
                       </button>
-                      <span className="min-w-6 text-center text-sm font-black tabular-nums text-[var(--store-text)]">
+                      <span className="min-w-6 text-center text-sm font-black tabular-nums text-[var(--store-text-primary)]">
                         {entry.quantity}
                       </span>
                       <button
@@ -165,7 +165,7 @@ export function StoreCartPage() {
                     </div>
 
                     <p className="flex items-baseline gap-2">
-                      <Money value={entry.lineTotal} className="text-sm font-black text-[var(--store-text)]" />
+                      <Money value={entry.lineTotal} className="text-sm font-black text-[var(--store-text-primary)]" />
                       {entry.price < entry.listPrice ? (
                         <Money value={entry.listPrice * entry.quantity} strike className="text-xs" />
                       ) : null}
@@ -193,7 +193,7 @@ export function StoreCartPage() {
             <button
               type="button"
               onClick={clear}
-              className="text-xs font-bold text-[var(--store-muted)] hover:text-rose-600"
+              className="text-xs font-bold text-[var(--store-text-secondary)] hover:text-rose-600"
             >
               {t("store.cart.clear")}
             </button>
@@ -202,14 +202,14 @@ export function StoreCartPage() {
 
         <aside className="flex flex-col gap-4 lg:sticky lg:top-24 lg:self-start">
           <div className="border border-[var(--store-border)] bg-[var(--store-surface)] p-4" style={{ borderRadius: "var(--store-radius)" }}>
-            <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-muted)]">
+            <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-text-secondary)]">
               {t("store.cart.summary")}
             </h2>
 
             <dl className="mt-3 space-y-2 text-sm">
               <div className="flex justify-between gap-2">
-                <dt className="text-[var(--store-muted)]">{t("store.cart.subtotal")}</dt>
-                <dd className="font-bold text-[var(--store-text)]"><Money value={preview?.subtotal ?? totals.subtotal} /></dd>
+                <dt className="text-[var(--store-text-secondary)]">{t("store.cart.subtotal")}</dt>
+                <dd className="font-bold text-[var(--store-text-primary)]"><Money value={preview?.subtotal ?? totals.subtotal} /></dd>
               </div>
               {(preview?.autoDiscount ?? 0) > 0 ? (
                 <div className="flex justify-between gap-2 text-emerald-700">
@@ -231,11 +231,11 @@ export function StoreCartPage() {
               ) : null}
               {(preview?.deliveryFee ?? totals.delivery_fee) > 0 ? (
                 <div className="flex justify-between gap-2">
-                  <dt className="text-[var(--store-muted)]">
+                  <dt className="text-[var(--store-text-secondary)]">
                     {t("store.cart.deliveryFee")}
                     {preview?.zoneName ? ` · ${preview.zoneName}` : ""}
                   </dt>
-                  <dd className="font-bold text-[var(--store-text)]"><Money value={preview?.deliveryFee ?? totals.delivery_fee} /></dd>
+                  <dd className="font-bold text-[var(--store-text-primary)]"><Money value={preview?.deliveryFee ?? totals.delivery_fee} /></dd>
                 </div>
               ) : null}
               {(preview?.shippingDiscount ?? 0) > 0 ? (
@@ -245,8 +245,8 @@ export function StoreCartPage() {
                 </div>
               ) : null}
               <div className="flex justify-between gap-2 border-t border-[var(--store-border)] pt-2 text-base">
-                <dt className="font-black text-[var(--store-text)]">{t("store.cart.total")}</dt>
-                <dd className="font-black text-[var(--store-text)]"><Money value={preview?.total ?? totals.total} /></dd>
+                <dt className="font-black text-[var(--store-text-primary)]">{t("store.cart.total")}</dt>
+                <dd className="font-black text-[var(--store-text-primary)]"><Money value={preview?.total ?? totals.total} /></dd>
               </div>
             </dl>
 
@@ -264,18 +264,18 @@ export function StoreCartPage() {
               type="button"
               onClick={() => navigate("/store/checkout")}
               disabled={problems.length > 0}
-              className="mt-4 w-full bg-[var(--store-primary)] px-4 py-3 text-sm font-black text-[var(--store-on-primary)] transition hover:bg-[var(--store-primary-hover)] disabled:cursor-not-allowed disabled:bg-[var(--store-border)] disabled:text-[var(--store-muted)]"
+              className="mt-4 w-full bg-[var(--store-primary)] px-4 py-3 text-sm font-black text-[var(--store-on-primary)] transition hover:bg-[var(--store-primary-hover)] disabled:cursor-not-allowed disabled:bg-[var(--store-border)] disabled:text-[var(--store-text-secondary)]"
               style={{ borderRadius: "var(--store-radius-button)" }}
             >
               {t("store.cart.checkout")}
             </button>
-            <p className="mt-2 text-[11px] font-medium text-[var(--store-muted)]">
+            <p className="mt-2 text-[11px] font-medium text-[var(--store-text-secondary)]">
               {t("store.cart.pricesRefreshed")}
             </p>
           </div>
 
           <div className="border border-[var(--store-border)] bg-[var(--store-surface)] p-4" style={{ borderRadius: "var(--store-radius)" }}>
-            <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-muted)]">
+            <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-text-secondary)]">
               {t("store.cart.coupon")}
             </h2>
             {couponCode ? (
@@ -284,7 +284,7 @@ export function StoreCartPage() {
                 <button
                   type="button"
                   onClick={clearCoupon}
-                  className="text-xs font-bold text-[var(--store-muted)] hover:text-rose-600"
+                  className="text-xs font-bold text-[var(--store-text-secondary)] hover:text-rose-600"
                 >
                   {t("store.cart.removeCoupon")}
                 </button>
@@ -326,7 +326,7 @@ export function StoreCartPage() {
           </div>
 
           {pick(settings.delivery.note_ar, settings.delivery.note_en) ? (
-            <p className="px-1 text-[11px] leading-relaxed text-[var(--store-muted)]">
+            <p className="px-1 text-[11px] leading-relaxed text-[var(--store-text-secondary)]">
               {pick(settings.delivery.note_ar, settings.delivery.note_en)}
             </p>
           ) : null}

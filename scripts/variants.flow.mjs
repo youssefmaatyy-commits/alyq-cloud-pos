@@ -224,10 +224,20 @@ async function main() {
     setField(selector, option.value);
   };
   setSelect("#category_id", (o) => o.value !== "");
-  setField('[data-testid="variant-mode"]', "colors_sizes");
-  setField('[data-testid="variant-colors"]', "Gold | ذهبي | #D4AF37\nSilver | فضي | #C0C0C0");
-  setField('[data-testid="variant-sizes"]', "17, 18");
-  clickEl(document.querySelector('[data-testid="variant-generate"]'));
+  clickEl(document.querySelector('[data-testid="variant-mode-colors_sizes"]'));
+  await waitFor(() => document.querySelector('[data-testid="variant-add-color"]'), { label: "color row control" });
+  clickEl(document.querySelector('[data-testid="variant-add-color"]'));
+  await waitFor(() => document.querySelector('[data-testid="variant-color-en-0"]'), { label: "first color row" });
+  setTestid("variant-color-en-0", "Gold");
+  setTestid("variant-color-ar-0", "ذهبي");
+  setTestid("variant-color-hex-0", "#D4AF37");
+  clickEl(document.querySelector('[data-testid="variant-add-color"]'));
+  await waitFor(() => document.querySelector('[data-testid="variant-color-en-1"]'), { label: "second color row" });
+  setTestid("variant-color-en-1", "Silver");
+  setTestid("variant-color-ar-1", "فضي");
+  setTestid("variant-color-hex-1", "#C0C0C0");
+  setTestid("variant-size-entry", "17, 18");
+  clickEl(document.querySelector('[data-testid="variant-add-sizes"]'));
   await waitFor(() => document.querySelectorAll('[data-testid^="product-variant-"]:not([data-testid="product-variant-table"])').length === 4, {
     label: "four generated Add Product combinations",
   });
@@ -242,7 +252,9 @@ async function main() {
     setNative(inputs[3], dom.window.HTMLInputElement)("1");
     setNative(inputs[6], dom.window.HTMLInputElement)(`https://example.test/variant-${index + 1}.jpg`);
   }
-  assert.equal(document.querySelector("#stock_quantity").value, "12", "product stock is derived from variant stock");
+  assert.ok(!document.querySelector("#stock_quantity"), "variant product stock cannot be typed onto the parent");
+  assert.ok(document.querySelector('[data-testid="derived-product-stock"]')?.textContent.includes("12"),
+    "product stock is derived from the twelve variant units");
   clickEl(document.querySelector('[data-testid="product-form-save"]'));
   await waitFor(() => dom.window.location.hash === "#/products", { label: "Add Product variant save" });
   await waitFor(() => bodyText().includes(UI_SKU), { label: "the saved variant product" });
@@ -259,6 +271,57 @@ async function main() {
   await waitFor(() => document.querySelectorAll('[data-testid^="variant-row-"]').length === 4, {
     label: "four variants after Edit Product reload",
   });
+  // Edit uses the SAME simple controls as Add: rename a saved colour and add
+  // size 19. Existing IDs, stock, SKUs, and colour identity must not move.
+  await waitFor(() => document.querySelector('[data-testid="variant-color-en-0"]'), { label: "shared Edit Product controls" });
+  assert.ok(document.querySelector('[data-testid="variant-bulk-stock-apply"]').disabled,
+    "bulk stock cannot overwrite persisted shelf balances");
+  const beforeById = new Map(uiVariants.map((variant) => [variant.id, variant]));
+  for (const row of document.querySelectorAll('[data-testid^="product-variant-"]:not([data-testid="product-variant-table"])')) {
+    assert.ok(row.querySelector('[data-testid^="variant-field-stock-"]')?.readOnly,
+      "saved stock must move through Inventory, not the Edit Product form");
+  }
+  setTestid("variant-color-en-0", "Yellow Gold");
+  setTestid("variant-size-entry", "19");
+  clickEl(document.querySelector('[data-testid="variant-add-sizes"]'));
+  await waitFor(() => document.querySelectorAll('[data-testid^="product-variant-"]:not([data-testid="product-variant-table"])').length === 6, {
+    label: "two new sizes auto-appearing in Edit Product",
+  });
+  const newUiRows = [...document.querySelectorAll('[data-testid^="product-variant-draft:"]')];
+  assert.equal(newUiRows.length, 2, "one new 19 for each saved colour");
+  setNative(newUiRows[0].querySelector('[data-testid^="variant-field-stock-"]'), dom.window.HTMLInputElement)("2");
+  setNative(newUiRows[0].querySelector('[data-testid^="variant-field-barcode-"]'), dom.window.HTMLInputElement)("UI-BAR-GOLD-19");
+  setTestid("variant-bulk-low", "3");
+  clickEl(document.querySelector('[data-testid="variant-bulk-low-apply"]'));
+  assert.ok(!document.querySelector('[data-testid="variant-bulk-stock-apply"]').disabled,
+    "new shelves can receive an opening stock, unlike saved ones");
+  await waitFor(() => document.querySelector('[data-testid="variant-simple-save"]') &&
+    !document.querySelector('[data-testid="variant-simple-save"]').disabled, { label: "the Edit save control" });
+  clickEl(document.querySelector('[data-testid="variant-simple-save"]'));
+  await waitFor(() => catalog().variants.filter((v) => v.product_id === uiProduct.id).length === 6, {
+    label: "the six saved combinations",
+  });
+  const edited = catalog().variants.filter((v) => v.product_id === uiProduct.id);
+  assert.equal(edited.reduce((sum, v) => sum + v.stock_quantity, 0), 14,
+    "new shelf stock writes an inventory movement and the parent rollup becomes 14");
+  for (const [id, previous] of beforeById) {
+    const current = edited.find((v) => v.id === id);
+    assert.ok(current, "editing does not replace saved IDs");
+    assert.equal(current.sku, previous.sku);
+    assert.equal(current.stock_quantity, previous.stock_quantity, "saved shelf stock is unchanged");
+    assert.equal(current.color_key, previous.color_key, "rename retains the historical colour key");
+    assert.equal(current.low_stock_level, previous.low_stock_level, "bulk edit leaves saved thresholds alone");
+  }
+  assert.ok(edited.some((v) => v.size === 19 && v.color_key === "gold" && v.color_en === "Yellow Gold"
+    && v.barcode === "UI-BAR-GOLD-19" && v.stock_quantity === 2 && v.low_stock_level === 3),
+    "a new size for a renamed colour inherits the original colour identity");
+  await navigate("#/products");
+  await navigate(`#/products/${uiProduct.id}/edit`);
+  await waitFor(() => document.querySelectorAll('[data-testid^="variant-row-"]').length === 6, { label: "six shelves after reload" });
+  assert.ok(document.querySelector('[data-testid="variant-simple-save"]').disabled,
+    "reloading Edit Product has no phantom duplicate-label draft");
+  console.log("  ✓ Edit Product kept four historical IDs and added two sizes on the same colour keys");
+
   await navigate("#/inventory/stock");
   await waitFor(() => document.querySelector('input[placeholder*="Search by product"]'), { label: "inventory stock screen" });
   const inventoryRefresh = document.querySelector('button[title="Retry"]');
@@ -275,7 +338,54 @@ async function main() {
   await waitFor(() => [...document.querySelectorAll("button")].some((button) => (button.textContent ?? "").includes("Variant UI Ring")), { label: "variant product in POS" });
   await navigate(`#/store/products/${uiProduct.id}`);
   await waitFor(() => bodyText().includes("Gold") && bodyText().includes("Silver"), { label: "variant colors in storefront" });
-  console.log("  ✓ Edit Product, Inventory, POS, and Storefront expose all four combinations");
+  console.log("  ✓ Edit Product, Inventory, POS, and Storefront expose all six combinations");
+
+  // A network/database refusal AFTER product + first variant are written must
+  // allow a retry without minting a second product or doubling the first shelf.
+  await navigate("#/products/new");
+  await waitFor(() => document.querySelector("#sku"), { label: "retry product form" });
+  setField("#name_ar", "خاتم متابعة الحفظ");
+  setField("#name_en", "Retry Ring");
+  setField("#sku", "RETRY-RING");
+  setField("#selling_price", "200");
+  setField("#cost_price", "100");
+  setField("#tax_rate", "0");
+  setSelect("#category_id", (o) => o.value !== "");
+  clickEl(document.querySelector('[data-testid="variant-mode-colors_sizes"]'));
+  await waitFor(() => document.querySelector('[data-testid="variant-add-color"]'), { label: "retry color control" });
+  clickEl(document.querySelector('[data-testid="variant-add-color"]'));
+  await waitFor(() => document.querySelector('[data-testid="variant-color-en-0"]'), { label: "retry color row" });
+  setTestid("variant-color-en-0", "Gold");
+  setTestid("variant-size-entry", "17, 18");
+  clickEl(document.querySelector('[data-testid="variant-add-sizes"]'));
+  await waitFor(() => document.querySelectorAll('[data-testid^="product-variant-draft:"]').length === 2, { label: "retry combinations" });
+  const retryRows = [...document.querySelectorAll('[data-testid^="product-variant-draft:"]')];
+  setNative(retryRows[0].querySelector('[data-testid^="variant-field-stock-"]'), dom.window.HTMLInputElement)("1");
+  setNative(retryRows[1].querySelector('[data-testid^="variant-field-stock-"]'), dom.window.HTMLInputElement)("1");
+  setNative(retryRows[1].querySelector('[data-testid^="variant-field-sku-"]'), dom.window.HTMLInputElement)("UI-1");
+  clickEl(document.querySelector('[data-testid="product-form-save"]'));
+  await waitFor(() => catalog().products.find((p) => p.sku === "RETRY-RING") &&
+    catalog().variants.filter((v) => v.product_id === catalog().products.find((p) => p.sku === "RETRY-RING")?.id).length === 1,
+    { label: "first retry shelf to be saved before second SKU conflicts" });
+  await waitFor(() => bodyText().includes("Partial save"), { label: "the repairable partial-save guidance" });
+  assert.equal(dom.window.location.hash, "#/products/new", "failed combinations keep the form open");
+  assert.ok(document.querySelector('[data-testid="variant-mode-none"]').disabled,
+    "an interrupted create cannot switch mode and abandon persisted shelves");
+  const retryProductId = catalog().products.find((p) => p.sku === "RETRY-RING").id;
+  const firstShelfId = catalog().variants.find((v) => v.product_id === retryProductId).id;
+  setNative(document.querySelectorAll('[data-testid^="product-variant-draft:"]')[1].querySelector('[data-testid^="variant-field-sku-"]'), dom.window.HTMLInputElement)("RETRY-RING-GOLD-18");
+  await waitFor(() => !document.querySelector('[data-testid="product-form-save"]')?.disabled, { label: "retry save to unlock" });
+  clickEl(document.querySelector('[data-testid="product-form-save"]'));
+  await waitFor(() => dom.window.location.hash === "#/products", { label: "the resumed save" });
+  const retryProducts = catalog().products.filter((p) => p.sku === "RETRY-RING");
+  const retryShelves = catalog().variants.filter((v) => v.product_id === retryProductId);
+  assert.equal(retryProducts.length, 1, "retry never created a duplicate product");
+  assert.equal(retryShelves.length, 2, "retry creates only the missing combination");
+  assert.ok(retryShelves.some((v) => v.id === firstShelfId), "the first shelf keeps its original ID");
+  assert.equal(retryShelves.reduce((sum, v) => sum + v.stock_quantity, 0), 2);
+  assert.equal(retryProducts[0].stock_quantity, 2, "exact opening allocation rolls up once");
+  console.log("  ✓ interrupted create resumed exactly once, with no duplicate product or shelf");
+  await waitFor(() => !document.querySelector("#sku"), { label: "the catalogue to replace the saved form" });
 
   // 2 ─ focused two-shelf stock-sale proof
   await navigate("#/products/new");
@@ -305,6 +415,7 @@ async function main() {
   });
   // ProductForm has its own Generate (barcode) button; the editor's generator
   // is named by testid, not by label.
+  clickEl(document.querySelector('[data-testid="variant-advanced"] summary'));
   clickEl(document.querySelector('[data-testid="variant-generate"]'));
   await waitFor(() => document.querySelectorAll('[role="dialog"]').length > 0, {
     label: "the generator dialog",
@@ -368,8 +479,10 @@ async function main() {
   assert.equal(catalog().products.find((p) => p.id === productId).stock_quantity, 4);
   console.log("  ✓ switched to variant stock: 2 + 2, nothing created or destroyed");
 
-  // 4 ─ the catalogue chip
+  // 4 ─ the catalogue chip (search, because the catalogue paginates by name)
   await navigate("#/products");
+  await waitFor(() => document.querySelector('input[placeholder="Search by name, SKU or barcode…"]'), { label: "catalogue search" });
+  setField('input[placeholder="Search by name, SKU or barcode…"]', SKU);
   await waitFor(() => document.querySelector(`[data-testid="variant-chip-${SKU}"]`), {
     label: "the variant chip on the product row",
   });
@@ -557,6 +670,25 @@ async function main() {
   );
   console.log("  ✓ disable refused with the reason: a sold combination keeps the mode");
 
+  // History makes deletion impossible, but an explicit archive preserves the
+  // same ID, its sale snapshot and the independent Silver stock. Reactivation
+  // returns that exact shelf, not a replacement with a new identity.
+  const soldRow = () => document.querySelector(`[data-testid="variant-row-${GOLD_SKU}"]`);
+  const rowAction = (label) => [...(soldRow()?.querySelectorAll("button") ?? [])].find((b) => (b.textContent ?? "").trim() === label);
+  await waitFor(() => soldRow() && rowAction("Delete")?.disabled, { label: "historical shelf delete to be disabled" });
+  assert.ok((rowAction("Delete").title ?? "").includes("archive instead"), "deletion explains its history guard");
+  clickEl(rowAction("Archive"));
+  await waitFor(() => catalog().variants.find((v) => v.id === shelves[GOLD_SKU].id)?.active === false,
+    { label: "sold shelf archived" });
+  assert.equal(catalog().products.find((p) => p.id === productId).stock_quantity, 3,
+    "archiving the sold shelf does not consume Silver stock");
+  await waitFor(() => rowAction("Reactivate"), { label: "archived shelf reactivate action" });
+  clickEl(rowAction("Reactivate"));
+  await waitFor(() => catalog().variants.find((v) => v.id === shelves[GOLD_SKU].id)?.active === true,
+    { label: "sold shelf reactivated" });
+  assert.ok(rowAction("Delete")?.disabled, "reactivation does not erase history or enable permanent delete");
+  console.log("  ✓ history blocks delete; archive/reactivate preserves the exact shelf ID and stock");
+
   // 9 ─ the reports screen reads the shelves too: the Variants tab renders the
   //      per-combination performance from the rows this device holds (demo has
   //      no database, so this exercises the fallback that mirrors the RPC).
@@ -592,7 +724,7 @@ async function main() {
 
   assert.equal(networkCalls.length, 0, `no network in demo mode: ${networkCalls[0] ?? ""}`);
   assert.deepEqual(errors, [], "no console errors across the ring");
-  console.log("\nVariant Test Ring passed — 9/9 scenes\n");
+  console.log("\nVariant Test Ring passed — creation, edit, retry and stock lifecycle\n");
 }
 
 main()

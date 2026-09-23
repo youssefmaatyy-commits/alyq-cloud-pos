@@ -41,7 +41,8 @@ import {
 import { WhatsAppTemplatesPanel } from "../components/admin/WhatsAppTemplatesPanel";
 import { getWebsiteRepository } from "../data";
 import { toOnlineError, type OnlineErrorCode } from "../data/repository";
-import { resolveSettings, sanitizeSettings } from "../services/settingsDefaults";
+import { invalidSettingsColor, resolveSettings, sanitizeSettings, STORE_PALETTE } from "../services/settingsDefaults";
+import { storefrontInvalidation } from "../hooks/storefrontInvalidation";
 import {
   moveSection,
   orderedSections,
@@ -177,13 +178,7 @@ const THEME_PRESETS: ReadonlyArray<{
     key: "ivory",
     labelKey: "online.settings.preset.ivory",
     theme: {
-      primary_color: "#1c1917",
-      secondary_color: "#44403c",
-      accent_color: "#b08d57",
-      background_color: "#faf7f2",
-      surface_color: "#fffdfb",
-      text_color: "#1c1917",
-      muted_text_color: "#78716c",
+      ...STORE_PALETTE,
       font_stack: "system",
       button_style: "rounded",
       header_style: "solid",
@@ -195,13 +190,13 @@ const THEME_PRESETS: ReadonlyArray<{
     key: "dark",
     labelKey: "online.settings.preset.dark",
     theme: {
-      primary_color: "#e7ddcf",
-      secondary_color: "#292524",
-      accent_color: "#c8a76a",
-      background_color: "#12100e",
-      surface_color: "#1c1917",
-      text_color: "#ece7df",
-      muted_text_color: "#a8a29e",
+      primary_color: "#ebefec",
+      secondary_color: "#252b2d",
+      accent_color: "#c0a775",
+      background_color: "#121718",
+      surface_color: "#202628",
+      text_color: "#f7f8f5",
+      muted_text_color: "#b5bdbc",
       font_stack: "system",
       button_style: "rounded",
       header_style: "solid",
@@ -213,13 +208,13 @@ const THEME_PRESETS: ReadonlyArray<{
     key: "editorial",
     labelKey: "online.settings.preset.editorial",
     theme: {
-      primary_color: "#1a1613",
-      secondary_color: "#3f3a34",
-      accent_color: "#9a7b4f",
-      background_color: "#f6f1e7",
-      surface_color: "#fdfbf6",
-      text_color: "#1a1613",
-      muted_text_color: "#6f675e",
+      primary_color: "#22282a",
+      secondary_color: "#34393b",
+      accent_color: "#9e8654",
+      background_color: "#f2f3f1",
+      surface_color: "#ffffff",
+      text_color: "#22282a",
+      muted_text_color: "#626a6b",
       font_stack: "classic",
       button_style: "square",
       header_style: "solid",
@@ -296,23 +291,17 @@ export function WebsiteSettingsPage() {
 
   const save = async () => {
     if (!draft) return;
+    if (invalidSettingsColor(draft)) {
+      toast.error(t("online.settings.invalidColor"));
+      return;
+    }
     setSaving(true);
     try {
       const actor = getCurrentUser();
-      // Phase 45: the document is sanitized before it leaves the page — the
-      // same policy the database guard enforces (0045), applied client-side so
-      // an unsafe URL or an oversized list is refused with the form still open
-      // rather than by a SQL error after submit. Sanitizing is idempotent, so
-      // a document that is already clean saves unchanged.
-      const safeDraft = sanitizeSettings(draft);
-      const safeTheme = Object.fromEntries(
-        Object.entries(safeDraft.theme).map(([key, value]) => {
-          const original = draft.theme[key as keyof WebsiteSettings["theme"]];
-          const valid = typeof original === "string" && /^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(original.trim());
-          return [key, valid ? value : saved?.theme[key as keyof WebsiteSettings["theme"]] ?? value];
-        }),
-      ) as WebsiteSettings["theme"];
-      const normalized = { ...safeDraft, theme: safeTheme };
+      // One validated document is written atomically. Never replace an invalid
+      // colour with the factory default: a mistype must not erase the last
+      // valid saved custom palette, or quietly save other draft changes.
+      const normalized = sanitizeSettings(draft);
       const nextMeta = await repository.saveSettings({
         settings: normalized,
         user_id: actor.id,
@@ -321,6 +310,7 @@ export function WebsiteSettingsPage() {
       setSaved(normalized);
       setDraft(normalized);
       setMeta(nextMeta);
+      storefrontInvalidation.notify();
       toast.success(t("online.settings.saved"));
     } catch (caught) {
       toast.error(t(`online.error.${toOnlineError(caught).code}`));
@@ -543,6 +533,11 @@ export function WebsiteSettingsPage() {
                   ))}
                 </div>
                 <p className="text-[11px] leading-relaxed text-slate-500">{t("online.settings.colorHint")}</p>
+                {invalidSettingsColor(draft) ? (
+                  <p role="alert" className="text-sm font-semibold text-rose-700" data-testid="settings-invalid-color">
+                    {t("online.settings.invalidColor")}
+                  </p>
+                ) : null}
               </Card>
 
               <Card className="space-y-3">

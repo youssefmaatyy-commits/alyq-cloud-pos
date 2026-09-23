@@ -182,14 +182,20 @@ export async function saveVariant({
     }
   }
 
+  // An `undefined` stock property is NOT the same as omitting it. The demo
+  // repository spreads patches onto rows, and spreading `stock_quantity:
+  // undefined` erased an existing shelf (then the rollup became NaN). Inventory
+  // owns stock; the guarded setVariantActive RPC owns archive/reactivate. A
+  // metadata edit must never silently bypass either shelf invariant.
+  const current = currentId ? siblings.find((variant) => variant.id === currentId) : null;
+  if (current && current.active !== values.active) {
+    throw new AppError("VALIDATION", "Archive or reactivate this combination using its dedicated action", "active");
+  }
+  const editPatch: ProductVariantPatch = { ...values, sku, barcode };
+  delete editPatch.stock_quantity;
+  delete editPatch.active;
   const variant = currentId
-    ? await repository.updateVariant(currentId, {
-        ...values,
-        sku,
-        barcode,
-        // stock never travels through an edit — see inventoryService.
-        stock_quantity: undefined,
-      } as ProductVariantPatch)
+    ? await repository.updateVariant(currentId, editPatch)
     : await repository.createVariant({
         ...values,
         sku,
@@ -321,7 +327,7 @@ export async function setVariantActive(id: string, active: boolean): Promise<Pro
   if (!before) throw new AppError("VARIANT_NOT_FOUND", `Variant ${id} not found`);
   if (before.active === active) return before;
 
-  const variant = await repository.updateVariant(id, { active });
+  const variant = await repository.setVariantActive(id, active);
   if (repository.kind === "demo") {
     void recordAudit({
       action: active ? "product.variant_reactivated" : "product.variant_archived",
@@ -411,14 +417,17 @@ export async function enableVariants(
     );
   }
 
-  // Ledger first (each unit on its own line), then the mode flip. If the flip
-  // fails, the movements describe a distribution that did not happen — which is
-  // why the database does the same two steps inside one transaction, and why
-  // this branch only ever runs in demo mode.
+  // Supabase does this atomically inside the RPC. Demo records one movement
+  // per exact shelf; a retry after an interrupted distribution must SKIP a
+  // shelf whose opening movement already landed, never count it twice.
   if (repository.kind === "demo") {
     for (const variant of variants) {
       const quantity = byId.get(variant.id) ?? 0;
-      if (quantity > 0) {
+      if (variant.stock_quantity > 0 && variant.stock_quantity !== quantity) {
+        throw new AppError("VARIANTS_STOCK_MISMATCH",
+          `Opening stock on ${variant.sku} changed; review Inventory before retrying`, "stock_quantity");
+      }
+      if (quantity > 0 && variant.stock_quantity === 0) {
         await applyVariantMovement({
           productId,
           variantId: variant.id,

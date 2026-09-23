@@ -2,8 +2,8 @@
  * Storefront polish E2E (Phase 49) — the premium editorial storefront, driven
  * through the real bundle in jsdom, demo mode:
  *
- *   · the palette stays the house's own: warm ivory surfaces, espresso ink,
- *     muted antique gold — and the accent token is gold, never orange;
+ *   · the saved theme resolves to clean ivory, white and charcoal surfaces,
+ *     with muted gold details (not the old brown/orange palette);
  *   · the hero carries the admin's imagery path, a gradient fallback in the
  *     shop's own colours when there is no image, a primary CTA and the quieter
  *     "Our story" second CTA;
@@ -105,6 +105,7 @@ async function main() {
 
   await navigate(`#/products/${productId}/edit`);
   await waitFor(() => document.querySelector('[data-testid="variant-editor"]'), { label: "the variant editor" });
+  clickEl(document.querySelector('[data-testid="variant-advanced"] summary'));
   clickEl(document.querySelector('[data-testid="variant-generate"]'));
   await waitFor(() => document.querySelectorAll('[role="dialog"]').length > 0, { label: "the generator dialog" });
   const genDialog = [...document.querySelectorAll('[role="dialog"]')].pop();
@@ -143,17 +144,19 @@ async function main() {
     label: "the storefront",
   });
   const accent = getComputedStyle(document.documentElement).getPropertyValue("--store-accent").trim().toLowerCase();
-  const bg = getComputedStyle(document.documentElement).getPropertyValue("--store-bg").trim().toLowerCase();
+  const bg = getComputedStyle(document.documentElement).getPropertyValue("--store-background").trim().toLowerCase();
+  const surface = getComputedStyle(document.documentElement).getPropertyValue("--store-surface").trim().toLowerCase();
+  const primary = getComputedStyle(document.documentElement).getPropertyValue("--store-primary").trim().toLowerCase();
   check(
-    "the palette reads warm ivory + muted antique gold — the accent token is #b08d57, never orange",
-    accent === "#b08d57" && bg === "#faf7f2",
+    "the palette reads clean ivory, white, charcoal and muted gold from saved settings",
+    accent === "#a48d59" && bg === "#f8f9f6" && surface === "#ffffff" && primary === "#202427",
   );
 
   // ── 2 · the hero: gradient fallback in the shop's own colours ─────────────
   const heroSection = document.querySelector("main section[aria-label]");
   check(
     "the hero falls back to a quiet paper surface from the admin theme (no image, no orange field)",
-    Boolean(heroSection) && (heroSection.getAttribute("style") ?? "").includes("var(--store-bg)"),
+    Boolean(heroSection) && (heroSection.getAttribute("style") ?? "").includes("var(--store-background)"),
   );
 
   // ── 3 · the hero's primary CTA and the quieter "Our story" ────────────────

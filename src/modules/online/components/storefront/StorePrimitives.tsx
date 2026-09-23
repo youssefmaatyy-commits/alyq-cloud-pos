@@ -40,7 +40,7 @@ export function StoreImage({
   const show = src && !failed;
 
   return (
-    <div className={cn("relative overflow-hidden bg-[var(--store-surface-alt)]", ratio, className)} style={style}>
+    <div className={cn("relative overflow-hidden bg-[var(--store-surface-muted)]", ratio, className)} style={style}>
       {show ? (
         <img
           src={src}
@@ -53,7 +53,7 @@ export function StoreImage({
         />
       ) : (
         <div className="flex h-full w-full items-center justify-center" aria-hidden>
-          <svg viewBox="0 0 24 24" className="h-1/4 w-1/4 text-[var(--store-muted)] opacity-40">
+          <svg viewBox="0 0 24 24" className="h-1/4 w-1/4 text-[var(--store-text-secondary)] opacity-40">
             <path
               fill="currentColor"
               d="M4 5h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Zm1 2v8.6l3.6-3.6a1 1 0 0 1 1.4 0L14 16.2l1.6-1.6a1 1 0 0 1 1.4 0l1 1V7H5Zm3 1.8a1.2 1.2 0 1 1 0 2.4 1.2 1.2 0 0 1 0-2.4Z"
@@ -156,12 +156,12 @@ export function QuantityStepper({
         aria-label={t("store.cart.decrease")}
         className={cn(
           pad,
-          "grid place-items-center font-bold text-[var(--store-muted)] transition disabled:opacity-40",
+          "grid place-items-center font-bold text-[var(--store-text-secondary)] transition disabled:opacity-40",
         )}
       >
         −
       </button>
-      <span className="min-w-8 text-center text-sm font-bold tabular-nums text-[var(--store-text)]">
+      <span className="min-w-8 text-center text-sm font-bold tabular-nums text-[var(--store-text-primary)]">
         {value}
       </span>
       <button
@@ -248,7 +248,7 @@ export function SectionShell({
       ) : null}
       <div className="mx-auto w-full max-w-[var(--store-max-width,72rem)] px-4 py-10 sm:px-6">
         <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
-          <h2 style={{ fontFamily: "var(--store-font-display)" }} className="text-2xl font-normal tracking-tight text-[var(--store-text)] sm:text-3xl">
+          <h2 style={{ fontFamily: "var(--store-font-display)" }} className="text-2xl font-normal tracking-tight text-[var(--store-text-primary)] sm:text-3xl">
             {title}
           </h2>
           {action}
@@ -272,7 +272,7 @@ export function FieldNote({
       ? "text-rose-600"
       : tone === "success"
         ? "text-emerald-600"
-        : "text-[var(--store-muted)]";
+        : "text-[var(--store-text-secondary)]";
   return <p className={cn("mt-1 text-xs font-medium", color)}>{children}</p>;
 }
 
@@ -354,7 +354,7 @@ export function FreeDeliveryBar({
         />
       </div>
       {!eligible ? (
-        <p className="mt-1.5 text-[11px] font-medium text-[var(--store-muted)]">
+        <p className="mt-1.5 text-[11px] font-medium text-[var(--store-text-secondary)]">
           {t("store.cart.freeDeliveryAt", { amount: money(threshold) })}
         </p>
       ) : null}
@@ -398,7 +398,7 @@ export function OrderSummary({
   return (
     <dl className={cn("mt-4 space-y-1.5 border-t border-[var(--store-border)] pt-3 text-sm", className)}>
       <div className="flex justify-between gap-2">
-        <dt className="text-[var(--store-muted)]">{t("store.cart.subtotal")}</dt>
+        <dt className="text-[var(--store-text-secondary)]">{t("store.cart.subtotal")}</dt>
         <dd className="font-bold"><Money value={subtotal} /></dd>
       </div>
       {discountAmount > 0 ? (
@@ -409,13 +409,13 @@ export function OrderSummary({
       ) : null}
       {deliveryFee > 0 ? (
         <div className="flex justify-between gap-2">
-          <dt className="text-[var(--store-muted)]">{t("store.cart.deliveryFee")}</dt>
+          <dt className="text-[var(--store-text-secondary)]">{t("store.cart.deliveryFee")}</dt>
           <dd className="font-bold"><Money value={deliveryFee} /></dd>
         </div>
       ) : null}
       <div className="flex justify-between gap-2 border-t border-[var(--store-border)] pt-2 text-base">
-        <dt className="font-black text-[var(--store-text)]">{t("store.cart.total")}</dt>
-        <dd className="font-black text-[var(--store-text)]"><Money value={total} /></dd>
+        <dt className="font-black text-[var(--store-text-primary)]">{t("store.cart.total")}</dt>
+        <dd className="font-black text-[var(--store-text-primary)]"><Money value={total} /></dd>
       </div>
     </dl>
   );

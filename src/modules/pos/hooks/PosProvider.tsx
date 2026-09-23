@@ -29,8 +29,8 @@ import { SALES_ROW_CAP, getSalesRepository, type SalesRepository } from "../data
 import { completeSale as completeSaleGuarded } from "../services/saleService";
 import { isApprovalRequired, type ApprovalRequirement } from "@/modules/approvals";
 import { cartTotals, validateDiscount, type CartTotals as Totals } from "../services/posMath";
+import { addCartLine, changeCartQuantity, discountCartLine, removeCartLine } from "../services/cartOperations";
 import {
-  lineKey,
   type CartDiscount,
   type CartLine,
   type CompleteSaleInput,
@@ -135,6 +135,16 @@ export function PosProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<AppError | null>(null);
   const [lines, setLines] = useState<CartLine[]>([]);
+  // React may defer/replay a state updater. A scanner and a picker must know
+  // *synchronously* whether their exact line was added, even for two scans in
+  // the same event batch. All cart mutations go through this ref; customer is
+  // separate sale state and is never coupled to a cart-line transition.
+  const linesRef = useRef<CartLine[]>([]);
+  const updateLines = useCallback((change: (current: CartLine[]) => CartLine[]) => {
+    const next = change(linesRef.current);
+    linesRef.current = next;
+    setLines(next);
+  }, []);
   const [discount, setDiscountValue] = useState<CartDiscount>(EMPTY_DISCOUNT);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [completing, setCompleting] = useState(false);
@@ -261,26 +271,28 @@ export function PosProvider({ children }: { children: ReactNode }) {
   }, [promotionTargets]);
 
   const addLine = useCallback(
-    (product: Product, variant: ProductVariant | null = null) => {
-      if (!product.active || !product.stock_tracking_enabled) return false;
+    (product: Product, choice: ProductVariant | null = null) => {
+      const current = products.find((entry) => entry.id === product.id);
+      if (!current?.active || !current.stock_tracking_enabled) return false;
 
-      const active = variants.filter((v) => v.product_id === product.id && v.active);
-      // A variant product needs the exact combination named. Falling back to the
-      // product (or to its first variant) would be the silent mistake this whole
-      // feature exists to prevent.
-      if (product.variants_enabled && active.length > 0) {
-        if (!variant) return false;
-        if (!variant.active || variant.product_id !== product.id) return false;
+      // Resolve the ID against the current catalog, not a stale picker object.
+      // An enabled product with zero *active* shelves still cannot be sold as a
+      // plain product (and an archived or forged combination cannot be sold).
+      const variant = choice ? variants.find((entry) => entry.id === choice.id) ?? null : null;
+      if (current.variants_enabled) {
+        if (!variant?.active || variant.product_id !== current.id) return false;
+      } else if (choice) {
+        return false;
       }
 
-      const maxQty = variant ? variant.stock_quantity : product.stock_quantity;
+      const maxQty = variant ? variant.stock_quantity : current.stock_quantity;
       if (maxQty <= 0) return false;
 
-      const officialUnit = variant ? variantPrice(variant, product) : product.selling_price;
+      const officialUnit = variant ? variantPrice(variant, current) : current.selling_price;
       const effective = promotionUnitPrice(
-        product.id,
+        current.id,
         variant?.id ?? null,
-        product.category_id ?? null,
+        current.category_id ?? null,
         officialUnit,
         promotions,
         posPromotionTargets,
@@ -288,39 +300,30 @@ export function PosProvider({ children }: { children: ReactNode }) {
         "pos",
       );
       const line: CartLine = {
-        product_id: product.id,
+        product_id: current.id,
         variant_id: variant?.id ?? null,
         variant_sku: variant?.sku ?? null,
         color_ar: variant?.color_ar ?? null,
         color_en: variant?.color_en ?? null,
         size: variant?.size ?? null,
         size_label: variant?.size_label ?? null,
-        sku: variant?.sku ?? product.sku,
-        name_ar: product.name_ar,
-        name_en: product.name_en,
-        barcode: variant?.barcode ?? product.barcode,
+        sku: variant?.sku ?? current.sku,
+        name_ar: current.name_ar,
+        name_en: current.name_en,
+        barcode: variant?.barcode ?? current.barcode,
         unit_price: effective.unit,
         max_qty: maxQty,
         qty: 1,
-        image_url: variant?.image_url ?? product.image_url,
+        image_url: variant?.image_url ?? current.image_url,
         item_discount: { ...EMPTY_DISCOUNT },
       };
 
-      let added = false;
-      setLines((prev) => {
-        const key = lineKey(line);
-        const existing = prev.find((l) => lineKey(l) === key);
-        if (existing) {
-          if (existing.qty + 1 > existing.max_qty) return prev;
-          added = true;
-          return prev.map((l) => (lineKey(l) === key ? { ...l, qty: l.qty + 1 } : l));
-        }
-        added = true;
-        return [...prev, line];
-      });
-      return added;
+      const result = addCartLine(linesRef.current, line);
+      if (!result.added) return false;
+      updateLines(() => result.lines);
+      return true;
     },
-    [variants, promotions, posPromotionTargets],
+    [products, variants, promotions, posPromotionTargets, updateLines],
   );
 
   /**
@@ -348,35 +351,30 @@ export function PosProvider({ children }: { children: ReactNode }) {
         (p) => p.sku.toUpperCase() === code || (p.barcode ?? "").toUpperCase() === code,
       );
       if (!product) return false;
-      const active = variants.filter((v) => v.product_id === product.id && v.active);
-      if (product.variants_enabled && active.length > 0) return false;
+      if (product.variants_enabled) return false;
       return addLine(product);
     },
     [products, variants, addLine],
   );
 
   const increase = useCallback((key: string) => {
-    setLines((prev) =>
-      prev.map((l) => (lineKey(l) === key && l.qty + 1 <= l.max_qty ? { ...l, qty: l.qty + 1 } : l)),
-    );
-  }, []);
+    updateLines((prev) => changeCartQuantity(prev, key, 1));
+  }, [updateLines]);
 
   const decrease = useCallback((key: string) => {
-    setLines((prev) =>
-      prev.map((l) => (lineKey(l) === key ? { ...l, qty: l.qty - 1 } : l)).filter((l) => l.qty > 0),
-    );
-  }, []);
+    updateLines((prev) => changeCartQuantity(prev, key, -1));
+  }, [updateLines]);
 
   const removeLine = useCallback((key: string) => {
-    setLines((prev) => prev.filter((l) => lineKey(l) !== key));
-  }, []);
+    updateLines((prev) => removeCartLine(prev, key));
+  }, [updateLines]);
 
   const setLineDiscount = useCallback(
     (key: string, next: CartDiscount) => {
       if (!canDiscount || validateDiscount(next.type, next.value)) return;
-      setLines((prev) => prev.map((line) => (lineKey(line) === key ? { ...line, item_discount: next } : line)));
+      updateLines((prev) => discountCartLine(prev, key, next));
     },
-    [canDiscount],
+    [canDiscount, updateLines],
   );
 
   const setDiscount = useCallback(
@@ -389,10 +387,10 @@ export function PosProvider({ children }: { children: ReactNode }) {
   );
 
   const clearCart = useCallback(() => {
-    setLines([]);
+    updateLines(() => []);
     setDiscountValue(EMPTY_DISCOUNT);
-    setSelectedCustomer(null);
-  }, []);
+    // Clearing merchandise is not an explicit request to clear the customer.
+  }, [updateLines]);
 
   const totals = useMemo(() => cartTotals(lines, discount), [lines, discount]);
   const isEmpty = lines.length === 0;
@@ -433,9 +431,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
         const sale = await completeSaleGuarded(input);
         await loadCatalog();
         setCompletedSale(sale);
-        setLines([]);
+        updateLines(() => []);
         setDiscountValue(EMPTY_DISCOUNT);
-        setSelectedCustomer(null);
         void refreshSales();
         return sale;
       } catch (err) {
@@ -452,7 +449,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
         setCompleting(false);
       }
     },
-    [canSell, completing, lines, discount, repository, refreshSales, loadCatalog, selectedCustomer, user],
+    [canSell, completing, lines, discount, refreshSales, loadCatalog, selectedCustomer, user, updateLines],
   );
 
   const dismissCompleted = useCallback(() => setCompletedSale(null), []);

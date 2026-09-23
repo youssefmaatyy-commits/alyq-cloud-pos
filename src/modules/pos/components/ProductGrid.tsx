@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useI18n } from "@/lib/i18n/I18nProvider";
-import { Badge } from "@/components/ui";
+import { Badge, useToast } from "@/components/ui";
 import { normalizeText } from "@/modules/products/services/productQuery";
 import { useCatalog } from "@/modules/products/hooks/CatalogProvider";
 import {
@@ -18,6 +18,7 @@ import { VariantPicker } from "./VariantPicker";
 
 export function ProductGrid() {
   const { t, pick } = useI18n();
+  const toast = useToast();
   const { products, addLine, addBySku, lines, variantsOf } = usePos();
   // Phase 44: the register's filter chips come from the category table, not
   // from the products — so an ARCHIVED category leaves the shelf labels even
@@ -148,7 +149,7 @@ export function ProductGrid() {
           // A variant product is never "out" because the rollup says so — it is
           // out when no active combination has stock left.
           const combinations = variantsOf(product.id);
-          const sellsByVariant = product.variants_enabled && combinations.length > 0;
+          const sellsByVariant = product.variants_enabled;
           const sellable = combinations.filter((v) => v.active && v.stock_quantity > 0);
           const out = sellsByVariant ? sellable.length === 0 : product.stock_quantity <= 0;
           const totalUnits = sellsByVariant
@@ -242,9 +243,7 @@ export function ProductGrid() {
   );
 
   function flashNotFound() {
-    // brief shake + toast handled by parent via window event? Keep simple:
-    // the empty grid already communicates "no match". This no-op keeps the
-    // Enter handler honest.
+    toast.error(t("pos.codeUnavailable"));
   }
 }
 

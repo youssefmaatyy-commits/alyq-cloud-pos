@@ -49,7 +49,7 @@ export function VariantPicker({
       {/* Colour — hidden entirely for a size-only product (one empty group). */}
       {groups.length > 1 || (groups[0]?.color_key ?? "") !== "" ? (
         <div>
-          <p className="mb-1.5 text-[11px] font-black uppercase tracking-wider text-[var(--store-muted)]">
+          <p className="mb-1.5 text-[11px] font-black uppercase tracking-wider text-[var(--store-text-secondary)]">
             {t("store.variants.color")}
           </p>
           <div className="flex flex-wrap gap-2" role="listbox" aria-label={t("store.variants.color")}>
@@ -75,7 +75,7 @@ export function VariantPicker({
                     "min-h-11 flex items-center gap-1.5 border px-3 py-1.5 text-xs font-bold transition",
                     selected
                       ? "border-[var(--store-primary)] text-[var(--store-primary)] ring-1 ring-[var(--store-primary)]"
-                      : "border-[var(--store-border)] text-[var(--store-text)] hover:border-[var(--store-primary)]",
+                      : "border-[var(--store-border)] text-[var(--store-text-primary)] hover:border-[var(--store-primary)]",
                     !anyStock && "opacity-50",
                   )}
                   style={{ borderRadius: "var(--store-radius-button)" }}
@@ -98,7 +98,7 @@ export function VariantPicker({
       {/* Size — the chosen colour's numeric sizes, ascending, none silent. */}
       {chosenGroup ? (
         <div>
-          <p className="mb-1.5 text-[11px] font-black uppercase tracking-wider text-[var(--store-muted)]">
+          <p className="mb-1.5 text-[11px] font-black uppercase tracking-wider text-[var(--store-text-secondary)]">
             {t("store.variants.size")}
           </p>
           <div className="flex flex-wrap gap-2" role="listbox" aria-label={t("store.variants.size")}>
@@ -133,9 +133,9 @@ export function VariantPicker({
                     "min-h-11 min-w-11 border px-3 py-1.5 text-xs font-black tabular-nums transition",
                     selected
                       ? "border-[var(--store-primary)] bg-[var(--store-primary)] text-[var(--store-on-primary)]"
-                      : "border-[var(--store-border)] text-[var(--store-text)] hover:border-[var(--store-primary)]",
+                      : "border-[var(--store-border)] text-[var(--store-text-primary)] hover:border-[var(--store-primary)]",
                     !buyable &&
-                      "cursor-not-allowed text-[var(--store-muted)] line-through decoration-[var(--store-border)] opacity-60",
+                      "cursor-not-allowed text-[var(--store-text-secondary)] line-through decoration-[var(--store-border)] opacity-60",
                   )}
                   style={{ borderRadius: "var(--store-radius-button)" }}
                 >
@@ -146,7 +146,7 @@ export function VariantPicker({
           </div>
         </div>
       ) : (
-        <p className="text-xs font-semibold text-[var(--store-muted)]">
+        <p className="text-xs font-semibold text-[var(--store-text-secondary)]">
           {t("store.variants.pickColorFirst")}
         </p>
       )}

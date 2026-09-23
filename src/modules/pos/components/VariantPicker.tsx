@@ -34,7 +34,7 @@ export interface VariantPickerProps {
 
 export function VariantPicker({ product, variants, onPick, onClose }: VariantPickerProps) {
   const { t, lang } = useI18n();
-  const { addLine } = usePos();
+  const { addLine, lines } = usePos();
   const [colorKey, setColorKey] = useState<string | null>(null);
 
   const active = useMemo(() => variants.filter((v) => v.active), [variants]);
@@ -60,9 +60,12 @@ export function VariantPicker({ product, variants, onPick, onClose }: VariantPic
     () => active.filter((v) => v.color_key === colorKey).sort((a, b) => (a.size ?? 0) - (b.size ?? 0)),
     [active, colorKey],
   );
+  const inCart = (id: string) => lines.find((line) => line.variant_id === id)?.qty ?? 0;
+  const hasColors = active.some((variant) => Boolean(variant.color_key));
+  const colorsOnly = active.length > 0 && active.every((variant) => variant.size === null && !variant.size_label);
 
   const pick = (variant: ProductVariant) => {
-    if (variant.stock_quantity <= 0) return;
+    if (!variant.active || variant.stock_quantity <= inCart(variant.id)) return;
     const added = addLine(product, variant);
     if (added) {
       onPick(variant);
@@ -101,8 +104,8 @@ export function VariantPicker({ product, variants, onPick, onClose }: VariantPic
           </button>
         </div>
 
-        {/* colours */}
-        <div className="mb-3">
+        {/* Size-only products do not ask for an imaginary colour. */}
+        {hasColors && <div className="mb-3">
           <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-stone-500">
             {t("pos.variants.color")}
           </p>
@@ -110,14 +113,15 @@ export function VariantPicker({ product, variants, onPick, onClose }: VariantPic
             {colors.map(({ key, sample }) => {
               const stock = active
                 .filter((v) => v.color_key === key)
-                .reduce((sum, v) => sum + v.stock_quantity, 0);
+                .reduce((sum, v) => sum + Math.max(0, v.stock_quantity - inCart(v.id)), 0);
               const selected = key === colorKey;
               return (
                 <button
                   key={key}
                   type="button"
-                  onClick={() => setColorKey(key)}
-                  className={`flex items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-xs font-semibold transition ${
+                  disabled={colorsOnly && stock === 0}
+                  onClick={() => colorsOnly ? pick(sample) : setColorKey(key)}
+                  className={`flex min-h-10 items-center gap-1.5 rounded-xl border px-2.5 py-1.5 text-xs font-semibold transition ${
                     selected
                       ? "border-indigo-400 bg-[#faf5ec] text-[#8a6a3d]"
                       : "border-stone-200 bg-white text-stone-700 hover:border-[#e5d5b8]"
@@ -136,34 +140,33 @@ export function VariantPicker({ product, variants, onPick, onClose }: VariantPic
               );
             })}
           </div>
-        </div>
+        </div>}
 
-        {/* sizes */}
-        <div>
+        {/* Only offered, active colour/size IDs are buttons; no inferred grid. */}
+        {!colorsOnly && <div>
           <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-stone-500">
             {t("pos.variants.size")}
           </p>
-          <div className="grid grid-cols-4 gap-1.5">
+          <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-4">
             {sizes.map((variant) => {
-              const out = variant.stock_quantity <= 0;
+              const remaining = Math.max(0, variant.stock_quantity - inCart(variant.id));
+              const out = remaining === 0;
               return (
                 <button
                   key={variant.id}
                   type="button"
                   disabled={out}
                   onClick={() => pick(variant)}
-                  className={`flex flex-col items-center rounded-xl border px-2 py-2 text-sm font-bold tabular-nums transition ${
+                  className={`flex min-h-12 flex-col items-center rounded-xl border px-2 py-2 text-sm font-bold tabular-nums transition ${
                     out
                       ? "cursor-not-allowed border-stone-200 bg-stone-50 text-stone-400"
                       : "border-stone-200 bg-white text-stone-900 hover:border-[#d4bf9a] hover:bg-[#faf5ec]"
                   }`}
-                  aria-label={`${variantLabel(variant, lang)} — ${
-                    out ? t("pos.variants.soldOut") : `${variant.stock_quantity}`
-                  }`}
+                  aria-label={`${variantLabel(variant, lang)} — ${remaining}`}
                 >
-                  <span>{sizeLabelOf(variant.size, variant.size_label)}</span>
+                  <span>{sizeLabelOf(variant.size, variant.size_label) || variantLabel(variant, lang)}</span>
                   <span className="mt-0.5 text-[10px] font-semibold text-stone-500">
-                    {out ? t("pos.variants.soldOut") : variant.stock_quantity}
+                    {out ? (variant.stock_quantity === 0 ? t("pos.variants.soldOut") : t("pos.variants.inCart")) : remaining}
                   </span>
                   {variant.price_override !== null ? (
                     <span className="mt-0.5 text-[10px] font-medium text-stone-500 tabular-nums">
@@ -179,7 +182,7 @@ export function VariantPicker({ product, variants, onPick, onClose }: VariantPic
               {t("pos.variants.none")}
             </p>
           ) : null}
-        </div>
+        </div>}
 
         <div className="mt-4 flex justify-end">
           <Button variant="secondary" size="sm" onClick={onClose}>

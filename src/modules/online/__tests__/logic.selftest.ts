@@ -104,12 +104,14 @@ import {
   externalHref,
   internalHref,
   mergeSettings,
+  STORE_PALETTE,
+  invalidSettingsColor,
   readableOn,
   repairSections,
   resolveSettings,
   safeColor,
 } from "../services/settingsDefaults";
-import { buttonRadiusOf, fontStackOf, shade, themeVariables } from "../services/theme";
+import { announcementStyle, buttonRadiusOf, fontStackOf, shade, themeVariables } from "../services/theme";
 import {
   absoluteUrl,
   buildRobotsTxt,
@@ -1601,19 +1603,56 @@ test("every configured storefront link passes the same safe-href policy", () => 
   assert.equal(configuredHref(""), null);
 });
 
-test("the shop does not wear the back office's colours", () => {
-  // The storefront used to default to the POS's indigo and violet so that the two
-  // looked like one product. For a brand shop that is the wrong instinct: it is
-  // exactly what makes a storefront read as an admin screen. These remain
-  // defaults an admin can change — the point is that they start as a shop.
+test("the shop defaults to clean ivory, white and charcoal with a restrained gold", () => {
   const theme = resolveSettings({}).theme;
-  assert.equal(theme.primary_color, "#1c1917", "espresso, not indigo");
-  assert.equal(theme.background_color, "#faf7f2", "warm cream, not cool slate");
-  assert.equal(theme.surface_color, "#fffdfb", "soft white, not pure white");
-  assert.equal(theme.accent_color, "#b08d57", "antique gold for details");
-  assert.equal(theme.muted_text_color, "#78716c", "warm grey, not blue grey");
-  assert.notEqual(theme.primary_color, "#4f46e5", "the POS primary must not be the shop's");
-  assert.ok(theme.corner_radius <= 6, "tight corners; a 16px radius reads as an app");
+  for (const [key, color] of Object.entries(STORE_PALETTE)) {
+    assert.equal(theme[key as keyof typeof STORE_PALETTE], color, `${key} comes from the sole shop palette`);
+  }
+  assert.notEqual(theme.primary_color, "#4f46e5", "POS indigo must not leak into the shop");
+  assert.notEqual(theme.background_color, "#faf7f2", "no old beige page background");
+  assert.ok(theme.corner_radius <= 6, "tight editorial corners, not app tiles");
+});
+
+test("only the exactly untouched persisted legacy palette upgrades; a single edit preserves every chosen value", () => {
+  const legacy = {
+    ...DEFAULT_WEBSITE_SETTINGS,
+    theme: { ...DEFAULT_WEBSITE_SETTINGS.theme, primary_color: "#1c1917", secondary_color: "#44403c",
+      accent_color: "#b08d57", background_color: "#faf7f2", surface_color: "#fffdfb",
+      text_color: "#1c1917", muted_text_color: "#78716c" },
+  };
+  const upgraded = resolveSettings(legacy);
+  assert.equal(upgraded.theme.background_color, STORE_PALETTE.background_color);
+  assert.equal(upgraded.theme.accent_color, STORE_PALETTE.accent_color);
+  assert.equal(legacy.theme.background_color, "#faf7f2", "resolve does not mutate persisted data");
+  assert.equal(announcementStyle(upgraded).backgroundColor, "var(--store-secondary)",
+    "old saved announcement defaults follow the newly derived secondary token");
+
+  const tailored = resolveSettings({ ...legacy, theme: { ...legacy.theme, primary_color: "#0f766e" } });
+  assert.equal(tailored.theme.primary_color, "#0f766e");
+  assert.equal(tailored.theme.background_color, "#faf7f2", "other saved colours are not partially migrated");
+  assert.equal(tailored.theme.accent_color, "#b08d57");
+  assert.equal(resolveSettings({ theme: { primary_color: "#075985" } }).theme.primary_color, "#075985");
+  const customAnn = { ...upgraded, announcement: { ...upgraded.announcement, bg_color: "#303d46", text_color: "#fafafa" } };
+  assert.equal(announcementStyle(customAnn).backgroundColor, "#303d46", "an admin's announcement colour wins");
+});
+
+test("theme tokens derive from saved colours, and invalid entries block the whole settings save", () => {
+  const saved = resolveSettings({ theme: { primary_color: "#0f766e", background_color: "#effdf6",
+    surface_color: "#ffffff", text_color: "#093726", muted_text_color: "#3d6250", accent_color: "#b3955e" } });
+  const vars = themeVariables(saved);
+  assert.equal(vars["--store-primary"], "#0f766e");
+  assert.equal(vars["--store-background"], "#effdf6");
+  assert.equal(vars["--store-surface"], "#ffffff");
+  assert.equal(vars["--store-text-primary"], "#093726");
+  assert.equal(vars["--store-text-secondary"], "#3d6250");
+  assert.equal(vars["--store-accent"], "#b3955e");
+  assert.ok(vars["--store-primary-hover"] !== vars["--store-primary"]);
+  for (const key of ["--store-surface-muted", "--store-border", "--store-accent-muted",
+    "--store-danger", "--store-success", "--store-warning"]) assert.ok(vars[key], key);
+  assert.equal(invalidSettingsColor(saved), null);
+  assert.equal(invalidSettingsColor({ ...saved, theme: { ...saved.theme, primary_color: "terracotta" } }), "primary_color");
+  assert.equal(invalidSettingsColor({ ...saved, announcement: { ...saved.announcement, bg_color: "url(evil)" } }), "announcement.bg_color");
+  assert.equal(saved.theme.primary_color, "#0f766e", "the previously valid document is not mutated");
 });
 
 test("the tokens a premium layout needs exist, and stay namespaced", () => {
@@ -1637,8 +1676,8 @@ test("the tokens a premium layout needs exist, and stay namespaced", () => {
   assert.ok(variables["--store-font-display"].includes("serif"), "headings get a display serif");
   assert.ok(variables["--store-font"].includes("sans-serif"), "body copy stays a sans stack");
   assert.ok(
-    variables["--store-shadow"].includes("28 25 23"),
-    "shadows use the page's warm ink, not pure black",
+    variables["--store-shadow"].includes("32 36 39"),
+    "shadows use the page's neutral charcoal, not old brown",
   );
 });
 

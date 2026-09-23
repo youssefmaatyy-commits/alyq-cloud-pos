@@ -12,7 +12,8 @@ import {
   PRODUCT_TYPE_META,
   STOCK_DEFAULT_BY_TYPE,
 } from "../constants";
-import { PRODUCT_TYPES, marginPct, stockStatus, suggestSku, type ProductType } from "../types";
+import { PRODUCT_TYPES, marginPct, stockStatus, suggestSku, type Product, type ProductType } from "../types";
+import { colorKeyOf, type ProductVariant } from "../variants";
 import {
   EMPTY_PRODUCT_FORM,
   fieldErrorKey,
@@ -32,7 +33,8 @@ import { deriveBarcodeFromSku, isDerivedFromSku } from "../services/barcode";
 import { buildBarcodeLabelHtml } from "../services/barcodeLabel";
 import { StockBadge } from "./ProductTable";
 import { ProductVariantsForm, EMPTY_PRODUCT_VARIANT_FORM, type ProductVariantFormValue } from "./ProductVariantsForm";
-import { enableVariants, saveVariant } from "../services/variantService";
+import { validateVariantDraft, variantDraftTotal } from "../services/variantDraft";
+import { enableVariants, listVariants, saveVariant } from "../services/variantService";
 
 export function ProductForm({ productId }: { productId?: string }) {
   const { t, pick, money, num, isRTL } = useI18n();
@@ -60,10 +62,16 @@ export function ProductForm({ productId }: { productId?: string }) {
   const [printCopies, setPrintCopies] = useState("1");
   const [labelOptions, setLabelOptions] = useState({ name: true, color: true, size: true, sku: true, price: true, number: true });
 
-  // Variant setup is part of the initial product draft. The saved-product
-  // VariantEditor remains the editor for later changes; this state is the
-  // single pre-save source of truth for the Add Product workflow.
+  // Variant setup is part of the initial product draft. The edit page reuses
+  // these same controls, with saved stock guarded by the inventory ledger.
   const [variantConfig, setVariantConfig] = useState<ProductVariantFormValue>(EMPTY_PRODUCT_VARIANT_FORM);
+  // Create + combinations + opening stock spans several requests. Once a
+  // product exists, a retry must RESUME it, not try to create the same SKU
+  // again. The map also survives a response lost after a variant insert.
+  const variantBootstrap = useRef<{
+    product: Product; productDraft: string; ids: Map<string, string>;
+  } | null>(null);
+  const [bootstrapPending, setBootstrapPending] = useState(false);
   /**
    * `auto` keeps the barcode mirrored from the SKU; `manual` means the admin
    * entered a manufacturer barcode which must survive later SKU edits.
@@ -85,9 +93,12 @@ export function ProductForm({ productId }: { productId?: string }) {
     );
   }
 
+  // Revalidate against the just-created product ID after a partial save. Its
+  // own SKU is not a duplicate when the employee retries the remaining rows.
+  const activeId = productId ?? (bootstrapPending ? variantBootstrap.current?.product.id : undefined);
   const draft = useMemo(
-    () => validateProductDraft(values, { products, categories, currentId: productId }),
-    [values, products, categories, productId],
+    () => validateProductDraft(values, { products, categories, currentId: activeId }),
+    [values, products, categories, activeId],
   );
   const errors: FieldErrors = draft.errors;
 
@@ -200,18 +211,17 @@ export function ProductForm({ productId }: { productId?: string }) {
   const profit = selling - cost;
   const margin = marginPct(selling, cost);
 
+  const isEdit = Boolean(productId);
+  const variantTotal = variantDraftTotal(variantConfig.rows);
+  const hasNewVariants = !isEdit && variantConfig.mode !== "none";
+  const variantStockIsDerived = hasNewVariants || Boolean(existing?.variants_enabled);
+  const shownStock = hasNewVariants ? variantTotal : Number(values.stock_quantity.replace(/,/g, ".")) || 0;
   const liveStatus = stockStatus({
     stock_tracking_enabled: values.stock_tracking_enabled,
-    stock_quantity: Number(values.stock_quantity.replace(/,/g, ".")) || 0,
+    stock_quantity: shownStock,
     low_stock_level: Number(values.low_stock_level.replace(/,/g, ".")) || 0,
   });
-
-  const isEdit = Boolean(productId);
-  const variantTotal = useMemo(
-    () => variantConfig.rows.reduce((sum, row) => sum + Math.max(0, Math.trunc(Number(row.stock_quantity) || 0)), 0),
-    [variantConfig.rows],
-  );
-  const hasNewVariants = !isEdit && variantConfig.mode !== "none";
+  const variantError = hasNewVariants ? validateVariantDraft(variantConfig, values.sku, values.barcode) : null;
   const dirty = useMemo(() => {
     const baseline = existing ? productToForm(existing) : EMPTY_PRODUCT_FORM;
     return JSON.stringify(baseline) !== JSON.stringify(values);
@@ -230,55 +240,93 @@ export function ProductForm({ productId }: { productId?: string }) {
   const changeVariantConfig = (next: ProductVariantFormValue) => {
     setVariantConfig(next);
     if (next.mode !== "none") {
-      const total = next.rows.reduce((sum, row) => sum + Math.max(0, Math.trunc(Number(row.stock_quantity) || 0)), 0);
-      setValues((previous) => ({ ...previous, stock_quantity: String(total) }));
+      setValues((previous) => ({
+        ...previous, stock_quantity: String(variantDraftTotal(next.rows)), stock_tracking_enabled: true,
+      }));
     }
   };
 
   const saveDraftAndVariants = async () => {
-    if (hasNewVariants && variantConfig.rows.length === 0) {
-      throw new Error(t("products.variants.nothingToGenerate"));
+    if (variantError) {
+      throw new Error(t(`products.simple.${variantError}` as never));
     }
     const productValues = hasNewVariants
       ? { ...values, stock_quantity: String(variantTotal), stock_tracking_enabled: true }
       : values;
-    const result = await saveProduct(productValues, productId);
-    if (!hasNewVariants || !result.isNew) return result;
-
-    const created = [] as Awaited<ReturnType<typeof saveVariant>>["variant"][];
-    for (const row of variantConfig.rows) {
-      const saved = await saveVariant({
-        product: result.product,
-        siblings: created,
-        values: {
-          sku: row.sku,
-          barcode: row.barcode.trim() || null,
-          color_key: undefined,
-          color_ar: row.color_ar.trim() || null,
-          color_en: row.color_en.trim() || null,
-          color_hex: row.color_hex.trim() || null,
-          size: row.size.trim() ? Number(row.size.replace(",", ".")) : null,
-          size_label: row.size.trim() ? null : row.size_label.trim() || null,
-          image_url: row.image_url.trim() || null,
-          price_override: row.price_override.trim() ? Number(row.price_override) : null,
-          cost_override:
-            canAct("change_cost") && row.cost_override.trim() ? Number(row.cost_override) : null,
-          stock_quantity: 0,
-          low_stock_level: Math.max(0, Math.trunc(Number(row.low_stock_level) || 0)),
-          active: row.active,
-          sort_order: created.length + 1,
-        },
-      });
-      created.push(saved.variant);
+    if (hasNewVariants && (!canAct("edit_product") ||
+        (variantTotal > 0 && !canAct("adjust_stock")))) {
+      throw new Error(t("products.simple.enableRights"));
     }
+    const bootstrap = variantBootstrap.current;
+    if (bootstrap && (!hasNewVariants || JSON.stringify(productValues) !== bootstrap.productDraft)) {
+      throw new Error(t("products.simple.retryLocked"));
+    }
+    const result = bootstrap
+      ? { product: bootstrap.product, isNew: true }
+      : await saveProduct(productValues, productId);
+    if (!hasNewVariants || !result.isNew) return result;
+    if (!variantBootstrap.current) {
+      variantBootstrap.current = {
+        product: result.product, productDraft: JSON.stringify(productValues), ids: new Map(),
+      };
+      setBootstrapPending(true);
+    }
+    const resume = variantBootstrap.current;
+    // Re-read each time. A response may have timed out AFTER an insert landed;
+    // the exact colour+size (or the ID from an earlier successful response)
+    // identifies that shelf without ever creating a duplicate on retry.
+    const created: ProductVariant[] = (await listVariants()).filter((variant) => variant.product_id === result.product.id);
+    const ordered: ProductVariant[] = [];
+    for (const row of variantConfig.rows) {
+      const size = row.size.trim() ? Number(row.size.replace(",", ".")) : null;
+      const label = size === null ? row.size_label.trim() : "";
+      const colorKey = row.color_key || colorKeyOf(row);
+      const previous = created.find((variant) => variant.id === resume.ids.get(row.id)) ?? created.find(
+        (variant) => variant.color_key === colorKey && variant.size === size &&
+          (size !== null || (variant.size_label ?? "") === label),
+      );
+      const rowValues = {
+        sku: row.sku, barcode: row.barcode.trim() || null,
+        color_key: previous?.color_key ?? colorKey,
+        color_ar: row.color_ar.trim() || null,
+        color_en: row.color_en.trim() || null,
+        color_hex: row.color_hex.trim() || null,
+        size, size_label: label || null,
+        image_url: row.image_url.trim() || variantConfig.colors.find((color) => color.id === row.color_id)?.image_url || null,
+        price_override: row.price_override.trim() ? Number(row.price_override) : null,
+        cost_override: canAct("change_cost") && row.cost_override.trim() ? Number(row.cost_override) : null,
+        stock_quantity: 0, low_stock_level: Number(row.low_stock_level),
+        active: row.active, sort_order: previous?.sort_order ?? created.length + 1,
+      };
+      // A previously saved row may have a corrected barcode on retry. The
+      // service strips stock from updates, so this still cannot move its shelf.
+      const needsEdit = previous && (
+        previous.sku !== rowValues.sku || previous.barcode !== rowValues.barcode ||
+        previous.color_ar !== rowValues.color_ar || previous.color_en !== rowValues.color_en ||
+        previous.color_hex !== rowValues.color_hex || previous.image_url !== rowValues.image_url ||
+        previous.price_override !== rowValues.price_override || previous.cost_override !== rowValues.cost_override ||
+        previous.low_stock_level !== rowValues.low_stock_level || previous.active !== rowValues.active
+      );
+      const variant = previous && !needsEdit ? previous : (await saveVariant({
+        product: result.product, siblings: created, currentId: previous?.id, values: rowValues,
+      })).variant;
+      if (!previous) created.push(variant);
+      resume.ids.set(row.id, variant.id);
+      ordered.push(variant);
+    }
+    // enableVariants atomically allocates the already-existing product total
+    // across these exact IDs. In demo mode its movement ledger is retry-safe;
+    // in Supabase the RPC is a single database transaction.
     await enableVariants(
       result.product.id,
-      created.map((variant, index) => ({
+      ordered.map((variant, index) => ({
         variantId: variant.id,
-        quantity: Math.max(0, Math.trunc(Number(variantConfig.rows[index].stock_quantity) || 0)),
+        quantity: Number(variantConfig.rows[index].stock_quantity),
       })),
     );
     await refresh();
+    variantBootstrap.current = null;
+    setBootstrapPending(false);
     return result;
   };
 
@@ -292,6 +340,11 @@ export function ProductForm({ productId }: { productId?: string }) {
       toast.error(t("validation.fixErrors"));
       const first = Object.keys(errors)[0];
       document.querySelector<HTMLElement>(`[name="${first}"]`)?.focus();
+      return;
+    }
+    if (variantError) {
+      toast.error(t(`products.simple.${variantError}` as never));
+      document.querySelector<HTMLElement>('[data-testid="product-variants-form"]')?.scrollIntoView?.({ block: "center" });
       return;
     }
     setSaving(true);
@@ -309,7 +362,9 @@ export function ProductForm({ productId }: { productId?: string }) {
         return;
       }
       const described = describeError(error);
-      toast.error(t(described.key as never));
+      toast.error(error instanceof Error && [t("products.simple.enableRights"), t("products.simple.retryLocked")].includes(error.message)
+        ? error.message
+        : variantBootstrap.current ? `${t(described.key as never)} · ${t("products.simple.retryShort")}` : t(described.key as never));
       if (described.field) {
         setTouched((prev) => ({ ...prev, [described.field as string]: true }));
       }
@@ -327,6 +382,11 @@ export function ProductForm({ productId }: { productId?: string }) {
       document.querySelector<HTMLElement>(`[name="${first}"]`)?.focus();
       return;
     }
+    if (variantError) {
+      toast.error(t(`products.simple.${variantError}` as never));
+      document.querySelector<HTMLElement>('[data-testid="product-variants-form"]')?.scrollIntoView?.({ block: "center" });
+      return;
+    }
     setSaving(true);
     try {
       const { isNew } = await saveDraftAndVariants();
@@ -341,7 +401,9 @@ export function ProductForm({ productId }: { productId?: string }) {
         return;
       }
       const described = describeError(error);
-      toast.error(t(described.key as never));
+      toast.error(error instanceof Error && [t("products.simple.enableRights"), t("products.simple.retryLocked")].includes(error.message)
+        ? error.message
+        : variantBootstrap.current ? `${t(described.key as never)} · ${t("products.simple.retryShort")}` : t(described.key as never));
       if (described.field) {
         setTouched((prev) => ({ ...prev, [described.field as string]: true }));
       }
@@ -618,7 +680,10 @@ export function ProductForm({ productId }: { productId?: string }) {
               productSku={values.sku}
               productSellingPrice={values.selling_price}
               productCostPrice={values.cost_price}
+              productBarcode={values.barcode}
               onChange={changeVariantConfig}
+              structureLocked={bootstrapPending}
+              stockEditable={!bootstrapPending}
             />
           ) : null}
 
@@ -688,26 +753,28 @@ export function ProductForm({ productId }: { productId?: string }) {
 
             {values.stock_tracking_enabled ? (
               <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                <Field
-                  label={t("products.stockQuantity")}
-                  required
-                  hint={t("products.stockQuantityHint")}
-                  error={showError("stock_quantity") ? t(fieldErrorKey(showError("stock_quantity")!) as never) : undefined}
-                  htmlFor="stock_quantity"
-                >
-                  <TextInput
-                    id="stock_quantity"
-                    name="stock_quantity"
-                    dir="ltr"
-                    inputMode="numeric"
-                    readOnly={hasNewVariants}
-                    value={hasNewVariants ? String(variantTotal) : values.stock_quantity}
-                    invalid={Boolean(showError("stock_quantity"))}
-                    onBlur={handleBlur("stock_quantity")}
-                    onChange={(e) => set("stock_quantity", e.target.value)}
-                    placeholder="0"
-                  />
-                </Field>
+                {variantStockIsDerived ? (
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2" data-testid="derived-product-stock">
+                    <p className="text-xs font-bold text-slate-700">{t("products.stockQuantity")}</p>
+                    <p className="mt-1 text-xl font-black tabular-nums text-slate-900">{num(shownStock, 0)}</p>
+                    <p className="text-xs text-slate-600">{t("products.simple.productStockDerived")}</p>
+                  </div>
+                ) : (
+                  <Field
+                    label={t("products.stockQuantity")}
+                    required
+                    hint={t("products.stockQuantityHint")}
+                    error={showError("stock_quantity") ? t(fieldErrorKey(showError("stock_quantity")!) as never) : undefined}
+                    htmlFor="stock_quantity"
+                  >
+                    <TextInput
+                      id="stock_quantity" name="stock_quantity" dir="ltr" inputMode="numeric"
+                      value={values.stock_quantity} invalid={Boolean(showError("stock_quantity"))}
+                      onBlur={handleBlur("stock_quantity")}
+                      onChange={(e) => set("stock_quantity", e.target.value)} placeholder="0"
+                    />
+                  </Field>
+                )}
                 <Field
                   label={t("products.lowStockLevel")}
                   required
@@ -741,7 +808,7 @@ export function ProductForm({ productId }: { productId?: string }) {
               ) : null}
               <StatTile
                 label={t("common.stock")}
-                value={values.stock_tracking_enabled ? num(Number(values.stock_quantity.replace(/,/g, ".")) || 0, 0) : "—"}
+                value={values.stock_tracking_enabled ? num(shownStock, 0) : "—"}
                 badge={values.stock_tracking_enabled ? <StockBadge status={liveStatus} /> : undefined}
                 tone={liveStatus === "out" ? "danger" : liveStatus === "low" ? "warning" : "neutral"}
               />
@@ -802,6 +869,7 @@ export function ProductForm({ productId }: { productId?: string }) {
                 label={t("products.stockTracking")}
                 hint={t("products.stockTrackingHint")}
                 checked={values.stock_tracking_enabled}
+                disabled={variantStockIsDerived}
                 onChange={(checked) => set("stock_tracking_enabled", checked)}
               />
 
@@ -842,7 +910,7 @@ export function ProductForm({ productId }: { productId?: string }) {
       {/* Sticky action bar */}
       <div className="alyq-actionbar sticky bottom-0 z-20 -mx-3 flex flex-col-reverse items-stretch gap-2 px-3 py-3 sm:-mx-6 sm:flex-row sm:items-center sm:justify-between sm:px-6">
         <p className="text-xs font-semibold text-slate-600 sm:text-sm">
-          {dirty ? t("common.unsavedTitle") : isEdit ? t("common.updated") : t("common.readOnly")}
+          {bootstrapPending ? t("products.simple.retryShort") : dirty ? t("common.unsavedTitle") : isEdit ? t("common.updated") : t("common.readOnly")}
         </p>
         <div className="flex items-center gap-2 max-sm:w-full [&>button]:max-sm:flex-1">
           <Button variant="secondary" type="button" onClick={goBack} disabled={saving}>

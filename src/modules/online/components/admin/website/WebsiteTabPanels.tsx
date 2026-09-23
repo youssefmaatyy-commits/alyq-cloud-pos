@@ -204,7 +204,7 @@ export function HeaderPanel({ draft, patch }: { draft: WebsiteSettings; patch: P
             <TextInput
               dir="ltr"
               value={announcement.bg_color ?? ""}
-              placeholder="#1c1917"
+              placeholder="#34393b"
               onChange={(event) =>
                 patch((c) => ({ ...c, announcement: { ...c.announcement, bg_color: event.target.value } }))
               }
@@ -214,7 +214,7 @@ export function HeaderPanel({ draft, patch }: { draft: WebsiteSettings; patch: P
             <TextInput
               dir="ltr"
               value={announcement.text_color ?? ""}
-              placeholder="#faf7f2"
+              placeholder="#f8f9f6"
               onChange={(event) =>
                 patch((c) => ({ ...c, announcement: { ...c.announcement, text_color: event.target.value } }))
               }

@@ -20,7 +20,7 @@
  */
 import type { CSSProperties } from "react";
 import type { ButtonStyle, StoreFontKey, WebsiteSettings } from "../types";
-import { readableOn, safeColor } from "./settingsDefaults";
+import { readableOn, safeColor, STORE_PALETTE } from "./settingsDefaults";
 
 /**
  * The display face, for headings only.
@@ -39,14 +39,14 @@ const DISPLAY_FONT_STACK =
   '"Source Serif 4", "Iowan Old Style", "Palatino Linotype", Georgia, "Times New Roman", "Amiri", "Noto Naskh Arabic", serif';
 
 /**
- * Shadows, in the page's own warm ink rather than pure black.
+ * Shadows, in the page's neutral ink rather than pure black.
  *
  * Restraint is the point: these exist to lift a card off the cream, not to
  * decorate it. A heavy drop shadow is the fastest way to make a shop look like a
  * marketplace.
  */
-const SHADOW_SOFT = "0 1px 2px rgb(28 25 23 / 0.04), 0 10px 28px -16px rgb(28 25 23 / 0.16)";
-const SHADOW_LIFT = "0 2px 6px rgb(28 25 23 / 0.05), 0 22px 44px -22px rgb(28 25 23 / 0.26)";
+const SHADOW_SOFT = "0 1px 2px rgb(32 36 39 / 0.04), 0 10px 28px -16px rgb(32 36 39 / 0.16)";
+const SHADOW_LIFT = "0 2px 6px rgb(32 36 39 / 0.05), 0 22px 44px -22px rgb(32 36 39 / 0.22)";
 
 const FONT_STACKS: Record<StoreFontKey, string> = {
   // Nothing to download: the fastest possible first paint.
@@ -97,7 +97,7 @@ export function hexToRgb(hex: string): { r: number; g: number; b: number } | nul
  * Used for hover and pressed states, so an admin never has to pick three shades
  * of the same colour to get one coherent button.
  */
-export function shade(hex: string, amount: number, fallback = "#4338ca"): string {
+export function shade(hex: string, amount: number, fallback: string = STORE_PALETTE.primary_color): string {
   const safe = safeColor(hex, fallback);
   const rgb = hexToRgb(safe);
   if (!rgb) return safe;
@@ -110,64 +110,65 @@ export function shade(hex: string, amount: number, fallback = "#4338ca"): string
   return `#${toHex(mix(rgb.r))}${toHex(mix(rgb.g))}${toHex(mix(rgb.b))}`;
 }
 
-/** Dark surfaces for a storefront the admin switched to dark mode. */
+/** Dark-mode fallbacks are charcoal, never the old espresso/brown scheme. */
 const DARK_FALLBACKS = {
-  // Warm, to match the light palette: an espresso dark rather than a blue one,
-  // so switching modes changes the light and not the brand.
-  background: "#14100e",
-  surface: "#1e1917",
-  text: "#f7f3ee",
-  muted: "#a8a29e",
+  background: "#121718", surface: "#202628", text: "#f7f8f5", muted: "#b5bdbc",
 } as const;
 
-/** The whole token set the storefront reads, as CSS custom properties. */
+/** The ONLY brand-to-semantic mapping. All storefront pages read these tokens. */
 export function themeVariables(settings: WebsiteSettings): Record<string, string> {
   const theme = settings.theme;
-  const primary = safeColor(theme.primary_color, "#4338ca");
-  const secondary = safeColor(theme.secondary_color, "#0f172a");
-  const accent = safeColor(theme.accent_color, "#b08d57");
+  const primary = safeColor(theme.primary_color, STORE_PALETTE.primary_color);
+  const secondary = safeColor(theme.secondary_color, STORE_PALETTE.secondary_color);
+  const accent = safeColor(theme.accent_color, STORE_PALETTE.accent_color);
   const dark = theme.dark_mode;
-
-  const background = safeColor(
-    theme.background_color,
-    dark ? DARK_FALLBACKS.background : "#faf7f2",
-  );
-  const surface = safeColor(theme.surface_color, dark ? DARK_FALLBACKS.surface : "#fffdfb");
-  const text = safeColor(theme.text_color, dark ? DARK_FALLBACKS.text : "#1c1917");
-  const muted = safeColor(theme.muted_text_color, dark ? DARK_FALLBACKS.muted : "#78716c");
-
+  const background = safeColor(theme.background_color,
+    dark ? DARK_FALLBACKS.background : STORE_PALETTE.background_color);
+  const surface = safeColor(theme.surface_color,
+    dark ? DARK_FALLBACKS.surface : STORE_PALETTE.surface_color);
+  const text = safeColor(theme.text_color,
+    dark ? DARK_FALLBACKS.text : STORE_PALETTE.text_color);
+  const muted = safeColor(theme.muted_text_color,
+    dark ? DARK_FALLBACKS.muted : STORE_PALETTE.muted_text_color);
+  const surfaceMuted = dark ? shade(surface, 0.08, surface) : shade(surface, -0.035, surface);
+  const border = dark ? shade(surface, 0.17, surface) : shade(surface, -0.11, surface);
+  const rgb = hexToRgb(accent) ?? { r: 164, g: 141, b: 89 };
+  const hairlineGold = `rgb(${rgb.r} ${rgb.g} ${rgb.b} / 0.34)`;
   return {
+    "--store-background": background,
+    "--store-surface": surface,
+    "--store-surface-muted": surfaceMuted,
+    "--store-text-primary": text,
+    "--store-text-secondary": muted,
+    "--store-border": border,
     "--store-primary": primary,
     "--store-primary-hover": shade(primary, -0.12, primary),
     "--store-primary-active": shade(primary, -0.24, primary),
-    // A tint of the primary for chips, soft buttons and the free-delivery bar.
-    "--store-primary-soft": dark ? shade(primary, -0.62, primary) : shade(primary, 0.88, "#f5efe6"),
+    "--store-primary-soft": dark ? shade(primary, -0.62, primary) : shade(primary, 0.90, primary),
     "--store-on-primary": readableOn(primary),
     "--store-secondary": secondary,
     "--store-on-secondary": readableOn(secondary),
     "--store-accent": accent,
+    "--store-accent-muted": dark ? shade(accent, -0.67, accent) : shade(accent, 0.88, accent),
+    "--store-accent-ink": shade(accent, -0.27, accent),
     "--store-on-accent": readableOn(accent),
+    "--store-danger": dark ? "#f0a1a9" : "#a93647",
+    "--store-success": dark ? "#93d4b8" : "#226b53",
+    "--store-warning": dark ? "#eed095" : "#8b611c",
+    // Compatibility aliases for older published markup; the values still come
+    // from the same settings document (not a second palette or CSS fallback).
     "--store-bg": background,
-    "--store-surface": surface,
-    // One step between surface and background, for nested cards and table rows.
-    "--store-surface-alt": dark ? shade(surface, 0.06, surface) : shade(surface, -0.04, surface),
-    "--store-border": dark ? shade(surface, 0.16, surface) : shade(surface, -0.12, surface),
+    "--store-surface-alt": surfaceMuted,
     "--store-text": text,
     "--store-muted": muted,
     "--store-radius": `${Math.max(0, theme.corner_radius)}px`,
     "--store-radius-button": `${buttonRadiusOf(theme.button_style, theme.corner_radius)}px`,
     "--store-font": fontStackOf(theme.font_stack),
-    // Headings only. See DISPLAY_FONT_STACK for why body copy is left alone.
     "--store-font-display": DISPLAY_FONT_STACK,
     "--store-shadow": SHADOW_SOFT,
     "--store-shadow-lift": SHADOW_LIFT,
-    // A hairline in the page's own ink, for dividers that should not read as
-    // borders — the gold rule under a section title, the line above a footer.
-    "--store-hairline": "rgb(28 25 23 / 0.10)",
-    "--store-hairline-gold": "rgb(176 141 87 / 0.38)",
-    // Generous section rhythm. Whitespace is what separates a brand from a
-    // catalogue, so the spacing is a token rather than something each section
-    // invents for itself.
+    "--store-hairline": `rgb(${(hexToRgb(text) ?? rgb).r} ${(hexToRgb(text) ?? rgb).g} ${(hexToRgb(text) ?? rgb).b} / 0.12)`,
+    "--store-hairline-gold": hairlineGold,
     "--store-space-section": "clamp(3.5rem, 8vw, 6.5rem)",
     "--store-max-width": "76rem",
   };
@@ -181,13 +182,27 @@ export function themeStyle(settings: WebsiteSettings): CSSProperties {
   return themeVariables(settings) as unknown as CSSProperties;
 }
 
+/** Legacy announcement defaults were stored as literal espresso/cream, which
+ * outlived theme changes. Only configured custom announcement colours stay
+ * independent; the unchanged defaults follow the secondary semantic tokens. */
+export function announcementStyle(settings: WebsiteSettings): CSSProperties {
+  const bg = safeColor(settings.announcement.bg_color, STORE_PALETTE.secondary_color);
+  const fg = safeColor(settings.announcement.text_color, STORE_PALETTE.background_color);
+  return {
+    backgroundColor: ["#1c1917", STORE_PALETTE.secondary_color].includes(bg.toLowerCase())
+      ? "var(--store-secondary)" : bg,
+    color: ["#faf7f2", STORE_PALETTE.background_color].includes(fg.toLowerCase())
+      ? "var(--store-on-secondary)" : fg,
+  };
+}
+
 /** The storefront's base surface: page background, text colour and font. */
 export function storefrontSurfaceStyle(settings: WebsiteSettings): CSSProperties {
-  const variables = themeVariables(settings);
+  void settings;
   return {
-    backgroundColor: variables["--store-bg"],
-    color: variables["--store-text"],
-    fontFamily: variables["--store-font"],
+    backgroundColor: "var(--store-background)",
+    color: "var(--store-text-primary)",
+    fontFamily: "var(--store-font)",
     minHeight: "100vh",
   };
 }
@@ -200,35 +215,35 @@ export function storefrontSurfaceStyle(settings: WebsiteSettings): CSSProperties
  * what "button styles" in a builder is supposed to buy the admin.
  */
 export function primaryButtonStyle(settings: WebsiteSettings): CSSProperties {
-  const vars = themeVariables(settings);
+  void settings;
   return {
-    backgroundColor: vars["--store-primary"],
-    color: vars["--store-on-primary"],
-    borderRadius: vars["--store-radius-button"],
+    backgroundColor: "var(--store-primary)",
+    color: "var(--store-on-primary)",
+    borderRadius: "var(--store-radius-button)",
     fontWeight: 600,
   };
 }
 
 /** The quieter button: same shape, no fill. Used for "keep browsing" and filters. */
 export function secondaryButtonStyle(settings: WebsiteSettings): CSSProperties {
-  const vars = themeVariables(settings);
+  void settings;
   return {
     backgroundColor: "transparent",
-    color: vars["--store-primary"],
-    border: `1px solid ${vars["--store-border"]}`,
-    borderRadius: vars["--store-radius-button"],
+    color: "var(--store-primary)",
+    border: "1px solid var(--store-border)",
+    borderRadius: "var(--store-radius-button)",
     fontWeight: 600,
   };
 }
 
 /** Card surface: what every product tile, panel and drawer sits on. */
 export function cardStyle(settings: WebsiteSettings): CSSProperties {
-  const vars = themeVariables(settings);
+  void settings;
   return {
-    backgroundColor: vars["--store-surface"],
-    color: vars["--store-text"],
-    border: `1px solid ${vars["--store-border"]}`,
-    borderRadius: vars["--store-radius"],
+    backgroundColor: "var(--store-surface)",
+    color: "var(--store-text-primary)",
+    border: "1px solid var(--store-border)",
+    borderRadius: "var(--store-radius)",
   };
 }
 

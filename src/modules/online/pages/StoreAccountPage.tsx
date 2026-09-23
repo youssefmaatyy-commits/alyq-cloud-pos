@@ -129,7 +129,7 @@ export function StoreAccountPage() {
   }, [catalogContext, contentByProduct, contents, products, signedIn, wishlist]);
 
   const inputClass =
-    "w-full rounded-lg border border-[var(--store-border)] bg-[var(--store-surface)] px-3 py-2 text-sm text-[var(--store-text)] outline-none transition focus:border-[var(--store-primary)]";
+    "w-full rounded-lg border border-[var(--store-border)] bg-[var(--store-surface)] px-3 py-2 text-sm text-[var(--store-text-primary)] outline-none transition focus:border-[var(--store-primary)]";
 
   const errorText = error ? t(`store.error.${error}` as never) : null;
 
@@ -141,7 +141,7 @@ export function StoreAccountPage() {
 
   if (loading) {
     return (
-      <div className="mx-auto w-full max-w-2xl px-4 py-20 text-center text-sm font-semibold text-[var(--store-muted)]">
+      <div className="mx-auto w-full max-w-2xl px-4 py-20 text-center text-sm font-semibold text-[var(--store-text-secondary)]">
         {t("common.loading")}
       </div>
     );
@@ -150,14 +150,14 @@ export function StoreAccountPage() {
   return (
     <div className="mx-auto w-full max-w-[var(--store-max-width,72rem)] px-4 py-6 sm:px-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-black tracking-tight text-[var(--store-text)]">
+        <h1 className="text-2xl font-black tracking-tight text-[var(--store-text-primary)]">
           {signedIn ? t("store.account.hello", { name: customer?.name ?? "" }) : t("store.account.title")}
         </h1>
         {signedIn ? (
           <button
             type="button"
             onClick={() => void logout()}
-            className="border border-[var(--store-border)] px-4 py-2 text-xs font-black text-[var(--store-muted)] transition hover:text-rose-600"
+            className="border border-[var(--store-border)] px-4 py-2 text-xs font-black text-[var(--store-text-secondary)] transition hover:text-rose-600"
             style={{ borderRadius: "var(--store-radius-button)" }}
           >
             {t("store.account.signOut")}
@@ -180,7 +180,7 @@ export function StoreAccountPage() {
 
       {!signedIn ? (
         <div className="mx-auto mt-6 max-w-md">
-          <div className="flex gap-1 rounded-xl bg-[var(--store-surface-alt)] p-1">
+          <div className="flex gap-1 rounded-xl bg-[var(--store-surface-muted)] p-1">
             {(["login", "register"] as SignedOutTab[]).map((tab) => (
               <button
                 key={tab}
@@ -190,7 +190,7 @@ export function StoreAccountPage() {
                   "flex-1 rounded-lg px-3 py-2 text-sm font-black transition",
                   outTab === tab
                     ? "bg-[var(--store-surface)] text-[var(--store-primary)] shadow-sm"
-                    : "text-[var(--store-muted)]",
+                    : "text-[var(--store-text-secondary)]",
                 )}
               >
                 {tab === "login" ? t("store.account.signIn") : t("store.account.register")}
@@ -208,7 +208,7 @@ export function StoreAccountPage() {
                 }}
               >
                 <label className="block">
-                  <span className="mb-1 block text-xs font-bold text-[var(--store-text)]">
+                  <span className="mb-1 block text-xs font-bold text-[var(--store-text-primary)]">
                     {t("store.account.identifier")}
                   </span>
                   <input
@@ -220,7 +220,7 @@ export function StoreAccountPage() {
                   />
                 </label>
                 <label className="block">
-                  <span className="mb-1 block text-xs font-bold text-[var(--store-text)]">
+                  <span className="mb-1 block text-xs font-bold text-[var(--store-text-primary)]">
                     {t("store.account.password")}
                   </span>
                   <input
@@ -239,7 +239,7 @@ export function StoreAccountPage() {
                 >
                   {busy ? t("common.loading") : t("store.account.signIn")}
                 </button>
-                <p className="text-[11px] leading-relaxed text-[var(--store-muted)]">
+                <p className="text-[11px] leading-relaxed text-[var(--store-text-secondary)]">
                   {t("store.account.guestCheckoutNote")}{" "}
                   <Link to="/store/track" className="font-bold text-[var(--store-primary)] hover:underline">
                     {t("store.track.title")}
@@ -260,13 +260,13 @@ export function StoreAccountPage() {
                 }}
               >
                 <label className="block">
-                  <span className="mb-1 block text-xs font-bold text-[var(--store-text)]">
+                  <span className="mb-1 block text-xs font-bold text-[var(--store-text-primary)]">
                     {t("store.checkout.fullName")}
                   </span>
                   <input value={regName} onChange={(event) => setRegName(event.target.value)} className={inputClass} autoComplete="name" />
                 </label>
                 <label className="block">
-                  <span className="mb-1 block text-xs font-bold text-[var(--store-text)]">
+                  <span className="mb-1 block text-xs font-bold text-[var(--store-text-primary)]">
                     {t("store.checkout.phone")}
                   </span>
                   <input
@@ -279,13 +279,13 @@ export function StoreAccountPage() {
                   />
                 </label>
                 <label className="block">
-                  <span className="mb-1 block text-xs font-bold text-[var(--store-text)]">
-                    {t("store.checkout.email")} <span className="font-medium text-[var(--store-muted)]">({t("common.optional")})</span>
+                  <span className="mb-1 block text-xs font-bold text-[var(--store-text-primary)]">
+                    {t("store.checkout.email")} <span className="font-medium text-[var(--store-text-secondary)]">({t("common.optional")})</span>
                   </span>
                   <input value={regEmail} onChange={(event) => setRegEmail(event.target.value)} className={inputClass} type="email" autoComplete="email" />
                 </label>
                 <label className="block">
-                  <span className="mb-1 block text-xs font-bold text-[var(--store-text)]">
+                  <span className="mb-1 block text-xs font-bold text-[var(--store-text-primary)]">
                     {t("store.account.password")}
                   </span>
                   <input
@@ -304,7 +304,7 @@ export function StoreAccountPage() {
                 >
                   {busy ? t("common.loading") : t("store.account.createAccount")}
                 </button>
-                <p className="text-[11px] leading-relaxed text-[var(--store-muted)]">
+                <p className="text-[11px] leading-relaxed text-[var(--store-text-secondary)]">
                   {t("store.account.passwordRule")}
                 </p>
               </form>
@@ -313,7 +313,7 @@ export function StoreAccountPage() {
         </div>
       ) : (
         <div className="mt-6 grid gap-6 lg:grid-cols-[13rem_1fr]">
-          <nav className="flex gap-1 overflow-x-auto rounded-xl bg-[var(--store-surface-alt)] p-1 lg:flex-col lg:overflow-visible" aria-label={t("store.account.title")}>
+          <nav className="flex gap-1 overflow-x-auto rounded-xl bg-[var(--store-surface-muted)] p-1 lg:flex-col lg:overflow-visible" aria-label={t("store.account.title")}>
             {(
               [
                 ["profile", t("store.account.tabProfile")],
@@ -330,7 +330,7 @@ export function StoreAccountPage() {
                   "shrink-0 rounded-lg px-3 py-2 text-sm font-black transition lg:text-start",
                   inTab === tab
                     ? "bg-[var(--store-surface)] text-[var(--store-primary)] shadow-sm"
-                    : "text-[var(--store-muted)]",
+                    : "text-[var(--store-text-secondary)]",
                 )}
               >
                 {label}
@@ -355,20 +355,20 @@ export function StoreAccountPage() {
                   }).then((ok) => setSaved(ok));
                 }}
               >
-                <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-muted)]">
+                <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-text-secondary)]">
                   {t("store.account.tabProfile")}
                 </h2>
                 <div className="mt-3 grid gap-3 sm:grid-cols-2">
                   <label className="block">
-                    <span className="mb-1 block text-xs font-bold text-[var(--store-text)]">{t("store.checkout.fullName")}</span>
+                    <span className="mb-1 block text-xs font-bold text-[var(--store-text-primary)]">{t("store.checkout.fullName")}</span>
                     <input value={profileName} onChange={(event) => setProfileName(event.target.value)} className={inputClass} />
                   </label>
                   <label className="block">
-                    <span className="mb-1 block text-xs font-bold text-[var(--store-text)]">{t("store.checkout.phone")}</span>
+                    <span className="mb-1 block text-xs font-bold text-[var(--store-text-primary)]">{t("store.checkout.phone")}</span>
                     <input value={profilePhone} onChange={(event) => setProfilePhone(event.target.value)} className={inputClass} inputMode="tel" />
                   </label>
                   <label className="block sm:col-span-2">
-                    <span className="mb-1 block text-xs font-bold text-[var(--store-text)]">{t("store.checkout.email")}</span>
+                    <span className="mb-1 block text-xs font-bold text-[var(--store-text-primary)]">{t("store.checkout.email")}</span>
                     <input value={profileEmail} onChange={(event) => setProfileEmail(event.target.value)} className={inputClass} type="email" />
                   </label>
                 </div>
@@ -385,7 +385,7 @@ export function StoreAccountPage() {
                     <span className="text-xs font-bold text-emerald-600">{t("store.account.saved")}</span>
                   ) : null}
                 </div>
-                <p className="mt-3 text-[11px] leading-relaxed text-[var(--store-muted)]">
+                <p className="mt-3 text-[11px] leading-relaxed text-[var(--store-text-secondary)]">
                   {t("store.account.profileNote")}
                 </p>
               </form>
@@ -394,7 +394,7 @@ export function StoreAccountPage() {
             {inTab === "addresses" ? (
               <div className="flex flex-col gap-3">
                 <div className="flex items-center justify-between gap-3">
-                  <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-muted)]">
+                  <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-text-secondary)]">
                     {t("store.account.tabAddresses")}
                   </h2>
                   <button
@@ -408,7 +408,7 @@ export function StoreAccountPage() {
                 </div>
 
                 {addresses.length === 0 && !draft ? (
-                  <p className="border border-dashed border-[var(--store-border)] p-6 text-center text-sm text-[var(--store-muted)]" style={{ borderRadius: "var(--store-radius)" }}>
+                  <p className="border border-dashed border-[var(--store-border)] p-6 text-center text-sm text-[var(--store-text-secondary)]" style={{ borderRadius: "var(--store-radius)" }}>
                     {t("store.account.noAddresses")}
                   </p>
                 ) : null}
@@ -421,7 +421,7 @@ export function StoreAccountPage() {
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <p className="text-sm font-black text-[var(--store-text)]">
+                        <p className="text-sm font-black text-[var(--store-text-primary)]">
                           {address.label || t("store.account.address")}
                           {address.is_default ? (
                             <span className="ms-2 rounded-full bg-[var(--store-primary-soft)] px-2 py-0.5 text-[10px] font-black text-[var(--store-primary)]">
@@ -429,13 +429,13 @@ export function StoreAccountPage() {
                             </span>
                           ) : null}
                         </p>
-                        <p className="mt-1 text-xs text-[var(--store-muted)]">
+                        <p className="mt-1 text-xs text-[var(--store-text-secondary)]">
                           {[address.street, address.area, address.city].filter(Boolean).join("، ")}
                         </p>
-                        <p className="text-xs text-[var(--store-muted)]">
+                        <p className="text-xs text-[var(--store-text-secondary)]">
                           {[address.building, address.floor, address.apartment].filter(Boolean).join(" · ")}
                         </p>
-                        {address.notes ? <p className="mt-1 text-xs text-[var(--store-muted)]">{address.notes}</p> : null}
+                        {address.notes ? <p className="mt-1 text-xs text-[var(--store-text-secondary)]">{address.notes}</p> : null}
                       </div>
                       <div className="flex shrink-0 gap-2">
                         {!address.is_default ? (
@@ -450,14 +450,14 @@ export function StoreAccountPage() {
                         <button
                           type="button"
                           onClick={() => setDraft(address)}
-                          className="text-xs font-bold text-[var(--store-muted)] hover:underline"
+                          className="text-xs font-bold text-[var(--store-text-secondary)] hover:underline"
                         >
                           {t("common.edit")}
                         </button>
                         <button
                           type="button"
                           onClick={() => void removeAddress(address.id)}
-                          className="text-xs font-bold text-[var(--store-muted)] hover:text-rose-600"
+                          className="text-xs font-bold text-[var(--store-text-secondary)] hover:text-rose-600"
                         >
                           {t("common.delete")}
                         </button>
@@ -496,7 +496,7 @@ export function StoreAccountPage() {
                         ] as [keyof CustomerAddress, string][]
                       ).map(([field, label]) => (
                         <label key={field} className="block">
-                          <span className="mb-1 block text-xs font-bold text-[var(--store-text)]">{label}</span>
+                          <span className="mb-1 block text-xs font-bold text-[var(--store-text-primary)]">{label}</span>
                           <input
                             value={String(draft[field] ?? "")}
                             onChange={(event) =>
@@ -507,7 +507,7 @@ export function StoreAccountPage() {
                         </label>
                       ))}
                       <label className="block sm:col-span-2">
-                        <span className="mb-1 block text-xs font-bold text-[var(--store-text)]">
+                        <span className="mb-1 block text-xs font-bold text-[var(--store-text-primary)]">
                           {t("store.checkout.addressNotes")}
                         </span>
                         <input
@@ -529,7 +529,7 @@ export function StoreAccountPage() {
                       <button
                         type="button"
                         onClick={() => setDraft(null)}
-                        className="text-xs font-bold text-[var(--store-muted)] hover:underline"
+                        className="text-xs font-bold text-[var(--store-text-secondary)] hover:underline"
                       >
                         {t("common.cancel")}
                       </button>
@@ -541,11 +541,11 @@ export function StoreAccountPage() {
 
             {inTab === "wishlist" ? (
               <div>
-                <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-muted)]">
+                <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-text-secondary)]">
                   {t("store.account.tabWishlist")}
                 </h2>
                 {wishlistEntries.length === 0 ? (
-                  <p className="mt-3 border border-dashed border-[var(--store-border)] p-6 text-center text-sm text-[var(--store-muted)]" style={{ borderRadius: "var(--store-radius)" }}>
+                  <p className="mt-3 border border-dashed border-[var(--store-border)] p-6 text-center text-sm text-[var(--store-text-secondary)]" style={{ borderRadius: "var(--store-radius)" }}>
                     {t("store.wishlist.empty")}
                   </p>
                 ) : (
@@ -561,7 +561,7 @@ export function StoreAccountPage() {
             {inTab === "orders" ? (
               <div className="flex flex-col gap-3">
                 <div className="flex items-center justify-between gap-3">
-                  <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-muted)]">
+                  <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-text-secondary)]">
                     {t("store.account.tabOrders")}
                   </h2>
                   <button
@@ -574,7 +574,7 @@ export function StoreAccountPage() {
                 </div>
 
                 {history.length === 0 ? (
-                  <p className="border border-dashed border-[var(--store-border)] p-6 text-center text-sm text-[var(--store-muted)]" style={{ borderRadius: "var(--store-radius)" }}>
+                  <p className="border border-dashed border-[var(--store-border)] p-6 text-center text-sm text-[var(--store-text-secondary)]" style={{ borderRadius: "var(--store-radius)" }}>
                     {historyLoading ? t("common.loading") : t("store.account.noOrders")}
                   </p>
                 ) : null}
@@ -587,8 +587,8 @@ export function StoreAccountPage() {
                   >
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div>
-                        <p className="text-sm font-black tabular-nums text-[var(--store-text)]">{order.order_number}</p>
-                        <p className="text-xs text-[var(--store-muted)]">
+                        <p className="text-sm font-black tabular-nums text-[var(--store-text-primary)]">{order.order_number}</p>
+                        <p className="text-xs text-[var(--store-text-secondary)]">
                           {new Date(order.created_at).toLocaleDateString(pick("ar-EG", "en-GB"))} ·{" "}
                           {t("store.cart.itemCount", { count: order.items.reduce((sum, item) => sum + item.quantity, 0) })}
                         </p>
@@ -596,18 +596,18 @@ export function StoreAccountPage() {
                       <div className="flex flex-wrap items-center gap-2">
                         <OrderStatusPill status={order.status} />
                         <PaymentStatusPill status={order.payment_status} />
-                        <Money value={order.total} className="text-sm font-black text-[var(--store-text)]" />
+                        <Money value={order.total} className="text-sm font-black text-[var(--store-text-primary)]" />
                       </div>
                     </div>
 
-                    <p className="mt-2 line-clamp-2 text-xs text-[var(--store-muted)]">
+                    <p className="mt-2 line-clamp-2 text-xs text-[var(--store-text-secondary)]">
                       {order.items.map((item) => pick(item.name_ar, item.name_en)).join("، ")}
                     </p>
 
                     <div className="mt-3 flex flex-wrap gap-2">
                       <Link
                         to={`/store/track?order=${encodeURIComponent(order.order_number)}&phone=${encodeURIComponent(order.customer_phone)}`}
-                        className="rounded-lg border border-[var(--store-border)] px-3 py-1.5 text-xs font-black text-[var(--store-text)]"
+                        className="rounded-lg border border-[var(--store-border)] px-3 py-1.5 text-xs font-black text-[var(--store-text-primary)]"
                       >
                         {t("store.account.viewOrder")}
                       </Link>

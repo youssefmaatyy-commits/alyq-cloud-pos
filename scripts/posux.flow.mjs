@@ -260,6 +260,45 @@ assert.equal(
 );
 console.log("  ✓ the customer is attached to the sale");
 
+// The customer is sale state, not cart-line state. Exercise the actual controls
+// (including discounts and an empty cart) before accepting the sale.
+const customerName = () => document.querySelector('input[aria-label="Select customer"]')?.value;
+const expectCustomer = (action) => assert.equal(customerName(), "سارة المحمود", `customer survives ${action}`);
+const lineFor = (label) => cartLines().find((line) => line.textContent.includes(label));
+const quantityFor = (label) => lineFor(label)?.querySelector('[data-testid^="cart-quantity-"]')?.textContent;
+clickEl(lineFor("Silver / 17").querySelector('button[aria-label="Increase quantity"]'));
+await waitFor(() => quantityFor("Silver / 17") === "2", { label: "Silver increase" });
+assert.equal(quantityFor("Gold / 17"), "2", "increasing Silver does not touch Gold");
+expectCustomer("increasing Silver");
+clickEl(lineFor("Silver / 17").querySelector('button[aria-label="Decrease quantity"]'));
+await waitFor(() => quantityFor("Silver / 17") === "1", { label: "Silver decrease" });
+expectCustomer("decreasing Silver");
+setReactValue(lineFor("Silver / 17").querySelector('select[aria-label="Item discount"]'), "percent");
+await waitFor(() => lineFor("Silver / 17")?.querySelector('input[aria-label="Discount value"]'), { label: "per-item discount field" });
+setReactValue(lineFor("Silver / 17").querySelector('input[aria-label="Discount value"]'), "5");
+await waitFor(() => lineFor("Silver / 17")?.querySelector('span.text-rose-700')?.textContent.startsWith("−"), { label: "line discount to apply" });
+expectCustomer("an item discount");
+setReactValue(lineFor("Silver / 17").querySelector('input[aria-label="Discount value"]'), "0");
+setReactValue(lineFor("Silver / 17").querySelector('select[aria-label="Item discount"]'), "none");
+setReactValue(document.querySelector('select[aria-label="Invoice discount"]'), "percent");
+await waitFor(() => document.querySelector('input[aria-label="Discount value"]:not([type="number"])'), { label: "invoice discount field" });
+setReactValue(document.querySelector('input[aria-label="Discount value"]:not([type="number"])'), "5");
+expectCustomer("an invoice discount");
+setReactValue(document.querySelector('input[aria-label="Discount value"]:not([type="number"])'), "0");
+setReactValue(document.querySelector('select[aria-label="Invoice discount"]'), "none");
+clickEl(lineFor("Silver / 17").querySelector('[data-testid^="cart-remove-"]'));
+await waitFor(() => cartLines().length === 1, { label: "remove only the Silver line" });
+assert.equal(quantityFor("Gold / 17"), "2");
+expectCustomer("removing the Silver line");
+clickEl(tileFor("UX2 Ring"));
+await waitFor(() => picker(), { label: "the picker after removal" });
+clickEl(colorChip("Silver"));
+await waitFor(() => sizeButton("Silver / 17"), { label: "Silver size after removal" });
+clickEl(sizeButton("Silver / 17"));
+await waitFor(() => cartLines().length === 2, { label: "Silver returned as its own line" });
+expectCustomer("adding the Silver line again");
+console.log("  ✓ increase, decrease, discounts, remove and re-add preserve the same selected customer and exact shelves");
+
 // ── 9 · complete the sale through the existing flow ─────────────────────────
 setField('[data-testid="cash-input"]', "500");
 await sleep(250);
@@ -272,7 +311,8 @@ await waitFor(() => /INV-\d{6}/.test(bodyText()), { label: "the sale to complete
 const receiptNo = (bodyText().match(/INV-\d{6}/) ?? [])[0];
 assert.ok(receiptNo, `completed as ${receiptNo}`);
 assert.ok(bodyText().includes("Change"), "change is computed against the cash tendered");
-console.log("  ✓ the sale completes through the proven flow, with change");
+expectCustomer("a completed sale; only the merchandise was cleared");
+console.log("  ✓ the sale completes through the proven flow, with change and the selected customer");
 
 // ── 10 · the receipt preserves the variants ────────────────────────────────
 const printBtn = buttons().find((b) => (b.textContent ?? "").includes("Print receipt"));
@@ -289,6 +329,7 @@ console.log("  ✓ the printed receipt preserves both exact shelves");
 clickExact("New sale");
 await sleep(400);
 await waitFor(() => cartBadge() === "0", { label: "the fresh sale" });
+expectCustomer("opening a new, empty sale");
 const silver = catalog().variants.find((v) => v.sku === SILVER_SKU);
 assert.ok(silver?.barcode, `Silver / 17 carries a barcode (${silver?.barcode})`);
 setField('input[aria-label="Search"]', silver.barcode);
@@ -297,7 +338,22 @@ await sleep(600);
 assert.ok(cartBadge() === "1", "the scan added exactly one unit");
 await waitFor(() => cartLines().length === 1, { label: "one scanned line" });
 assert.ok(cartLines()[0].textContent.includes("Silver / 17"), "the scan resolved Silver / 17 exactly");
-console.log("  ✓ the shelf barcode scan adds Silver / 17 — never the rollup");
+expectCustomer("an exact-variant barcode scan");
+clickEl(testid("pos-clear-cart"));
+await waitFor(() => cartLines().length === 0, { label: "clear items to empty the cart" });
+expectCustomer("Clear items (which must NOT clear the customer)");
+setField('input[aria-label="Search"]', silver.barcode);
+searchBox().dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+await waitFor(() => cartLines().length === 1, { label: "scanning after clearing the cart" });
+expectCustomer("scanning after Clear items");
+clickEl(cartLines()[0].querySelector('[data-testid^="cart-remove-"]'));
+await waitFor(() => cartLines().length === 0, { label: "last-line removal" });
+expectCustomer("removing the last item");
+const explicitClear = document.querySelector('button[title="Walk-in customer (no account)"]');
+assert.ok(explicitClear, "only the customer picker has the explicit customer-clear control");
+clickEl(explicitClear);
+await waitFor(() => customerName() === "", { label: "explicitly clearing the customer" });
+console.log("  ✓ shelf barcode targets Silver / 17; Clear items and last-line removal keep the customer until explicitly cleared");
 
 await navigate("#/");
 await sleep(400);

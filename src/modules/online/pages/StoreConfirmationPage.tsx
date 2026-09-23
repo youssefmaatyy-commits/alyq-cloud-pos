@@ -122,15 +122,15 @@ export function StoreConfirmationPage() {
 
       <div className="mt-6 grid gap-4 md:grid-cols-2">
         <section className="border border-[var(--store-border)] bg-[var(--store-surface)] p-4" style={{ borderRadius: "var(--store-radius)" }}>
-          <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-muted)]">
+          <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-text-secondary)]">
             {t("store.confirmation.whatHappensNext")}
           </h2>
           {confGuidance ? (
-            <p className="mt-3 whitespace-pre-line text-sm leading-relaxed text-[var(--store-text)]">
+            <p className="mt-3 whitespace-pre-line text-sm leading-relaxed text-[var(--store-text-primary)]">
               {confGuidance}
             </p>
           ) : (
-            <ol className="mt-3 list-decimal space-y-1.5 ps-5 text-sm text-[var(--store-text)]">
+            <ol className="mt-3 list-decimal space-y-1.5 ps-5 text-sm text-[var(--store-text-primary)]">
               {whatsNext.map((step) => (
                 <li key={step}>{step}</li>
               ))}
@@ -143,22 +143,22 @@ export function StoreConfirmationPage() {
         </section>
 
         <section className="border border-[var(--store-border)] bg-[var(--store-surface)] p-4" style={{ borderRadius: "var(--store-radius)" }}>
-          <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-muted)]">
+          <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-text-secondary)]">
             {t("store.confirmation.details")}
           </h2>
           <dl className="mt-3 space-y-2 text-sm">
             <div className="flex justify-between gap-2">
-              <dt className="text-[var(--store-muted)]">{t("store.checkout.contactSection")}</dt>
-              <dd className="text-end font-semibold text-[var(--store-text)]">
+              <dt className="text-[var(--store-text-secondary)]">{t("store.checkout.contactSection")}</dt>
+              <dd className="text-end font-semibold text-[var(--store-text-primary)]">
                 {order.customer_name}
-                <span className="block text-xs font-medium text-[var(--store-muted)]">{order.customer_phone}</span>
+                <span className="block text-xs font-medium text-[var(--store-text-secondary)]">{order.customer_phone}</span>
               </dd>
             </div>
             <div className="flex justify-between gap-2">
-              <dt className="text-[var(--store-muted)]">
+              <dt className="text-[var(--store-text-secondary)]">
                 {order.delivery_type === "pickup" ? t("store.checkout.pickup") : t("store.checkout.delivery")}
               </dt>
-              <dd className="max-w-[60%] text-end text-xs font-semibold text-[var(--store-text)]">
+              <dd className="max-w-[60%] text-end text-xs font-semibold text-[var(--store-text-primary)]">
                 {order.delivery_type === "pickup"
                   ? pick(settings.delivery.pickup_address_ar, settings.delivery.pickup_address_en) ||
                     t("store.footer.pickupAvailable")
@@ -168,8 +168,8 @@ export function StoreConfirmationPage() {
               </dd>
             </div>
             <div className="flex justify-between gap-2">
-              <dt className="text-[var(--store-muted)]">{t("store.checkout.payment")}</dt>
-              <dd className="font-semibold text-[var(--store-text)]">
+              <dt className="text-[var(--store-text-secondary)]">{t("store.checkout.payment")}</dt>
+              <dd className="font-semibold text-[var(--store-text-primary)]">
                 {order.payment_method === "instapay" ? t("store.checkout.instapay") : t("store.checkout.cod")}
               </dd>
             </div>
@@ -189,7 +189,7 @@ export function StoreConfirmationPage() {
         settings.delivery.instapay_proof_required ? (
           <div className="mt-4">
             {proofNoteCopy ? (
-              <p className="mb-3 text-xs leading-relaxed text-[var(--store-muted)]">{proofNoteCopy}</p>
+              <p className="mb-3 text-xs leading-relaxed text-[var(--store-text-secondary)]">{proofNoteCopy}</p>
             ) : null}
             <PaymentProofPanel
               orderNumber={number}
@@ -202,12 +202,12 @@ export function StoreConfirmationPage() {
         ) : (
           // The shop does not ask for a screenshot — but the order still waits
           // for an employee, and the customer should be told exactly that.
-          <p className="mt-4 border border-[var(--store-border)] bg-[var(--store-surface)] p-4 text-sm leading-relaxed text-[var(--store-muted)]" style={{ borderRadius: "var(--store-radius)" }}>
+          <p className="mt-4 border border-[var(--store-border)] bg-[var(--store-surface)] p-4 text-sm leading-relaxed text-[var(--store-text-secondary)]" style={{ borderRadius: "var(--store-radius)" }}>
             {t("store.checkout.instapayNeverAutomatic")}
           </p>
         )
       ) : (
-        <p className="mt-4 border border-[var(--store-border)] bg-[var(--store-surface)] p-4 text-sm leading-relaxed text-[var(--store-muted)]" style={{ borderRadius: "var(--store-radius)" }}>
+        <p className="mt-4 border border-[var(--store-border)] bg-[var(--store-surface)] p-4 text-sm leading-relaxed text-[var(--store-text-secondary)]" style={{ borderRadius: "var(--store-radius)" }}>
           {t("store.confirmation.codNote")}
         </p>
       )}
@@ -226,7 +226,7 @@ export function StoreConfirmationPage() {
             dismissLastOrder();
             navigate("/store/products");
           }}
-          className="border border-[var(--store-border)] px-5 py-3 text-sm font-black text-[var(--store-text)]"
+          className="border border-[var(--store-border)] px-5 py-3 text-sm font-black text-[var(--store-text-primary)]"
           style={{ borderRadius: "var(--store-radius-button)" }}
         >
           {t("store.cart.continueShopping")}
@@ -235,7 +235,7 @@ export function StoreConfirmationPage() {
           supportHref.startsWith("#") ? (
             <Link
               to={supportHref.slice(1)}
-              className="border border-[var(--store-border)] px-5 py-3 text-sm font-black text-[var(--store-text)]"
+              className="border border-[var(--store-border)] px-5 py-3 text-sm font-black text-[var(--store-text-primary)]"
               style={{ borderRadius: "var(--store-radius-button)" }}
             >
               {supportLabel}
@@ -245,7 +245,7 @@ export function StoreConfirmationPage() {
               href={supportHref}
               target="_blank"
               rel="noopener noreferrer"
-              className="border border-[var(--store-border)] px-5 py-3 text-sm font-black text-[var(--store-text)]"
+              className="border border-[var(--store-border)] px-5 py-3 text-sm font-black text-[var(--store-text-primary)]"
               style={{ borderRadius: "var(--store-radius-button)" }}
             >
               {supportLabel}

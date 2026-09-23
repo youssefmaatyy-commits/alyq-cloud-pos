@@ -143,14 +143,14 @@ export function PaymentProofPanel({
 
   return (
     <div className="border border-[var(--store-border)] bg-[var(--store-surface)] p-4" style={{ borderRadius: "var(--store-radius)" }}>
-      <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-muted)]">
+      <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-text-secondary)]">
         {t("store.proof.title")}
       </h2>
-      <p className="mt-1 text-xs leading-relaxed text-[var(--store-muted)]">{t("store.proof.hint")}</p>
+      <p className="mt-1 text-xs leading-relaxed text-[var(--store-text-secondary)]">{t("store.proof.hint")}</p>
 
       {typeof total === "number" ? (
         <p className="mt-3 flex items-baseline gap-2 rounded-lg bg-[var(--store-primary-soft)] px-3 py-2">
-          <span className="text-xs font-bold text-[var(--store-muted)]">{t("store.proof.amountToSend")}</span>
+          <span className="text-xs font-bold text-[var(--store-text-secondary)]">{t("store.proof.amountToSend")}</span>
           <Money value={total} className="text-base font-black text-[var(--store-primary)]" />
         </p>
       ) : null}
@@ -159,19 +159,19 @@ export function PaymentProofPanel({
         <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_auto]">
           <div className="text-xs">
             {settings.social.instapay_holder ? (
-              <p className="font-semibold text-[var(--store-muted)]">
+              <p className="font-semibold text-[var(--store-text-secondary)]">
                 {t("store.checkout.instapayHolder")}: {settings.social.instapay_holder}
               </p>
             ) : null}
             {settings.social.instapay_account ? (
-              <p className="font-black text-[var(--store-text)]">{settings.social.instapay_account}</p>
+              <p className="font-black text-[var(--store-text-primary)]">{settings.social.instapay_account}</p>
             ) : null}
             {instapayInstructions ? (
-              <p className="mt-2 whitespace-pre-line leading-relaxed text-[var(--store-muted)]">
+              <p className="mt-2 whitespace-pre-line leading-relaxed text-[var(--store-text-secondary)]">
                 {instapayInstructions}
               </p>
             ) : (
-              <ol className="mt-2 list-decimal space-y-1 ps-4 text-[var(--store-muted)]">
+              <ol className="mt-2 list-decimal space-y-1 ps-4 text-[var(--store-text-secondary)]">
                 <li>{t("store.proof.step1")}</li>
                 <li>{t("store.proof.step2")}</li>
                 <li>{t("store.proof.step3")}</li>
@@ -203,7 +203,7 @@ export function PaymentProofPanel({
 
       <div className="mt-4 grid gap-3">
         <label className="block">
-          <span className="mb-1 block text-xs font-bold text-[var(--store-text)]">{t("store.proof.reference")}</span>
+          <span className="mb-1 block text-xs font-bold text-[var(--store-text-primary)]">{t("store.proof.reference")}</span>
           <input
             value={reference}
             onChange={(event) => setReference(event.target.value)}
@@ -215,13 +215,13 @@ export function PaymentProofPanel({
         </label>
 
         <label className="block">
-          <span className="mb-1 block text-xs font-bold text-[var(--store-text)]">{t("store.proof.image")}</span>
+          <span className="mb-1 block text-xs font-bold text-[var(--store-text-primary)]">{t("store.proof.image")}</span>
           <input
             ref={inputRef}
             type="file"
             accept="image/*"
             onChange={(event) => choose(event.target.files?.[0] ?? null)}
-            className="w-full text-xs text-[var(--store-muted)] file:me-3 file:rounded-lg file:border-0 file:bg-[var(--store-primary-soft)] file:px-3 file:py-2 file:text-xs file:font-black file:text-[var(--store-primary)]"
+            className="w-full text-xs text-[var(--store-text-secondary)] file:me-3 file:rounded-lg file:border-0 file:bg-[var(--store-primary-soft)] file:px-3 file:py-2 file:text-xs file:font-black file:text-[var(--store-primary)]"
           />
           {fileName ? <FieldNote tone="muted">{fileName}</FieldNote> : null}
         </label>
@@ -242,7 +242,7 @@ export function PaymentProofPanel({
           onClick={() => void send()}
           className={cn(
             "w-full bg-[var(--store-primary)] px-4 py-3 text-sm font-black text-[var(--store-on-primary)] transition hover:bg-[var(--store-primary-hover)]",
-            "disabled:cursor-not-allowed disabled:bg-[var(--store-border)] disabled:text-[var(--store-muted)]",
+            "disabled:cursor-not-allowed disabled:bg-[var(--store-border)] disabled:text-[var(--store-text-secondary)]",
           )}
           style={{ borderRadius: "var(--store-radius-button)" }}
         >
@@ -252,10 +252,10 @@ export function PaymentProofPanel({
               ? t("store.proof.submitting")
               : t("store.proof.submit")}
         </button>
-        <p className="text-[11px] leading-relaxed text-[var(--store-muted)]">{t("store.proof.neverAutomatic")}</p>
+        <p className="text-[11px] leading-relaxed text-[var(--store-text-secondary)]">{t("store.proof.neverAutomatic")}</p>
       </div>
 
-      <p className="mt-3 text-[11px] text-[var(--store-muted)]">
+      <p className="mt-3 text-[11px] text-[var(--store-text-secondary)]">
         {t("store.proof.orderRef")}: <span className="font-black">{orderNumber}</span>
         {phone ? ` · ${phone}` : ""}
       </p>

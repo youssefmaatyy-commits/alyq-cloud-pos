@@ -71,6 +71,11 @@ const SUITES = [
     title: "Final integrated flow (Phase 48): login → shift → customer → variant ring → POS → return → storefront → delivery/COD/InstaPay → settle → category → KPIs → reports → Danger Zone preview → permissions → audit",
   },
   {
+    id: "theme",
+    file: "scripts/theme.flow.mjs",
+    title: "Saved storefront theme (admin preview, invalid hex rejection, public routes, POS isolation)",
+  },
+  {
     id: "storepolish",
     file: "scripts/storepolish.flow.mjs",
     title: "Storefront polish (Phase 49): gold-on-ivory palette, hero CTAs + fallback, slim header, editorial rhythm, quiet quick-add, Phase 43 variant proof, cart/checkout hierarchy, RTL, footer",

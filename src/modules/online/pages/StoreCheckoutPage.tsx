@@ -269,7 +269,7 @@ export function StoreCheckoutPage() {
   if (isEmpty) {
     return (
       <div className="mx-auto w-full max-w-2xl px-4 py-20 text-center">
-        <p className="text-lg font-black text-[var(--store-text)]">{t("store.cart.empty")}</p>
+        <p className="text-lg font-black text-[var(--store-text-primary)]">{t("store.cart.empty")}</p>
         <Link
           to="/store/products"
           className="mt-6 inline-block bg-[var(--store-primary)] px-6 py-3 text-sm font-black text-[var(--store-on-primary)]"
@@ -282,7 +282,7 @@ export function StoreCheckoutPage() {
   }
 
   const inputClass =
-    "w-full rounded-lg border border-[var(--store-border)] bg-[var(--store-surface)] px-3 py-2 text-sm text-[var(--store-text)] outline-none transition focus:border-[var(--store-primary)]";
+    "w-full rounded-lg border border-[var(--store-border)] bg-[var(--store-surface)] px-3 py-2 text-sm text-[var(--store-text-primary)] outline-none transition focus:border-[var(--store-primary)]";
 
   // Phase 45: the admin's checkout words. Copy only — fees, thresholds,
   // minimums and the payment flow itself stay exactly as configured and
@@ -299,12 +299,12 @@ export function StoreCheckoutPage() {
 
   return (
     <form onSubmit={submit} className="mx-auto w-full max-w-[var(--store-max-width,72rem)] px-4 py-6 sm:px-6">
-      <h1 className="text-2xl font-black tracking-tight text-[var(--store-text)]">
+      <h1 className="text-2xl font-black tracking-tight text-[var(--store-text-primary)]">
         {headingCopy || t("store.checkout.title")}
       </h1>
 
       {!customer ? (
-        <p className="mt-2 text-xs font-semibold text-[var(--store-muted)]">
+        <p className="mt-2 text-xs font-semibold text-[var(--store-text-secondary)]">
           {t("store.checkout.guestNote")}{" "}
           <Link to="/store/account" className="font-bold text-[var(--store-primary)] hover:underline">
             {t("store.account.signIn")}
@@ -326,17 +326,17 @@ export function StoreCheckoutPage() {
         <div className="flex flex-col gap-5">
           {/* contact */}
           <section className="border border-[var(--store-border)] bg-[var(--store-surface)] p-4" style={{ borderRadius: "var(--store-radius)" }}>
-            <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-muted)]">
+            <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-text-secondary)]">
               {t("store.checkout.contactSection")}
             </h2>
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
               <label className="block">
-                <span className="mb-1 block text-xs font-bold text-[var(--store-text)]">{t("store.checkout.fullName")}</span>
+                <span className="mb-1 block text-xs font-bold text-[var(--store-text-primary)]">{t("store.checkout.fullName")}</span>
                 <input value={name} onChange={(event) => setName(event.target.value)} className={inputClass} autoComplete="name" />
                 {nameError ? <FieldNote tone="error">{nameError}</FieldNote> : null}
               </label>
               <label className="block">
-                <span className="mb-1 block text-xs font-bold text-[var(--store-text)]">{t("store.checkout.phone")}</span>
+                <span className="mb-1 block text-xs font-bold text-[var(--store-text-primary)]">{t("store.checkout.phone")}</span>
                 <input
                   value={phone}
                   onChange={(event) => setPhone(event.target.value)}
@@ -352,8 +352,8 @@ export function StoreCheckoutPage() {
                 )}
               </label>
               <label className="block sm:col-span-2">
-                <span className="mb-1 block text-xs font-bold text-[var(--store-text)]">
-                  {t("store.checkout.email")} <span className="font-medium text-[var(--store-muted)]">({t("common.optional")})</span>
+                <span className="mb-1 block text-xs font-bold text-[var(--store-text-primary)]">
+                  {t("store.checkout.email")} <span className="font-medium text-[var(--store-text-secondary)]">({t("common.optional")})</span>
                 </span>
                 <input value={email} onChange={(event) => setEmail(event.target.value)} className={inputClass} type="email" autoComplete="email" />
               </label>
@@ -362,7 +362,7 @@ export function StoreCheckoutPage() {
 
           {/* fulfilment */}
           <section className="border border-[var(--store-border)] bg-[var(--store-surface)] p-4" style={{ borderRadius: "var(--store-radius)" }}>
-            <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-muted)]">
+            <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-text-secondary)]">
               {t("store.checkout.fulfilment")}
             </h2>
             {!settings.delivery.enabled ? (
@@ -384,8 +384,8 @@ export function StoreCheckoutPage() {
                       : "border-[var(--store-border)]",
                   )}
                 >
-                  <p className="text-sm font-black text-[var(--store-text)]">{t("store.checkout.delivery")}</p>
-                  <p className="mt-0.5 text-xs text-[var(--store-muted)]">
+                  <p className="text-sm font-black text-[var(--store-text-primary)]">{t("store.checkout.delivery")}</p>
+                  <p className="mt-0.5 text-xs text-[var(--store-text-secondary)]">
                     {(shown?.deliveryFee ?? totals.delivery_fee) > 0
                       ? t("store.checkout.deliveryFeeAmount", { amount: money(shown?.deliveryFee ?? activeZone?.shipping_fee ?? settings.delivery.fee) })
                       : t("store.cart.freeDeliveryReached")}
@@ -403,8 +403,8 @@ export function StoreCheckoutPage() {
                       : "border-[var(--store-border)]",
                   )}
                 >
-                  <p className="text-sm font-black text-[var(--store-text)]">{t("store.checkout.pickup")}</p>
-                  <p className="mt-0.5 text-xs text-[var(--store-muted)]">
+                  <p className="text-sm font-black text-[var(--store-text-primary)]">{t("store.checkout.pickup")}</p>
+                  <p className="mt-0.5 text-xs text-[var(--store-text-secondary)]">
                     {pick(settings.delivery.pickup_address_ar, settings.delivery.pickup_address_en) ||
                       t("store.checkout.pickupFree")}
                   </p>
@@ -414,7 +414,7 @@ export function StoreCheckoutPage() {
 
             {deliveryType === "delivery" && enabledZones.length > 0 ? (
               <fieldset className="mt-3">
-                <legend className="mb-1 block text-xs font-bold text-[var(--store-text)]">
+                <legend className="mb-1 block text-xs font-bold text-[var(--store-text-primary)]">
                   {t("store.checkout.chooseZone")}
                 </legend>
                 <div className="flex flex-col gap-2" data-testid="checkout-zone-picker">
@@ -441,10 +441,10 @@ export function StoreCheckoutPage() {
                           className="mt-0.5 accent-[var(--store-primary)]"
                         />
                         <span className="min-w-0 flex-1">
-                          <span className="block text-sm font-black text-[var(--store-text)]">
+                          <span className="block text-sm font-black text-[var(--store-text-primary)]">
                             {pick(zone.name_ar, zone.name_en)}
                           </span>
-                          <span className="mt-0.5 block text-xs text-[var(--store-muted)]">
+                          <span className="mt-0.5 block text-xs text-[var(--store-text-secondary)]">
                             {zone.shipping_fee > 0 ? (
                               t("store.checkout.zoneFee", { amount: money(zone.shipping_fee) })
                             ) : (
@@ -465,10 +465,10 @@ export function StoreCheckoutPage() {
             ) : null}
 
             {deliveryNoteCopy && deliveryType === "delivery" ? (
-              <p className="mt-3 text-xs leading-relaxed text-[var(--store-muted)]">{deliveryNoteCopy}</p>
+              <p className="mt-3 text-xs leading-relaxed text-[var(--store-text-secondary)]">{deliveryNoteCopy}</p>
             ) : null}
             {pickupNoteCopy && deliveryType === "pickup" ? (
-              <p className="mt-3 text-xs leading-relaxed text-[var(--store-muted)]">{pickupNoteCopy}</p>
+              <p className="mt-3 text-xs leading-relaxed text-[var(--store-text-secondary)]">{pickupNoteCopy}</p>
             ) : null}
             {deliveryType === "delivery" ? (
               <div className="mt-4">
@@ -497,11 +497,11 @@ export function StoreCheckoutPage() {
                           className="mt-0.5 accent-[var(--store-primary)]"
                         />
                         <span className="text-xs">
-                          <span className="block font-black text-[var(--store-text)]">
+                          <span className="block font-black text-[var(--store-text-primary)]">
                             {entry.label || entry.full_name}
                             {entry.is_default ? ` · ${t("store.account.defaultAddress")}` : ""}
                           </span>
-                          <span className="block text-[var(--store-muted)]">
+                          <span className="block text-[var(--store-text-secondary)]">
                             {[entry.street, entry.area, entry.city].filter(Boolean).join("، ")}
                           </span>
                         </span>
@@ -540,7 +540,7 @@ export function StoreCheckoutPage() {
                     ] as [keyof CustomerAddress, string][]
                   ).map(([field, label]) => (
                     <label key={field} className="block">
-                      <span className="mb-1 block text-xs font-bold text-[var(--store-text)]">{label}</span>
+                      <span className="mb-1 block text-xs font-bold text-[var(--store-text-primary)]">{label}</span>
                       <input
                         value={String(address[field] ?? "")}
                         onChange={(event) =>
@@ -557,7 +557,7 @@ export function StoreCheckoutPage() {
                     </label>
                   ))}
                   <label className="block sm:col-span-2">
-                    <span className="mb-1 block text-xs font-bold text-[var(--store-text)]">
+                    <span className="mb-1 block text-xs font-bold text-[var(--store-text-primary)]">
                       {t("store.checkout.addressNotes")}
                     </span>
                     <input
@@ -573,7 +573,7 @@ export function StoreCheckoutPage() {
                 {areaError ? <FieldNote tone="error">{areaError}</FieldNote> : null}
               </div>
             ) : (
-              <p className="mt-3 text-xs leading-relaxed text-[var(--store-muted)]">
+              <p className="mt-3 text-xs leading-relaxed text-[var(--store-text-secondary)]">
                 {t("store.checkout.pickupNote", {
                   address:
                     pick(settings.delivery.pickup_address_ar, settings.delivery.pickup_address_en) ||
@@ -585,11 +585,11 @@ export function StoreCheckoutPage() {
 
           {/* payment */}
           <section className="border border-[var(--store-border)] bg-[var(--store-surface)] p-4" style={{ borderRadius: "var(--store-radius)" }}>
-            <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-muted)]">
+            <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-text-secondary)]">
               {t("store.checkout.payment")}
             </h2>
             {paymentNoteCopy ? (
-              <p className="mt-2 text-xs leading-relaxed text-[var(--store-muted)]">{paymentNoteCopy}</p>
+              <p className="mt-2 text-xs leading-relaxed text-[var(--store-text-secondary)]">{paymentNoteCopy}</p>
             ) : null}
             <div className="mt-3 flex flex-col gap-2">
               {settings.delivery.cod_enabled ? (
@@ -610,10 +610,10 @@ export function StoreCheckoutPage() {
                     className="mt-0.5 accent-[var(--store-primary)]"
                   />
                   <span>
-                    <span className="block text-sm font-black text-[var(--store-text)]">{t("store.checkout.cod")}</span>
-                    <span className="block text-xs text-[var(--store-muted)]">{t("store.checkout.codHint")}</span>
+                    <span className="block text-sm font-black text-[var(--store-text-primary)]">{t("store.checkout.cod")}</span>
+                    <span className="block text-xs text-[var(--store-text-secondary)]">{t("store.checkout.codHint")}</span>
                     {codNoteCopy ? (
-                      <span className="mt-1 block text-xs leading-relaxed text-[var(--store-muted)]">{codNoteCopy}</span>
+                      <span className="mt-1 block text-xs leading-relaxed text-[var(--store-text-secondary)]">{codNoteCopy}</span>
                     ) : null}
                   </span>
                 </label>
@@ -637,27 +637,27 @@ export function StoreCheckoutPage() {
                     className="mt-0.5 accent-[var(--store-primary)]"
                   />
                   <span className="min-w-0 flex-1">
-                    <span className="block text-sm font-black text-[var(--store-text)]">{t("store.checkout.instapay")}</span>
-                    <span className="block text-xs text-[var(--store-muted)]">{t("store.checkout.instapayHint")}</span>
+                    <span className="block text-sm font-black text-[var(--store-text-primary)]">{t("store.checkout.instapay")}</span>
+                    <span className="block text-xs text-[var(--store-text-secondary)]">{t("store.checkout.instapayHint")}</span>
 
                     {paymentMethod === "instapay" ? (
-                      <span className="mt-3 block rounded-lg border border-[var(--store-border)] bg-[var(--store-surface-alt)] p-3">
-                        <span className="block text-xs font-bold text-[var(--store-text)]">
+                      <span className="mt-3 block rounded-lg border border-[var(--store-border)] bg-[var(--store-surface-muted)] p-3">
+                        <span className="block text-xs font-bold text-[var(--store-text-primary)]">
                           {t("store.checkout.instapaySteps")}
                         </span>
                         {instapayInstructions ? (
-                          <p className="mt-2 whitespace-pre-line text-xs leading-relaxed text-[var(--store-muted)]">
+                          <p className="mt-2 whitespace-pre-line text-xs leading-relaxed text-[var(--store-text-secondary)]">
                             {instapayInstructions}
                           </p>
                         ) : (
-                          <ol className="mt-2 list-decimal space-y-1 ps-4 text-xs text-[var(--store-muted)]">
+                          <ol className="mt-2 list-decimal space-y-1 ps-4 text-xs text-[var(--store-text-secondary)]">
                             <li>{t("store.checkout.instapayStep1", { amount: money(shown?.total ?? totals.total) })}</li>
                             <li>{t("store.checkout.instapayStep2")}</li>
                             <li>{t("store.checkout.instapayStep3")}</li>
                           </ol>
                         )}
                         {settings.social.instapay_holder ? (
-                          <span className="mt-2 block text-xs font-semibold text-[var(--store-muted)]">
+                          <span className="mt-2 block text-xs font-semibold text-[var(--store-text-secondary)]">
                             {t("store.checkout.instapayHolder")}: {settings.social.instapay_holder}
                           </span>
                         ) : null}
@@ -686,7 +686,7 @@ export function StoreCheckoutPage() {
                           />
                         ) : null}
                         {instapayNoteCopy ? (
-                          <span className="mt-2 block whitespace-pre-line text-xs leading-relaxed text-[var(--store-muted)]">
+                          <span className="mt-2 block whitespace-pre-line text-xs leading-relaxed text-[var(--store-text-secondary)]">
                             {instapayNoteCopy}
                           </span>
                         ) : null}
@@ -704,8 +704,8 @@ export function StoreCheckoutPage() {
           {/* notes */}
           <section className="border border-[var(--store-border)] bg-[var(--store-surface)] p-4" style={{ borderRadius: "var(--store-radius)" }}>
             <label className="block">
-              <span className="mb-1 block text-xs font-bold text-[var(--store-text)]">
-                {t("store.checkout.orderNotes")} <span className="font-medium text-[var(--store-muted)]">({t("common.optional")})</span>
+              <span className="mb-1 block text-xs font-bold text-[var(--store-text-primary)]">
+                {t("store.checkout.orderNotes")} <span className="font-medium text-[var(--store-text-secondary)]">({t("common.optional")})</span>
               </span>
               <textarea
                 value={notes}
@@ -721,7 +721,7 @@ export function StoreCheckoutPage() {
         {/* summary */}
         <aside className="flex flex-col gap-4 lg:sticky lg:top-24 lg:self-start">
           <div className="border border-[var(--store-border)] bg-[var(--store-surface)] p-4" style={{ borderRadius: "var(--store-radius)" }}>
-            <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-muted)]">
+            <h2 className="text-sm font-black uppercase tracking-widest text-[var(--store-text-secondary)]">
               {t("store.cart.summary")}
             </h2>
 
@@ -736,15 +736,15 @@ export function StoreCheckoutPage() {
                     className="flex items-start justify-between gap-2 text-xs"
                   >
                     <span className="min-w-0">
-                      <span className="block truncate font-bold text-[var(--store-text)]">
+                      <span className="block truncate font-bold text-[var(--store-text-primary)]">
                         {pick(entry.product.name_ar, entry.product.name_en)}
                       </span>
                       {entry.variantLabel ? (
-                        <span className="block font-bold text-[var(--store-text)]" data-testid="checkout-line-variant">
+                        <span className="block font-bold text-[var(--store-text-primary)]" data-testid="checkout-line-variant">
                           {entry.variantLabel}
                         </span>
                       ) : null}
-                      <span className="text-[var(--store-muted)]">
+                      <span className="text-[var(--store-text-secondary)]">
                         {t("store.checkout.quantityTimes", { count: entry.quantity })}
                       </span>
                       {problem ? (
@@ -753,7 +753,7 @@ export function StoreCheckoutPage() {
                         </span>
                       ) : null}
                     </span>
-                    <Money value={entry.lineTotal} className="shrink-0 font-black text-[var(--store-text)]" />
+                    <Money value={entry.lineTotal} className="shrink-0 font-black text-[var(--store-text-primary)]" />
                   </li>
                 );
               })}
@@ -761,8 +761,8 @@ export function StoreCheckoutPage() {
 
             <dl className="mt-3 space-y-2 border-t border-[var(--store-border)] pt-3 text-sm">
               <div className="flex justify-between gap-2">
-                <dt className="text-[var(--store-muted)]">{t("store.cart.subtotal")}</dt>
-                <dd className="font-bold text-[var(--store-text)]"><Money value={shown?.subtotal ?? totals.subtotal} /></dd>
+                <dt className="text-[var(--store-text-secondary)]">{t("store.cart.subtotal")}</dt>
+                <dd className="font-bold text-[var(--store-text-primary)]"><Money value={shown?.subtotal ?? totals.subtotal} /></dd>
               </div>
               {(shown?.autoDiscount ?? 0) > 0 ? (
                 <div className="flex justify-between gap-2 text-emerald-700">
@@ -783,14 +783,14 @@ export function StoreCheckoutPage() {
                 </div>
               ) : null}
               <div className="flex justify-between gap-2">
-                <dt className="text-[var(--store-muted)]">
+                <dt className="text-[var(--store-text-secondary)]">
                   {deliveryType === "pickup"
                     ? t("store.checkout.pickup")
                     : activeZone
                       ? pick(activeZone.name_ar, activeZone.name_en)
                       : t("store.cart.deliveryFee")}
                 </dt>
-                <dd className="font-bold text-[var(--store-text)]">
+                <dd className="font-bold text-[var(--store-text-primary)]">
                   {(shown?.deliveryFee ?? totals.delivery_fee) > 0 ? (
                     <Money value={shown?.deliveryFee ?? totals.delivery_fee} />
                   ) : (
@@ -808,8 +808,8 @@ export function StoreCheckoutPage() {
                 </div>
               ) : null}
               <div className="flex justify-between gap-2 border-t border-[var(--store-border)] pt-2 text-base">
-                <dt className="font-black text-[var(--store-text)]">{t("store.cart.total")}</dt>
-                <dd className="font-black text-[var(--store-text)]"><Money value={shown?.total ?? totals.total} /></dd>
+                <dt className="font-black text-[var(--store-text-primary)]">{t("store.cart.total")}</dt>
+                <dd className="font-black text-[var(--store-text-primary)]"><Money value={shown?.total ?? totals.total} /></dd>
               </div>
             </dl>
 
@@ -821,7 +821,7 @@ export function StoreCheckoutPage() {
                 <button
                   type="button"
                   onClick={clearCoupon}
-                  className="text-xs font-bold text-[var(--store-muted)] hover:text-rose-600"
+                  className="text-xs font-bold text-[var(--store-text-secondary)] hover:text-rose-600"
                 >
                   {t("store.cart.removeCoupon")}
                 </button>
@@ -877,14 +877,14 @@ export function StoreCheckoutPage() {
             <button
               type="submit"
               disabled={placing || invalid}
-              className="mt-4 w-full bg-[var(--store-primary)] px-4 py-3 text-sm font-black text-[var(--store-on-primary)] transition hover:bg-[var(--store-primary-hover)] disabled:cursor-not-allowed disabled:bg-[var(--store-border)] disabled:text-[var(--store-muted)]"
+              className="mt-4 w-full bg-[var(--store-primary)] px-4 py-3 text-sm font-black text-[var(--store-on-primary)] transition hover:bg-[var(--store-primary-hover)] disabled:cursor-not-allowed disabled:bg-[var(--store-border)] disabled:text-[var(--store-text-secondary)]"
               style={{ borderRadius: "var(--store-radius-button)" }}
             >
               {placing
                 ? t("store.checkout.placing")
                 : placeOrderCopy || t("store.checkout.placeOrder")}
             </button>
-            <p className="mt-2 text-[11px] leading-relaxed text-[var(--store-muted)]">
+            <p className="mt-2 text-[11px] leading-relaxed text-[var(--store-text-secondary)]">
               {t("store.checkout.placementNote")}
             </p>
           </div>

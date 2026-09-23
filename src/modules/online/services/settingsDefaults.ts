@@ -9,8 +9,9 @@
  *   - adding a setting never needs a data migration,
  *   - the storefront can always trust the shape it receives.
  *
- * The defaults are the design the storefront shipped with: the same indigo the
- * POS uses, EGP, and every homepage section visible in a sensible order.
+ * The defaults are the storefront's single palette authority, independent of
+ * the POS. Stored custom values always win; only an exact, uncustomized legacy
+ * theme is upgraded to the current ivory/charcoal/gold baseline.
  */
 import {
   BUTTON_STYLES as BUTTON_KEY_STYLES,
@@ -39,6 +40,32 @@ import { defaultWhatsAppUpdates, resolveWhatsAppUpdates } from "./whatsapp";
 const DEFAULT_STORE_NAME_AR = "أَلِــيْـــق";
 const DEFAULT_STORE_NAME_EN = "ALYQ";
 export { DEFAULT_STORE_NAME_AR, DEFAULT_STORE_NAME_EN };
+
+/** Only brand colours live here; semantic UI colours are derived in theme.ts. */
+export const STORE_PALETTE = {
+  primary_color: "#202427",       // charcoal CTA, not espresso
+  secondary_color: "#34393b",     // header / announcement
+  accent_color: "#a48d59",        // small, muted gold details
+  background_color: "#f8f9f6",    // clean ivory, not muddy beige
+  surface_color: "#ffffff",       // white cards
+  text_color: "#202427",
+  muted_text_color: "#626a6b",
+} as const;
+
+/** Previously persisted verbatim by demo localStorage and website_settings. */
+const LEGACY_DEFAULT_PALETTE = {
+  primary_color: "#1c1917", secondary_color: "#44403c", accent_color: "#b08d57",
+  background_color: "#faf7f2", surface_color: "#fffdfb", text_color: "#1c1917",
+  muted_text_color: "#78716c",
+} as const;
+
+function isUntouchedLegacyTheme(stored: unknown): boolean {
+  if (!isPlainObject(stored) || !isPlainObject(stored.theme)) return false;
+  const theme = stored.theme;
+  return theme.dark_mode === false && Object.entries(LEGACY_DEFAULT_PALETTE).every(
+    ([key, color]) => typeof theme[key] === "string" && theme[key].toLowerCase() === color,
+  );
+}
 
 export const DEFAULT_HERO_SLIDES: HeroSlide[] = [
   {
@@ -144,20 +171,8 @@ export const DEFAULT_WEBSITE_SETTINGS: WebsiteSettings = {
     map_url: "",
   },
   theme: {
-    // An accessories-house palette: warm cream paper, soft white surfaces,
-    // espresso ink, and a muted antique gold used for details rather than
-    // surfaces. The previous defaults were the POS's own indigo and violet,
-    // chosen so the shop and the till looked like one product — which is
-    // precisely what makes a shop read as a back office instead of a brand.
-    // These tokens are namespaced `--store-*` and removed when the storefront
-    // unmounts, so the till does not change by one pixel either way.
-    primary_color: "#1c1917", // espresso: dark buttons, cream type on top
-    secondary_color: "#44403c", // warm stone, for the announcement bar
-    accent_color: "#b08d57", // antique gold: badges, rules, small details
-    background_color: "#faf7f2", // warm cream paper
-    surface_color: "#fffdfb", // soft white cards
-    text_color: "#1c1917",
-    muted_text_color: "#78716c",
+    ...STORE_PALETTE,
+    // The --store-* tokens never leak into the signed-in admin/POS shell.
     font_stack: "system",
     button_style: "rounded",
     header_style: "solid",
@@ -241,8 +256,8 @@ export const DEFAULT_WEBSITE_SETTINGS: WebsiteSettings = {
     text_en: "Considered details. Everyday elegance. — ALYQ",
     href: "",
     mode: "rotate",
-    bg_color: "#1c1917",
-    text_color: "#faf7f2",
+    bg_color: STORE_PALETTE.secondary_color,
+    text_color: STORE_PALETTE.background_color,
     interval_ms: 5000,
     messages: [],
   },
@@ -433,6 +448,10 @@ export function resolveSettings(stored: unknown): WebsiteSettings {
       : undefined;
   return {
     ...merged,
+    // Old installs persisted the *whole* previous default theme, so changing
+    // code defaults alone could never change their shop. Upgrade only that
+    // exact untouched palette; even a single custom saved colour is honoured.
+    theme: isUntouchedLegacyTheme(stored) ? { ...merged.theme, ...STORE_PALETTE } : merged.theme,
     sections: repairSections(merged.sections),
     whatsapp_updates: resolveWhatsAppUpdates(rawUpdates ?? merged.whatsapp_updates),
   };
@@ -505,11 +524,32 @@ export function repairSections(
   }).sort((a, b) => a.order - b.order || HOMEPAGE_SECTIONS.indexOf(a.key) - HOMEPAGE_SECTIONS.indexOf(b.key));
 }
 
+/** The same hex policy is used in both the public renderer and the admin save. */
+export function isHexColor(value: unknown): value is string {
+  return typeof value === "string" && /^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(value.trim());
+}
+
 /** A hex colour the browser can use, or the fallback when it cannot. */
 export function safeColor(value: unknown, fallback: string): string {
-  if (typeof value !== "string") return fallback;
-  const trimmed = value.trim();
-  return /^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(trimmed) ? trimmed : fallback;
+  return isHexColor(value) ? value.trim() : fallback;
+}
+
+const THEME_COLOR_FIELDS = [
+  "primary_color", "secondary_color", "accent_color", "background_color",
+  "surface_color", "text_color", "muted_text_color",
+] as const;
+
+/** Reject the whole settings write instead of silently replacing a mistyped
+ * colour with the shipped default (or saving the other fields over last valid). */
+export function invalidSettingsColor(settings: WebsiteSettings): string | null {
+  for (const field of THEME_COLOR_FIELDS) {
+    if (!isHexColor(settings.theme[field])) return field;
+  }
+  for (const field of ["bg_color", "text_color"] as const) {
+    const value = settings.announcement[field];
+    if (value && !isHexColor(value)) return `announcement.${field}`;
+  }
+  return null;
 }
 
 /**
@@ -766,8 +806,8 @@ export function sanitizeSettings(input: unknown): WebsiteSettings {
   // announcement
   const ann = out.announcement as unknown as Json;
   ann.mode = enumOf(ann.mode, ["static", "rotate", "scroll"] as const, "rotate");
-  ann.bg_color = safeColor(ann.bg_color as string, "#1c1917");
-  ann.text_color = safeColor(ann.text_color as string, "#faf7f2");
+  ann.bg_color = safeColor(ann.bg_color as string, DEFAULT_WEBSITE_SETTINGS.announcement.bg_color ?? STORE_PALETTE.secondary_color);
+  ann.text_color = safeColor(ann.text_color as string, DEFAULT_WEBSITE_SETTINGS.announcement.text_color ?? STORE_PALETTE.background_color);
   ann.interval_ms = clampInt(ann.interval_ms, 2000, 15000, 5000);
   ann.href = safeUrlField(ann.href);
   ann.text_ar = str(ann.text_ar, 240);

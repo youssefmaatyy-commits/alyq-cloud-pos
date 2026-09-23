@@ -201,10 +201,12 @@ export interface CatalogRepository {
   listVariants(): Promise<ProductVariant[]>;
   createVariant(input: NewProductVariant): Promise<ProductVariant>;
   updateVariant(id: string, patch: ProductVariantPatch): Promise<ProductVariant>;
+  /** The guarded archive/reactivate path: cannot archive the last active shelf. */
+  setVariantActive(id: string, active: boolean): Promise<ProductVariant>;
   /**
    * Permanently remove a combination. Refused with `VARIANT_IN_USE` when any
-   * history names it, `VARIANT_REQUIRED` when it is the product's last one, and
-   * `NOT_FOUND` when it does not exist. Archive is the normal verb.
+   * history names it, `VARIANT_REQUIRED` when it would remove the last active
+   * shelf (or the only shelf), and `NOT_FOUND` when absent. Archive is the normal verb.
    */
   deleteVariant(id: string): Promise<void>;
   /** variant id → referenced-row count, so the screen can explain a refusal. */
