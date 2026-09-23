@@ -17,7 +17,9 @@ import { useI18n } from "@/lib/i18n/I18nProvider";
 import { Badge, Button, Modal, TextArea, useToast } from "@/components/ui";
 import type { OnlineOrder, OrderAction } from "../types";
 import { useOnlineOrders } from "../hooks/OnlineOrdersProvider";
-import { whatsappHref } from "./storefront/StoreLayout";
+import { WhatsAppUpdatePanel, useWhatsAppUpdates } from "./WhatsAppUpdatePanel";
+import { suggestedTemplateKey } from "../services/whatsapp";
+import type { WhatsAppTemplateKey } from "../types";
 
 /** Which actions need a reason typed before they run. */
 const REASON_ACTIONS: OrderAction[] = ["cancel", "payment_reject"];
@@ -56,6 +58,8 @@ export function OrderDetailModal({ order, onClose }: { order: OnlineOrder | null
   const [reasonFor, setReasonFor] = useState<OrderAction | null>(null);
   const [reason, setReason] = useState("");
   const [running, setRunning] = useState(false);
+  const [offerKey, setOfferKey] = useState<WhatsAppTemplateKey | null>(null);
+  const templates = useWhatsAppUpdates();
 
   useEffect(() => {
     if (!order) {
@@ -79,6 +83,10 @@ export function OrderDetailModal({ order, onClose }: { order: OnlineOrder | null
     setReason("");
     if (updated) {
       toast.success(t(`online.orders.done.${action}`));
+      const suggested = suggestedTemplateKey(updated);
+      if (suggested && action !== "cancel" && action !== "payment_approve" && action !== "payment_reject") {
+        setOfferKey(suggested);
+      }
       if (action === "approve" && updated.sale_number) {
         toast.push(t("online.orders.saleCreated", { number: updated.sale_number }), "info");
       }
@@ -99,8 +107,6 @@ export function OrderDetailModal({ order, onClose }: { order: OnlineOrder | null
         .filter((part) => Boolean(part && part.trim()))
         .join("، ")
     : "";
-
-  const wa = whatsappHref(order.customer_phone, t("online.orders.whatsappMessage", { number: order.order_number }));
 
   const label = "text-[11px] font-bold uppercase tracking-wide text-stone-500";
   const value = "text-sm font-semibold text-stone-900";
@@ -176,16 +182,6 @@ export function OrderDetailModal({ order, onClose }: { order: OnlineOrder | null
                 <a href={`tel:${order.customer_phone}`} className="font-semibold text-[#9a7a49] hover:underline">
                   {order.customer_phone}
                 </a>
-                {wa ? (
-                  <a
-                    href={wa}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="ms-2 font-semibold text-emerald-700 hover:underline"
-                  >
-                    {t("online.orders.openWhatsapp")}
-                  </a>
-                ) : null}
               </p>
               {order.customer_email ? <p className="text-xs text-stone-600">{order.customer_email}</p> : null}
               <p className="text-xs text-stone-500">{date(order.created_at)}</p>
@@ -206,6 +202,14 @@ export function OrderDetailModal({ order, onClose }: { order: OnlineOrder | null
               ) : null}
             </div>
           </section>
+
+          <WhatsAppUpdatePanel
+            order={order}
+            templates={templates}
+            preferredKey={offerKey}
+            offerNote={offerKey !== null}
+            onDismissOffer={() => setOfferKey(null)}
+          />
 
           {/* items */}
           <section>

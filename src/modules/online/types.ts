@@ -1180,6 +1180,44 @@ export interface StorefrontCategory {
   content: StorefrontCategoryContent | null;
 }
 
+/**
+ * Staff WhatsApp order-update copy (Phase 55). Stored in the existing settings
+ * document — not a second settings system, and not a delivery log.
+ *
+ * Keys are the real order statuses (plus pickup vs delivery, which the status
+ * machine already distinguishes). There is no invented status.
+ */
+export const WHATSAPP_TEMPLATE_KEYS = [
+  "approved",
+  "processing",
+  "ready_delivery",
+  "ready_pickup",
+  "completed_delivery",
+  "completed_pickup",
+] as const;
+export type WhatsAppTemplateKey = (typeof WHATSAPP_TEMPLATE_KEYS)[number];
+
+/** Placeholders a customer message may contain. Each one is backed by order data. */
+export const WHATSAPP_PLACEHOLDERS = [
+  "customer_name",
+  "order_number",
+  "order_total",
+  "delivery_governorate",
+  "tracking_link",
+  "payment_method",
+  "delivery_method",
+] as const;
+export type WhatsAppPlaceholder = (typeof WHATSAPP_PLACEHOLDERS)[number];
+
+export interface WhatsAppMessageTemplate {
+  ar: string;
+  en: string;
+}
+
+export interface WhatsAppUpdatesSettings {
+  templates: Record<WhatsAppTemplateKey, WhatsAppMessageTemplate>;
+}
+
 export interface WebsiteSettings {
   /** Bumped if the document's shape ever changes incompatibly. */
   version: 1;
@@ -1206,6 +1244,11 @@ export interface WebsiteSettings {
   social_links: SocialLinkConfig[];
   /** Phase 46: shared brand identity (see {@link BrandSettings}). */
   brand: BrandSettings;
+  /**
+   * Phase 55: editable Arabic and English WhatsApp order-update templates.
+   * Deep-link copy only — opening a link is not delivery.
+   */
+  whatsapp_updates: WhatsAppUpdatesSettings;
 }
 
 /** Who changed the settings — shown next to "last saved". */

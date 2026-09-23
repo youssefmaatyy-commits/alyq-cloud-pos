@@ -27,7 +27,9 @@ import {
 } from "@/lib/export";
 import { paymentTotals, remainingOf } from "@/modules/pos/services/salesExport";
 import type { Sale } from "@/modules/pos/types";
+import type { SalesReturn } from "@/modules/returns/types";
 import type { Customer } from "../types";
+import { buildCustomerDirectory } from "./crm";
 
 export interface CustomerPurchaseStats {
   /** Non-voided invoices. */
@@ -78,14 +80,46 @@ export function customerPurchaseStats(sales: readonly Sale[]): Map<string, Custo
 export interface CustomersExportInput {
   /** Customers to export — already searched/filtered by the caller. */
   customers: readonly Customer[];
+  /**
+   * The full book, when `customers` is a filtered view. Phone matching has to
+   * see every record so a duplicate is not silently assigned inside the filter.
+   */
+  book?: readonly Customer[];
   /** Every sale, unfiltered: history is a property of the customer, not the view. */
   sales: readonly Sale[];
+  /** Completed refunds reduce net customer value. Omitted means no refunds known. */
+  returnsList?: readonly SalesReturn[];
   t: Translate;
 }
 
-export function buildCustomersSheets({ customers, sales, t }: CustomersExportInput): BuiltSheet[] {
+export function buildCustomersSheets({
+  customers,
+  book,
+  sales,
+  returnsList = [],
+  t,
+}: CustomersExportInput): BuiltSheet[] {
   const stats = customerPurchaseStats(sales);
   const statsFor = (id: string) => stats.get(id) ?? EMPTY_STATS();
+  // CRM columns use completed invoices and completed refunds. The older
+  // balance / total-spent columns stay on `customerPurchaseStats` so existing
+  // statements do not change meaning. Attribution runs on the full book.
+  const crm = new Map(
+    buildCustomerDirectory(book ?? customers, sales, returnsList).rows.map((row) => [row.customer.id, row.kpis]),
+  );
+  const crmFor = (id: string) =>
+    crm.get(id) ?? {
+      paidTotal: 0,
+      purchaseCount: 0,
+      aov: 0,
+      refundTotal: 0,
+      netValue: 0,
+      lastPurchaseAt: null,
+      posPaid: 0,
+      posCount: 0,
+      onlinePaid: 0,
+      onlineCount: 0,
+    };
 
   const list: ExportSheet<Customer> = {
     name: t("export.sheet.customers"),
@@ -97,6 +131,9 @@ export function buildCustomersSheets({ customers, sales, t }: CustomersExportInp
       { header: t("export.col.balance"), value: (c) => statsFor(c.id).outstanding, kind: "money" },
       { header: t("export.col.purchases"), value: (c) => statsFor(c.id).count, kind: "number", width: 12 },
       { header: t("export.col.totalSpent"), value: (c) => statsFor(c.id).totalSpent, kind: "money" },
+      { header: t("export.col.completedPurchases"), value: (c) => crmFor(c.id).purchaseCount, kind: "number", width: 14 },
+      { header: t("export.col.refunds"), value: (c) => crmFor(c.id).refundTotal, kind: "money" },
+      { header: t("export.col.netCustomerValue"), value: (c) => crmFor(c.id).netValue, kind: "money" },
       {
         header: t("export.col.lastPurchase"),
         value: (c) => toDate(statsFor(c.id).lastPurchaseAt),
@@ -112,6 +149,9 @@ export function buildCustomersSheets({ customers, sales, t }: CustomersExportInp
       Math.round(customers.reduce((acc, c) => acc + statsFor(c.id).outstanding, 0) * 100) / 100,
       customers.reduce((acc, c) => acc + statsFor(c.id).count, 0),
       Math.round(customers.reduce((acc, c) => acc + statsFor(c.id).totalSpent, 0) * 100) / 100,
+      customers.reduce((acc, c) => acc + crmFor(c.id).purchaseCount, 0),
+      Math.round(customers.reduce((acc, c) => acc + crmFor(c.id).refundTotal, 0) * 100) / 100,
+      Math.round(customers.reduce((acc, c) => acc + crmFor(c.id).netValue, 0) * 100) / 100,
       null,
       "",
       null,
@@ -119,6 +159,7 @@ export function buildCustomersSheets({ customers, sales, t }: CustomersExportInp
     notes: [
       t("export.note.balance"),
       t("export.note.totalsExcludeVoided"),
+      t("export.note.crmNet"),
       `${t("export.col.name")}: ${customers.length}`,
     ],
   };

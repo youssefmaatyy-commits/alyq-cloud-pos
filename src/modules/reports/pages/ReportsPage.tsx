@@ -514,7 +514,7 @@ export function ReportsPage() {
                   name="customers"
                   size="sm"
                   count={customers.length}
-                  build={() => buildCustomersSheets({ customers, sales, t })}
+                  build={() => buildCustomersSheets({ customers, sales, returnsList, t })}
                 />
               </ExportRow>
 

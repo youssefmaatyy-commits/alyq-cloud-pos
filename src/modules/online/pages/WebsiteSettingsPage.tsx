@@ -38,6 +38,7 @@ import {
   ToggleSwitch,
   useToast,
 } from "@/components/ui";
+import { WhatsAppTemplatesPanel } from "../components/admin/WhatsAppTemplatesPanel";
 import { getWebsiteRepository } from "../data";
 import { toOnlineError, type OnlineErrorCode } from "../data/repository";
 import { resolveSettings, sanitizeSettings } from "../services/settingsDefaults";
@@ -95,7 +96,8 @@ type Tab =
   | "social"
   | "delivery"
   | "checkout"
-  | "confirmation";
+  | "confirmation"
+  | "messages";
 
 const TABS: { key: Tab; labelKey: string }[] = [
   { key: "general", labelKey: "online.ws.general" },
@@ -113,6 +115,7 @@ const TABS: { key: Tab; labelKey: string }[] = [
   { key: "delivery", labelKey: "online.ws.delivery" },
   { key: "checkout", labelKey: "online.ws.checkout" },
   { key: "confirmation", labelKey: "online.ws.confirmation" },
+  { key: "messages", labelKey: "online.ws.messages" },
 ];
 
 const newId = () =>
@@ -1083,6 +1086,8 @@ export function WebsiteSettingsPage() {
           {tab === "checkout" ? <div data-testid="checkout-copy-settings"><CheckoutCopyPanel draft={draft} patch={patch} /></div> : null}
 
           {tab === "confirmation" ? <div data-testid="confirmation-settings"><ConfirmationPanel draft={draft} patch={patch} /></div> : null}
+
+          {tab === "messages" ? <WhatsAppTemplatesPanel draft={draft} patch={patch} /> : null}
 
           {tab === "delivery" ? (
             <Card className="space-y-4">

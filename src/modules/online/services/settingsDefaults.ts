@@ -33,6 +33,7 @@ import type {
   WebsiteSettings,
 } from "../types";
 import { HOMEPAGE_SECTIONS } from "../types";
+import { defaultWhatsAppUpdates, resolveWhatsAppUpdates } from "./whatsapp";
 
 /** The shop's name before the admin sets one. Both languages, like everything. */
 const DEFAULT_STORE_NAME_AR = "أَلِــيْـــق";
@@ -382,6 +383,7 @@ export const DEFAULT_WEBSITE_SETTINGS: WebsiteSettings = {
     { platform: "tiktok", enabled: false, url: "", label_ar: "تيك توك", label_en: "TikTok" },
     { platform: "whatsapp", enabled: false, url: "", label_ar: "واتساب", label_en: "WhatsApp" },
   ],
+  whatsapp_updates: defaultWhatsAppUpdates(),
 };
 
 type Json = Record<string, unknown>;
@@ -425,7 +427,15 @@ export function mergeSettings<T>(defaults: T, stored: unknown): T {
  */
 export function resolveSettings(stored: unknown): WebsiteSettings {
   const merged = mergeSettings(DEFAULT_WEBSITE_SETTINGS, stored);
-  return { ...merged, sections: repairSections(merged.sections) };
+  const rawUpdates =
+    stored && typeof stored === "object" && !Array.isArray(stored)
+      ? (stored as { whatsapp_updates?: unknown }).whatsapp_updates
+      : undefined;
+  return {
+    ...merged,
+    sections: repairSections(merged.sections),
+    whatsapp_updates: resolveWhatsAppUpdates(rawUpdates ?? merged.whatsapp_updates),
+  };
 }
 
 /** Fill in missing sections, drop unknown ones, and make the order total. */
@@ -926,6 +936,9 @@ export function sanitizeSettings(input: unknown): WebsiteSettings {
   }
   confirmation.support_href = safeUrlField(confirmation.support_href);
   confirmation.whatsapp_cta = bool(confirmation.whatsapp_cta, true);
+
+  // Phase 55: order-update templates. Plain text, length-capped, unknown keys dropped.
+  out.whatsapp_updates = resolveWhatsAppUpdates(out.whatsapp_updates);
 
   // per-section config
   out.sections = out.sections.map((section) => ({

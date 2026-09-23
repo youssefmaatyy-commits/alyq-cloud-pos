@@ -119,7 +119,8 @@ export async function exportEmergencyWorkbook(input: EmergencyExportInput): Prom
 
   await section("customers", async () => {
     const customers = await loadCustomers();
-    return buildCustomersSheets({ customers, sales: sales ?? [], t });
+    const returnsList = await loadReturns().catch(() => []);
+    return buildCustomersSheets({ customers, sales: sales ?? [], returnsList, t });
   });
 
   await section("sales", async () => (sales ? buildSalesSheets({ sales, t, pick }) : []));
