@@ -6,6 +6,7 @@
  */
 export { InventoryProvider, useInventory } from "./hooks/InventoryProvider";
 export { InventoryPage } from "./pages/InventoryPage";
+export { StocktakePage } from "./pages/StocktakePage";
 export { MovementsPage } from "./pages/MovementsPage";
 export { StockStatusBadge } from "./components/StockStatusBadge";
 export { StockAdjustmentModal } from "./components/StockAdjustmentModal";

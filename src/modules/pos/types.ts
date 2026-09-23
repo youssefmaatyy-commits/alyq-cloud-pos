@@ -11,8 +11,29 @@
  * reversing stock movement).
  */
 
-export const PAYMENT_METHODS = ["cash", "instapay"] as const;
+/**
+ * How a sale is paid.
+ *
+ * `cod` (cash on delivery) exists only for sales an approved website order
+ * created — the till has no button for it, because a cashier standing in front
+ * of a customer is not delivering anything. It is in this list because it is in
+ * the database enum (migration 0017) and because a sale paid that way has to be
+ * readable everywhere sales are listed and exported.
+ */
+export const PAYMENT_METHODS = ["cash", "instapay", "visa", "cod"] as const;
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
+
+/**
+ * Where a sale came from.
+ *
+ * `pos` is the till; `online` is an approved website order. The column exists so
+ * the register can answer "how much of today's takings was the website?" without
+ * a second system of record, and so an online sale is recognisable in the sales
+ * list rather than looking like a mystery transaction. Optional and defaulting to
+ * `pos`, so every existing call site keeps working unchanged.
+ */
+export const SALE_SOURCES = ["pos", "online"] as const;
+export type SaleSource = (typeof SALE_SOURCES)[number];
 
 /** `completed` = paid & stock deducted · `pending` = InstaPay awaiting confirmation · `voided` = reversed. */
 export type SaleStatus = "completed" | "pending" | "voided";
@@ -23,6 +44,16 @@ export interface SaleItem {
   id: string;
   sale_id: string;
   product_id: string;
+  /**
+   * Phase 43: the exact combination sold. Null on every legacy line and on a
+   * product sold as a whole.
+   */
+  variant_id: string | null;
+  /** Frozen colour and size — an archived or renamed variant still reads here. */
+  variant_color_ar: string | null;
+  variant_color_en: string | null;
+  variant_size: number | null;
+  variant_size_label: string | null;
   /** Snapshot of the product name at sale time (historical, not a live join). */
   name_ar: string;
   name_en: string;
@@ -30,7 +61,20 @@ export interface SaleItem {
   barcode: string | null;
   unit_price: number;
   quantity: number;
+  /** Gross line total before manual item discount. */
+  gross_total?: number;
   line_total: number;
+  discount_type?: DiscountType;
+  discount_value?: number;
+  discount_amount?: number;
+  automatic_promotion_id?: string | null;
+  automatic_promotion_name?: string | null;
+  automatic_discount_amount?: number;
+  /**
+   * Cost per unit frozen at sale time (Phase 53). Null on rows written before
+   * the snapshot existed — unknown, never treated as free.
+   */
+  unit_cost?: number | null;
 }
 
 /**
@@ -72,7 +116,14 @@ export interface Sale {
   subtotal: number;
   discount_type: DiscountType;
   discount_value: number;
+  /** Invoice-level discount (legacy fields remain invoice discount fields). */
   discount_amount: number;
+  /** Manual item discounts, kept separate from invoice discounts. */
+  item_discount_amount?: number;
+  total_discount_amount?: number;
+  automatic_discount_amount?: number;
+  automatic_promotion_id?: string | null;
+  automatic_promotion_name?: string | null;
   total: number;
   user_id: string;
   user_name: string;
@@ -97,6 +148,13 @@ export interface Sale {
   paid_at: string | null;
   paid_by: string | null;
   paid_by_name: string | null;
+  /** `pos` unless an approved online order created it. */
+  source?: SaleSource;
+  /**
+   * The open shift a till sale was completed under (migration 0040).
+   * `null` for online-channel sales and for rows before the column existed.
+   */
+  shift_id?: string | null;
 }
 
 /** Payload the cart sends to complete a sale. */
@@ -106,7 +164,14 @@ export interface CompleteSaleInput {
    * Only product ids + quantities come from the client. Prices, names and
    * totals are re-read/recalculated on the authoritative side.
    */
-  lines: { product_id: string; qty: number }[];
+  lines: {
+    product_id: string;
+    qty: number;
+    variant_id?: string | null;
+    /** Discount intent only; authoritative service recalculates the amount. */
+    discount_type?: DiscountType;
+    discount_value?: number;
+  }[];
   discount_type: DiscountType;
   discount_value: number;
   /** One or more payments whose amounts sum exactly to the sale total. */
@@ -116,6 +181,8 @@ export interface CompleteSaleInput {
   customer_phone?: string | null;
   user_id: string;
   user_name: string;
+  /** Omitted by the till; set to `online` when an order approval creates it. */
+  source?: SaleSource;
 }
 
 export interface VoidSaleInput {
@@ -133,15 +200,43 @@ export interface ConfirmPaymentInput {
 /** A line in the active cart (UI state only — never persisted as-is). */
 export interface CartLine {
   product_id: string;
+  /**
+   * Phase 43: the exact combination this line is, when the product sells by
+   * variant. THIS is part of the line's identity — two combinations of one
+   * product are two lines that never merge, because merging them would charge
+   * one shelf for stock that came off another.
+   *
+   * Null for a product sold as a whole, and on a legacy line.
+   */
+  variant_id: string | null;
+  /** The combination's own code, frozen onto the line at add time. */
+  variant_sku: string | null;
+  /** Frozen colour/size, so a rename cannot rewrite a line already in the cart. */
+  color_ar: string | null;
+  color_en: string | null;
+  size: number | null;
+  size_label: string | null;
   sku: string;
   name_ar: string;
   name_en: string;
   barcode: string | null;
   unit_price: number;
-  /** Maximum sellable quantity right now (live stock for tracked goods). */
+  /** Maximum sellable quantity right now — the VARIANT's shelf when there is one. */
   max_qty: number;
   qty: number;
   image_url: string | null;
+  item_discount?: CartDiscount;
+}
+
+/**
+ * The identity of a cart line: product + exact combination.
+ *
+ * Used for lookups, for React keys and for the "already in the cart" badge, so
+ * Gold/17 and Silver/17 are separate lines everywhere and neither can be
+ * increased by clicking the other.
+ */
+export function lineKey(line: Pick<CartLine, "product_id" | "variant_id">): string {
+  return `${line.product_id}::${line.variant_id ?? ""}`;
 }
 
 export interface CartDiscount {

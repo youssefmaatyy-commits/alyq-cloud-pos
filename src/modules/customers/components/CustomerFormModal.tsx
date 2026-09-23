@@ -6,6 +6,7 @@ import type { Customer } from "../types";
 import {
   EMPTY_CUSTOMER_FORM,
   MAX_CUSTOMER_ADDRESS,
+  MAX_CUSTOMER_EMAIL,
   MAX_CUSTOMER_NAME,
   MAX_CUSTOMER_NOTES,
   MAX_CUSTOMER_PHONE,
@@ -89,6 +90,8 @@ export function CustomerFormModal({
         return t("customers.phoneInvalid");
       case "phoneTaken":
         return t("customers.phoneTaken");
+      case "emailInvalid":
+        return t("customers.emailInvalid");
       case "addressTooLong":
         return t("customers.addressTooLong", { max: MAX_CUSTOMER_ADDRESS });
       case "notesTooLong":
@@ -150,6 +153,26 @@ export function CustomerFormModal({
               onBlur={() => setTouched((p) => ({ ...p, phone: true }))}
               onChange={(e) => setValues((p) => ({ ...p, phone: e.target.value }))}
               placeholder="05xxxxxxxx"
+            />
+          </Field>
+
+          <Field
+            label={t("customers.email")}
+            optional={t("common.optional")}
+            error={getErrorMessage(showError("email"))}
+            htmlFor="cust-email"
+            hint={`${values.email.length}/${MAX_CUSTOMER_EMAIL}`}
+          >
+            <TextInput
+              id="cust-email"
+              dir="ltr"
+              type="email"
+              value={values.email}
+              maxLength={MAX_CUSTOMER_EMAIL}
+              invalid={Boolean(showError("email"))}
+              onBlur={() => setTouched((p) => ({ ...p, email: true }))}
+              onChange={(e) => setValues((p) => ({ ...p, email: e.target.value }))}
+              placeholder={t("customers.emailPlaceholder")}
             />
           </Field>
         </div>

@@ -1,7 +1,15 @@
-import type { CreateReturnInput, RefundRecord, ReturnItem, SalesReturn } from "../types";
+import type {
+  CreateReturnInput,
+  RefundRecord,
+  ReturnItem,
+  SalesReturn,
+  SettleRefundInput,
+  SettleRefundResult,
+} from "../types";
 import { AppError, type ReturnRepository } from "./repository";
 import { safeStorage } from "@/modules/products/data/demoSeed";
 import { getDemoSalesRepository } from "@/modules/pos/data/demoRepository";
+import { getDemoOnlineRepository } from "@/modules/online/data/demoRepository";
 import { getDemoRepository as getCatalogDemo } from "@/modules/products/data/demoRepository";
 import { applyDemoAdjustment } from "@/modules/inventory/data/demoRepository";
 import { validateReturnDraft } from "../validation";
@@ -114,6 +122,25 @@ export class DemoReturnRepository implements ReturnRepository {
     const sale = await salesRepo.getSale(input.sale_id);
     if (!sale) throw new AppError("NOT_FOUND", `Sale ${input.sale_id} not found`);
 
+    // An online-origin sale's lines read at list while its discount rides as
+    // one fixed sale discount: the refund uses the order snapshot's paid
+    // prices instead, so a discounted item refunds discounted, never list.
+    let paidPrices: { product_id: string; variant_id: string | null; discounted_unit_price: number | null }[] | null =
+      null;
+    if (sale.source === "online") {
+      try {
+        const origin = await getDemoOnlineRepository().getOrderBySaleId(sale.id);
+        paidPrices =
+          origin?.items.map((item) => ({
+            product_id: item.product_id,
+            variant_id: item.variant_id ?? null,
+            discounted_unit_price: item.discounted_unit_price ?? null,
+          })) ?? null;
+      } catch {
+        paidPrices = null;
+      }
+    }
+
     const validation = validateReturnDraft(
       sale,
       input.items,
@@ -121,6 +148,7 @@ export class DemoReturnRepository implements ReturnRepository {
       input.refund_method,
       this.returns,
       this.refunds,
+      paidPrices,
     );
 
     if (!validation.valid) {
@@ -144,6 +172,11 @@ export class DemoReturnRepository implements ReturnRepository {
         return_id: returnId,
         sale_item_id: validItem.sale_item_id,
         product_id: validItem.product_id,
+        variant_id: validItem.variant_id,
+        variant_color_ar: validItem.variant_color_ar,
+        variant_color_en: validItem.variant_color_en,
+        variant_size: validItem.variant_size,
+        variant_size_label: validItem.variant_size_label,
         name_ar: validItem.name_ar,
         name_en: validItem.name_en,
         sku: validItem.sku,
@@ -159,6 +192,8 @@ export class DemoReturnRepository implements ReturnRepository {
       await applyDemoAdjustment(
         {
           productId: validItem.product_id,
+          // The exact shelf the goods left — never a sibling size or colour.
+          variantId: validItem.variant_id,
           type: "adjustment_in",
           reason: "customer_return",
           quantity: validItem.requested_quantity,
@@ -201,6 +236,12 @@ export class DemoReturnRepository implements ReturnRepository {
       user_id: input.user_id,
       user_name: input.user_name,
       created_at: now,
+      // A refund created already-settled carries its own creator as the
+      // settlement trail; a pending one waits for `settleRefund`.
+      rejection_reason: null,
+      settled_at: input.refund_status === "pending" ? null : now,
+      settled_by: input.refund_status === "pending" ? null : input.user_id,
+      settled_by_name: input.refund_status === "pending" ? null : input.user_name,
     };
 
     this.returns = [returnRecord, ...this.returns];
@@ -210,6 +251,77 @@ export class DemoReturnRepository implements ReturnRepository {
     persistRefunds(this.refunds);
 
     return delay({ returnRecord, refundRecord }, 60);
+  }
+
+  async settleRefund(refundId: string, input: SettleRefundInput): Promise<SettleRefundResult> {
+    const refund = this.refunds.find((r) => r.id === refundId);
+    if (!refund) throw new AppError("NOT_FOUND", `Refund ${refundId} not found`);
+
+    // Idempotent in the same direction, refused in the other — the same shape
+    // `pos_settle_refund` enforces in migration 0016.
+    if (refund.status === input.decision) {
+      return delay({ refund, alreadySettled: true }, 40);
+    }
+    if (refund.status !== "pending") {
+      throw new AppError(
+        "VALIDATION",
+        `This refund was already settled as ${refund.status}`,
+      );
+    }
+    const reason = input.reason?.trim() ?? "";
+    if (input.decision === "rejected" && reason.length === 0) {
+      throw new AppError("VALIDATION", "A rejected refund needs a reason");
+    }
+
+    const now = nowIso();
+    const settled: RefundRecord = {
+      ...refund,
+      status: input.decision,
+      rejection_reason: input.decision === "rejected" ? reason : null,
+      settled_at: now,
+      settled_by: input.user_id,
+      settled_by_name: input.user_name,
+    };
+    this.refunds = this.refunds.map((r) => (r.id === refundId ? settled : r));
+    persistRefunds(this.refunds);
+
+    // The linked return follows the money: its refund_status is a mirror of the
+    // settlement, which is what frees the reserved refundable amount for a
+    // rejection.
+    if (settled.return_id) {
+      this.returns = this.returns.map((r) =>
+        r.id === settled.return_id ? { ...r, refund_status: settled.status } : r,
+      );
+      persistReturns(this.returns);
+
+      // A rejection cancels the return, so the goods are written back out —
+      // the exact mirror of pos_settle_refund (migration 0041). This keeps the
+      // released quantity honest: a later, genuine return restores stock
+      // exactly once, for the goods that actually came back that time.
+      if (settled.status === "rejected") {
+        const linked = this.returns.find((r) => r.id === settled.return_id);
+        if (linked) {
+          const catalog = getCatalogDemo();
+          for (const item of linked.items) {
+            const products = await catalog.listProducts();
+            await applyDemoAdjustment(
+              {
+                productId: item.product_id,
+                type: "adjustment_out",
+                reason: "customer_return",
+                quantity: item.quantity,
+                notes: `Reversed: refund ${settled.refund_number} rejected (Return ${linked.return_number})`,
+                userId: input.user_id,
+                userName: input.user_name,
+              },
+              products,
+            );
+          }
+        }
+      }
+    }
+
+    return delay({ refund: settled, alreadySettled: false }, 60);
   }
 
   reset(): void {

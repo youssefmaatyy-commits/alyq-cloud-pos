@@ -1,23 +1,25 @@
-import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { PageHeader } from "@/components/layout/AppShell";
+import { canAct } from "@/lib/permissions/enforce";
 import {
   Button,
   Card,
   EmptyState,
   ErrorState,
+  ExportButton,
   LoadingBlock,
   SelectInput,
   StatTile,
   TextInput,
-  useToast,
   BoxIcon,
   HistoryIcon,
   SearchIcon,
   WarehouseIcon,
   AlertIcon,
 } from "@/components/ui";
+import { buildInventorySheets } from "../services/inventoryExport";
 import { useInventory } from "../hooks/InventoryProvider";
 import {
   paginate,
@@ -29,27 +31,44 @@ import {
 } from "../services/inventoryQuery";
 import { StockStatusBadge } from "../components/StockStatusBadge";
 import { StockAdjustmentModal } from "../components/StockAdjustmentModal";
-import { ALL_ROLES, ROLE_LABEL, type InventoryRole } from "../permissions";
+import { ROLE_LABEL } from "../permissions";
 import type { StockStatus } from "@/modules/products/types";
+import type { ProductVariant } from "@/modules/products/variants";
+import { sizeLabelOf } from "@/modules/products/variants";
 
 export function InventoryPage() {
   const { t, pick, num, date } = useI18n();
-  const toast = useToast();
   const {
     products,
     movements,
+    variantsByProduct,
     loading,
     error,
     refresh,
     user,
     canAdjust,
-    setUser,
   } = useInventory();
 
   const [filters, setFilters] = useState<InventoryFiltersValue>(EMPTY_INVENTORY_FILTERS);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [adjusting, setAdjusting] = useState<string | null>(null);
+
+  // Phase 46: the dashboard's Low/Out tiles land here pre-filtered
+  // (`?status=low` / `?status=out`). Hydrated once; unknown values ignored.
+  const [params, setParams] = useSearchParams();
+  const hydrated = useRef(false);
+  useEffect(() => {
+    if (hydrated.current) return;
+    hydrated.current = true;
+    const status = params.get("status");
+    if (status === "low" || status === "out" || status === "in") {
+      setFilters((current) => ({ ...current, status }));
+      setPage(1);
+      setParams({}, { replace: true });
+    }
+  }, []); // once, on mount
+
 
   const nameOf = (id: string | null) => {
     if (!id) return t("products.withoutCategory");
@@ -67,6 +86,25 @@ export function InventoryPage() {
     () => summarizeInventory(products, movements),
     [products, movements],
   );
+  // Phase 46: the combination shelf counted directly — a variant product with
+  // healthy-looking rollup can still hide a sold-out size, so the tiles below
+  // also say how many COMBINATIONS are low or gone.
+  const comboStats = useMemo(() => {
+    let low = 0;
+    let out = 0;
+    let total = 0;
+    for (const product of products) {
+      if (!product.stock_tracking_enabled) continue;
+      const variants = (variantsByProduct.get(product.id) ?? []).filter((v) => v.active);
+      if (variants.length === 0) continue;
+      total += variants.length;
+      for (const variant of variants) {
+        if (variant.stock_quantity <= 0) out += 1;
+        else if (variant.low_stock_level > 0 && variant.stock_quantity <= variant.low_stock_level) low += 1;
+      }
+    }
+    return { low, out, total };
+  }, [products, variantsByProduct]);
 
   const updateFilters = (next: InventoryFiltersValue) => {
     setFilters(next);
@@ -80,14 +118,10 @@ export function InventoryPage() {
     return undefined;
   };
 
-  const onRoleChange = (next: InventoryRole) => {
-    setUser({ ...user, role: next });
-    toast.push(t("inventory.roleSwitcher") + ": " + ROLE_LABEL[next], "info");
-  };
-
   return (
     <div>
       <PageHeader
+        crumbs={[{ label: t("home.management.title"), to: "/management" }, { label: t("nav.inventory") }]}
         title={t("inventory.dashboard")}
         subtitle={t("inventory.dashboardSubtitle")}
         actions={
@@ -95,6 +129,23 @@ export function InventoryPage() {
             <Button variant="secondary" onClick={() => void refresh()} title={t("common.retry")}>
               ⟳
             </Button>
+            {/* Held units are the website's reservations — the place they get
+                read and, when they disagree with their order, settled. */}
+            {canAct("manage_online_orders") ? (
+              <Link to="/online/reservations">
+                <Button variant="secondary">{t("nav.stockHolds")}</Button>
+              </Link>
+            ) : null}
+            {/* Exports `results` — the filtered rows on screen. Category names
+                come from this page's own resolver, which deliberately does not
+                import the catalog tree. */}
+            <ExportButton
+              name="inventory"
+              count={results.length}
+              build={() =>
+                buildInventorySheets({ products: results, categoryName: nameOf, t, pick })
+              }
+            />
             <Link
               to="/inventory/movements"
               className="inline-flex h-10 items-center gap-2 rounded-xl bg-white px-4 text-sm font-semibold text-slate-800 ring-1 ring-slate-300 transition-colors hover:bg-slate-50"
@@ -106,32 +157,28 @@ export function InventoryPage() {
         }
       />
 
-      {/* Role / permission banner — always visible, helps demos without auth */}
+      {/* Signed-in identity + what this seat may do (Authentication phase:
+          replaces the Phase 3 role switcher — the acting role now comes from
+          the session and can only change by signing in as someone else).
+
+          The sentence follows `canAdjust`: the read-only wording used to be
+          rendered unconditionally, which is why a fully privileged Admin read
+          "Viewing as Admin — changes are not permitted" on this screen while
+          the dot beside it said the opposite. The dot and the sentence now
+          agree — both track the same resolved capability. */}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700">
         <span className="flex items-center gap-2">
           <span
             className={`h-2 w-2 rounded-full ${canAdjust ? "bg-emerald-500" : "bg-amber-500"}`}
             aria-hidden
           />
-          {t("inventory.perm.banner", { role: ROLE_LABEL[user.role] })}
+          {t(canAdjust ? "inventory.perm.bannerAllowed" : "inventory.perm.banner", {
+            role: ROLE_LABEL[user.role] ?? user.role,
+          })}
         </span>
-        <label className="flex items-center gap-1.5">
-          <span className="text-[11px] uppercase tracking-wider text-slate-500">
-            {t("inventory.roleSwitcher")}:
-          </span>
-          <SelectInput
-            value={user.role}
-            onChange={(e) => onRoleChange(e.target.value as InventoryRole)}
-            className="h-8 w-auto min-w-32 py-1 text-xs font-semibold"
-            aria-label={t("inventory.roleSwitcher")}
-          >
-            {ALL_ROLES.map((role) => (
-              <option key={role} value={role}>
-                {ROLE_LABEL[role]}
-              </option>
-            ))}
-          </SelectInput>
-        </label>
+        <span className="text-[11px] text-slate-500">
+          {t("auth.signedInAs")}: <span className="font-bold text-slate-700">{user.name}</span>
+        </span>
       </div>
 
       {/* KPI tiles */}
@@ -141,19 +188,31 @@ export function InventoryPage() {
           value={num(stats.totalStock, 0)}
           tone="primary"
           icon={<WarehouseIcon />}
-          hint={t("inventory.kpi.totalStockHint")}
+          hint={
+            comboStats.total > 0
+              ? `${t("inventory.kpi.totalStockHint")} · ${t("inventory.kpi.variantSkus", { count: comboStats.total })}`
+              : t("inventory.kpi.totalStockHint")
+          }
         />
         <StatTile
           label={t("inventory.kpi.lowStock")}
           value={String(stats.lowStock)}
           tone="warning"
-          hint={t("inventory.status.low")}
+          hint={
+            comboStats.low > 0
+              ? `${t("inventory.status.low")} · ${t("inventory.kpi.combosLow", { count: comboStats.low })}`
+              : t("inventory.status.low")
+          }
         />
         <StatTile
           label={t("inventory.kpi.outOfStock")}
           value={String(stats.outOfStock)}
           tone="danger"
-          hint={t("inventory.status.out")}
+          hint={
+            comboStats.out > 0
+              ? `${t("inventory.status.out")} · ${t("inventory.kpi.combosOut", { count: comboStats.out })}`
+              : t("inventory.status.out")
+          }
         />
         <StatTile
           label={t("inventory.kpi.movements7d")}
@@ -220,6 +279,7 @@ export function InventoryPage() {
             lastMovementOf={lastMovement}
             onAdjust={(id) => setAdjusting(id)}
             canAdjust={canAdjust}
+            variantsByProduct={variantsByProduct}
             empty={
               <Card>
                 <EmptyState
@@ -305,6 +365,8 @@ interface InventoryTableProps {
   lastMovementOf: (id: string) => { created_at: string } | undefined;
   onAdjust: (id: string) => void;
   canAdjust: boolean;
+  /** Phase 43: the combinations behind a variant product's rollup. */
+  variantsByProduct: Map<string, ProductVariant[]>;
   empty: React.ReactNode;
 }
 
@@ -314,9 +376,12 @@ function InventoryStockTable({
   lastMovementOf,
   onAdjust,
   canAdjust,
+  variantsByProduct,
   empty,
 }: InventoryTableProps) {
   const { t, pick, num, date } = useI18n();
+  // One breakdown open at a time: the screen is a count, not a maze.
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   if (products.length === 0) return <>{empty}</>;
 
   return (
@@ -341,8 +406,11 @@ function InventoryStockTable({
                 ? deriveStatus(product)
                 : ("none" as StockStatus);
               const last = lastMovementOf(product.id);
+              const variants = variantsByProduct.get(product.id) ?? [];
+              const expanded = expandedId === product.id;
               return (
-                <tr key={product.id} className="border-b border-slate-50 last:border-0 hover:bg-slate-50/60">
+                <Fragment key={product.id}>
+                <tr className="border-b border-slate-50 last:border-0 hover:bg-slate-50/60">
                   <td className="px-4 py-3">
                     <p className="font-medium text-slate-900">
                       {pick(product.name_ar, product.name_en)}
@@ -370,6 +438,19 @@ function InventoryStockTable({
                     <span className="block text-[11px] font-medium text-slate-500">
                       {last ? date(last.created_at) : "—"}
                     </span>
+                    {variants.length > 0 ? (
+                      <button
+                        type="button"
+                        data-testid={`variant-breakdown-toggle-${product.sku}`}
+                        aria-expanded={expanded}
+                        onClick={() => setExpandedId(expanded ? null : product.id)}
+                        className="mt-0.5 text-[10px] font-bold text-indigo-600 hover:underline"
+                      >
+                        {expanded
+                          ? t("inventory.variants.hide")
+                          : t("inventory.variants.show", { count: variants.length })}
+                      </button>
+                    ) : null}
                   </td>
                   <td className="px-3 py-3 text-end font-medium text-slate-700 tabular-nums">
                     {num(product.low_stock_level, 0)}
@@ -388,6 +469,48 @@ function InventoryStockTable({
                     </Button>
                   </td>
                 </tr>
+                {/* The breakdown: one row per combination, its OWN shelf. The
+                    product line above is the sum; this is where a missing size
+                    is actually found. */}
+                {expanded && variants.length > 0 ? (
+                  <tr className="border-b border-slate-100 bg-indigo-50/40">
+                    <td colSpan={8} className="px-4 py-2">
+                      <ul className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3" data-testid={`variant-breakdown-${product.sku}`}>
+                        {variants.map((variant) => (
+                          <li
+                            key={variant.id}
+                            className="flex items-center justify-between gap-2 rounded-lg bg-white px-2.5 py-1.5 text-[11px] shadow-sm"
+                          >
+                            <span className="min-w-0 truncate font-semibold text-slate-800">
+                              {pick(variant.color_ar, variant.color_en) || t("store.variants.defaultColor")}
+                              {" / "}
+                              <span className="tabular-nums">
+                                {sizeLabelOf(variant.size, variant.size_label)}
+                              </span>
+                              {!variant.active ? (
+                                <span className="ms-1 text-slate-400">· {t("products.variants.statusArchived")}</span>
+                              ) : null}
+                            </span>
+                            <span
+                              className={`shrink-0 font-bold tabular-nums ${
+                                !variant.active
+                                  ? "text-slate-400"
+                                  : variant.stock_quantity <= 0
+                                    ? "text-rose-600"
+                                    : variant.low_stock_level > 0 && variant.stock_quantity <= variant.low_stock_level
+                                      ? "text-amber-600"
+                                      : "text-emerald-700"
+                              }`}
+                            >
+                              {num(variant.stock_quantity, 0)}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </td>
+                  </tr>
+                ) : null}
+                </Fragment>
               );
             })}
           </tbody>

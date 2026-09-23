@@ -1,0 +1,38 @@
+# ── dependencies ──────────────────────────────────────────────────────────
+node_modules/
+
+# ── build output ──────────────────────────────────────────────────────────
+dist/
+dist-ssr/
+*.local
+
+# ── environment ───────────────────────────────────────────────────────────
+# Real credentials never enter the repository. `.env.example` is the template
+# and is deliberately kept, so a fresh clone knows what to configure.
+.env
+.env.*
+!.env.example
+
+# ── editor / OS ───────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# ── logs ──────────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+yarn-error.log*
+
+# ── local-only preview harness ────────────────────────────────────────────
+# `vite.preview.config.ts` is a sandbox preview shim (0.0.0.0 host, relaxed
+# allowedHosts). It is not part of the application and must not be deployed.
+vite.preview.config.ts
+
+# ── test / tooling scratch ────────────────────────────────────────────────
+coverage/
+.nyc_output/
+*.tsbuildinfo
+supabase/.temp/

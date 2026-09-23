@@ -20,13 +20,6 @@ export const isSupabaseConfigured =
   /^https?:\/\//i.test(SUPABASE_URL) &&
   SUPABASE_ANON_KEY.length > 0;
 
-/** Reason Supabase is unavailable — surfaced in the UI badge. */
-export const supabaseConfigError: string | null = isSupabaseConfigured
-  ? null
-  : SUPABASE_URL || SUPABASE_ANON_KEY
-    ? "incomplete_credentials"
-    : "not_configured";
-
 let client: SupabaseClient | null = null;
 
 /** Returns the shared Supabase client, or `null` in demo mode. */
@@ -38,13 +31,4 @@ export function getSupabaseClient(): SupabaseClient | null {
     });
   }
   return client;
-}
-
-/** Convenience helper: throws a typed, user-safe error when in demo mode. */
-export function requireSupabase(): SupabaseClient {
-  const c = getSupabaseClient();
-  if (!c) {
-    throw new Error("SUPABASE_NOT_CONFIGURED");
-  }
-  return c;
 }

@@ -7,6 +7,7 @@ interface CustomerRow {
   id: string;
   name: string;
   phone: string;
+  email: string | null;
   address: string | null;
   notes: string | null;
   created_at: string;
@@ -18,6 +19,7 @@ function mapCustomer(row: CustomerRow): Customer {
     id: row.id,
     name: row.name,
     phone: row.phone,
+    email: row.email ?? null,
     address: row.address,
     notes: row.notes,
     created_at: row.created_at,
@@ -93,6 +95,7 @@ export class SupabaseCustomerRepository implements CustomerRepository {
       const payload: Record<string, unknown> = {};
       if (patch.name !== undefined) payload.name = patch.name.trim();
       if (patch.phone !== undefined) payload.phone = patch.phone.trim();
+      if (patch.email !== undefined) payload.email = patch.email?.trim() || null;
       if (patch.address !== undefined) payload.address = patch.address?.trim() || null;
       if (patch.notes !== undefined) payload.notes = patch.notes?.trim() || null;
       payload.updated_at = new Date().toISOString();

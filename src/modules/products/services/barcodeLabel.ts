@@ -16,6 +16,14 @@ export interface BarcodeLabelData {
   barcode: string;
   /** Pre-formatted price string (already localised + currency-suffixed). */
   price: string;
+  color?: string;
+  size?: string;
+  showName?: boolean;
+  showColor?: boolean;
+  showSize?: boolean;
+  showSku?: boolean;
+  showPrice?: boolean;
+  showNumber?: boolean;
   /** Number of copies to lay out on the sheet. */
   copies?: number;
   /** `rtl` renders the name line right-aligned with the Arabic name first. */
@@ -38,18 +46,20 @@ function renderLabelCard(data: BarcodeLabelData, strings: BarcodeLabelStrings): 
   const secondaryName = rtl ? data.nameEn || "" : data.nameAr || "";
 
   const symbol = encoded
-    ? barcodeToSvgString(encoded, { height: 52, moduleWidth: 1.6, showText: true })
+    ? barcodeToSvgString(encoded, { height: 52, moduleWidth: 1.6, showText: data.showNumber !== false })
     : `<div class="unsupported">${escapeXml(strings.unsupported)}</div>`;
 
   return `
     <div class="label" dir="${rtl ? "rtl" : "ltr"}">
-      <div class="name" title="${escapeXml(primaryName)}">${escapeXml(primaryName)}</div>
-      ${secondaryName ? `<div class="name-alt">${escapeXml(secondaryName)}</div>` : ""}
+      ${data.showName !== false ? `<div class="name" title="${escapeXml(primaryName)}">${escapeXml(primaryName)}</div>` : ""}
+      ${secondaryName && data.showName !== false ? `<div class="name-alt">${escapeXml(secondaryName)}</div>` : ""}
+      ${data.showColor !== false && data.color ? `<div class="name-alt">${escapeXml(data.color)}${data.showSize !== false && data.size ? ` / ${escapeXml(data.size)}` : ""}</div>` : data.showSize !== false && data.size ? `<div class="name-alt">${escapeXml(data.size)}</div>` : ""}
       <div class="symbol">${symbol}</div>
       <div class="meta">
-        <span class="sku"><span class="muted">${escapeXml(strings.skuLabel)}</span> ${escapeXml(data.sku)}</span>
-        <span class="price">${escapeXml(data.price)}</span>
+        ${data.showSku !== false ? `<span class="sku"><span class="muted">${escapeXml(strings.skuLabel)}</span> ${escapeXml(data.sku)}</span>` : ""}
+        ${data.showPrice !== false ? `<span class="price">${escapeXml(data.price)}</span>` : ""}
       </div>
+      ${data.showNumber !== false ? `<div class="barcode-number">${escapeXml(data.barcode)}</div>` : ""}
     </div>`;
 }
 

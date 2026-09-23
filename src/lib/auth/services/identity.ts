@@ -1,0 +1,107 @@
+/**
+ * One place that turns a stored identity record into the `AuthUser` the whole
+ * application reasons about.
+ *
+ * Both repositories build their result here, so a demo sign-in and a Supabase
+ * sign-in produce the same shape — including the resolved capability list, which
+ * is what makes every permission check in the app synchronous.
+ *
+ * The rules encoded below, in the order they are applied:
+ *
+ *   1. a custom role *replaces* the system matrix when it is assigned and active;
+ *   2. the person's own exceptions then add to and subtract from that result,
+ *      with a denial winning over a grant.
+ *
+ * Both mirror `public.can()` — rule 1 since migration 0021, rule 2 since 0028 —
+ * so the UI hiding a button and the database refusing the write are the same
+ * decision made twice, not two different decisions.
+ */
+import { normalizeRole, type AppRole, type Capability } from "@/lib/permissions/roles";
+import { resolveCapabilities } from "@/lib/permissions/customRoles";
+import { parseCapabilityExceptions, type CapabilityExceptions } from "@/lib/permissions/exceptions";
+import type { AuthUser } from "../types";
+
+export interface IdentityInput {
+  id: string;
+  username: string;
+  name: string;
+  email?: string | null;
+  phone?: string | null;
+  /** Raw role string from a profile row or the demo directory. */
+  role: string | null | undefined;
+  active?: boolean;
+  custom_role_id?: string | null;
+  /** The assigned custom role, when it could be read. */
+  custom_role?: { name_en: string; name_ar: string; capabilities: readonly string[]; active: boolean } | null;
+  /**
+   * Phase 17: this person's own grants and denials, read from
+   * `profiles.extra_capabilities` / `denied_capabilities` (live) or the demo
+   * directory (offline). Absent, null or corrupt all mean "none", because
+   * `parseCapabilityExceptions` refuses to invent authority out of bad data.
+   */
+  exceptions?: CapabilityExceptions | { extra?: unknown; denied?: unknown } | null;
+  last_login_at?: string | null;
+  /** Supabase Auth uid; the demo directory stores its own ids. */
+  auth_id?: string | null;
+}
+
+/**
+ * An unmappable or absent role yields `null`, and a `null` role is what
+ * `ANONYMOUS_USER` carries: every capability denied, fail closed. The caller
+ * decides whether that means "refuse the sign-in" (it does, in both
+ * repositories) or "render nothing".
+ */
+export function roleOf(input: IdentityInput): AppRole | null {
+  return normalizeRole(input.role);
+}
+
+export function capabilitiesForIdentity(input: IdentityInput): Capability[] {
+  const role = roleOf(input);
+  const custom =
+    input.custom_role && input.custom_role.active
+      ? { capabilities: input.custom_role.capabilities, active: true }
+      : null;
+  return resolveCapabilities(role, custom, parseCapabilityExceptions(input.exceptions));
+}
+
+export function buildAuthUser(input: IdentityInput): AuthUser {
+  const role = roleOf(input);
+  return {
+    id: input.id,
+    username: input.username.trim().toLowerCase(),
+    name: input.name.trim() || input.username.trim(),
+    // A missing role is not representable in the model, so it becomes the empty
+    // string — the same value `ANONYMOUS_USER` carries, which no capability
+    // check accepts.
+    role: (role ?? "") as AppRole,
+    auth_id: input.auth_id ?? null,
+    email: input.email ?? null,
+    phone: input.phone ?? null,
+    active: input.active !== false,
+    custom_role_id: input.custom_role_id ?? null,
+    custom_role_name: input.custom_role ? input.custom_role.name_en : null,
+    capabilities: capabilitiesForIdentity(input),
+    last_login_at: input.last_login_at ?? null,
+  };
+}
+
+/**
+ * The synthetic email convention: `<username>@alyq.local`.
+ *
+ * Historical note that matters for reading old code: sign-in and recovery used
+ * to resolve EVERY bare username through this address, which silently broke
+ * both for any account whose Supabase Auth identity is a real email. They no
+ * longer — a bare username is resolved server-side by the `alyq-auth` edge
+ * function to whatever address `auth.users` actually holds (real or
+ * synthetic), and the browser never sees it.
+ *
+ * This helper's one remaining job is account CREATION without an email
+ * (`settings` → Users, live mode requires one, so this is the fallback path):
+ * such an account still needs an address to sign in with, and the resolver
+ * signs it in by username like any other. It is not a login rule and must not
+ * become one again.
+ */
+export function usernameToEmail(username: string, domain = "alyq.local"): string {
+  const handle = username.trim();
+  return handle.includes("@") ? handle.toLowerCase() : `${handle.toLowerCase()}@${domain}`;
+}

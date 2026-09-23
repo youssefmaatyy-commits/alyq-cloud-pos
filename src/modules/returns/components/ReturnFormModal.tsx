@@ -15,14 +15,16 @@ import { usePos } from "@/modules/pos";
 import { useReturns } from "../hooks/ReturnProvider";
 import { useCatalog } from "@/modules/products";
 import { getCurrentUser } from "@/modules/inventory/permissions";
-import {
-  getRemainingReturnableQuantities,
-  validateReturnDraft,
-  MAX_RETURN_REASON_LENGTH,
-} from "../validation";
+import { validateReturnDraft, MAX_RETURN_REASON_LENGTH } from "../validation";
+import type { PaidUnitPrice } from "../validation";
+import { saleReturnability } from "../services/saleReturnability";
+import { getOnlineOrdersRepository } from "@/modules/online/data";
 import type { Sale } from "@/modules/pos/types";
 import type { ReturnItemInput } from "../types";
 import { normalizeText } from "@/modules/products/services/productQuery";
+
+/** One shared empty map, so `returnableMap` keeps a stable identity. */
+const EMPTY_RETURNABLE_MAP: Map<string, number> = new Map();
 
 export interface ReturnFormModalProps {
   open: boolean;
@@ -39,7 +41,7 @@ export function ReturnFormModal({
 }: ReturnFormModalProps) {
   const { t, pick, num, date } = useI18n();
   const toast = useToast();
-  const { sales } = usePos();
+  const { sales, refreshSales } = usePos();
   const { returnsList, refundsList, createReturn } = useReturns();
   const { refresh: refreshCatalog } = useCatalog();
 
@@ -83,6 +85,14 @@ export function ReturnFormModal({
     }
   }, [open, preselectedSaleId]);
 
+  // The invoice list is a point-in-time read: a sale written since the last
+  // read — an online order approved into the till from another screen — would
+  // otherwise be missing from the picker until the next POS-side write. Every
+  // open re-reads, silently, so the list is never older than the modal.
+  useEffect(() => {
+    if (open) void refreshSales({ silent: true });
+  }, [open, refreshSales]);
+
   // Filter eligible non-voided sales invoices by invoice number, customer name, customer phone, date range
   const filteredSales: Sale[] = useMemo(() => {
     const term = normalizeText(searchQuery);
@@ -112,10 +122,21 @@ export function ReturnFormModal({
       .sort((a, b) => b.created_at.localeCompare(a.created_at));
   }, [sales, searchQuery, dateFrom, dateTo]);
 
-  const returnableMap = useMemo(() => {
-    if (!selectedSale) return new Map<string, number>();
-    return getRemainingReturnableQuantities(selectedSale, returnsList);
-  }, [selectedSale, returnsList]);
+  // One computation decides what this modal may offer — see saleReturnability
+  // for why "no lines loaded" and "all lines returned" must not be conflated.
+  const returnability = useMemo(
+    () => (selectedSale ? saleReturnability(selectedSale, returnsList) : null),
+    [selectedSale, returnsList],
+  );
+  const returnableMap = returnability?.returnableMap ?? EMPTY_RETURNABLE_MAP;
+  const hasAnyReturnable = returnability?.state === "returnable";
+  /**
+   * A sale whose lines have not arrived is NOT a sale with nothing left to
+   * return: saying "all items were already returned" about missing data accuses
+   * the customer of a return that never happened. Reported honestly instead, and
+   * the action fails closed rather than being offered.
+   */
+  const itemsUnavailable = returnability?.state === "unavailable";
 
   const itemsInput: ReturnItemInput[] = useMemo(() => {
     if (!selectedSale) return [];
@@ -125,6 +146,35 @@ export function ReturnFormModal({
       quantity: Number(itemQuantities[item.id] ?? 0),
     }));
   }, [selectedSale, itemQuantities]);
+
+  // An online-origin sale refunds at the order snapshot's paid prices (see
+  // validation's `paidPrices`): resolve the originating order when the
+  // selection is one, so the preview matches what the write will refund.
+  const [originPaidPrices, setOriginPaidPrices] = useState<PaidUnitPrice[] | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setOriginPaidPrices(null);
+    if (selectedSale?.source === "online") {
+      void getOnlineOrdersRepository()
+        .getOrderBySaleId(selectedSale.id)
+        .then((origin) => {
+          if (cancelled) return;
+          setOriginPaidPrices(
+            origin?.items.map((item) => ({
+              product_id: item.product_id,
+              variant_id: item.variant_id ?? null,
+              discounted_unit_price: item.discounted_unit_price ?? null,
+            })) ?? null,
+          );
+        })
+        .catch(() => {
+          if (!cancelled) setOriginPaidPrices(null);
+        });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedSale?.id, selectedSale?.source]);
 
   const validation = useMemo(() => {
     if (!selectedSale) {
@@ -143,16 +193,9 @@ export function ReturnFormModal({
       refundMethod,
       returnsList,
       refundsList,
+      originPaidPrices,
     );
-  }, [selectedSale, itemsInput, reason, refundMethod, returnsList, refundsList]);
-
-  const hasAnyReturnable = useMemo(() => {
-    if (!selectedSale) return false;
-    for (const val of returnableMap.values()) {
-      if (val > 0) return true;
-    }
-    return false;
-  }, [selectedSale, returnableMap]);
+  }, [selectedSale, itemsInput, reason, refundMethod, returnsList, refundsList, originPaidPrices]);
 
   const handleSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -160,6 +203,14 @@ export function ReturnFormModal({
 
     if (!selectedSale) {
       toast.error(t("returns.selectSalePlaceholder"));
+      return;
+    }
+
+    // Fail closed on missing lines before anything else: `validation` would
+    // report the same "no items selected" a cashier sees when they simply have
+    // not ticked a quantity yet, which sends them looking in the wrong place.
+    if (itemsUnavailable) {
+      toast.error(t("returns.itemsUnavailable"));
       return;
     }
 
@@ -191,12 +242,21 @@ export function ReturnFormModal({
         user_name: user.name,
       });
 
-      toast.success(t("returns.createdToast"));
+      // Phase 12: a refund above the cap is still recorded — the goods are back
+      // and the stock is right — but it opens `pending` and the request goes to
+      // an approver, who releases the money from the inbox.
+      if (res.approvalRequest) {
+        toast.success(
+          t("returns.createdPendingApprovalToast", { number: res.approvalRequest.request_number }),
+        );
+      } else {
+        toast.success(t("returns.createdToast"));
+      }
       await refreshCatalog();
       onClose();
       if (onSuccess) onSuccess(res.returnRecord.id);
-    } catch {
-      toast.error(t("common.error"));
+    } catch (err) {
+      toast.error(err instanceof Error && err.message ? err.message : t("common.error"));
     } finally {
       setSubmitting(false);
     }
@@ -483,9 +543,16 @@ export function ReturnFormModal({
         {selectedSale && (
           <>
             {!hasAnyReturnable ? (
-              <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-center text-xs font-bold text-amber-800">
-                ⚠ {t("returns.allReturned")}
-              </div>
+              itemsUnavailable ? (
+                /* Missing lines, not a completed return: fail closed and say so. */
+                <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-center text-xs font-bold text-rose-800">
+                  ⚠ {t("returns.itemsUnavailable")}
+                </div>
+              ) : (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-center text-xs font-bold text-amber-800">
+                  ⚠ {t("returns.allReturned")}
+                </div>
+              )
             ) : (
               <>
                 <div>

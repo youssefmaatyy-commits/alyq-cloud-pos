@@ -110,8 +110,8 @@ select t.id,
 insert into public.categories (id, name_ar, name_en, parent_id, active, sort_order)
 select v.id, v.name_ar, v.name_en, null::uuid, v.active, v.sort_order
   from (values
-    ('11111111-1111-4111-8111-000000000001'::uuid, 'مشروبات', 'Beverages', true,  1),
-    ('11111111-1111-4111-8111-000000000004'::uuid, 'بقالة',   'Grocery',   true,  2),
+    ('11111111-1111-4111-8111-000000000001'::uuid, 'مجوهرات', 'Jewellery', true,  1),
+    ('11111111-1111-4111-8111-000000000004'::uuid, 'إكسسوارات أزياء',   'Fashion Accessories',   true,  2),
     ('11111111-1111-4111-8111-000000000006'::uuid, 'خدمات',   'Services',  true,  3)
   ) as v(id, name_ar, name_en, active, sort_order)
 where not exists (select 1 from public.categories c where c.id = v.id);
@@ -119,9 +119,9 @@ where not exists (select 1 from public.categories c where c.id = v.id);
 insert into public.categories (id, name_ar, name_en, parent_id, active, sort_order)
 select v.id, v.name_ar, v.name_en, v.parent_id, v.active, v.sort_order
   from (values
-    ('11111111-1111-4111-8111-000000000002'::uuid, 'قهوة',        'Coffee', '11111111-1111-4111-8111-000000000001'::uuid, true, 1),
-    ('11111111-1111-4111-8111-000000000003'::uuid, 'عصائر',       'Juices', '11111111-1111-4111-8111-000000000001'::uuid, true, 2),
-    ('11111111-1111-4111-8111-000000000005'::uuid, 'ألبان وأجبان','Dairy',  '11111111-1111-4111-8111-000000000004'::uuid, true, 1)
+    ('11111111-1111-4111-8111-000000000002'::uuid, 'أقراط',        'Earrings', '11111111-1111-4111-8111-000000000001'::uuid, true, 1),
+    ('11111111-1111-4111-8111-000000000003'::uuid, 'قلادات',       'Necklaces', '11111111-1111-4111-8111-000000000001'::uuid, true, 2),
+    ('11111111-1111-4111-8111-000000000005'::uuid, 'أساور','Bracelets',  '11111111-1111-4111-8111-000000000004'::uuid, true, 1)
   ) as v(id, name_ar, name_en, parent_id, active, sort_order)
 where not exists (select 1 from public.categories c where c.id = v.id);
 
@@ -134,14 +134,14 @@ select v.sku, v.barcode, v.name_ar, v.name_en, v.description_ar, v.description_e
        v.category_id, v.product_type::public.product_type, v.selling_price, v.cost_price, v.tax_rate,
        v.stock_tracking_enabled, v.active
   from (values
-    ('ALYQ-1001', '6281000000013', 'قهوة عربية مطحونة 250غ', 'Arabic Ground Coffee 250g',
-     'تحميص متوسط، عبوة محكمة الإغلاق.', 'Medium roast, resealable pouch.',
+    ('ALYQ-1001', '6281000000013', 'أقراط لؤلؤ ذهبية', 'Gold Pearl Earrings',
+     'نحاس مطلي بالذهب مع لؤلؤ طبيعي، إغلاق آمن.', 'Gold-plated brass with freshwater pearls, secure closure.',
      '11111111-1111-4111-8111-000000000002'::uuid, 'physical', 32.50, 21.00, 15.00, true, true),
-    ('ALYQ-1010', '6281000000037', 'عصير برتقال طازج 1 لتر', 'Fresh Orange Juice 1L',
-     'بدون سكر مضاف — يُحفظ مبردًا.', 'No added sugar — keep refrigerated.',
+    ('ALYQ-1010', '6281000000037', 'قلادة لؤلؤ', 'Pearl Necklace',
+     'لؤلؤ صناعي على سلسلة رفيعة — تُحفظ في علبتها.', 'Faux pearls on a fine chain — keep in its pouch.',
      '11111111-1111-4111-8111-000000000003'::uuid, 'expiry-tracked', 14.00, 8.50, 15.00, true, true),
-    ('ALYQ-3001', '4006381333931', 'خدمة تركيب وتشغيل المكينة', 'Machine Installation Service',
-     'زيارة موقع واحدة، تشمل التدريب الأساسي.', 'One site visit, includes basic staff training.',
+    ('ALYQ-3001', '4006381333931', 'خدمة تغليف الهدايا والنقش', 'Gift Wrapping & Personalisation',
+     'تغليف في المتجر مع نقش الاسم، تشمل جلسة تنسيق قصيرة.', 'In-store wrapping with name engraving, includes a short styling session.',
      '11111111-1111-4111-8111-000000000006'::uuid, 'service', 350.00, 0.00, 15.00, false, true)
   ) as v(sku, barcode, name_ar, name_en, description_ar, description_en,
          category_id, product_type, selling_price, cost_price, tax_rate,

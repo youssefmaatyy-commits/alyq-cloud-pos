@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useI18n } from "@/lib/i18n/I18nProvider";
-import { Badge } from "@/components/ui";
+import { Badge, Button, Field, Modal, SelectInput } from "@/components/ui";
 import { ChevronIcon, EditIcon, PlusIcon, RestoreIcon, TrashIcon } from "@/components/ui";
 import { cn } from "@/utils/cn";
 import type { CategoryNode } from "../types";
@@ -9,6 +9,7 @@ import { describeError } from "../services/catalogService";
 import { useToast } from "@/components/ui";
 import { CategoryFormModal } from "./CategoryFormModal";
 import { ConfirmDialog } from "@/components/ui/Modal";
+import { flattenCategoryTree } from "../services/categoryTree";
 
 interface RowAction {
   label: string;
@@ -156,10 +157,29 @@ function TreeRow({
   );
 }
 
-export function CategoryTree() {
-  const { t } = useI18n();
+export function CategoryTree({
+  view = "all",
+}: {
+  /** Which lifecycle states to show. The page's Archived filter drives this. */
+  view?: "active" | "archived" | "all";
+}) {
+  const { t, tPlural, pick } = useI18n();
   const toast = useToast();
-  const { tree, deleteCategory, saveCategory } = useCatalog();
+  const { tree: fullTree, categories, deleteCategory, setCategoryActive, moveProductsAndDeleteCategory } =
+    useCatalog();
+
+  // Prune the tree to the requested view: "active" hides archived branches
+  // entirely; "archived" shows only archived categories (their active
+  // children stay hidden — they are on the Active tab).
+  const tree = useMemo(() => {
+    if (view === "all") return fullTree;
+    const keep = view === "active";
+    const walk = (nodes: CategoryNode[]): CategoryNode[] =>
+      nodes
+        .filter((node) => node.active === keep)
+        .map((node) => ({ ...node, children: walk(node.children) }));
+    return walk(fullTree);
+  }, [fullTree, view]);
 
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [initialized, setInitialized] = useState(false);
@@ -182,6 +202,16 @@ export function CategoryTree() {
     mode: "delete" | "deactivate";
     reason: { productCount: number; childCount: number } | null;
   }>({ open: false, node: null, mode: "delete", reason: null });
+  // Phase 44: a category that still holds content gets the lifecycle dialog —
+  // move its products to an active category and delete it in one transaction,
+  // or archive it. The dialog states the server's real obstacle (the counts);
+  // the server re-counts and decides.
+  const [lifecycle, setLifecycle] = useState<{ open: boolean; node: CategoryNode | null }>({
+    open: false,
+    node: null,
+  });
+  const [moveTarget, setMoveTarget] = useState<string>("");
+  const [lifecycleChoice, setLifecycleChoice] = useState<"move" | "archive">("move");
   const [busy, setBusy] = useState(false);
 
   const toggle = (id: string) => {
@@ -198,6 +228,14 @@ export function CategoryTree() {
     childCount: node.children.reduce((sum, child) => sum + 1 + child.descendantCount, 0),
   });
 
+  // Move targets: every ACTIVE category except the source and its subtree.
+  // Archived categories must not receive products (the server refuses them
+  // too — this list only mirrors the rule).
+  const moveTargets = useMemo(() => {
+    if (!lifecycle.node) return [];
+    return flattenCategoryTree(tree, { skipId: lifecycle.node.id });
+  }, [tree, lifecycle.node]);
+
   const runDelete = async (node: CategoryNode) => {
     setBusy(true);
     try {
@@ -211,25 +249,31 @@ export function CategoryTree() {
     }
   };
 
-  const runDeactivate = async (node: CategoryNode) => {
+  const runSetArchived = async (node: CategoryNode, archived: boolean) => {
     setBusy(true);
     try {
-      await saveCategory(
-        {
-          name_ar: node.name_ar,
-          name_en: node.name_en,
-          parent_id: node.parent_id ?? "",
-          sort_order: String(node.sort_order),
-          active: !node.active,
-        },
-        node.id,
-      );
-      toast.success(t(node.active ? "categories.archivedToast" : "categories.restoredToast"));
+      await setCategoryActive(node.id, !archived);
+      toast.success(t(archived ? "categories.archivedToast" : "categories.restoredToast"));
     } catch (error) {
       toast.error(t(describeError(error).key as never));
     } finally {
       setBusy(false);
       setConfirm({ open: false, node: null, mode: "deactivate", reason: null });
+      setLifecycle({ open: false, node: null });
+    }
+  };
+
+  const runMoveAndDelete = async (node: CategoryNode, targetId: string) => {
+    setBusy(true);
+    try {
+      const { moved } = await moveProductsAndDeleteCategory(node.id, targetId);
+      const targetName = categories.find((c) => c.id === targetId)?.name_en ?? targetId;
+      toast.success(t("categories.movedToast", { count: moved, name: targetName }));
+    } catch (error) {
+      toast.error(t(describeError(error).key as never));
+    } finally {
+      setBusy(false);
+      setLifecycle({ open: false, node: null });
     }
   };
 
@@ -250,13 +294,18 @@ export function CategoryTree() {
         icon: <TrashIcon />,
         tone: "danger",
         disabled: busy,
-        onClick: () =>
-          setConfirm({
-            open: true,
-            node,
-            mode: "delete",
-            reason: usage.productCount > 0 || usage.childCount > 0 ? usage : null,
-          }),
+        onClick: () => {
+          // Empty leaf: plain confirm. Anything else: the lifecycle dialog —
+          // the server's refusal is anticipated here with the client's own
+          // informational counts, but the decision stays with the server.
+          if (usage.productCount > 0 || usage.childCount > 0) {
+            setLifecycleChoice(usage.childCount > 0 ? "archive" : "move");
+            setMoveTarget("");
+            setLifecycle({ open: true, node });
+          } else {
+            setConfirm({ open: true, node, mode: "delete", reason: null });
+          }
+        },
       },
     ];
   };
@@ -310,7 +359,7 @@ export function CategoryTree() {
         tone="primary"
         loading={busy}
         onCancel={() => setConfirm({ open: false, node: null, mode: "delete", reason: null })}
-        onConfirm={() => confirm.node && void runDeactivate(confirm.node)}
+        onConfirm={() => confirm.node && void runSetArchived(confirm.node, true)}
       />
 
       <ConfirmDialog
@@ -329,8 +378,112 @@ export function CategoryTree() {
         tone="primary"
         loading={busy}
         onCancel={() => setConfirm({ open: false, node: null, mode: "deactivate", reason: null })}
-        onConfirm={() => confirm.node && void runDeactivate(confirm.node)}
+        onConfirm={() => confirm.node && void runSetArchived(confirm.node, confirm.node.active)}
       />
+
+      <Modal
+        open={lifecycle.open && lifecycle.node !== null}
+        onClose={() => setLifecycle({ open: false, node: null })}
+        title={t("categories.lifecycleTitle", { name: lifecycle.node?.name_en ?? "" })}
+        size="md"
+      >
+        {lifecycle.node ? (
+          <div className="space-y-4">
+            <p className="text-sm text-slate-600">
+              {tPlural("categories.lifecycleContains", usageOf(lifecycle.node).productCount)}
+              {usageOf(lifecycle.node).childCount > 0
+                ? " " +
+                  tPlural("categories.lifecycleChildren", usageOf(lifecycle.node).childCount)
+                : ""}
+            </p>
+
+            <label
+              className={cn(
+                "flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition-colors",
+                lifecycleChoice === "move"
+                  ? "border-indigo-400 bg-indigo-50/60"
+                  : "border-slate-200 hover:border-slate-300",
+                usageOf(lifecycle.node).childCount > 0 && "cursor-not-allowed opacity-50",
+              )}
+            >
+              <input
+                type="radio"
+                name="category-lifecycle"
+                className="mt-1"
+                checked={lifecycleChoice === "move"}
+                disabled={usageOf(lifecycle.node).childCount > 0}
+                onChange={() => setLifecycleChoice("move")}
+              />
+              <span className="flex-1 space-y-2">
+                <span className="block text-sm font-semibold text-slate-900">
+                  {t("categories.lifecycleMoveTitle")}
+                </span>
+                <span className="block text-xs text-slate-600">
+                  {t("categories.lifecycleMoveHint")}
+                </span>
+                <Field label={t("categories.lifecycleTargetLabel")}>
+                  <SelectInput
+                    value={moveTarget}
+                    onChange={(event) => setMoveTarget(event.target.value)}
+                    disabled={lifecycleChoice !== "move" || busy}
+                  >
+                    <option value="">{t("categories.lifecycleTargetPlaceholder")}</option>
+                    {moveTargets.map((target) => (
+                      <option key={target.id} value={target.id}>
+                        {pick(target.name_ar, target.name_en)}
+                      </option>
+                    ))}
+                  </SelectInput>
+                </Field>
+              </span>
+            </label>
+
+            <label
+              className={cn(
+                "flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition-colors",
+                lifecycleChoice === "archive"
+                  ? "border-indigo-400 bg-indigo-50/60"
+                  : "border-slate-200 hover:border-slate-300",
+              )}
+            >
+              <input
+                type="radio"
+                name="category-lifecycle"
+                className="mt-1"
+                checked={lifecycleChoice === "archive"}
+                onChange={() => setLifecycleChoice("archive")}
+              />
+              <span>
+                <span className="block text-sm font-semibold text-slate-900">
+                  {t("categories.lifecycleArchiveTitle")}
+                </span>
+                <span className="block text-xs text-slate-600">
+                  {t("categories.lifecycleArchiveHint")}
+                </span>
+              </span>
+            </label>
+
+            <div className="flex justify-end gap-2 border-t border-slate-100 pt-3">
+              <Button variant="secondary" onClick={() => setLifecycle({ open: false, node: null })} disabled={busy}>
+                {t("common.cancel")}
+              </Button>
+              <Button
+                variant={lifecycleChoice === "move" ? "danger" : "primary"}
+                disabled={busy || (lifecycleChoice === "move" && !moveTarget)}
+                onClick={() => {
+                  if (!lifecycle.node) return;
+                  if (lifecycleChoice === "move") void runMoveAndDelete(lifecycle.node, moveTarget);
+                  else void runSetArchived(lifecycle.node, true);
+                }}
+              >
+                {lifecycleChoice === "move"
+                  ? t("categories.lifecycleMoveConfirm")
+                  : t("categories.lifecycleArchiveConfirm")}
+              </Button>
+            </div>
+          </div>
+        ) : null}
+      </Modal>
     </>
   );
 }

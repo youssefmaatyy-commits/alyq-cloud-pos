@@ -19,6 +19,15 @@ export {
 export { Modal, ConfirmDialog } from "./Modal";
 export { ToastProvider, useToast } from "./Toast";
 export {
+  KpiTile,
+  KpiSkeletonRow,
+  SegmentedTabs,
+  Skeleton,
+} from "./KpiTile";
+export type { KpiTileProps, KpiTone, SegmentedTab } from "./KpiTile";
+export { ExportButton } from "./ExportButton";
+export type { ExportButtonProps } from "./ExportButton";
+export {
   ArchiveIcon,
   AlertIcon,
   BoxIcon,
@@ -42,4 +51,9 @@ export {
   SearchIcon,
   TrashIcon,
   WarehouseIcon,
+  WalletIcon,
+  ClipboardIcon,
+  ClockIcon,
+  DownloadIcon,
+  ReportIcon,
 } from "./icons";

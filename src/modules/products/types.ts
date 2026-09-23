@@ -1,3 +1,5 @@
+import type { VariantSummary } from "./variants";
+
 /**
  * Products & Categories module — domain types.
  * Field names intentionally mirror the Supabase columns (snake_case) so no
@@ -32,6 +34,22 @@ export interface Product {
   stock_quantity: number;
   /** Alert threshold — warn when quantity ≤ this value (tracked products). */
   low_stock_level: number;
+  /**
+   * Phase 43: this product sells by variant (colour / size).
+   *
+   * When true, `product_variants.stock_quantity` is the stock authority and this
+   * row's `stock_quantity` is the rollup the database keeps from it — for the
+   * reports, the dashboard and every reader that predates variants. When false
+   * the product-level stock behaves exactly as it always has.
+   */
+  variants_enabled: boolean;
+  /**
+   * Variant counts, filled in by whoever loaded the variants (the catalogue and
+   * inventory lists, the POS, the storefront). Absent on a product that has none
+   * loaded — which is also why it is optional rather than zeroed: "no variants"
+   * and "not asked" are different answers.
+   */
+  variant_summary?: VariantSummary;
   /** Storefront visibility flag. */
   show_on_website: boolean;
   /** Featured / highlighted in the storefront. */
@@ -57,7 +75,10 @@ export interface Category {
 }
 
 /** Payload for creating a product (server fills id + timestamps). */
-export type NewProduct = Omit<Product, "id" | "created_at" | "updated_at">;
+export type NewProduct = Omit<Product, "id" | "created_at" | "updated_at" | "variants_enabled"> & {
+  /** Optional on create: the database defaults it to false. */
+  variants_enabled?: boolean;
+};
 /** Patch for updating a product — partial, `id`/timestamps excluded. */
 export type ProductPatch = Partial<NewProduct>;
 
@@ -85,23 +106,44 @@ export type ProductImageItem =
   | { id: string; kind: "remote"; url: string }
   | { id: string; kind: "local"; file: File; previewUrl: string };
 
-/** Generate a stable, collision-safe id for an image item (used as React key). */
-export function newImageId(prefix = "img"): string {
-  const rand =
-    typeof crypto !== "undefined" && "randomUUID" in crypto
-      ? crypto.randomUUID().slice(0, 13)
-      : Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
-  return `${prefix}-${rand}`;
-}
-
 /** Stock state derived from a product's tracking + quantity + threshold. */
 export type StockStatus = "none" | "in" | "low" | "out";
 
-/** Pure stock-status derivation, shared by lists, badges and filters. */
+/**
+ * Pure stock-status derivation, shared by lists, badges and filters.
+ *
+ * Phase 43: a variant product is classified from its ACTIVE VARIANTS, never from
+ * the rollup. Twenty units of Silver/17 with none left of Gold/17 is not simply
+ * "in stock" — somebody has to look at that shelf. The rules:
+ *
+ *   out  — no active variant has stock left (nothing can be sold)
+ *   low  — something is sellable, but at least one active variant is at or under
+ *          its own threshold
+ *   in   — sellable, and nothing needs attention
+ *
+ * A legacy product keeps the exact rule it always had. When the summary has not
+ * been loaded the function falls back to the rollup rather than pretending the
+ * product is healthy — the rollup is still the sum, so "out" and "low" stay
+ * conservative instead of wrong.
+ */
 export function stockStatus(
-  product: Pick<Product, "stock_tracking_enabled" | "stock_quantity" | "low_stock_level">,
+  product: Pick<Product, "stock_tracking_enabled" | "stock_quantity" | "low_stock_level"> &
+    Partial<Pick<Product, "variants_enabled" | "variant_summary">>,
 ): StockStatus {
   if (!product.stock_tracking_enabled) return "none";
+
+  if (product.variants_enabled && product.variant_summary && product.variant_summary.total > 0) {
+    const summary = product.variant_summary;
+    // Nothing sellable at all: the product is out, however many units the
+    // rollup holds for archived rows.
+    if (summary.available <= 0) return "out";
+    // Something IS sellable, but at least one active combination is at or under
+    // its own threshold — a sold-out size included, because that is exactly the
+    // shelf nobody would notice from the product total.
+    if (summary.low > 0 || summary.out > 0) return "low";
+    return "in";
+  }
+
   if (product.stock_quantity <= 0) return "out";
   if (product.low_stock_level > 0 && product.stock_quantity <= product.low_stock_level) {
     return "low";

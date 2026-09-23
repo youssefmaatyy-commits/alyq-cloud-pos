@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { PageHeader } from "@/components/layout/AppShell";
 import {
@@ -8,6 +8,7 @@ import {
   Card,
   EmptyState,
   ErrorState,
+  ExportButton,
   EyeIcon,
   LoadingBlock,
   PlusIcon,
@@ -19,9 +20,11 @@ import {
 import { useReturns } from "../hooks/ReturnProvider";
 import { queryRefunds, queryReturns } from "../services/returnService";
 import { ReturnFormModal } from "../components/ReturnFormModal";
+import { buildReturnsSheets } from "../services/returnsExport";
 
 export function ReturnsPage({ initialTab = "returns" }: { initialTab?: "returns" | "refunds" }) {
-  const { t, date, num } = useI18n();
+  const { t, date, num, pick } = useI18n();
+  const navigate = useNavigate();
   const { returnsList, refundsList, loading, error, refresh } = useReturns();
 
   const [activeTab, setActiveTab] = useState<"returns" | "refunds">(initialTab);
@@ -59,10 +62,24 @@ export function ReturnsPage({ initialTab = "returns" }: { initialTab?: "returns"
   return (
     <div>
       <PageHeader
+        crumbs={[{ label: t("home.management.title"), to: "/management" }, { label: t("nav.returns") }]}
         title={t("returns.title")}
         subtitle={t("returns.subtitle")}
         actions={
           <>
+            {/* Exports what the search box currently narrows both tabs down to. */}
+            <ExportButton
+              name="returns"
+              count={filteredReturns.length + filteredRefunds.length}
+              build={() =>
+                buildReturnsSheets({
+                  returnsList: filteredReturns,
+                  refundsList: filteredRefunds,
+                  t,
+                  pick,
+                })
+              }
+            />
             <Button variant="secondary" onClick={() => void refresh()} title={t("common.retry")}>
               ⟳
             </Button>
@@ -178,6 +195,8 @@ export function ReturnsPage({ initialTab = "returns" }: { initialTab?: "returns"
                     <th className="px-3 py-3 text-start font-semibold">{t("returns.saleNumber")}</th>
                     <th className="px-3 py-3 text-start font-semibold">{t("returns.customer")}</th>
                     <th className="px-3 py-3 text-start font-semibold">{t("returns.reason")}</th>
+                    <th className="px-3 py-3 text-start font-semibold">{t("returns.itemsColumn")}</th>
+                    <th className="px-3 py-3 text-start font-semibold">{t("pos.cols.status")}</th>
                     <th className="px-3 py-3 text-end font-semibold">{t("returns.refundAmount")}</th>
                     <th className="px-3 py-3 text-start font-semibold">{t("returns.refundMethod")}</th>
                     <th className="px-3 py-3 text-start font-semibold">{t("pos.cols.date")}</th>
@@ -208,6 +227,35 @@ export function ReturnsPage({ initialTab = "returns" }: { initialTab?: "returns"
                       </td>
                       <td className="px-3 py-3 text-xs text-slate-600 max-w-xs truncate">
                         {ret.reason}
+                      </td>
+                      {/* What came back, with its exact combination (Phase 43):
+                          a return restores the shelf the goods left, so the row
+                          names Gold / 17 rather than just the product. */}
+                      <td className="px-3 py-3 text-xs text-slate-700" data-testid="returns-items-cell">
+                        {ret.items.map((item) => (
+                          <div key={item.id} className="truncate">
+                            {t("returns.itemLine", {
+                              count: item.quantity,
+                              name: pick(item.name_ar, item.name_en),
+                              variant: item.variant_id
+                                ? ` · ${item.variant_color_en || item.variant_color_ar}${item.variant_size !== null || item.variant_size_label ? ` / ${item.variant_size !== null ? Math.round(item.variant_size * 100) / 100 : item.variant_size_label}` : ""}`
+                                : "",
+                            })}
+                          </div>
+                        ))}
+                      </td>
+                      <td className="px-3 py-3">
+                        <Badge
+                          tone={
+                            ret.refund_status === "completed"
+                              ? "success"
+                              : ret.refund_status === "rejected"
+                                ? "danger"
+                                : "warning"
+                          }
+                        >
+                          {t(`returns.status.${ret.refund_status}`)}
+                        </Badge>
                       </td>
                       <td className="px-3 py-3 text-end text-sm font-bold tabular-nums text-slate-900">
                         {num(ret.refund_amount, 2)}
@@ -344,6 +392,7 @@ export function ReturnsPage({ initialTab = "returns" }: { initialTab?: "returns"
         <ReturnFormModal
           open={modalOpen}
           onClose={() => setModalOpen(false)}
+          onSuccess={(returnId) => navigate(`/returns/${returnId}`)}
         />
       )}
     </div>

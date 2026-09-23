@@ -49,6 +49,7 @@ const cat = (
 
 const prod = (over: Partial<Product> & { id: string; sku: string }): Product => ({
   barcode: null,
+  variants_enabled: false,
   name_ar: "منتج",
   name_en: "Product " + over.sku,
   description_ar: null,
@@ -73,12 +74,12 @@ const prod = (over: Partial<Product> & { id: string; sku: string }): Product => 
 
 const categories: Category[] = [
   cat("c1", "Beverages"),
-  cat("c2", "Coffee", "c1", 1),
+  cat("c2", "Earrings", "c1", 1),
   cat("c3", "Dairy", null, 2, false),
 ];
 
 const products: Product[] = [
-  prod({ id: "p1", sku: "ALYQ-1", barcode: "100", name_en: "Coffee", name_ar: "قهوة", category_id: "c2" }),
+  prod({ id: "p1", sku: "ALYQ-1", barcode: "100", name_en: "Earrings", name_ar: "أقراط", category_id: "c2" }),
   prod({ id: "p2", sku: "alyq-2", barcode: "200", name_en: "Milk", name_ar: "حليب", category_id: "c3", active: false, product_type: "expiry-tracked" }),
   prod({ id: "p3", sku: "SRV-1", name_en: "Install", name_ar: "تركيب", category_id: null, product_type: "service" }),
 ];
@@ -200,8 +201,8 @@ test("normalises and rounds a valid draft", () => {
     {
       ...EMPTY_PRODUCT_FORM,
       sku: "  new-2  ",
-      name_ar: " قهوة ",
-      name_en: " Coffee ",
+      name_ar: " أقراط ",
+      name_en: " Earrings ",
       category_id: "c1",
       selling_price: "10.005",
       cost_price: "4.994",
@@ -211,7 +212,7 @@ test("normalises and rounds a valid draft", () => {
     { products, categories },
   );
   assert.equal(data?.sku, "new-2");
-  assert.equal(data?.name_ar, "قهوة");
+  assert.equal(data?.name_ar, "أقراط");
   assert.equal(data?.selling_price, 10.01);
   assert.equal(data?.cost_price, 4.99);
   assert.equal(data?.tax_rate, 15.5);
@@ -261,6 +262,9 @@ test("validateImageFile whitelists image types and size", () => {
   assert.equal(validateImageFile(new File(["a"], "a.jpg", { type: "image/jpeg" })), null);
   assert.equal(validateImageFile(new File(["a"], "a.txt", { type: "text/plain" })), "type");
   assert.equal(validateImageFile(new File(["a"], "a.exe", { type: "application/octet-stream" })), "type");
+  // SVG is a script-carrying format in a public bucket — refused (0036 removed
+  // it from this whitelist and from the bucket's server-side allowed list).
+  assert.equal(validateImageFile(new File(["a"], "a.svg", { type: "image/svg+xml" })), "type");
 });
 
 // ── category rules ───────────────────────────────────────────────────────
@@ -272,8 +276,8 @@ test("category requires bilingual names and integer sort order", () => {
 });
 
 test("category cannot be moved under its own descendant", () => {
-  assert.equal(isDescendant("c2", "c1", categories), true); // Coffee is inside Beverages
-  assert.equal(isDescendant("c1", "c2", categories), false); // Beverages is not inside Coffee
+  assert.equal(isDescendant("c2", "c1", categories), true); // Earrings is inside Beverages
+  assert.equal(isDescendant("c1", "c2", categories), false); // Beverages is not inside Earrings
   assert.equal(isDescendant("c2", "c2", categories), true);
   assert.equal(isDescendant("c3", "c1", categories), false);
   const { errors } = validateCategoryDraft(
@@ -296,7 +300,7 @@ test("builds a tree with depths and rolled-up product counts", () => {
   const root = tree.find((n) => n.id === "c1")!;
   assert.equal(root.depth, 0);
   assert.equal(root.productCount, 0);
-  assert.equal(root.descendantProductCount, 1); // Coffee under it
+  assert.equal(root.descendantProductCount, 1); // Earrings under it
   assert.equal(root.children[0].depth, 1);
   assert.equal(flattenCategoryTree(tree).length, 2); // inactive c3 excluded by default
   assert.equal(flattenCategoryTree(tree, { includeInactive: true }).length, 3);
@@ -325,11 +329,11 @@ test("search matches SKU, barcode, bilingual names and category names", () => {
     }
     return parts.join(" ");
   };
-  assert.equal(queryProducts(products, { search: "alyq-2", categoryId: "all", status: "all", type: "all", stock: "all", featured: false, sort: "name" }, nameOf).length, 1);
-  assert.equal(queryProducts(products, { search: "200", categoryId: "all", status: "all", type: "all", stock: "all", featured: false, sort: "name" }, nameOf)[0].id, "p2");
-  assert.equal(queryProducts(products, { search: "قهوة", categoryId: "all", status: "all", type: "all", stock: "all", featured: false, sort: "name" }, nameOf)[0].id, "p1");
-  assert.equal(queryProducts(products, { search: "coffee", categoryId: "all", status: "all", type: "all", stock: "all", featured: false, sort: "name" }, nameOf)[0].id, "p1");
-  assert.equal(queryProducts(products, { search: "beverages", categoryId: "all", status: "all", type: "all", stock: "all", featured: false, sort: "name" }, nameOf)[0].id, "p1");
+  assert.equal(queryProducts(products, { search: "alyq-2", categoryId: "all", status: "all", type: "all", stock: "all", visibility: "all", featured: false, sort: "name" }, nameOf).length, 1);
+  assert.equal(queryProducts(products, { search: "200", categoryId: "all", status: "all", type: "all", stock: "all", visibility: "all", featured: false, sort: "name" }, nameOf)[0].id, "p2");
+  assert.equal(queryProducts(products, { search: "أقراط", categoryId: "all", status: "all", type: "all", stock: "all", visibility: "all", featured: false, sort: "name" }, nameOf)[0].id, "p1");
+  assert.equal(queryProducts(products, { search: "earrings", categoryId: "all", status: "all", type: "all", stock: "all", visibility: "all", featured: false, sort: "name" }, nameOf)[0].id, "p1");
+  assert.equal(queryProducts(products, { search: "beverages", categoryId: "all", status: "all", type: "all", stock: "all", visibility: "all", featured: false, sort: "name" }, nameOf)[0].id, "p1");
 });
 
 test("status, category, uncategorized and type filters compose", () => {
@@ -337,7 +341,7 @@ test("status, category, uncategorized and type filters compose", () => {
   const run = (over: Partial<Parameters<typeof queryProducts>[1]>) =>
     queryProducts(
       products,
-      { search: "", categoryId: "all", status: "all", type: "all", stock: "all", featured: false, sort: "name", ...over },
+      { search: "", categoryId: "all", status: "all", type: "all", stock: "all", visibility: "all", featured: false, sort: "name", ...over },
       nameOf,
     ).map((p) => p.id);
 
@@ -351,7 +355,7 @@ test("status, category, uncategorized and type filters compose", () => {
 test("sorting by price and update time works", () => {
   const sorted = queryProducts(
     products,
-    { search: "", categoryId: "all", status: "all", type: "all", stock: "all", featured: false, sort: "price_desc" },
+    { search: "", categoryId: "all", status: "all", type: "all", stock: "all", visibility: "all", featured: false, sort: "price_desc" },
     () => "",
   );
   assert.deepEqual(sorted.map((p) => p.selling_price).sort((a, b) => b - a), sorted.map((p) => p.selling_price));
@@ -378,12 +382,12 @@ test("stock and featured filters work", () => {
   const nameOf = () => "";
   const lowIds = products.filter((p) => stockStatus(p) === "low").map((p) => p.id);
   assert.deepEqual(
-    queryProducts(products, { search: "", categoryId: "all", status: "all", type: "all", stock: "low", featured: false, sort: "name" }, nameOf).map((p) => p.id),
+    queryProducts(products, { search: "", categoryId: "all", status: "all", type: "all", stock: "low", visibility: "all", featured: false, sort: "name" }, nameOf).map((p) => p.id),
     lowIds,
   );
   const featuredIds = products.filter((p) => p.is_featured).map((p) => p.id);
   assert.deepEqual(
-    queryProducts(products, { search: "", categoryId: "all", status: "all", type: "all", stock: "all", featured: true, sort: "name" }, nameOf).map((p) => p.id),
+    queryProducts(products, { search: "", categoryId: "all", status: "all", type: "all", stock: "all", visibility: "all", featured: true, sort: "name" }, nameOf).map((p) => p.id),
     featuredIds,
   );
 });
@@ -460,7 +464,7 @@ test("derives a barcode from the SKU (barcode === SKU)", () => {
   assert.equal(deriveBarcodeFromSku("TSHIRT-BLK-001"), "TSHIRT-BLK-001");
   assert.equal(deriveBarcodeFromSku("  alyq-1001 "), "ALYQ-1001");
   assert.equal(deriveBarcodeFromSku("a b c"), "A-B-C");
-  assert.equal(deriveBarcodeFromSku("قهوة"), "");
+  assert.equal(deriveBarcodeFromSku("أقراط"), "");
   assert.equal(deriveBarcodeFromSku("SKU--X"), "SKU-X");
 });
 
@@ -472,9 +476,9 @@ test("isDerivedFromSku detects auto vs manual barcodes", () => {
 
 test("Code 128 encodability + payload validation", () => {
   assert.equal(isEncodableCode128("TSHIRT-BLK-001"), true);
-  assert.equal(isEncodableCode128("قهوة"), false);
+  assert.equal(isEncodableCode128("أقراط"), false);
   assert.equal(validateBarcodePayload(""), "empty");
-  assert.equal(validateBarcodePayload("قهوة"), "unsupportedChar");
+  assert.equal(validateBarcodePayload("أقراط"), "unsupportedChar");
   assert.equal(validateBarcodePayload("A".repeat(49)), "tooLong");
   assert.equal(validateBarcodePayload("ALYQ-1001"), null);
 });
@@ -504,18 +508,18 @@ test("encoded symbol round-trips through a reference decoder", () => {
 });
 
 test("unsupported payloads encode to null instead of throwing", () => {
-  assert.equal(encodeCode128("قهوة"), null);
+  assert.equal(encodeCode128("أقراط"), null);
   assert.equal(encodeCode128(""), null);
 });
 
 test("barcode label HTML contains name, SKU, barcode and price", () => {
   const html = buildBarcodeLabelHtml(
     {
-      nameAr: "قهوة عربية",
-      nameEn: "Arabic Coffee",
+      nameAr: "أقراط لؤلؤ",
+      nameEn: "Arabic Earrings",
       sku: "ALYQ-1001",
       barcode: "ALYQ-1001",
-      price: "SAR 32.50",
+      price: "EGP 32.50",
       copies: 2,
       direction: "rtl",
     },
@@ -527,10 +531,10 @@ test("barcode label HTML contains name, SKU, barcode and price", () => {
       unsupported: "unsupported",
     },
   );
-  assert.ok(html.includes("قهوة عربية"), "Arabic name present");
-  assert.ok(html.includes("Arabic Coffee"), "English name present");
+  assert.ok(html.includes("أقراط لؤلؤ"), "Arabic name present");
+  assert.ok(html.includes("Arabic Earrings"), "English name present");
   assert.ok(html.includes("ALYQ-1001"), "SKU present");
-  assert.ok(html.includes("SAR 32.50"), "price present");
+  assert.ok(html.includes("EGP 32.50"), "price present");
   assert.ok(html.includes("<svg"), "barcode symbol embedded");
   assert.ok(html.includes('dir="rtl"'), "RTL direction honoured");
   assert.equal(html.split('class="label"').length - 1, 2, "renders the requested copies");
@@ -582,6 +586,66 @@ async function main(): Promise<void> {
       const [cats, prods] = await Promise.all([repo.listCategories(), repo.listProducts()]);
       assert.ok(cats.length >= 7);
       assert.ok(prods.length >= 9);
+    });
+
+    await test("a cached catalogue from an older seed revision is replaced, a current one is kept", async () => {
+      // The demo range is cached under a key the backup module also reads
+      // (schema, health check, backup flow), so it cannot be renamed every time
+      // the catalogue changes — that would orphan every snapshot already taken.
+      // The state carries a revision instead. Both directions matter: a stale
+      // default range has to be swapped out, and anything stamped with the
+      // current revision — a shop's own edit, or a restored snapshot — has to be
+      // left exactly alone.
+      const map = new Map<string, string>();
+      const storage = {
+        getItem: (key: string) => map.get(key) ?? null,
+        setItem: (key: string, value: string) => void map.set(key, value),
+        removeItem: (key: string) => void map.delete(key),
+      };
+      const g = globalThis as Record<string, unknown>;
+      const hadWindow = "window" in g;
+      const hadLocalStorage = "localStorage" in g;
+      const originalWindow = g.window;
+      const originalLocalStorage = g.localStorage;
+      // `window` as well as `localStorage`: safeStorage reads window.localStorage.
+      Object.defineProperty(globalThis, "localStorage", { value: storage, configurable: true });
+      Object.defineProperty(globalThis, "window", { value: { localStorage: storage }, configurable: true });
+      try {
+        const KEY = "alyq.demo.catalog.v1";
+        map.set(
+          KEY,
+          JSON.stringify({
+            categories: [{ id: "cat-old", name_ar: "مشروبات", name_en: "Beverages" }],
+            products: [{ id: "prd-old", sku: "OLD-1", name_en: "Arabic Ground Coffee 250g" }],
+            seed_revision: 1,
+          }),
+        );
+
+        const prods = await new DemoRepository().listProducts();
+        assert.ok(!prods.some((p) => p.sku === "OLD-1"), "the retired range is gone");
+        assert.ok(prods.some((p) => p.sku === "ALYQ-1001"), "and the current one is in its place");
+        const stamped = JSON.parse(map.get(KEY) ?? "{}") as { seed_revision?: number };
+        assert.ok(
+          typeof stamped.seed_revision === "number" && stamped.seed_revision !== 1,
+          "the reseed is stamped with the current revision, so it happens once and not on every load",
+        );
+
+        const current = JSON.parse(map.get(KEY) ?? "{}") as { products: { name_en: string }[] };
+        current.products[0]!.name_en = "Renamed by the shop";
+        map.set(KEY, JSON.stringify(current));
+        const kept = await new DemoRepository().listProducts();
+        assert.equal(kept[0]?.name_en, "Renamed by the shop", "an edit at the current revision survives");
+      } finally {
+        if (hadWindow)
+          Object.defineProperty(globalThis, "window", { value: originalWindow, configurable: true });
+        else delete g.window;
+        if (hadLocalStorage)
+          Object.defineProperty(globalThis, "localStorage", {
+            value: originalLocalStorage,
+            configurable: true,
+          });
+        else delete g.localStorage;
+      }
     });
 
     await test("create → duplicate SKU rejected → update → archive", async () => {
@@ -659,7 +723,10 @@ async function main(): Promise<void> {
       assert.ok(used);
       await assert.rejects(
         () => repo.deleteCategory(used!.id),
-        (error: { code: string }) => error.code === "CATEGORY_IN_USE",
+        // Phase 44: the repository raises the structured CATEGORY_NOT_EMPTY
+        // (the live RPC raises the same rule; CATEGORY_IN_USE remains the
+        // service/legacy code for the generic "still has content" case).
+        (error: { code: string }) => error.code === "CATEGORY_NOT_EMPTY",
       );
     });
 
@@ -674,6 +741,120 @@ async function main(): Promise<void> {
       await repo.deleteCategory(created.id);
       const cats = await repo.listCategories();
       assert.ok(!cats.some((c) => c.id === created.id));
+    });
+  })();
+
+  // ── Excel/CSV import ─────────────────────────────────────────────────────
+
+  await (async () => {
+    const { parseCsv, buildColumnMap, importProductsFromCsv, resolveCategoryIds } = await import(
+      "@/modules/products/services/excelImport"
+    );
+
+    test("parseCsv: basic comma-separated values", () => {
+      const rows = parseCsv("a,b,c\n1,2,3\n4,5,6");
+      assert.equal(rows.length, 3);
+      assert.deepEqual(rows[0], ["a", "b", "c"]);
+      assert.deepEqual(rows[1], ["1", "2", "3"]);
+    });
+
+    test("parseCsv: quoted fields with commas", () => {
+      const rows = parseCsv('name,desc\n"Hello, World","A ""quoted"" thing"');
+      assert.equal(rows[1][0], "Hello, World");
+      assert.equal(rows[1][1], 'A "quoted" thing');
+    });
+
+    test("parseCsv: embedded newlines in quoted fields", () => {
+      const rows = parseCsv('a,b\n"line1\nline2",c');
+      assert.equal(rows.length, 2);
+      assert.equal(rows[1][0], "line1\nline2");
+      assert.equal(rows[1][1], "c");
+    });
+
+    test("parseCsv: strips BOM", () => {
+      const rows = parseCsv("\uFEFFa,b\n1,2");
+      assert.equal(rows[0][0], "a");
+    });
+
+    test("parseCsv: handles Windows line endings", () => {
+      const rows = parseCsv("a,b\r\n1,2\r\n3,4");
+      assert.equal(rows.length, 3);
+    });
+
+    test("buildColumnMap: matches English headers", () => {
+      const map = buildColumnMap(["SKU", "Name", "Price", "Cost", "Stock"]);
+      assert.equal(map["0"], "sku");
+      assert.equal(map["1"], "name_en");
+      assert.equal(map["2"], "selling_price");
+      assert.equal(map["3"], "cost_price");
+      assert.equal(map["4"], "stock_quantity");
+    });
+
+    test("buildColumnMap: matches Arabic headers", () => {
+      const map = buildColumnMap(["كود", "الاسم", "السعر", "الكمية"]);
+      assert.equal(map["0"], "sku");
+      assert.equal(map["1"], "name_ar");
+      assert.equal(map["2"], "selling_price");
+      assert.equal(map["3"], "stock_quantity");
+    });
+
+    test("importProductsFromCsv: valid rows parsed correctly", () => {
+      const csv = "SKU,Name,Price,Cost,Stock\nALYQ-001,Earrings,32.50,15.00,10\nALYQ-002,Tea,25.00,10.00,20";
+      const result = importProductsFromCsv(csv);
+      assert.equal(result.totalRows, 2);
+      assert.equal(result.validRows.length, 2);
+      assert.equal(result.invalidRows.length, 0);
+      assert.equal(result.validRows[0].data.sku, "ALYQ-001");
+      assert.equal(result.validRows[0].data.selling_price, 32.50);
+      assert.equal(result.validRows[0].data.cost_price, 15.00);
+      assert.equal(result.validRows[0].data.stock_quantity, 10);
+      assert.equal(result.validRows[1].data.sku, "ALYQ-002");
+    });
+
+    test("importProductsFromCsv: missing SKU flagged as error", () => {
+      const csv = "SKU,Name,Price\n,Earrings,32.50";
+      const result = importProductsFromCsv(csv);
+      assert.equal(result.invalidRows.length, 1);
+      assert.equal(result.invalidRows[0].errors[0].code, "required");
+    });
+
+    test("importProductsFromCsv: duplicate SKU within file", () => {
+      const csv = "SKU,Name,Price\nDUP-1,Earrings,10\nDUP-1,Tea,20";
+      const result = importProductsFromCsv(csv);
+      assert.equal(result.validRows.length, 1);
+      assert.equal(result.invalidRows.length, 1);
+      assert.ok(result.invalidRows[0].errors.some((e) => e.code === "duplicateSku"));
+    });
+
+    test("importProductsFromCsv: negative price rejected", () => {
+      const csv = "SKU,Name,Price\nX-1,Earrings,-5";
+      const result = importProductsFromCsv(csv);
+      assert.equal(result.invalidRows.length, 1);
+      assert.ok(result.invalidRows[0].errors.some((e) => e.code === "nonnegative"));
+    });
+
+    test("importProductsFromCsv: empty file", () => {
+      const result = importProductsFromCsv("");
+      assert.equal(result.totalRows, 0);
+      assert.ok(result.globalErrors.length > 0);
+    });
+
+    test("resolveCategoryIds: matches by name", () => {
+      const csv = "SKU,Name,Price,Category\nX-1,Earrings,10,Beverages";
+      const result = importProductsFromCsv(csv);
+      const resolved = resolveCategoryIds(
+        result.validRows,
+        [{ id: "cat-1", name_ar: "مشروبات", name_en: "Beverages" }],
+        null,
+      );
+      assert.equal(resolved[0].data.category_id, "cat-1");
+    });
+
+    test("resolveCategoryIds: falls back to default", () => {
+      const csv = "SKU,Name,Price,Category\nX-1,Earrings,10,Unknown";
+      const result = importProductsFromCsv(csv);
+      const resolved = resolveCategoryIds(result.validRows, [], "default-cat");
+      assert.equal(resolved[0].data.category_id, "default-cat");
     });
   })();
 

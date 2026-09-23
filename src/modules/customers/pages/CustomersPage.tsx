@@ -9,6 +9,7 @@ import {
   EditIcon,
   EmptyState,
   ErrorState,
+  ExportButton,
   EyeIcon,
   LoadingBlock,
   PlusIcon,
@@ -17,57 +18,67 @@ import {
   TextInput,
   TrashIcon,
   UsersIcon,
+  Badge,
+  SelectInput,
   useToast,
 } from "@/components/ui";
+import { buildCustomersSheets } from "../services/customersExport";
 import { useCustomers } from "../hooks/CustomerProvider";
-import { queryCustomers } from "../services/customerService";
 import { CustomerFormModal } from "../components/CustomerFormModal";
 import type { Customer } from "../types";
+import { buildCustomerDirectory, queryDirectory, segmentLabelKey, type CrmSortKey } from "../services/crm";
 import { usePos } from "@/modules/pos";
+import { useReturns } from "@/modules/returns";
+import { canAct } from "@/lib/permissions/enforce";
 
 export function CustomersPage() {
   const { t, date, num } = useI18n();
   const toast = useToast();
   const { customers, loading, error, refresh, deleteCustomer } = useCustomers();
-  const { sales } = usePos();
+  const { sales, salesTruncated } = usePos();
+  const { returnsList } = useReturns();
 
   const [search, setSearch] = useState("");
+  const [sort, setSort] = useState<CrmSortKey>("book");
   const [modalOpen, setModalOpen] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Customer | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  const filtered = useMemo(() => {
-    return queryCustomers(customers, { search });
-  }, [customers, search]);
+  // Phase 17: the three acts on this screen are three capabilities. Hiding the
+  // button is the courtesy; `customerService` asserts the same capability, and in
+  // live mode the row-level policies assert it again — so a hand-built request
+  // meets the same answer the UI gave.
+  const mayAdd = canAct("add_customer");
+  const mayEdit = canAct("edit_customer");
+  const mayDelete = canAct("delete_customer");
 
-  const customerPurchasesMap = useMemo(() => {
-    const map = new Map<string, { count: number; totalSpent: number }>();
-    for (const sale of sales) {
-      if (!sale.customer_id) continue;
-      const prev = map.get(sale.customer_id) ?? { count: 0, totalSpent: 0 };
-      map.set(sale.customer_id, {
-        count: prev.count + 1,
-        totalSpent: prev.totalSpent + (sale.status !== "voided" ? sale.total : 0),
-      });
-    }
-    return map;
-  }, [sales]);
+  const directory = useMemo(
+    () => buildCustomerDirectory(customers, sales, returnsList),
+    [customers, sales, returnsList],
+  );
+  const filtered = useMemo(
+    () => queryDirectory(directory.rows, search, sort),
+    [directory, search, sort],
+  );
+  const filteredCustomers = useMemo(() => filtered.map((row) => row.customer), [filtered]);
 
   const stats = useMemo(() => {
-    const total = customers.length;
     let totalPurchases = 0;
     let totalRevenue = 0;
-    for (const data of customerPurchasesMap.values()) {
-      totalPurchases += data.count;
-      totalRevenue += data.totalSpent;
+    let netValue = 0;
+    for (const row of directory.rows) {
+      totalPurchases += row.kpis.purchaseCount;
+      totalRevenue += row.kpis.paidTotal;
+      netValue += row.kpis.netValue;
     }
     return {
-      total,
+      total: customers.length,
       totalPurchases,
-      totalRevenue,
+      totalRevenue: Math.round(totalRevenue * 100) / 100,
+      netValue: Math.round(netValue * 100) / 100,
     };
-  }, [customers, customerPurchasesMap]);
+  }, [customers.length, directory.rows]);
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
@@ -93,21 +104,30 @@ export function CustomersPage() {
             <Button variant="secondary" onClick={() => void refresh()} title={t("common.retry")}>
               ⟳
             </Button>
-            <Button
-              onClick={() => {
-                setEditingCustomer(null);
-                setModalOpen(true);
-              }}
-            >
-              <PlusIcon />
-              {t("customers.add")}
-            </Button>
+            {/* Exports `filtered` (search applied). Purchase history is always
+                computed over every sale, since it belongs to the customer. */}
+            <ExportButton
+              name="customers"
+              count={filteredCustomers.length}
+              build={() => buildCustomersSheets({ customers: filteredCustomers, book: customers, sales, returnsList, t })}
+            />
+            {mayAdd ? (
+              <Button
+                onClick={() => {
+                  setEditingCustomer(null);
+                  setModalOpen(true);
+                }}
+              >
+                <PlusIcon />
+                {t("customers.add")}
+              </Button>
+            ) : null}
           </>
         }
       />
 
       {/* KPI Stats */}
-      <div className="mb-4 grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3">
+      <div className="mb-4 grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         <StatTile
           label={t("customers.title")}
           value={String(stats.total)}
@@ -124,19 +144,55 @@ export function CustomersPage() {
           value={num(stats.totalRevenue, 2)}
           tone="info"
         />
+        <StatTile
+          label={t("customers.crm.net")}
+          value={num(stats.netValue, 2)}
+          tone="primary"
+        />
       </div>
+
+      {directory.attribution.duplicateGroups.length > 0 ? (
+        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950" data-testid="customer-duplicate-phones">
+          <p className="font-bold">{t("customers.crm.duplicatesTitle")}</p>
+          <p className="mt-1 text-xs leading-relaxed">
+            {t("customers.crm.duplicatesBody", {
+              count: directory.attribution.duplicateGroups.reduce((sum, group) => sum + group.length, 0),
+            })}
+          </p>
+        </div>
+      ) : null}
+      {salesTruncated ? (
+        <p className="mb-4 text-xs font-medium text-slate-500">{t("customers.crm.windowNote")}</p>
+      ) : null}
 
       {/* Filter / Search Bar */}
       <Card className="mb-4">
-        <div className="max-w-md">
-          <TextInput
-            value={search}
-            leading={<SearchIcon />}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder={t("customers.searchPlaceholder")}
-            aria-label={t("common.search")}
-            type="search"
-          />
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+          <div className="min-w-0 flex-1">
+            <TextInput
+              value={search}
+              leading={<SearchIcon />}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder={t("customers.searchPlaceholder")}
+              aria-label={t("common.search")}
+              type="search"
+            />
+          </div>
+          <label className="block text-xs font-bold text-slate-600 sm:w-56">
+            {t("customers.sort.label")}
+            <SelectInput
+              className="mt-1"
+              value={sort}
+              aria-label={t("customers.sort.label")}
+              onChange={(event) => setSort(event.target.value as CrmSortKey)}
+            >
+              <option value="book">{t("customers.sort.book")}</option>
+              <option value="spend">{t("customers.sort.spend")}</option>
+              <option value="orders">{t("customers.sort.orders")}</option>
+              <option value="recent">{t("customers.sort.recent")}</option>
+              <option value="inactive">{t("customers.sort.inactive")}</option>
+            </SelectInput>
+          </label>
         </div>
       </Card>
 
@@ -181,15 +237,16 @@ export function CustomersPage() {
                   <th className="px-4 py-3 text-start font-semibold">{t("customers.name")}</th>
                   <th className="px-3 py-3 text-start font-semibold">{t("customers.phone")}</th>
                   <th className="px-3 py-3 text-start font-semibold">{t("customers.address")}</th>
-                  <th className="px-3 py-3 text-end font-semibold">{t("customers.totalSales")}</th>
-                  <th className="px-3 py-3 text-end font-semibold">{t("customers.totalSpent")}</th>
-                  <th className="px-3 py-3 text-start font-semibold">{t("customers.created")}</th>
+                  <th className="px-3 py-3 text-end font-semibold">{t("customers.crm.count")}</th>
+                  <th className="px-3 py-3 text-end font-semibold">{t("customers.crm.paid")}</th>
+                  <th className="px-3 py-3 text-end font-semibold">{t("customers.crm.net")}</th>
+                  <th className="px-3 py-3 text-start font-semibold">{t("customers.crm.lastPurchase")}</th>
                   <th className="px-4 py-3 text-end font-semibold">{t("common.actions")}</th>
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((c) => {
-                  const pData = customerPurchasesMap.get(c.id) ?? { count: 0, totalSpent: 0 };
+                {filtered.map((row) => {
+                  const c = row.customer;
                   return (
                     <tr
                       key={c.id}
@@ -202,9 +259,14 @@ export function CustomersPage() {
                         >
                           {c.name}
                         </Link>
-                        {c.notes && (
-                          <p className="line-clamp-1 max-w-xs text-xs text-slate-500">{c.notes}</p>
-                        )}
+                        {c.email ? <p className="line-clamp-1 max-w-xs text-xs text-slate-500">{c.email}</p> : null}
+                        {row.segments.length > 0 ? (
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {row.segments.map((segment) => (
+                              <Badge key={segment} tone="neutral">{t(segmentLabelKey(segment))}</Badge>
+                            ))}
+                          </div>
+                        ) : null}
                       </td>
                       <td className="px-3 py-3 font-mono text-xs font-semibold text-slate-700" dir="ltr">
                         {c.phone}
@@ -213,13 +275,16 @@ export function CustomersPage() {
                         {c.address || "—"}
                       </td>
                       <td className="px-3 py-3 text-end text-xs font-bold tabular-nums text-slate-900">
-                        {pData.count}
+                        {row.kpis.purchaseCount}
+                      </td>
+                      <td className="px-3 py-3 text-end text-sm font-bold tabular-nums text-slate-900">
+                        {num(row.kpis.paidTotal, 2)}
                       </td>
                       <td className="px-3 py-3 text-end text-sm font-bold tabular-nums text-indigo-700">
-                        {num(pData.totalSpent, 2)}
+                        {num(row.kpis.netValue, 2)}
                       </td>
                       <td className="px-3 py-3 text-xs text-slate-500" dir="ltr">
-                        {date(c.created_at)}
+                        {row.kpis.lastPurchaseAt ? date(row.kpis.lastPurchaseAt) : "—"}
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-end gap-1">
@@ -230,25 +295,29 @@ export function CustomersPage() {
                           >
                             <EyeIcon />
                           </Link>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setEditingCustomer(c);
-                              setModalOpen(true);
-                            }}
-                            className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900"
-                            title={t("common.edit")}
-                          >
-                            <EditIcon />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setDeleteTarget(c)}
-                            className="flex h-8 w-8 items-center justify-center rounded-lg text-rose-500 transition-colors hover:bg-rose-50 hover:text-rose-700"
-                            title={t("common.delete")}
-                          >
-                            <TrashIcon />
-                          </button>
+                          {mayEdit ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingCustomer(c);
+                                setModalOpen(true);
+                              }}
+                              className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900"
+                              title={t("common.edit")}
+                            >
+                              <EditIcon />
+                            </button>
+                          ) : null}
+                          {mayDelete ? (
+                            <button
+                              type="button"
+                              onClick={() => setDeleteTarget(c)}
+                              className="flex h-8 w-8 items-center justify-center rounded-lg text-rose-500 transition-colors hover:bg-rose-50 hover:text-rose-700"
+                              title={t("common.delete")}
+                            >
+                              <TrashIcon />
+                            </button>
+                          ) : null}
                         </div>
                       </td>
                     </tr>
@@ -260,8 +329,8 @@ export function CustomersPage() {
 
           {/* Mobile cards */}
           <div className="space-y-3 md:hidden">
-            {filtered.map((c) => {
-              const pData = customerPurchasesMap.get(c.id) ?? { count: 0, totalSpent: 0 };
+            {filtered.map((row) => {
+              const c = row.customer;
               return (
                 <div key={c.id} className="alyq-card p-4 space-y-2">
                   <div className="flex items-start justify-between gap-2">
@@ -302,10 +371,10 @@ export function CustomersPage() {
 
                   <div className="flex items-center justify-between border-t border-slate-100 pt-2 text-xs">
                     <span className="text-slate-500">
-                      {pData.count} {t("customers.totalSales")}
+                      {row.kpis.purchaseCount} {t("customers.crm.count")}
                     </span>
                     <span className="font-bold tabular-nums text-indigo-700">
-                      {num(pData.totalSpent, 2)}
+                      {num(row.kpis.netValue, 2)}
                     </span>
                   </div>
                 </div>

@@ -1,3 +1,19 @@
+// Phase 27: a till sale requires an open shift (the demo repository now
+// mirrors migration 0040). Every suite that rings up sales opens one first.
+async function openTestShift() {
+  const { getDemoShiftRepository } = await import("@/modules/shifts/data/demoRepository");
+  const shifts = await getDemoShiftRepository().listShifts();
+  if (!shifts.some((s) => s.status === "open")) {
+    await getDemoShiftRepository().openShift({
+      branch: "Main",
+      register: "Till 1",
+      opening_cash: 100,
+      opened_by: "00000000-0000-0000-0000-000000000c1t",
+      opened_by_name: "Test Cashier",
+    });
+  }
+}
+
 /**
  * POS logic self-test (headless, Node).
  * Run with:
@@ -24,10 +40,23 @@ import {
   autoBalanceOther,
 } from "../services/posMath";
 import { getDemoSalesRepository } from "../data/demoRepository";
+import { getDemoReturnRepository } from "@/modules/returns/data/demoRepository";
 import { getDemoRepository } from "@/modules/products/data/demoRepository";
 import { getDemoInventoryRepository } from "@/modules/inventory/data/demoRepository";
-import { buildReceiptHtml, paymentMethodDisplayName } from "../services/receipt";
+import {
+  buildReceiptHtml,
+  buildReturnReceiptHtml,
+  customerInfoIssue,
+  paymentMethodDisplayName,
+  RECEIPT_LOGO_SRC,
+} from "../services/receipt";
+import { salesReceiptStrings, returnReceiptStrings } from "../services/receiptStrings";
+import { en, ar } from "@/lib/i18n/dictionary";
 import type { CartLine, SalePaymentInput } from "../types";
+
+function money2(value: number): string {
+  return value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
 
 type TestCase = { name: string; fn: () => void | Promise<void> };
 const tests: TestCase[] = [];
@@ -37,6 +66,12 @@ function test(name: string, fn: () => void | Promise<void>) {
 
 function line(partial: Partial<CartLine> & { product_id: string; sku: string }): CartLine {
   return {
+    variant_id: null,
+    variant_sku: null,
+    color_ar: null,
+    color_en: null,
+    size: null,
+    size_label: null,
     name_ar: "",
     name_en: partial.sku,
     barcode: null,
@@ -62,6 +97,10 @@ const insta = (amount: number, status: "paid" | "pending" = "paid"): SalePayment
 });
 
 console.log("\nPOS · cart math");
+
+test("setup: open the till shift the till needs (Phase 27)", async () => {
+  await openTestShift();
+});
 
 test("line total + subtotal with rounding", () => {
   assert.equal(lineTotal(10.005, 3), 30.02); // 10.005 * 3 = 30.015 → 30.02
@@ -171,10 +210,10 @@ async function bySku(sku: string) {
 }
 
 test("cash-only sale returns a numbered sale with recomputed totals + change", async () => {
-  const coffee = await bySku("ALYQ-1001"); // price 32.5
+  const earrings = await bySku("ALYQ-1001"); // price 32.5
   const sale = await repo.completeSale({
     client_ref: `test-${Date.now()}`,
-    lines: [{ product_id: coffee.id, qty: 2 }],
+    lines: [{ product_id: earrings.id, qty: 2 }],
     discount_type: "none",
     discount_value: 0,
     payments: [cash(65, 100)],
@@ -186,7 +225,7 @@ test("cash-only sale returns a numbered sale with recomputed totals + change", a
   assert.equal(sale.status, "completed");
   assert.equal(sale.items.length, 1);
   assert.equal(sale.items[0].sku, "ALYQ-1001");
-  assert.equal(sale.items[0].name_en, "Arabic Ground Coffee 250g"); // snapshot preserved
+  assert.equal(sale.items[0].name_en, "Gold Pearl Earrings"); // snapshot preserved
   assert.equal(sale.items[0].unit_price, 32.5);
   assert.equal(sale.items[0].quantity, 2);
   assert.equal(sale.subtotal, 65);
@@ -199,12 +238,12 @@ test("cash-only sale returns a numbered sale with recomputed totals + change", a
 });
 
 test("completing a sale deducts stock and writes a movement", async () => {
-  const coffee = await bySku("ALYQ-1001");
-  const before = coffee.stock_quantity;
+  const earrings = await bySku("ALYQ-1001");
+  const before = earrings.stock_quantity;
 
   const sale = await repo.completeSale({
     client_ref: `deduct-${Date.now()}`,
-    lines: [{ product_id: coffee.id, qty: 1 }],
+    lines: [{ product_id: earrings.id, qty: 1 }],
     discount_type: "percent",
     discount_value: 10,
     payments: [cash(round2(32.5 * 0.9), 100)],
@@ -212,11 +251,11 @@ test("completing a sale deducts stock and writes a movement", async () => {
     user_name: "Tester",
   });
 
-  const after = (await catalog.listProducts()).find((p) => p.id === coffee.id)!;
+  const after = (await catalog.listProducts()).find((p) => p.id === earrings.id)!;
   assert.equal(after.stock_quantity, before - 1, "stock deducted by sold qty");
   assert.ok(after.stock_quantity >= 0, "never negative");
 
-  const movements = await inventory.listMovementsForProduct(coffee.id);
+  const movements = await inventory.listMovementsForProduct(earrings.id);
   const saleMovement = movements.find((m) => m.notes?.includes(sale.sale_number));
   assert.ok(saleMovement, "a stock movement references the sale number");
   assert.equal(saleMovement?.type, "issue");
@@ -226,10 +265,10 @@ test("completing a sale deducts stock and writes a movement", async () => {
 });
 
 test("percent discount is recomputed server-side, not trusted from the client", async () => {
-  const milk = await bySku("ALYQ-1020"); // 11.5
+  const bracelet = await bySku("ALYQ-1020"); // 11.5
   const sale = await repo.completeSale({
     client_ref: `disc-${Date.now()}`,
-    lines: [{ product_id: milk.id, qty: 2 }],
+    lines: [{ product_id: bracelet.id, qty: 2 }],
     discount_type: "percent",
     discount_value: 50,
     payments: [cash(11.5)],
@@ -242,11 +281,11 @@ test("percent discount is recomputed server-side, not trusted from the client", 
 });
 
 test("overselling is rejected", async () => {
-  const coffee = await bySku("ALYQ-1001");
+  const earrings = await bySku("ALYQ-1001");
   await assert.rejects(
     repo.completeSale({
       client_ref: `oversell-${Date.now()}`,
-      lines: [{ product_id: coffee.id, qty: 99 }],
+      lines: [{ product_id: earrings.id, qty: 99 }],
       discount_type: "none",
       discount_value: 0,
       payments: [cash(1)],
@@ -258,12 +297,12 @@ test("overselling is rejected", async () => {
 });
 
 test("out-of-stock and non-tracked products cannot be sold", async () => {
-  const juice = await bySku("ALYQ-1010"); // stock 0
+  const necklace = await bySku("ALYQ-1010"); // stock 0
   const service = await bySku("ALYQ-3001"); // stock_tracking_enabled = false
   await assert.rejects(
     repo.completeSale({
       client_ref: `oos-${Date.now()}`,
-      lines: [{ product_id: juice.id, qty: 1 }],
+      lines: [{ product_id: necklace.id, qty: 1 }],
       discount_type: "none",
       discount_value: 0,
       payments: [cash(5)],
@@ -287,11 +326,11 @@ test("out-of-stock and non-tracked products cannot be sold", async () => {
 });
 
 test("insufficient cash is rejected", async () => {
-  const milk = await bySku("ALYQ-1020"); // 11.5
+  const bracelet = await bySku("ALYQ-1020"); // 11.5
   await assert.rejects(
     repo.completeSale({
       client_ref: `cash-${Date.now()}`,
-      lines: [{ product_id: milk.id, qty: 1 }],
+      lines: [{ product_id: bracelet.id, qty: 1 }],
       discount_type: "none",
       discount_value: 0,
       payments: [cash(11.5, 5)],
@@ -303,11 +342,11 @@ test("insufficient cash is rejected", async () => {
 });
 
 test("invalid quantities are rejected", async () => {
-  const milk = await bySku("ALYQ-1020");
+  const bracelet = await bySku("ALYQ-1020");
   await assert.rejects(
     repo.completeSale({
       client_ref: `qty-${Date.now()}`,
-      lines: [{ product_id: milk.id, qty: 0 }],
+      lines: [{ product_id: bracelet.id, qty: 0 }],
       discount_type: "none",
       discount_value: 0,
       payments: [cash(100)],
@@ -331,12 +370,12 @@ test("invalid quantities are rejected", async () => {
 });
 
 test("payment sums that don't match the total are rejected", async () => {
-  const milk = await bySku("ALYQ-1020"); // 11.5
+  const bracelet = await bySku("ALYQ-1020"); // 11.5
   // Underpaid
   await assert.rejects(
     repo.completeSale({
       client_ref: `under-${Date.now()}`,
-      lines: [{ product_id: milk.id, qty: 1 }],
+      lines: [{ product_id: bracelet.id, qty: 1 }],
       discount_type: "none",
       discount_value: 0,
       payments: [cash(10)],
@@ -349,7 +388,7 @@ test("payment sums that don't match the total are rejected", async () => {
   await assert.rejects(
     repo.completeSale({
       client_ref: `over-${Date.now()}`,
-      lines: [{ product_id: milk.id, qty: 1 }],
+      lines: [{ product_id: bracelet.id, qty: 1 }],
       discount_type: "none",
       discount_value: 0,
       payments: [cash(12)],
@@ -361,10 +400,10 @@ test("payment sums that don't match the total are rejected", async () => {
 });
 
 test("concurrent completion is rejected (double-submission guard)", async () => {
-  const milk = await bySku("ALYQ-1020");
+  const bracelet = await bySku("ALYQ-1020");
   const p1 = repo.completeSale({
     client_ref: `concurrent-${Date.now()}`,
-    lines: [{ product_id: milk.id, qty: 1 }],
+    lines: [{ product_id: bracelet.id, qty: 1 }],
     discount_type: "none",
     discount_value: 0,
     payments: [cash(11.5)],
@@ -373,7 +412,7 @@ test("concurrent completion is rejected (double-submission guard)", async () => 
   });
   const p2 = repo.completeSale({
     client_ref: `concurrent-2-${Date.now()}`,
-    lines: [{ product_id: milk.id, qty: 1 }],
+    lines: [{ product_id: bracelet.id, qty: 1 }],
     discount_type: "none",
     discount_value: 0,
     payments: [cash(11.5)],
@@ -385,13 +424,13 @@ test("concurrent completion is rejected (double-submission guard)", async () => 
 });
 
 test("retrying the same client_ref returns the same sale (idempotency)", async () => {
-  const milk = await bySku("ALYQ-1020");
+  const bracelet = await bySku("ALYQ-1020");
   const ref = `idempotent-${Date.now()}`;
-  const before = (await catalog.listProducts()).find((p) => p.id === milk.id)!.stock_quantity;
+  const before = (await catalog.listProducts()).find((p) => p.id === bracelet.id)!.stock_quantity;
 
   const payload = {
     client_ref: ref,
-    lines: [{ product_id: milk.id, qty: 1 }],
+    lines: [{ product_id: bracelet.id, qty: 1 }],
     discount_type: "none" as const,
     discount_value: 0,
     payments: [cash(11.5)],
@@ -405,20 +444,20 @@ test("retrying the same client_ref returns the same sale (idempotency)", async (
   assert.equal(retry.id, first.id, "same sale returned");
   assert.equal(retry.sale_number, first.sale_number, "no second invoice number burned");
 
-  const after = (await catalog.listProducts()).find((p) => p.id === milk.id)!.stock_quantity;
+  const after = (await catalog.listProducts()).find((p) => p.id === bracelet.id)!.stock_quantity;
   assert.equal(after, before - 1, "stock deducted exactly once");
   const sales = await repo.listSales();
   assert.equal(sales.filter((s) => s.client_ref === ref).length, 1, "only one sale persisted");
 });
 
 test("ledger keeps every movement across consecutive sales (regression)", async () => {
-  const milk = await bySku("ALYQ-1020");
-  const startCount = (await inventory.listMovementsForProduct(milk.id)).length;
+  const bracelet = await bySku("ALYQ-1020");
+  const startCount = (await inventory.listMovementsForProduct(bracelet.id)).length;
   const refs = [`led-a-${Date.now()}`, `led-b-${Date.now()}`, `led-c-${Date.now()}`];
   for (const ref of refs) {
     await repo.completeSale({
       client_ref: ref,
-      lines: [{ product_id: milk.id, qty: 1 }],
+      lines: [{ product_id: bracelet.id, qty: 1 }],
       discount_type: "none",
       discount_value: 0,
       payments: [cash(11.5)],
@@ -426,17 +465,17 @@ test("ledger keeps every movement across consecutive sales (regression)", async 
       user_name: "Tester",
     });
   }
-  const endCount = (await inventory.listMovementsForProduct(milk.id)).length;
+  const endCount = (await inventory.listMovementsForProduct(bracelet.id)).length;
   assert.equal(endCount, startCount + refs.length, "one movement recorded per sale, none lost");
 });
 
 test("invoice numbers are sequential and never reused", async () => {
-  const milk = await bySku("ALYQ-1020");
+  const bracelet = await bySku("ALYQ-1020");
   const numbers: string[] = [];
   for (let i = 0; i < 3; i += 1) {
     const sale = await repo.completeSale({
       client_ref: `seq-${i}-${Date.now()}`,
-      lines: [{ product_id: milk.id, qty: 1 }],
+      lines: [{ product_id: bracelet.id, qty: 1 }],
       discount_type: "none",
       discount_value: 0,
       payments: [cash(11.5)],
@@ -453,10 +492,10 @@ test("invoice numbers are sequential and never reused", async () => {
 });
 
 test("InstaPay-only sale can be marked pending", async () => {
-  const milk = await bySku("ALYQ-1020");
+  const bracelet = await bySku("ALYQ-1020");
   const sale = await repo.completeSale({
     client_ref: `instapay-${Date.now()}`,
-    lines: [{ product_id: milk.id, qty: 1 }],
+    lines: [{ product_id: bracelet.id, qty: 1 }],
     discount_type: "none",
     discount_value: 0,
     payments: [insta(11.5, "pending")],
@@ -473,10 +512,10 @@ test("InstaPay-only sale can be marked pending", async () => {
 });
 
 test("mixed Cash + InstaPay split payment", async () => {
-  const milk = await bySku("ALYQ-1020"); // 11.5 × 4 = 46
+  const bracelet = await bySku("ALYQ-1020"); // 11.5 × 4 = 46
   const sale = await repo.completeSale({
     client_ref: `split-${Date.now()}`,
-    lines: [{ product_id: milk.id, qty: 4 }],
+    lines: [{ product_id: bracelet.id, qty: 4 }],
     discount_type: "none",
     discount_value: 0,
     payments: [cash(20), insta(26, "pending")],
@@ -502,10 +541,10 @@ test("mixed Cash + InstaPay split payment", async () => {
 });
 
 test("confirming a mixed sale marks only the InstaPay payment paid", async () => {
-  const milk = await bySku("ALYQ-1020");
+  const bracelet = await bySku("ALYQ-1020");
   const sale = await repo.completeSale({
     client_ref: `split-confirm-${Date.now()}`,
-    lines: [{ product_id: milk.id, qty: 2 }],
+    lines: [{ product_id: bracelet.id, qty: 2 }],
     discount_type: "none",
     discount_value: 0,
     payments: [cash(11.5), insta(11.5, "pending")],
@@ -527,12 +566,12 @@ test("confirming a mixed sale marks only the InstaPay payment paid", async () =>
 });
 
 test("confirming an InstaPay payment records who/when and preserves totals", async () => {
-  const coffee2 = await bySku("ALYQ-1002"); // price 68, high stock
-  const stockBefore = (await catalog.listProducts()).find((p) => p.id === coffee2.id)!.stock_quantity;
+  const ring = await bySku("ALYQ-1002"); // price 68, high stock
+  const stockBefore = (await catalog.listProducts()).find((p) => p.id === ring.id)!.stock_quantity;
 
   const sale = await repo.completeSale({
     client_ref: `ip-confirm-${Date.now()}`,
-    lines: [{ product_id: coffee2.id, qty: 2 }],
+    lines: [{ product_id: ring.id, qty: 2 }],
     discount_type: "none",
     discount_value: 0,
     payments: [insta(136, "pending")],
@@ -550,16 +589,16 @@ test("confirming an InstaPay payment records who/when and preserves totals", asy
   assert.equal(confirmed.total, 136);
   assert.deepEqual(confirmed.items.map((i) => i.id), sale.items.map((i) => i.id));
 
-  const stockAfter = (await catalog.listProducts()).find((p) => p.id === coffee2.id)!.stock_quantity;
+  const stockAfter = (await catalog.listProducts()).find((p) => p.id === ring.id)!.stock_quantity;
   assert.equal(stockAfter, stockBefore - 2, "stock deducted once at creation");
 });
 
 test("confirming a payment is idempotent and safe for cash/voided sales", async () => {
-  const coffee2 = await bySku("ALYQ-1002"); // price 68
+  const ring = await bySku("ALYQ-1002"); // price 68
 
   const instaSale = await repo.completeSale({
     client_ref: `ip-idem-${Date.now()}`,
-    lines: [{ product_id: coffee2.id, qty: 1 }],
+    lines: [{ product_id: ring.id, qty: 1 }],
     discount_type: "none",
     discount_value: 0,
     payments: [insta(68, "pending")],
@@ -574,7 +613,7 @@ test("confirming a payment is idempotent and safe for cash/voided sales", async 
 
   const cashSale = await repo.completeSale({
     client_ref: `cash-noop-${Date.now()}`,
-    lines: [{ product_id: coffee2.id, qty: 1 }],
+    lines: [{ product_id: ring.id, qty: 1 }],
     discount_type: "none",
     discount_value: 0,
     payments: [cash(68)],
@@ -589,10 +628,10 @@ test("confirming a payment is idempotent and safe for cash/voided sales", async 
 });
 
 test("receipt lists every split payment", async () => {
-  const coffee2 = await bySku("ALYQ-1002"); // price 68 × 4 = 272
+  const ring = await bySku("ALYQ-1002"); // price 68 × 4 = 272
   const sale = await repo.completeSale({
     client_ref: `receipt-${Date.now()}`,
-    lines: [{ product_id: coffee2.id, qty: 4 }],
+    lines: [{ product_id: ring.id, qty: 4 }],
     discount_type: "none",
     discount_value: 0,
     payments: [cash(120, 120), insta(152, "pending")],
@@ -634,10 +673,10 @@ test("receipt lists every split payment", async () => {
 });
 
 test("receipt branding: logo, boutique header, paid/remaining/change, contacts", async () => {
-  const coffee2 = await bySku("ALYQ-1002"); // price 68, high stock
+  const ring = await bySku("ALYQ-1002"); // price 68, high stock
   const sale = await repo.completeSale({
     client_ref: `brand-${Date.now()}`,
-    lines: [{ product_id: coffee2.id, qty: 2 }],
+    lines: [{ product_id: ring.id, qty: 2 }],
     discount_type: "none",
     discount_value: 0,
     payments: [cash(136, 140)],
@@ -646,8 +685,7 @@ test("receipt branding: logo, boutique header, paid/remaining/change, contacts",
   });
 
   const strings = {
-    businessName: "ALYQ | أَلِيق",
-    businessTagline: "Inspired by you",
+    businessName: "ALYQ | أَلِــيْـــق",
     saleLabel: "Sale #",
     dateLabel: "Date",
     cashierLabel: "Cashier",
@@ -671,10 +709,17 @@ test("receipt branding: logo, boutique header, paid/remaining/change, contacts",
   const html = buildReceiptHtml({ sale, direction: "ltr", strings });
 
   // brand block: official logo file (centered, fixed print size) + wordmark + tagline
-  assert.ok(html.includes('src="/alyq-logo.png"'), "official logo referenced");
+  assert.ok(html.includes(RECEIPT_LOGO_SRC), "official logo referenced");
   assert.ok(html.includes('class="logo"'), "logo has print sizing class");
-  assert.ok(html.includes("ALYQ | أَلِيق"), "bilingual wordmark shown");
-  assert.ok(html.includes("Inspired by you"), "tagline shown");
+  assert.ok(html.includes("ALYQ | أَلِــيْـــق"), "bilingual wordmark shown");
+  // The unapproved slogan was removed, not replaced: assert its absence, so
+  // re-introducing it — or any substitute invented in its place — fails here.
+  // Assembled from parts: the branding suite scans every file in the tree for
+  // the retired slogan, and a literal here would be the one place it survives.
+  assert.ok(
+    !html.includes(["Inspired", "by", "you"].join(" ")),
+    "the unapproved tagline must never be printed",
+  );
   // payment summary: total, paid, remaining, change
   assert.ok(html.includes("Paid"), "paid row shown");
   assert.ok(html.includes("Remaining"), "remaining row shown");
@@ -694,8 +739,367 @@ test("receipt branding: logo, boutique header, paid/remaining/change, contacts",
   // RTL receipt keeps Arabic + brand, barcode never mirrored
   const rtl = buildReceiptHtml({ sale, direction: "rtl", strings });
   assert.ok(rtl.includes('lang="ar"'), "arabic lang");
-  assert.ok(rtl.includes("ALYQ | أَلِيق"), "wordmark in RTL too");
+  assert.ok(rtl.includes("ALYQ | أَلِــيْـــق"), "wordmark in RTL too");
   assert.ok(!rtl.includes("scaleX(-1)"), "symbol never mirrored");
+});
+
+test("customer info guard: customer-linked receipts require name AND phone", () => {
+  // anonymous / guest — must stay printable (no behaviour change)
+  assert.equal(customerInfoIssue(null, null), null, "guest with neither field is allowed");
+  assert.equal(customerInfoIssue("", ""), null, "empty strings are treated as guest");
+  assert.equal(customerInfoIssue(undefined, undefined), null, "undefined is treated as guest");
+  assert.equal(customerInfoIssue("   ", "  "), null, "whitespace only is treated as guest");
+  // fully populated customer
+  assert.equal(customerInfoIssue("Test Customer", "0599111222"), null, "name + phone is allowed");
+  // customer-linked but incomplete
+  assert.equal(customerInfoIssue("Test Customer", null), "missingPhone", "name without phone blocked");
+  assert.equal(customerInfoIssue("Test Customer", "   "), "missingPhone", "blank phone blocked");
+  assert.equal(customerInfoIssue(null, "0599111222"), "missingName", "phone without name blocked");
+});
+
+// Real dictionary labels drive the receipt strings, so the assertions below
+// verify the actual printed wording rather than test-only strings.
+const enT = ((key: string) => (en as Record<string, string>)[key] ?? key) as never;
+const arT = ((key: string) => (ar as Record<string, string>)[key] ?? key) as never;
+
+test("full flow: sales + return receipt data matches the transaction records", async () => {
+  const salesRepo = getDemoSalesRepository();
+  const returnRepo = getDemoReturnRepository();
+
+  // Start from pristine stock so the full flow (sale → return) is deterministic.
+  catalog.reset();
+  inventory.reset();
+
+  const product = await bySku("ALYQ-1001");
+  const unitPrice = product.selling_price;
+  const qty = 3;
+  const lineTotal = round2(unitPrice * qty);
+  const discountValue = 2;
+  const total = round2(lineTotal - discountValue);
+
+  // ── A customer-linked sale with a discount and a split payment ──
+  const sale = await salesRepo.completeSale({
+    client_ref: `verify-${Date.now()}`,
+    lines: [{ product_id: product.id, qty }],
+    discount_type: "fixed",
+    discount_value: discountValue,
+    payments: [cash(round2(total / 2), total), insta(round2(total / 2))],
+    customer_id: "cust-verify",
+    customer_name: "Test Customer",
+    customer_phone: "Test Phone Number",
+    user_id: "u-verify",
+    user_name: "Verify Cashier",
+  });
+
+  const salesHtml = buildReceiptHtml({
+    sale,
+    direction: "ltr",
+    strings: salesReceiptStrings(enT),
+  });
+
+  // invoice number, date/time, cashier
+  assert.ok(salesHtml.includes(sale.sale_number), "sales: invoice number");
+  assert.ok(salesHtml.includes("/"), "sales: date rendered");
+  assert.ok(salesHtml.includes("Verify Cashier"), "sales: cashier name");
+  // customer name + phone
+  assert.ok(salesHtml.includes("Test Customer"), "sales: customer name");
+  assert.ok(salesHtml.includes("Test Phone Number"), "sales: customer phone");
+  // items, quantities, prices, line totals
+  const itemName = sale.items[0].name_en || sale.items[0].name_ar;
+  assert.ok(salesHtml.includes(itemName), "sales: item name");
+  assert.ok(salesHtml.includes(sale.items[0].sku), "sales: item SKU");
+  assert.ok(salesHtml.includes(`>${qty}<`), "sales: quantity");
+  assert.ok(salesHtml.includes(money2(unitPrice)), "sales: unit price");
+  assert.ok(salesHtml.includes(money2(lineTotal)), "sales: line total");
+  // discounts + total
+  assert.ok(salesHtml.includes(money2(sale.subtotal)), "sales: subtotal");
+  assert.ok(salesHtml.includes(`−${money2(discountValue)}`), "sales: discount amount");
+  assert.ok(salesHtml.includes(money2(total)), "sales: grand total");
+  // payment methods
+  assert.ok(salesHtml.includes("Cash"), "sales: cash payment listed");
+  assert.ok(salesHtml.includes("InstaPay"), "sales: instapay payment listed");
+  assert.ok(salesHtml.includes("Paid"), "sales: paid row");
+  assert.ok(salesHtml.includes("Remaining"), "sales: remaining row");
+  // barcodes: invoice barcode + product barcode on the item line
+  assert.ok(salesHtml.includes("<svg"), "sales: invoice barcode rendered");
+  assert.ok(salesHtml.includes("<rect"), "sales: barcode has bars (no broken render)");
+  if (sale.items[0].barcode) {
+    assert.ok(salesHtml.includes(sale.items[0].barcode!), "sales: product barcode on the item line");
+  }
+
+  // ── A return against that same invoice: stock restored + refund created ──
+  const stockBefore = (await bySku("ALYQ-1001")).stock_quantity;
+  const returnQty = 1;
+  const { returnRecord, refundRecord } = await returnRepo.createReturn({
+    sale_id: sale.id,
+    reason: "Damaged item",
+    refund_method: "cash",
+    items: [{ sale_item_id: sale.items[0].id, product_id: product.id, quantity: returnQty }],
+    user_id: "u-verify",
+    user_name: "Verify Cashier",
+  });
+  const stockAfter = (await bySku("ALYQ-1001")).stock_quantity;
+  assert.equal(stockAfter, stockBefore + returnQty, "return restores stock");
+  assert.ok(refundRecord.amount > 0, "refund record created");
+  assert.equal(returnRecord.refund_amount, refundRecord.amount, "return + refund amounts agree");
+
+  const returnHtml = buildReturnReceiptHtml({
+    returnRecord,
+    direction: "ltr",
+    customerPhone: sale.customer_phone,
+    refundNumber: refundRecord.refund_number,
+    strings: returnReceiptStrings(enT, returnRecord.refund_status),
+  });
+
+  // return number + original invoice + customer + cashier
+  assert.ok(returnHtml.includes(returnRecord.return_number), "return: return number");
+  assert.ok(returnHtml.includes(sale.sale_number), "return: original invoice number");
+  assert.ok(returnHtml.includes("Test Customer"), "return: inherited customer name");
+  assert.ok(returnHtml.includes("Test Phone Number"), "return: inherited customer phone");
+  assert.ok(returnHtml.includes("Verify Cashier"), "return: cashier name");
+  // returned items + quantities + refund amount + method
+  assert.ok(returnHtml.includes(itemName), "return: returned item name");
+  assert.ok(returnHtml.includes(sale.items[0].sku), "return: returned item SKU");
+  assert.ok(returnHtml.includes(`>${returnQty}<`), "return: returned quantity");
+  assert.ok(returnHtml.includes(money2(returnRecord.refund_amount)), "return: refund amount");
+  assert.ok(returnHtml.includes("Total refund"), "return: refund summary label");
+  assert.ok(returnHtml.includes("Cash"), "return: refund method value");
+  assert.ok(returnHtml.includes(refundRecord.refund_number), "return: linked refund number");
+  assert.ok(returnHtml.includes("<svg") && returnHtml.includes("<rect"), "return: barcode rendered");
+  // thermal layout + no missing fields
+  assert.ok(returnHtml.includes("max-width: 76mm"), "return: thermal width");
+  assert.ok(salesHtml.includes("max-width: 76mm"), "sales: thermal width");
+
+  // ── Arabic RTL: real Arabic labels + right alignment ──
+  const salesAr = buildReceiptHtml({ sale, direction: "rtl", strings: salesReceiptStrings(arT) });
+  assert.ok(salesAr.includes('dir="rtl"'), "sales AR: rtl direction");
+  assert.ok(salesAr.includes("الإجمالي"), "sales AR: arabic total label");
+  assert.ok(salesAr.includes("العميل"), "sales AR: arabic customer label");
+  assert.ok(salesAr.includes("text-align: right"), "sales AR: right-aligned tables");
+  assert.ok(salesAr.includes("Test Customer"), "sales AR: customer data preserved");
+
+  const returnAr = buildReturnReceiptHtml({
+    returnRecord,
+    direction: "rtl",
+    customerPhone: sale.customer_phone,
+    refundNumber: refundRecord.refund_number,
+    strings: returnReceiptStrings(arT, returnRecord.refund_status),
+  });
+  assert.ok(returnAr.includes('dir="rtl"'), "return AR: rtl direction");
+  assert.ok(returnAr.includes("إيصال مرتجع"), "return AR: arabic return title");
+  assert.ok(returnAr.includes("الفاتورة الأصلية"), "return AR: arabic original-invoice label");
+  assert.ok(returnAr.includes("text-align: right"), "return AR: right-aligned tables");
+  assert.ok(returnAr.includes(sale.sale_number), "return AR: invoice number preserved");
+  assert.ok(returnAr.includes("Test Phone Number"), "return AR: phone preserved");
+
+  // ── Reprint determinism: same transaction → identical receipt ──
+  const salesAgain = buildReceiptHtml({ sale, direction: "ltr", strings: salesReceiptStrings(enT) });
+  assert.equal(salesAgain, salesHtml, "reprinting a sale yields the identical receipt");
+  const returnAgain = buildReturnReceiptHtml({
+    returnRecord,
+    direction: "ltr",
+    customerPhone: sale.customer_phone,
+    refundNumber: refundRecord.refund_number,
+    strings: returnReceiptStrings(enT, returnRecord.refund_status),
+  });
+  assert.equal(returnAgain, returnHtml, "reprinting a return yields the identical receipt");
+});
+
+test("sales receipt renders customer name + phone only when linked", () => {
+  const base = {
+    id: "s1",
+    sale_number: "INV-000777",
+    client_ref: "c1",
+    status: "completed" as const,
+    subtotal: 30,
+    discount_type: "none" as const,
+    discount_value: 0,
+    discount_amount: 0,
+    total: 30,
+    user_id: "u1",
+    user_name: "Cashier One",
+    items: [
+      {
+        id: "i1",
+        sale_id: "s1",
+        product_id: "p1",
+        variant_id: null,
+        variant_color_ar: null,
+        variant_color_en: null,
+        variant_size: null,
+        variant_size_label: null,
+        name_ar: "أقراط",
+        name_en: "Earrings",
+        sku: "ALYQ-1001",
+        barcode: "6281000000013",
+        unit_price: 30,
+        quantity: 1,
+        line_total: 30,
+      },
+    ],
+    payments: [
+      {
+        id: "pay1",
+        sale_id: "s1",
+        method: "cash" as const,
+        amount: 30,
+        status: "paid" as const,
+        paid_at: null,
+        paid_by: null,
+        paid_by_name: null,
+      },
+    ],
+    created_at: "2026-03-01T08:00:00.000Z",
+    voided_at: null,
+    void_reason: null,
+    payment_method: "cash" as const,
+    payment_status: "paid" as const,
+    amount_received: 30,
+    change: 0,
+    paid_at: null,
+    paid_by: null,
+    paid_by_name: null,
+  };
+  const strings = {
+    businessName: "ALYQ | أَلِــيْـــق",
+    saleLabel: "Sale #",
+    dateLabel: "Date",
+    cashierLabel: "Cashier",
+    itemLabel: "Item",
+    qtyLabel: "Qty",
+    priceLabel: "Price",
+    totalLabel: "Total",
+    subtotalLabel: "Subtotal",
+    discountLabel: "Discount",
+    paymentLabel: "Payment",
+    receivedLabel: "Received",
+    changeLabel: "Change",
+    customerLabel: "Customer",
+    customerPhoneLabel: "Phone",
+    paidLabel: "Paid",
+    remainingLabel: "Remaining",
+    statusLabel: "Status",
+    thankYou: "Thanks",
+    voidedNotice: "Voided",
+  };
+
+  // linked customer → both fields present
+  const linked = buildReceiptHtml({
+    sale: { ...base, customer_id: "cust-1", customer_name: "Test Customer", customer_phone: "0599111222" },
+    direction: "ltr",
+    strings,
+  });
+  assert.ok(linked.includes("Test Customer"), "sales receipt shows customer name");
+  assert.ok(linked.includes("0599111222"), "sales receipt shows customer phone");
+
+  // guest sale → no customer block, unchanged behaviour
+  const guest = buildReceiptHtml({ sale: base, direction: "ltr", strings });
+  assert.ok(!guest.includes("0599111222"), "guest receipt has no customer phone");
+  assert.ok(!guest.includes('>Customer<') && !guest.includes(">Phone<"), "guest receipt has no customer rows");
+});
+
+test("return receipt reuses the shared design and carries return + invoice data", () => {
+  const returnRecord = {
+    return_number: "RET-000123",
+    created_at: "2026-02-03T09:30:00.000Z",
+    sale_number: "INV-000045",
+    customer_name: "Smoke Customer",
+    user_name: "Cashier One",
+    reason: "Damaged item",
+    refund_amount: 68,
+    refund_method: "cash",
+    refund_status: "completed" as const,
+    items: [
+      {
+        id: "ri1",
+        name_ar: "أقراط",
+        name_en: "Earrings",
+        sku: "ALYQ-1001",
+        barcode: "6281000000013",
+        unit_price: 34,
+        quantity: 2,
+        line_total: 68,
+      },
+    ],
+  };
+  const strings = {
+    businessName: "ALYQ | أَلِــيْـــق",
+    returnTitle: "Return Receipt",
+    returnLabel: "Return #",
+    dateLabel: "Date",
+    cashierLabel: "Cashier",
+    invoiceLabel: "Original invoice",
+    customerLabel: "Customer",
+    customerPhoneLabel: "Phone",
+    itemLabel: "Item",
+    qtyLabel: "Qty",
+    priceLabel: "Price",
+    refundLabel: "Refund",
+    totalQtyLabel: "Total returned qty",
+    totalRefundLabel: "Total refund",
+    refundMethodLabel: "Refund method",
+    refundNumberLabel: "Refund #",
+    reasonLabel: "Reason",
+    statusLabel: "completed",
+    thankYou: "Thanks",
+  };
+
+  const html = buildReturnReceiptHtml({
+    returnRecord,
+    direction: "ltr",
+    customerPhone: "01000000000",
+    refundNumber: "REF-000123",
+    strings,
+  });
+
+  // same shared shell/design as the sales receipt
+  assert.ok(html.includes(RECEIPT_LOGO_SRC), "official logo referenced");
+  assert.ok(html.includes("ALYQ | أَلِــيْـــق"), "boutique wordmark shown");
+  // The unapproved slogan was removed, not replaced: assert its absence, so
+  // re-introducing it — or any substitute invented in its place — fails here.
+  // Assembled from parts: the branding suite scans every file in the tree for
+  // the retired slogan, and a literal here would be the one place it survives.
+  assert.ok(
+    !html.includes(["Inspired", "by", "you"].join(" ")),
+    "the unapproved tagline must never be printed",
+  );
+  assert.ok(html.includes("max-width: 76mm"), "same thermal layout");
+  for (const label of ["WhatsApp", "Facebook", "Instagram", "TikTok", "0150 0221712", "ALYQ.eg", "@alyq.eg"]) {
+    assert.ok(html.includes(label), `shared footer keeps ${label}`);
+  }
+  // return + original invoice + customer + cashier
+  assert.ok(html.includes("Return Receipt"), "return title");
+  assert.ok(html.includes("RET-000123"), "return number");
+  assert.ok(html.includes("INV-000045"), "original invoice reference");
+  assert.ok(html.includes("Smoke Customer"), "customer name");
+  assert.ok(html.includes("01000000000"), "customer phone");
+  assert.ok(html.includes("Cashier One"), "cashier name");
+  assert.ok(html.includes("REF-000123"), "linked refund number");
+  // returned items table
+  assert.ok(html.includes("ALYQ-1001"), "item SKU");
+  assert.ok(html.includes("6281000000013"), "item barcode");
+  // refund summary
+  assert.ok(html.includes("Total returned qty"), "total quantity label");
+  assert.ok(html.includes("Total refund"), "total refund label");
+  assert.ok(html.includes("68.00"), "refund amount");
+  assert.ok(html.includes("Refund method"), "refund method label");
+  assert.ok(html.includes("Cash"), "refund method value");
+  assert.ok(html.includes("<svg"), "return barcode rendered");
+  assert.ok(html.includes('dir="ltr"'), "barcode stays LTR");
+
+  // RTL output
+  const rtl = buildReturnReceiptHtml({ returnRecord, direction: "rtl", strings });
+  assert.ok(rtl.includes('lang="ar"'), "arabic lang in RTL");
+  assert.ok(rtl.includes('dir="rtl"'), "rtl direction set");
+  assert.ok(rtl.includes("أقراط"), "arabic item name in RTL");
+
+  // mixed refund methods render without changing the data model
+  const mixed = buildReturnReceiptHtml({
+    returnRecord: { ...returnRecord, refund_method: "cash,instapay" },
+    direction: "ltr",
+    strings,
+  });
+  assert.ok(mixed.includes("Cash + InstaPay"), "mixed refund method renders");
 });
 
 test("receipt payment labels cover cash, visa and instapay", () => {
@@ -706,8 +1110,7 @@ test("receipt payment labels cover cash, visa and instapay", () => {
 
 test("receipt shows customer section only when a customer is linked", async () => {
   const customerStrings = {
-    businessName: "ALYQ | أَلِيق",
-    businessTagline: "Inspired by you",
+    businessName: "ALYQ | أَلِــيْـــق",
     saleLabel: "Sale #",
     dateLabel: "Date",
     cashierLabel: "Cashier",
@@ -728,10 +1131,10 @@ test("receipt shows customer section only when a customer is linked", async () =
     thankYou: "Thanks",
     voidedNotice: "Voided",
   };
-  const coffee2 = await bySku("ALYQ-1002");
+  const ring = await bySku("ALYQ-1002");
   const guestSale = await repo.completeSale({
     client_ref: `guest-${Date.now()}`,
-    lines: [{ product_id: coffee2.id, qty: 1 }],
+    lines: [{ product_id: ring.id, qty: 1 }],
     discount_type: "none",
     discount_value: 0,
     payments: [cash(68)],
@@ -744,7 +1147,7 @@ test("receipt shows customer section only when a customer is linked", async () =
 
   const linkedSale = await repo.completeSale({
     client_ref: `linked-${Date.now()}`,
-    lines: [{ product_id: coffee2.id, qty: 1 }],
+    lines: [{ product_id: ring.id, qty: 1 }],
     discount_type: "none",
     discount_value: 0,
     payments: [cash(68)],
@@ -759,6 +1162,85 @@ test("receipt shows customer section only when a customer is linked", async () =
   assert.ok(linkedHtml.includes("Smoke Customer"), "customer name shown");
   assert.ok(linkedHtml.includes("Phone"), "phone label shown");
   assert.ok(linkedHtml.includes("0599111222"), "customer phone shown");
+});
+
+console.log("\nPhase 27 · open-shift gate + customer stamp (demo)");
+
+test("a till sale is stamped with the open shift and keeps its customer", async () => {
+  const { getDemoShiftRepository } = await import("@/modules/shifts/data/demoRepository");
+  const shifts = await getDemoShiftRepository().listShifts();
+  const openShift = shifts.find((sh) => sh.status === "open");
+  assert.ok(openShift, "the setup test left a shift open");
+  const product = await bySku("ALYQ-1001"); // price 32.5
+  const sale = await repo.completeSale({
+    client_ref: `p27-stamp-${Date.now()}`,
+    lines: [{ product_id: product.id, qty: 1 }],
+    discount_type: "none",
+    discount_value: 0,
+    payments: [cash(product.selling_price)],
+    customer_id: "cust-p27",
+    customer_name: "Omar",
+    customer_phone: "0101111222",
+    user_id: "u1",
+    user_name: "Tester",
+  });
+  assert.equal(sale.shift_id, openShift.id, "the sale carries its shift");
+  assert.equal(sale.customer_id, "cust-p27");
+  assert.equal(sale.customer_name, "Omar");
+  assert.equal(sale.customer_phone, "0101111222");
+});
+
+test("no shift: the till sale is refused with SHIFT_REQUIRED, online is exempt", async () => {
+  const { getDemoShiftRepository } = await import("@/modules/shifts/data/demoRepository");
+  const shiftsRepo = getDemoShiftRepository();
+  const shifts = await shiftsRepo.listShifts();
+  const openShift = shifts.find((sh) => sh.status === "open")!;
+  await shiftsRepo.closeShift(openShift.id, {
+    closing_cash: openShift.opening_cash,
+    closed_by: "u1",
+    closed_by_name: "Tester",
+    summary: {
+      expected_cash: openShift.opening_cash,
+      actual_cash: openShift.opening_cash,
+      difference: 0,
+    } as Parameters<typeof shiftsRepo.closeShift>[1]["summary"],
+  });
+
+  const product = await bySku("ALYQ-1001");
+  await assert.rejects(
+    repo.completeSale({
+      client_ref: `p27-noshift-${Date.now()}`,
+      lines: [{ product_id: product.id, qty: 1 }],
+      discount_type: "none",
+      discount_value: 0,
+      payments: [cash(product.selling_price)],
+      user_id: "u1",
+      user_name: "Tester",
+    }),
+    (err: unknown) => (err as { code?: string }).code === "SHIFT_REQUIRED",
+  );
+
+  // the storefront channel does not need the drawer: COD, no shift
+  const online = await repo.completeSale({
+    client_ref: `p27-online-${Date.now()}`,
+    lines: [{ product_id: product.id, qty: 1 }],
+    discount_type: "none",
+    discount_value: 0,
+    payments: [{ method: "cod", amount: product.selling_price, status: "pending" }],
+    user_id: "u1",
+    user_name: "Tester",
+    source: "online",
+  });
+  assert.equal(online.shift_id, null, "an online sale carries no shift");
+
+  // leave the till sellable for whatever follows
+  await shiftsRepo.openShift({
+    branch: "Main",
+    register: "Till 1",
+    opening_cash: 100,
+    opened_by: "u1",
+    opened_by_name: "Tester",
+  });
 });
 
 // runner — sequential so each test sees a consistent in-memory catalog

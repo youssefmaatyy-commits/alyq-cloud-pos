@@ -66,6 +66,22 @@ begin
 end
 $$;
 
+-- ── refund status enum (pending / completed / rejected) ───────────────────
+-- Corrected 2026-09: this migration originally typed `refund_status` and
+-- `refund_records.status` as `public.payment_status`, which only holds
+-- ('paid','pending') — so `default 'completed'` failed the moment the table was
+-- created, and the RPC's `'completed'::public.payment_status` cast would have
+-- failed at runtime. A refund lifecycle is not the same thing as whether a sale
+-- has been paid, so refunds get their own enum. `rejected` is reserved for a
+-- refund that was requested, refused and therefore never paid out.
+do $$
+begin
+  if not exists (select 1 from pg_type where typname = 'refund_status') then
+    create type public.refund_status as enum ('pending', 'completed', 'rejected');
+  end if;
+end
+$$;
+
 -- ── sales_returns ─────────────────────────────────────────────────────────
 create table if not exists public.sales_returns (
   id            uuid primary key default gen_random_uuid(),
@@ -77,7 +93,7 @@ create table if not exists public.sales_returns (
   reason        text not null check (char_length(btrim(reason)) between 1 and 300),
   refund_amount numeric(14, 2) not null check (refund_amount >= 0),
   refund_method public.refund_method not null,
-  refund_status public.payment_status not null default 'completed',
+  refund_status public.refund_status  not null default 'completed',
   user_id       text not null,
   user_name     text not null,
   created_at    timestamptz not null default now()
@@ -117,7 +133,7 @@ create table if not exists public.refund_records (
   return_id     uuid references public.sales_returns (id) on delete set null,
   amount        numeric(14, 2) not null check (amount > 0),
   payment_method public.refund_method not null,
-  status        public.payment_status   not null default 'completed',
+  status        public.refund_status    not null default 'completed',
   reason        text,
   user_id       text not null,
   user_name     text not null,
@@ -167,21 +183,21 @@ create policy "sales_returns_select_authenticated"
   on public.sales_returns for select to authenticated using (true);
 drop policy if exists "sales_returns_no_direct_write" on public.sales_returns;
 create policy "sales_returns_no_direct_write"
-  on public.sales_returns for insert to authenticated using (false);
+  on public.sales_returns for insert to authenticated with check (false);
 
 drop policy if exists "return_items_select_authenticated" on public.return_items;
 create policy "return_items_select_authenticated"
   on public.return_items for select to authenticated using (true);
 drop policy if exists "return_items_no_direct_write" on public.return_items;
 create policy "return_items_no_direct_write"
-  on public.return_items for insert to authenticated using (false);
+  on public.return_items for insert to authenticated with check (false);
 
 drop policy if exists "refund_records_select_authenticated" on public.refund_records;
 create policy "refund_records_select_authenticated"
   on public.refund_records for select to authenticated using (true);
 drop policy if exists "refund_records_no_direct_write" on public.refund_records;
 create policy "refund_records_no_direct_write"
-  on public.refund_records for insert to authenticated using (false);
+  on public.refund_records for insert to authenticated with check (false);
 
 -- ── process return (transactional) ────────────────────────────────────────
 -- Validates remaining returnable quantities per line and the remaining
@@ -277,7 +293,7 @@ begin
   ) values (
     v_return_number, v_sale.id, v_sale.sale_number, v_sale.customer_id, v_sale.customer_name,
     v_reason, v_refund_total, v_refund_method::public.refund_method,
-    v_refund_status::public.payment_status, v_user_id, v_user_name
+    v_refund_status::public.refund_status, v_user_id, v_user_name
   ) returning id into v_return_id;
 
   for v_line in select * from jsonb_array_elements(p_payload->'items')
@@ -322,7 +338,7 @@ begin
   ) values (
     v_refund_number, v_sale.id, v_sale.sale_number, v_return_id, v_refund_total,
     v_refund_method::public.refund_method,
-    v_refund_status::public.payment_status,
+    v_refund_status::public.refund_status,
     v_reason, v_user_id, v_user_name
   ) returning id into v_refund_id;
 

@@ -1,5 +1,5 @@
-import { useCallback, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { PageHeader } from "@/components/layout/AppShell";
 import {
@@ -7,6 +7,7 @@ import {
   ConfirmDialog,
   EmptyState,
   ErrorState,
+  ExportButton,
   LoadingBlock,
   BoxIcon,
   PlusIcon,
@@ -14,6 +15,8 @@ import {
   StatTile,
   useToast,
 } from "@/components/ui";
+import { buildProductsSheets } from "../services/productsExport";
+import { buildVariantsSheet } from "../services/variantsExport";
 import { ProductFilters, EMPTY_FILTERS, type ProductFiltersValue } from "../components/ProductFilters";
 import { ProductTable } from "../components/ProductTable";
 import { useCatalog } from "../hooks/CatalogProvider";
@@ -22,16 +25,59 @@ import { describeError } from "../services/catalogService";
 import { paginate, queryProducts, summarize, totalPagesFor } from "../services/productQuery";
 import type { Product } from "../types";
 
+// Lazy load ExcelImportModal to prevent xlsx from loading at startup
+const ExcelImportModal = lazy(() => 
+  import("../components/ExcelImportModal").then(m => ({ default: m.ExcelImportModal }))
+);
+
 export function ProductsPage() {
   const { t, pick, tPlural } = useI18n();
   const toast = useToast();
-  const { products, categories, loading, error, refresh, setProductActive, mode } = useCatalog();
+  const {
+    products,
+    categories,
+    variants,
+    productReferences,
+    loading,
+    error,
+    refresh,
+    refreshReferences,
+    setProductActive,
+    deleteProduct,
+    mode,
+  } = useCatalog();
+
+  // History can mint while this screen is away — a sale completed at the POS,
+  // an online order approved. The reference map is what keeps a referenced
+  // product's delete affordance disabled with its reason, so re-read it
+  // silently on mount without flickering the catalogue.
+  useEffect(() => {
+    void refreshReferences();
+  }, [refreshReferences]);
 
   const [filters, setFilters] = useState<ProductFiltersValue>(EMPTY_FILTERS);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+
+  // Phase 46: the shell's global search lands here as `?q=…` (the catalog is
+  // the entity the shell can actually see). Hydrated once; anything else in the
+  // URL is ignored rather than invented.
+  const [params, setParams] = useSearchParams();
+  const hydrated = useRef(false);
+  useEffect(() => {
+    if (hydrated.current) return;
+    hydrated.current = true;
+    const q = params.get("q");
+    if (q) {
+      setFilters((current) => ({ ...current, search: q }));
+      setPage(1);
+      setParams({}, { replace: true });
+    }
+  }, []); // once, on mount
   const [busyId, setBusyId] = useState<string | null>(null);
   const [pending, setPending] = useState<Product | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<Product | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
 
   const nameIndex = useMemo(() => categoryNameIndex(categories, pick), [categories, pick]);
   const categoryName = useCallback(
@@ -60,7 +106,7 @@ export function ProductsPage() {
   const handleToggle = (product: Product) => setPending(product);
 
   const confirmToggle = async () => {
-    if (!pending) return;
+    if (!pending || busyId) return;
     setBusyId(pending.id);
     try {
       await setProductActive(pending.id, !pending.active);
@@ -70,6 +116,25 @@ export function ProductsPage() {
     } finally {
       setBusyId(null);
       setPending(null);
+    }
+  };
+
+  const handleDelete = (product: Product) => setPendingDelete(product);
+
+  const confirmDelete = async () => {
+    // busyId doubles as the double-submit guard: a second confirm while the
+    // first is in flight does nothing.
+    if (!pendingDelete || busyId) return;
+    setBusyId(pendingDelete.id);
+    try {
+      await deleteProduct(pendingDelete.id);
+      toast.success(t("products.deletedToast"));
+      setPendingDelete(null);
+    } catch (err) {
+      toast.error(t(describeError(err).key as never));
+      setPendingDelete(null);
+    } finally {
+      setBusyId(null);
     }
   };
 
@@ -84,6 +149,7 @@ export function ProductsPage() {
   return (
     <div>
       <PageHeader
+        crumbs={[{ label: t("home.management.title"), to: "/management" }, { label: t("nav.products") }]}
         title={t("products.title")}
         subtitle={t("products.subtitle")}
         actions={
@@ -91,6 +157,26 @@ export function ProductsPage() {
             <Button variant="secondary" onClick={() => void refresh()} title={t("common.retry")}>
               ⟳
             </Button>
+            <Button variant="secondary" onClick={() => setImportOpen(true)}>
+              📥 {t("import.button")}
+            </Button>
+            {/* Exports `results` — the filtered set on screen, not the raw list. */}
+            <ExportButton
+              name="products"
+              count={results.length}
+              build={() => buildProductsSheets({ products: results, categories, t, pick })}
+            />
+            {/* The combinations behind the rollups — hidden entirely when the
+                catalogue holds none, so the button never exports an empty file. */}
+            {variants.length > 0 ? (
+              <ExportButton
+                name="variants"
+                count={variants.length}
+                build={() =>
+                  buildVariantsSheet({ variants, products, t, pick })
+                }
+              />
+            ) : null}
             <Link
               to="/products/new"
               className="alyq-btn-primary alyq-cta h-10 gap-2 rounded-xl px-4 text-sm"
@@ -149,6 +235,8 @@ export function ProductsPage() {
             products={visible}
             categoryName={categoryName}
             onToggleActive={handleToggle}
+            onDelete={handleDelete}
+            references={productReferences}
             busyId={busyId}
             emptyState={
               <div className="alyq-card">
@@ -251,6 +339,29 @@ export function ProductsPage() {
         onCancel={() => setPending(null)}
         onConfirm={() => void confirmToggle()}
       />
+      <ConfirmDialog
+        open={Boolean(pendingDelete)}
+        title={t("products.permanentDeleteTitle")}
+        body={t("products.permanentDeleteBody", {
+          name: pendingDelete ? pick(pendingDelete.name_ar, pendingDelete.name_en) : "",
+        })}
+        confirmLabel={t("products.permanentDelete")}
+        tone="danger"
+        loading={Boolean(pendingDelete && busyId === pendingDelete.id)}
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={() => void confirmDelete()}
+      />
+      {importOpen && (
+        <Suspense fallback={null}>
+          <ExcelImportModal
+            open={importOpen}
+            onClose={() => setImportOpen(false)}
+            products={products}
+            categories={categories}
+            onImportComplete={() => void refresh()}
+          />
+        </Suspense>
+      )}
       <span className="sr-only">{tPlural("products.count", results.length)}</span>
     </div>
   );

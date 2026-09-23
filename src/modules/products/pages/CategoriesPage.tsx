@@ -8,6 +8,7 @@ import {
   ErrorState,
   LoadingBlock,
   PlusIcon,
+  SegmentedTabs,
   StatTile,
 } from "@/components/ui";
 import { CategoryFormModal } from "../components/CategoryFormModal";
@@ -19,18 +20,36 @@ export function CategoriesPage() {
   const { t, pick } = useI18n();
   const { tree, products, categories, loading, error, refresh } = useCatalog();
   const [modal, setModal] = useState<{ open: boolean }>({ open: false });
+  // Phase 44: archived categories are not gone — they live behind this filter
+  // so they can be found and reactivated, without cluttering the working tree.
+  const [view, setView] = useState<"active" | "archived" | "all">("active");
 
-  const flat = useMemo(() => flattenCategoryTree(tree, { includeInactive: true }), [tree]);
+  const flat = useMemo(
+    () => flattenCategoryTree(tree, { includeInactive: true }),
+    [tree],
+  );
+  const visibleFlat = useMemo(() => {
+    if (view === "all") return flat;
+    return flat.filter((node) => (view === "archived" ? !node.active : node.active));
+  }, [flat, view]);
   const uncategorized = useMemo(
     () => products.filter((p) => !p.category_id).length,
     [products],
   );
   const roots = tree.length;
   const activeCount = categories.filter((c) => c.active).length;
+  const archivedCount = categories.length - activeCount;
+
+  const viewTabs: { id: typeof view; label: string; count: number }[] = [
+    { id: "active", label: t("categories.viewActive"), count: activeCount },
+    { id: "archived", label: t("categories.viewArchived"), count: archivedCount },
+    { id: "all", label: t("categories.viewAll"), count: categories.length },
+  ];
 
   return (
     <div>
       <PageHeader
+        crumbs={[{ label: t("home.management.title"), to: "/management" }, { label: t("nav.categories") }]}
         title={t("categories.title")}
         subtitle={t("categories.subtitle")}
         actions={
@@ -85,14 +104,29 @@ export function CategoriesPage() {
       ) : (
         <div className="grid gap-4 lg:grid-cols-3">
           <div className="alyq-card p-2 lg:col-span-2">
-            <CategoryTree />
+            <div className="px-2 pt-2">
+              {/* Phase 46: the shared tab row — same tabs, one visual system. */}
+              <SegmentedTabs
+                ariaLabel={t("common.filters")}
+                testId="categories-tabs"
+                value={view}
+                onChange={setView}
+                tabs={viewTabs.map((tab) => ({
+                  key: tab.id,
+                  label: tab.label,
+                  count: tab.count,
+                  tone: tab.id === "archived" ? ("warning" as const) : undefined,
+                }))}
+              />
+            </div>
+            <CategoryTree view={view} />
           </div>
 
           <div className="space-y-3">
             <div className="alyq-card p-4">
               <h2 className="mb-2 text-sm font-bold text-slate-900">{t("categories.tree")}</h2>
               <ul className="space-y-1 text-sm font-medium text-slate-700">
-                {flat.map((node) => (
+                {visibleFlat.map((node) => (
                   <li key={node.id} className="flex items-center justify-between gap-2">
                     <span className="truncate">{pick(node.name_ar, node.name_en)}</span>
                     <span className="flex items-center gap-1">

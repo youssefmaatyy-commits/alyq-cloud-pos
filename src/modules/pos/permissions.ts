@@ -1,38 +1,40 @@
 import { getCurrentUser, type InventoryUser } from "@/modules/inventory/permissions";
+import { canActAs } from "@/lib/permissions/enforce";
 
 /**
  * POS permission checks.
  *
- * Reuses the shared internal user (Phase 3) so the same identity drives
- * inventory and POS. The cashier role was added to the shared role list;
- * everything here is additive.
+ * The acting user still comes from the shared accessor (Phase 3) — now backed
+ * by the auth session — but every decision delegates to the canonical
+ * capability matrix (`src/lib/permissions/roles.ts`). No permission was
+ * removed; the matrix simply states each one once.
+ *
+ * Authentication-phase fix: `canCompleteSale` previously listed roles by hand
+ * and omitted `cashier`, so a signed-in cashier could not sell even though the
+ * matrix grants `cashier` the `sell` capability. It now asks the matrix, which
+ * is the behaviour the role model documents.
  */
 
-/** Cashiers, managers and admins may run sales. Viewers cannot. */
+/** Cashiers, clerks, managers and admins may run sales. Viewers cannot. */
 export function canCompleteSale(user: InventoryUser = getCurrentUser()): boolean {
-  return (
-    user.role === "admin" || user.role === "manager" || user.role === "inventory_clerk"
-  );
+  return canActAs(user, "sell");
 }
 
 /** Discounts are a manager-level action — cashiers sell at full price only. */
 export function canApplyDiscount(user: InventoryUser = getCurrentUser()): boolean {
-  return user.role === "admin" || user.role === "manager";
+  return canActAs(user, "apply_discount");
 }
 
 /** Voiding a completed sale is restricted to managers / admins. */
 export function canVoidSale(user: InventoryUser = getCurrentUser()): boolean {
-  return user.role === "admin" || user.role === "manager";
+  return canActAs(user, "void_sale");
 }
 
-/**
- * Confirming a pending InstaPay payment uses the same staff tier that may
- * complete a sale (cashiers + managers + admins). Viewers cannot confirm.
- */
+/** Confirming a pending InstaPay payment uses the same staff tier as selling. */
 export function canConfirmPayment(user: InventoryUser = getCurrentUser()): boolean {
-  return canCompleteSale(user);
+  return canActAs(user, "confirm_payment");
 }
 
-/** Roles the POS role switcher offers (subset relevant to the till). */
+/** Roles the POS role switcher offered (kept for compatibility). */
 export const POS_ROLES = ["admin", "manager", "inventory_clerk"] as const;
 export type PosRole = (typeof POS_ROLES)[number];

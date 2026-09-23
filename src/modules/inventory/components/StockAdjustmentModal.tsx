@@ -25,6 +25,7 @@ import {
   type StockReason,
 } from "../types";
 import { useInventory } from "../hooks/InventoryProvider";
+import { sizeLabelOf, type ProductVariant } from "@/modules/products/variants";
 
 const REASONS_FOR_TYPE: Record<StockMovementType, StockReason[]> = {
   adjustment_in: ["recount", "customer_return", "other"],
@@ -44,7 +45,8 @@ interface StockAdjustmentModalProps {
 export function StockAdjustmentModal({ productId, open, onClose }: StockAdjustmentModalProps) {
   const { t, pick, num, date } = useI18n();
   const toast = useToast();
-  const { productById, movementsForProduct, adjustStock, canAdjust } = useInventory();
+  const { productById, movementsForProduct, variantsByProduct, adjustStock, canAdjust } =
+    useInventory();
 
   const product = productId ? productById(productId) : undefined;
   const [values, setValues] = useState<StockAdjustmentFormValues>(EMPTY_ADJUSTMENT_FORM);
@@ -52,11 +54,27 @@ export function StockAdjustmentModal({ productId, open, onClose }: StockAdjustme
   const [submitAttempted, setSubmitAttempted] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  // Phase 43: which shelf is being counted. A variant product is adjusted per
+  // combination — the rollup above it is derived and refuses direct writes.
+  const variants = useMemo(
+    () => (productId ? variantsByProduct.get(productId) ?? [] : []),
+    [productId, variantsByProduct],
+  );
+  const [variantId, setVariantId] = useState<string | null>(null);
+  const activeVariants = useMemo(
+    () => variants.filter((variant) => variant.active),
+    [variants],
+  );
+  const needsVariantChoice = Boolean(product?.variants_enabled && activeVariants.length > 0);
+  const chosenVariant: ProductVariant | null =
+    activeVariants.find((variant) => variant.id === variantId) ?? null;
+
   useEffect(() => {
     if (!open) return;
     setValues(EMPTY_ADJUSTMENT_FORM);
     setTouched({});
     setSubmitAttempted(false);
+    setVariantId(null);
   }, [open, productId]);
 
   const result = useMemo(() => validateAdjustment(values), [values]);
@@ -78,7 +96,9 @@ export function StockAdjustmentModal({ productId, open, onClose }: StockAdjustme
   };
 
   const { value: qty, isInteger } = parseAdjustmentQuantity(values.quantity);
-  const currentQty = product?.stock_quantity ?? 0;
+  // The before/after arithmetic runs on the CHOSEN SHELF: for a variant product
+  // the rollup follows the combination, never the other way round.
+  const currentQty = chosenVariant ? chosenVariant.stock_quantity : product?.stock_quantity ?? 0;
   const resultQty = isOutbound(values.type)
     ? currentQty - (Number.isFinite(qty) ? qty : 0)
     : currentQty + (Number.isFinite(qty) ? qty : 0);
@@ -102,6 +122,10 @@ export function StockAdjustmentModal({ productId, open, onClose }: StockAdjustme
       return;
     }
     if (!result.data) return;
+    if (needsVariantChoice && !chosenVariant) {
+      toast.error(t("inventory.adjust.variantRequired"));
+      return;
+    }
     if (wouldGoNegative) {
       toast.error(t("inventory.adjust.willGoNegative", { result: num(resultQty, 0) }));
       return;
@@ -110,6 +134,7 @@ export function StockAdjustmentModal({ productId, open, onClose }: StockAdjustme
     try {
       await adjustStock({
         productId: product.id,
+        variantId: chosenVariant?.id ?? null,
         type: result.data.type,
         reason: result.data.reason,
         quantity: result.data.quantity,
@@ -162,17 +187,39 @@ export function StockAdjustmentModal({ productId, open, onClose }: StockAdjustme
     >
       {product ? (
         <div className="space-y-4">
-          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-            <p className="text-sm font-bold text-slate-900">
+          <div className="rounded-xl border border-stone-200 bg-stone-50 p-3">
+            <p className="text-sm font-bold text-stone-900">
               {pick(product.name_ar, product.name_en)}
             </p>
-            <p className="text-xs font-medium text-slate-600">
+            <p className="text-xs font-medium text-stone-600">
               <span className="font-mono">{product.sku}</span>
               {product.barcode ? <span className="ms-2 font-mono">{product.barcode}</span> : null}
             </p>
-            <p className="mt-1 text-[11px] font-semibold text-slate-600">
+            {needsVariantChoice ? (
+              <div className="mt-2">
+                <Field label={t("inventory.adjust.combination")} required>
+                  <SelectInput
+                    value={variantId ?? ""}
+                    onChange={(e) => setVariantId(e.target.value || null)}
+                    data-testid="adjust-variant-select"
+                  >
+                    <option value="">{t("inventory.adjust.pickCombination")}</option>
+                    {activeVariants.map((variant) => (
+                      <option key={variant.id} value={variant.id}>
+                        {pick(variant.color_ar, variant.color_en) || "—"}
+                        {" / "}
+                        {sizeLabelOf(variant.size, variant.size_label)}
+                        {" · "}
+                        {num(variant.stock_quantity, 0)}
+                      </option>
+                    ))}
+                  </SelectInput>
+                </Field>
+              </div>
+            ) : null}
+            <p className="mt-1 text-[11px] font-semibold text-stone-600">
               {t("products.stockQuantity")}: <span className="tabular-nums">{num(product.stock_quantity, 0)}</span>
-              <span className="ms-2 text-slate-400">
+              <span className="ms-2 text-stone-400">
                 · {t("products.lowStockLevel")} {num(product.low_stock_level, 0)}
               </span>
             </p>
@@ -231,9 +278,9 @@ export function StockAdjustmentModal({ productId, open, onClose }: StockAdjustme
               placeholder="0"
             />
             <div className="mt-2 flex flex-wrap items-center gap-2 text-xs font-semibold">
-              <span className="text-slate-600">
+              <span className="text-stone-600">
                 {t("inventory.adjust.willResult")}:{" "}
-                <span className={cn(isInteger && wouldGoNegative ? "text-rose-700" : "text-slate-900", "tabular-nums")}>
+                <span className={cn(isInteger && wouldGoNegative ? "text-rose-700" : "text-stone-900", "tabular-nums")}>
                   {num(Number.isFinite(resultQty) ? resultQty : currentQty, 0)}
                 </span>
               </span>
@@ -262,20 +309,20 @@ export function StockAdjustmentModal({ productId, open, onClose }: StockAdjustme
           </Field>
 
           {recent.length > 0 ? (
-            <div className="rounded-xl border border-slate-200 bg-white">
-              <p className="border-b border-slate-100 px-3 py-2 text-[11px] font-bold uppercase tracking-wider text-slate-600">
+            <div className="rounded-xl border border-stone-200 bg-white">
+              <p className="border-b border-stone-100 px-3 py-2 text-[11px] font-bold uppercase tracking-wider text-stone-600">
                 {t("inventory.history.viewProduct")}
               </p>
-              <ul className="divide-y divide-slate-100 text-xs">
+              <ul className="divide-y divide-stone-100 text-xs">
                 {recent.map((m) => (
                   <li key={m.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
-                    <span className="font-semibold text-slate-700">
+                    <span className="font-semibold text-stone-700">
                       {t(`inventory.type.${m.type}` as never)}
                     </span>
-                    <span className="tabular-nums text-slate-600">
+                    <span className="tabular-nums text-stone-600">
                       {num(m.quantity_before, 0)} → {num(m.quantity_after, 0)}
                     </span>
-                    <span className="text-[11px] text-slate-500">{date(m.created_at)}</span>
+                    <span className="text-[11px] text-stone-500">{date(m.created_at)}</span>
                   </li>
                 ))}
               </ul>
@@ -283,7 +330,7 @@ export function StockAdjustmentModal({ productId, open, onClose }: StockAdjustme
           ) : null}
         </div>
       ) : (
-        <p className="text-sm font-medium text-slate-600">{t("common.notFound")}</p>
+        <p className="text-sm font-medium text-stone-600">{t("common.notFound")}</p>
       )}
     </Modal>
   );

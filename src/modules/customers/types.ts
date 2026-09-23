@@ -6,6 +6,8 @@ export interface Customer {
   id: string;
   name: string;
   phone: string;
+  /** Optional contact email (Phase 27). Blank is stored as null. */
+  email: string | null;
   address: string | null;
   notes: string | null;
   created_at: string;
@@ -18,7 +20,3 @@ export type CustomerPatch = Partial<NewCustomer>;
 export interface CustomerFiltersValue {
   search: string;
 }
-
-export const EMPTY_CUSTOMER_FILTERS: CustomerFiltersValue = {
-  search: "",
-};

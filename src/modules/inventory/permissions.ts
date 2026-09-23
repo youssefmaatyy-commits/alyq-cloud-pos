@@ -1,105 +1,91 @@
 /**
- * Inventory permission check.
+ * Inventory permission checks and the app-wide "acting user" accessor.
  *
- * Phase 1 doesn't have a real auth provider yet, so this layer simulates a
- * signed-in internal user from `localStorage`. Future POS / website modules
- * should drop in a Supabase `auth.getUser()` replacement that fills the same
- * shape (`{ id, name, role }`) and keep this file as the single permission
- * gate for stock-changing actions.
+ * Phase 3 originally simulated a signed-in user from `localStorage` and shipped
+ * a demo role switcher. The Authentication phase replaced that with a real
+ * session: `getCurrentUser()` now returns the user from the validated auth
+ * session (see `src/lib/auth/services/sessionStore.ts`) and the switcher is
+ * gone. Every call site kept its name and signature, so no module had to change.
  *
- * Stock adjustments are restricted to internal staff (admin, manager,
- * inventory_clerk). Cashier-only roles can read stock but not mutate it.
+ * The canonical role + capability model lives in `src/lib/permissions/roles.ts`;
+ * the checks below delegate to it.
  */
+import { getCurrentAuthUser } from "@/lib/auth/services/sessionStore";
+import { canActAs } from "@/lib/permissions/enforce";
+import { type AppRole } from "@/lib/permissions/roles";
 
-export const INVENTORY_ROLES = [
-  "admin",
-  "manager",
-  "inventory_clerk",
-  "viewer",
-] as const;
+/** The canonical role type (kept under the historic name for call sites). */
+export type InventoryRole = AppRole;
 
-export type InventoryRole = (typeof INVENTORY_ROLES)[number];
-
+/** The acting user, as everything in the app expects it. */
 export interface InventoryUser {
   id: string;
   name: string;
-  role: InventoryRole;
+  /** Empty string while signed out → every capability is denied. */
+  role: InventoryRole | "";
+  /** Login handle (Authentication phase). */
+  username?: string;
 }
 
-const STORAGE_KEY = "alyq.inventory.currentUser.v1";
-const FALLBACK_USER: InventoryUser = {
-  id: "user-demo-admin",
-  name: "ALYQ Admin",
-  role: "admin",
-};
+const LEGACY_STORAGE_KEY = "alyq.inventory.currentUser.v1";
 
-function safeRead(): InventoryUser | null {
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<InventoryUser>;
-    if (!parsed.id || !parsed.name || !parsed.role) return null;
-    if (!INVENTORY_ROLES.includes(parsed.role as InventoryRole)) return null;
-    return {
-      id: parsed.id,
-      name: parsed.name,
-      role: parsed.role as InventoryRole,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function safeWrite(user: InventoryUser): void {
-  try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(user));
-  } catch {
-    /* ignore quota / private mode */
-  }
-}
-
-let cachedUser: InventoryUser | null = null;
-let cachedLoaded = false;
+/** Roles the Phase 3 UI offered. The canonical list is `APP_ROLES`. */
+export const INVENTORY_ROLES = ["admin", "manager", "inventory_clerk", "viewer"] as const;
 
 /**
- * Resolves the active internal user. The user is persisted across reloads so
- * the auditor on the movement ledger has a stable name.
+ * The acting user.
+ *
+ * Returns the session user while signed in, or an anonymous user (empty role →
+ * every capability denied) when there is no session. The pre-authentication
+ * demo identity record is removed on first read so a stale demo role cannot
+ * influence anything.
  */
 export function getCurrentUser(): InventoryUser {
-  if (cachedLoaded) return cachedUser ?? FALLBACK_USER;
-  const stored = safeRead();
-  cachedUser = stored ?? FALLBACK_USER;
-  if (!stored) safeWrite(cachedUser);
-  cachedLoaded = true;
-  return cachedUser;
+  clearLegacyDemoUser();
+  const user = getCurrentAuthUser();
+  return {
+    id: user.id,
+    name: user.name,
+    role: user.role ?? "",
+    username: user.username,
+  };
 }
 
-export function setCurrentUser(user: InventoryUser): void {
-  if (!INVENTORY_ROLES.includes(user.role)) {
-    throw new Error(`Unknown inventory role: ${user.role}`);
-  }
-  cachedUser = user;
-  cachedLoaded = true;
-  safeWrite(user);
+/**
+ * The Phase 3 role switcher was replaced by authentication. This throws rather
+ * than silently changing who the app thinks is acting.
+ */
+export function setCurrentUser(): never {
+  throw new Error("setCurrentUser was removed in the Authentication phase — sign in instead");
 }
 
 /** True when the current user is allowed to create stock movements. */
 export function canAdjustStock(user: InventoryUser = getCurrentUser()): boolean {
-  return user.role === "admin" || user.role === "manager" || user.role === "inventory_clerk";
+  return canActAs(user, "adjust_stock");
 }
 
 /** True when the current user is allowed to read stock + movement history. */
 export function canViewInventory(user: InventoryUser = getCurrentUser()): boolean {
-  return INVENTORY_ROLES.includes(user.role);
+  return canActAs(user, "view_inventory");
 }
 
-/** All roles, ordered for the role switcher in the UI. */
+/** All roles, ordered (labels come from the canonical model). */
 export const ALL_ROLES: InventoryRole[] = [...INVENTORY_ROLES];
 
 /** Human label for a role. */
-export const ROLE_LABEL: Record<InventoryRole, string> = {
+export const ROLE_LABEL: Record<string, string> = {
   admin: "Admin",
   manager: "Manager",
+  cashier: "Cashier",
   inventory_clerk: "Inventory Clerk",
   viewer: "Viewer",
 };
+
+/** Remove the pre-authentication demo identity record, once per call. */
+function clearLegacyDemoUser(): void {
+  try {
+    globalThis.localStorage?.removeItem(LEGACY_STORAGE_KEY);
+  } catch {
+    /* ignore */
+  }
+}

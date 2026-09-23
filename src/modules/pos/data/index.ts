@@ -17,4 +17,5 @@ export function getSalesMode(): SalesMode {
 }
 
 export { DemoSalesRepository, SupabaseSalesRepository };
-export type { SalesRepository } from "./repository";
+export { SALES_ROW_CAP } from "./repository";
+export type { SaleListQuery, SalesRepository } from "./repository";

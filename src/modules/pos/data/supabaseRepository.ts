@@ -1,3 +1,4 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseClient } from "@/lib/supabase/client";
 import { AppError, toAppError } from "@/modules/products/data/repository";
 import type {
@@ -8,7 +9,8 @@ import type {
   SalePayment,
   VoidSaleInput,
 } from "../types";
-import type { SalesRepository } from "./repository";
+import type { SaleListQuery, SalesRepository } from "./repository";
+import { SALES_ROW_CAP } from "./repository";
 
 interface SaleRow {
   id: string;
@@ -21,6 +23,11 @@ interface SaleRow {
   discount_type: Sale["discount_type"];
   discount_value: number | string;
   discount_amount: number | string;
+  item_discount_amount?: number | string | null;
+  total_discount_amount?: number | string | null;
+  automatic_discount_amount?: number | string | null;
+  automatic_promotion_id?: string | null;
+  automatic_promotion_name?: string | null;
   total: number | string;
   amount_received: number | string | null;
   change: number | string | null;
@@ -35,6 +42,10 @@ interface SaleRow {
   paid_at: string | null;
   paid_by: string | null;
   paid_by_name: string | null;
+  /** Present from migration 0017 onward; older rows simply lack it. */
+  source?: Sale["source"] | null;
+  /** The open shift the till sale was completed under (migration 0040). */
+  shift_id?: string | null;
 }
 
 interface SalePaymentRow {
@@ -52,6 +63,11 @@ interface SaleItemRow {
   id: string;
   sale_id: string;
   product_id: string;
+  variant_id: string | null;
+  variant_color_ar: string | null;
+  variant_color_en: string | null;
+  variant_size: number | string | null;
+  variant_size_label?: string | null;
   name_ar: string;
   name_en: string;
   sku: string;
@@ -59,6 +75,15 @@ interface SaleItemRow {
   unit_price: number | string;
   quantity: number;
   line_total: number | string;
+  gross_total?: number | string | null;
+  discount_type?: SaleItem["discount_type"] | null;
+  discount_value?: number | string | null;
+  discount_amount?: number | string | null;
+  automatic_promotion_id?: string | null;
+  automatic_promotion_name?: string | null;
+  automatic_discount_amount?: number | string | null;
+  /** Present from migration 0055 onward; older rows are null (unknown cost). */
+  unit_cost?: number | string | null;
 }
 
 function toNumber(value: number | string | null | undefined): number {
@@ -92,6 +117,11 @@ function mapSale(row: SaleRow, items: SaleItemRow[] = [], payments: SalePaymentR
     discount_type: row.discount_type,
     discount_value: toNumber(row.discount_value),
     discount_amount: toNumber(row.discount_amount),
+    item_discount_amount: row.item_discount_amount == null ? undefined : toNumber(row.item_discount_amount),
+    total_discount_amount: row.total_discount_amount == null ? undefined : toNumber(row.total_discount_amount),
+    automatic_discount_amount: row.automatic_discount_amount == null ? undefined : toNumber(row.automatic_discount_amount),
+    automatic_promotion_id: row.automatic_promotion_id ?? null,
+    automatic_promotion_name: row.automatic_promotion_name ?? null,
     total: toNumber(row.total),
     amount_received: row.amount_received == null ? null : toNumber(row.amount_received),
     change: row.change == null ? null : toNumber(row.change),
@@ -101,13 +131,29 @@ function mapSale(row: SaleRow, items: SaleItemRow[] = [], payments: SalePaymentR
       id: i.id,
       sale_id: i.sale_id,
       product_id: i.product_id,
+      // Phase 43: the exact combination sold, with the colour and size frozen at
+      // sale time — a renamed or archived variant still reads on this invoice.
+      variant_id: i.variant_id ?? null,
+      variant_color_ar: i.variant_color_ar ?? null,
+      variant_color_en: i.variant_color_en ?? null,
+      variant_size:
+        i.variant_size === null || i.variant_size === undefined ? null : toNumber(i.variant_size),
+      variant_size_label: i.variant_size_label ?? null,
       name_ar: i.name_ar,
       name_en: i.name_en,
       sku: i.sku,
       barcode: i.barcode,
       unit_price: toNumber(i.unit_price),
       quantity: i.quantity,
+      gross_total: i.gross_total == null ? undefined : toNumber(i.gross_total),
       line_total: toNumber(i.line_total),
+      discount_type: i.discount_type ?? "none",
+      discount_value: i.discount_value == null ? 0 : toNumber(i.discount_value),
+      discount_amount: i.discount_amount == null ? 0 : toNumber(i.discount_amount),
+      automatic_promotion_id: i.automatic_promotion_id ?? null,
+      automatic_promotion_name: i.automatic_promotion_name ?? null,
+      automatic_discount_amount: i.automatic_discount_amount == null ? 0 : toNumber(i.automatic_discount_amount),
+      unit_cost: i.unit_cost == null ? null : toNumber(i.unit_cost),
     })),
     payments: payments.map(mapPayment),
     customer_id: row.customer_id ?? null,
@@ -119,6 +165,8 @@ function mapSale(row: SaleRow, items: SaleItemRow[] = [], payments: SalePaymentR
     paid_at: row.paid_at ?? null,
     paid_by: row.paid_by ?? null,
     paid_by_name: row.paid_by_name ?? null,
+    source: row.source ?? "pos",
+    shift_id: row.shift_id ?? null,
   };
 }
 
@@ -133,16 +181,28 @@ function mapSale(row: SaleRow, items: SaleItemRow[] = [], payments: SalePaymentR
 export class SupabaseSalesRepository implements SalesRepository {
   readonly kind = "supabase" as const;
 
+  /**
+   * Injectable so the contract test can drive this class against a stub client —
+   * CI has no reachable Supabase project, so the live read path would otherwise
+   * be unverified code. Production never passes one: `getSupabaseSalesRepository()`
+   * builds the singleton, which takes the shared client.
+   */
+  constructor(private readonly injected: SupabaseClient | null = null) {}
+
   private require() {
-    const client = getSupabaseClient();
+    const client = this.injected ?? getSupabaseClient();
     if (!client) throw new AppError("NOT_CONFIGURED");
     return client;
   }
 
-  async completeSale(input: CompleteSaleInput): Promise<Sale> {
+  async completeSale(input: CompleteSaleInput, approvalRequestId?: string | null): Promise<Sale> {
     try {
       const client = this.require();
       const { data, error } = await client.rpc("pos_complete_sale", {
+        // Migration 0035: an over-limit discount is refused unless a real,
+        // approved, unspent request stands behind it. Validated in the database,
+        // spent in the same transaction as the sale it produced.
+        p_approval_request_id: approvalRequestId ?? null,
         p_payload: {
           client_ref: input.client_ref,
           lines: input.lines,
@@ -154,6 +214,7 @@ export class SupabaseSalesRepository implements SalesRepository {
           customer_phone: input.customer_phone ?? null,
           user_id: input.user_id,
           user_name: input.user_name,
+          source: input.source ?? "pos",
         },
       });
       if (error) throw toAppError(error);
@@ -166,32 +227,90 @@ export class SupabaseSalesRepository implements SalesRepository {
     }
   }
 
-  async listSales(): Promise<Sale[]> {
+  async listSales(query: SaleListQuery = {}): Promise<Sale[]> {
     try {
       const client = this.require();
-      const { data, error } = await client
+      let salesQuery = client
         .from("sales")
         .select("*")
         .order("created_at", { ascending: false });
+
+      // Push the bounds into SQL rather than fetching history and filtering it
+      // in the browser. An unbounded select stops at the project's row cap and
+      // reports nothing about what it dropped.
+      if (query.from) salesQuery = salesQuery.gte("created_at", query.from);
+      if (query.to) salesQuery = salesQuery.lte("created_at", query.to);
+      if (query.limit !== undefined || query.offset !== undefined) {
+        const offset = Math.max(0, query.offset ?? 0);
+        const limit = Math.max(1, query.limit ?? SALES_ROW_CAP);
+        salesQuery = salesQuery.range(offset, offset + limit - 1);
+      }
+
+      const { data, error } = await salesQuery;
       if (error) throw toAppError(error);
       const sales = (data as SaleRow[] | null) ?? [];
 
-      const { data: payments, error: payError } = await client
-        .from("sale_payments")
-        .select("*")
-        .order("created_at", { ascending: true });
-      if (payError) throw toAppError(payError);
+      const pageIds = sales.map((row) => row.id);
+
+      // Lines and payments are both scoped to the page's sales. The payments
+      // query used to select every row ever written, on every refresh, no
+      // matter how few sales were shown; `sale_items` was not fetched at all,
+      // which is what made a list-mapped sale arrive with `items: []` — and an
+      // empty item list is indistinguishable from "nothing left to return", so
+      // the returns modal reported a brand-new invoice as fully returned
+      // (Phase 27 regression). Both reads are bounded the same way.
+      const itemsBySale = new Map<string, SaleItemRow[]>();
       const paymentsBySale = new Map<string, SalePaymentRow[]>();
-      for (const p of (payments as SalePaymentRow[] | null) ?? []) {
-        const list = paymentsBySale.get(p.sale_id) ?? [];
-        list.push(p);
-        paymentsBySale.set(p.sale_id, list);
+      if (pageIds.length > 0) {
+        const { data: items, error: itemsError } = await client
+          .from("sale_items")
+          .select("*")
+          .in("sale_id", pageIds)
+          .order("created_at", { ascending: true });
+        if (itemsError) throw toAppError(itemsError);
+        for (const i of (items as SaleItemRow[] | null) ?? []) {
+          const list = itemsBySale.get(i.sale_id) ?? [];
+          list.push(i);
+          itemsBySale.set(i.sale_id, list);
+        }
+
+        const { data: payments, error: payError } = await client
+          .from("sale_payments")
+          .select("*")
+          .in("sale_id", pageIds)
+          .order("created_at", { ascending: true });
+        if (payError) throw toAppError(payError);
+        for (const p of (payments as SalePaymentRow[] | null) ?? []) {
+          const list = paymentsBySale.get(p.sale_id) ?? [];
+          list.push(p);
+          paymentsBySale.set(p.sale_id, list);
+        }
       }
 
-      return sales.map((row) => mapSale(row, [], paymentsBySale.get(row.id) ?? []));
+      return sales.map((row) =>
+        mapSale(row, itemsBySale.get(row.id) ?? [], paymentsBySale.get(row.id) ?? []),
+      );
     } catch (error) {
       if (error instanceof AppError) throw error;
       throw toAppError(error);
+    }
+  }
+
+  async countSales(query: SaleListQuery = {}): Promise<number | null> {
+    try {
+      const client = this.require();
+      let countQuery = client
+        .from("sales")
+        .select("id", { count: "exact", head: true });
+      if (query.from) countQuery = countQuery.gte("created_at", query.from);
+      if (query.to) countQuery = countQuery.lte("created_at", query.to);
+      const { count, error } = await countQuery;
+      if (error || typeof count !== "number") return null;
+      return count;
+    } catch {
+      // A count refines the answer; it must never be able to fail the refresh.
+      // null means "unknown", and callers report unknown as unknown.
+      return null;
     }
   }
 

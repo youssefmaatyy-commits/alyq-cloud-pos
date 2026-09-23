@@ -21,6 +21,8 @@ import {
   type FieldErrors,
   type ProductFormValues,
 } from "../validation";
+import { ApprovalRequestDialog, isApprovalRequired, type ApprovalRequirement } from "@/modules/approvals";
+import { canAct } from "@/lib/permissions/enforce";
 import { useCatalog } from "../hooks/CatalogProvider";
 import { toCategoryOptions } from "../services/categoryTree";
 import { describeError } from "../services/catalogService";
@@ -29,25 +31,39 @@ import { BarcodePreview } from "./BarcodePreview";
 import { deriveBarcodeFromSku, isDerivedFromSku } from "../services/barcode";
 import { buildBarcodeLabelHtml } from "../services/barcodeLabel";
 import { StockBadge } from "./ProductTable";
+import { ProductVariantsForm, EMPTY_PRODUCT_VARIANT_FORM, type ProductVariantFormValue } from "./ProductVariantsForm";
+import { enableVariants, saveVariant } from "../services/variantService";
 
 export function ProductForm({ productId }: { productId?: string }) {
   const { t, pick, money, num, isRTL } = useI18n();
   const toast = useToast();
   const navigate = useNavigate();
-  const { products, categories, tree, loading, saveProduct } = useCatalog();
+  const { products, categories, tree, loading, saveProduct, refresh } = useCatalog();
 
   const existing = useMemo(
     () => (productId ? products.find((p) => p.id === productId) : undefined),
     [productId, products],
   );
 
-  const [values, setValues] = useState<ProductFormValues>(() =>
-    existing ? productToForm(existing) : EMPTY_PRODUCT_FORM,
-  );
+  const [values, setValues] = useState<ProductFormValues>(() => {
+    const base = existing ? productToForm(existing) : EMPTY_PRODUCT_FORM;
+    // Phase 17: a seat that may not see cost price still submits a value for it,
+    // because the record has one and the form validates it. Hidden means
+    // unchanged, never zeroed — an edit carries the product's own cost through
+    // (so `priceChanges` sees no move and asks for no authority), and a new
+    // product starts at zero rather than failing a field nobody can fill in.
+    return canAct("view_cost") || base.cost_price.trim() ? base : { ...base, cost_price: "0" };
+  });
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [submitAttempted, setSubmitAttempted] = useState(false);
   const [saving, setSaving] = useState(false);
   const [printCopies, setPrintCopies] = useState("1");
+  const [labelOptions, setLabelOptions] = useState({ name: true, color: true, size: true, sku: true, price: true, number: true });
+
+  // Variant setup is part of the initial product draft. The saved-product
+  // VariantEditor remains the editor for later changes; this state is the
+  // single pre-save source of truth for the Add Product workflow.
+  const [variantConfig, setVariantConfig] = useState<ProductVariantFormValue>(EMPTY_PRODUCT_VARIANT_FORM);
   /**
    * `auto` keeps the barcode mirrored from the SKU; `manual` means the admin
    * entered a manufacturer barcode which must survive later SKU edits.
@@ -123,6 +139,8 @@ export function ProductForm({ productId }: { productId?: string }) {
         barcode: barcodeValue,
         price: money(Number(values.selling_price.replace(/,/g, ".")) || 0),
         copies,
+        showName: labelOptions.name, showColor: labelOptions.color, showSize: labelOptions.size,
+        showSku: labelOptions.sku, showPrice: labelOptions.price, showNumber: labelOptions.number,
         direction: isRTL ? "rtl" : "ltr",
       },
       {
@@ -141,12 +159,41 @@ export function ProductForm({ productId }: { productId?: string }) {
     win.document.open();
     win.document.write(html);
     win.document.close();
-  }, [values, printCopies, money, t, toast, isRTL]);
+  }, [values, printCopies, labelOptions, money, t, toast, isRTL]);
 
-  const categoryOptions = useMemo(
-    () => toCategoryOptions(tree, pick, { includeInactive: true }),
-    [tree, pick],
-  );
+  // Phase 44: archived categories are not offered. A product already sitting
+  // in an archived category keeps its label visible (so an edit can be saved
+  // without a forced move) — but new assignments go to active shelves only.
+  // The server refuses an archived assignment regardless of what the picker
+  // allowed.
+  const categoryOptions = useMemo(() => {
+    const options = toCategoryOptions(tree, pick);
+    const current = values.category_id;
+    if (
+      current &&
+      !options.some((option) => option.id === current) &&
+      categories.some((c) => c.id === current)
+    ) {
+      const archived = categories.find((c) => c.id === current)!;
+      return [
+        ...options,
+        {
+          id: archived.id,
+          label: `${pick(archived.name_ar, archived.name_en)} (${t("categories.archivedBadge")})`,
+          depth: 0,
+          active: false,
+          productCount: 0,
+        },
+      ];
+    }
+    return options;
+  }, [tree, pick, categories, values.category_id, t]);
+
+  // Cost is two capabilities, not one: seeing the number and writing it. A seat
+  // that may see but not write gets a read-only field that says why; a seat that
+  // may do neither gets no field at all.
+  const maySeeCost = canAct("view_cost");
+  const mayChangeCost = canAct("change_cost");
 
   const selling = Number(values.selling_price.replace(/,/g, ".")) || 0;
   const cost = Number(values.cost_price.replace(/,/g, ".")) || 0;
@@ -160,6 +207,11 @@ export function ProductForm({ productId }: { productId?: string }) {
   });
 
   const isEdit = Boolean(productId);
+  const variantTotal = useMemo(
+    () => variantConfig.rows.reduce((sum, row) => sum + Math.max(0, Math.trunc(Number(row.stock_quantity) || 0)), 0),
+    [variantConfig.rows],
+  );
+  const hasNewVariants = !isEdit && variantConfig.mode !== "none";
   const dirty = useMemo(() => {
     const baseline = existing ? productToForm(existing) : EMPTY_PRODUCT_FORM;
     return JSON.stringify(baseline) !== JSON.stringify(values);
@@ -175,9 +227,96 @@ export function ProductForm({ productId }: { productId?: string }) {
 
   const handleBlur = (field: string) => () => setTouched((prev) => ({ ...prev, [field]: true }));
 
+  const changeVariantConfig = (next: ProductVariantFormValue) => {
+    setVariantConfig(next);
+    if (next.mode !== "none") {
+      const total = next.rows.reduce((sum, row) => sum + Math.max(0, Math.trunc(Number(row.stock_quantity) || 0)), 0);
+      setValues((previous) => ({ ...previous, stock_quantity: String(total) }));
+    }
+  };
+
+  const saveDraftAndVariants = async () => {
+    if (hasNewVariants && variantConfig.rows.length === 0) {
+      throw new Error(t("products.variants.nothingToGenerate"));
+    }
+    const productValues = hasNewVariants
+      ? { ...values, stock_quantity: String(variantTotal), stock_tracking_enabled: true }
+      : values;
+    const result = await saveProduct(productValues, productId);
+    if (!hasNewVariants || !result.isNew) return result;
+
+    const created = [] as Awaited<ReturnType<typeof saveVariant>>["variant"][];
+    for (const row of variantConfig.rows) {
+      const saved = await saveVariant({
+        product: result.product,
+        siblings: created,
+        values: {
+          sku: row.sku,
+          barcode: row.barcode.trim() || null,
+          color_key: undefined,
+          color_ar: row.color_ar.trim() || null,
+          color_en: row.color_en.trim() || null,
+          color_hex: row.color_hex.trim() || null,
+          size: row.size.trim() ? Number(row.size.replace(",", ".")) : null,
+          size_label: row.size.trim() ? null : row.size_label.trim() || null,
+          image_url: row.image_url.trim() || null,
+          price_override: row.price_override.trim() ? Number(row.price_override) : null,
+          cost_override:
+            canAct("change_cost") && row.cost_override.trim() ? Number(row.cost_override) : null,
+          stock_quantity: 0,
+          low_stock_level: Math.max(0, Math.trunc(Number(row.low_stock_level) || 0)),
+          active: row.active,
+          sort_order: created.length + 1,
+        },
+      });
+      created.push(saved.variant);
+    }
+    await enableVariants(
+      result.product.id,
+      created.map((variant, index) => ({
+        variantId: variant.id,
+        quantity: Math.max(0, Math.trunc(Number(variantConfig.rows[index].stock_quantity) || 0)),
+      })),
+    );
+    await refresh();
+    return result;
+  };
+
   const goBack = useCallback(() => {
     navigate(productId ? `/products/${productId}` : "/products");
   }, [navigate, productId]);
+
+  const handleSaveAndEditVariants = async () => {
+    setSubmitAttempted(true);
+    if (Object.keys(errors).length > 0) {
+      toast.error(t("validation.fixErrors"));
+      const first = Object.keys(errors)[0];
+      document.querySelector<HTMLElement>(`[name="${first}"]`)?.focus();
+      return;
+    }
+    setSaving(true);
+    try {
+      const { product, isNew } = await saveDraftAndVariants();
+      toast.success(t(isNew ? "products.createdToast" : "products.updatedToast"));
+      if (isNew) {
+        navigate(`/products/${product.id}/edit`);
+      } else {
+        navigate(`/products/${productId}`);
+      }
+    } catch (error) {
+      if (isApprovalRequired(error)) {
+        setApprovalAsk(error.approvalRequired);
+        return;
+      }
+      const described = describeError(error);
+      toast.error(t(described.key as never));
+      if (described.field) {
+        setTouched((prev) => ({ ...prev, [described.field as string]: true }));
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -190,10 +329,17 @@ export function ProductForm({ productId }: { productId?: string }) {
     }
     setSaving(true);
     try {
-      const { isNew } = await saveProduct(values, productId);
+      const { isNew } = await saveDraftAndVariants();
       toast.success(t(isNew ? "products.createdToast" : "products.updatedToast"));
       navigate(isNew ? "/products" : `/products/${productId}`);
     } catch (error) {
+      // Phase 12: the shop requires a second signature on price moves. Nothing
+      // was written — offer to file the change, carrying the draft verbatim so
+      // an approval applies exactly what was asked for.
+      if (isApprovalRequired(error)) {
+        setApprovalAsk(error.approvalRequired);
+        return;
+      }
       const described = describeError(error);
       toast.error(t(described.key as never));
       if (described.field) {
@@ -205,6 +351,9 @@ export function ProductForm({ productId }: { productId?: string }) {
   };
 
   const skuAvailable = !errors.sku && values.sku.trim().length > 0;
+
+  // The over-limit price move the service refused, waiting for a reason.
+  const [approvalAsk, setApprovalAsk] = useState<ApprovalRequirement | null>(null);
 
   if (productId && loading && !existing) {
     return <Card className="text-sm font-medium text-slate-600">{t("common.loading")}</Card>;
@@ -224,6 +373,7 @@ export function ProductForm({ productId }: { productId?: string }) {
   }
 
   return (
+    <>
     <form onSubmit={handleSubmit} className="space-y-4" noValidate>
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="space-y-4 lg:col-span-2">
@@ -438,6 +588,12 @@ export function ProductForm({ productId }: { productId?: string }) {
                       onChange={(e) => setPrintCopies(e.target.value)}
                     />
                   </label>
+                  <div className="flex flex-wrap items-center gap-2 text-[10px]">
+                    {(["name", "color", "size", "sku", "price", "number"] as const).map((key) => <label key={key} className="flex items-center gap-1"><input type="checkbox" checked={labelOptions[key]} onChange={(event) => setLabelOptions((current) => ({ ...current, [key]: event.target.checked }))} />{key}</label>)}
+                  </div>
+                  <Button variant="ghost" size="sm" type="button" onClick={() => setPrintCopies(String(Math.max(1, Number(values.stock_quantity) || 1)))}>
+                    {t("barcode.byStock")}
+                  </Button>
                   <Button variant="secondary" size="sm" type="button" onClick={generateBarcode}>
                     {t("barcode.generate")}
                   </Button>
@@ -455,6 +611,16 @@ export function ProductForm({ productId }: { productId?: string }) {
               <BarcodePreview value={values.barcode} />
             </div>
           </Card>
+
+          {!isEdit ? (
+            <ProductVariantsForm
+              value={variantConfig}
+              productSku={values.sku}
+              productSellingPrice={values.selling_price}
+              productCostPrice={values.cost_price}
+              onChange={changeVariantConfig}
+            />
+          ) : null}
 
           {/* Pricing + Stock */}
           <Card>
@@ -478,24 +644,28 @@ export function ProductForm({ productId }: { productId?: string }) {
                   placeholder="0.00"
                 />
               </Field>
-              <Field
-                label={t("products.costPrice")}
-                required
-                error={showError("cost_price") ? t(fieldErrorKey(showError("cost_price")!) as never) : undefined}
-                htmlFor="cost_price"
-              >
-                <TextInput
-                  id="cost_price"
-                  name="cost_price"
-                  dir="ltr"
-                  inputMode="decimal"
-                  value={values.cost_price}
-                  invalid={Boolean(showError("cost_price"))}
-                  onBlur={handleBlur("cost_price")}
-                  onChange={(e) => set("cost_price", e.target.value)}
-                  placeholder="0.00"
-                />
-              </Field>
+              {maySeeCost ? (
+                <Field
+                  label={t("products.costPrice")}
+                  required
+                  hint={mayChangeCost ? undefined : t("permissions.denied.change_cost")}
+                  error={showError("cost_price") ? t(fieldErrorKey(showError("cost_price")!) as never) : undefined}
+                  htmlFor="cost_price"
+                >
+                  <TextInput
+                    id="cost_price"
+                    name="cost_price"
+                    dir="ltr"
+                    inputMode="decimal"
+                    readOnly={!mayChangeCost}
+                    value={values.cost_price}
+                    invalid={Boolean(showError("cost_price"))}
+                    onBlur={handleBlur("cost_price")}
+                    onChange={(e) => set("cost_price", e.target.value)}
+                    placeholder="0.00"
+                  />
+                </Field>
+              ) : null}
               <Field
                 label={t("products.taxRate")}
                 required
@@ -530,7 +700,8 @@ export function ProductForm({ productId }: { productId?: string }) {
                     name="stock_quantity"
                     dir="ltr"
                     inputMode="numeric"
-                    value={values.stock_quantity}
+                    readOnly={hasNewVariants}
+                    value={hasNewVariants ? String(variantTotal) : values.stock_quantity}
                     invalid={Boolean(showError("stock_quantity"))}
                     onBlur={handleBlur("stock_quantity")}
                     onChange={(e) => set("stock_quantity", e.target.value)}
@@ -560,8 +731,14 @@ export function ProductForm({ productId }: { productId?: string }) {
             ) : null}
 
             <div className="mt-3 grid gap-3 sm:grid-cols-3">
-              <StatTile label={t("products.profit")} value={money(profit)} tone={profit >= 0 ? "success" : "danger"} />
-              <StatTile label={t("products.margin")} value={margin === null ? "—" : `${num(margin, 1)}%`} />
+              {/* Both figures are cost in disguise: profit is price minus cost,
+                  and margin is the same subtraction as a percentage. */}
+              {maySeeCost ? (
+                <>
+                  <StatTile label={t("products.profit")} value={money(profit)} tone={profit >= 0 ? "success" : "danger"} />
+                  <StatTile label={t("products.margin")} value={margin === null ? "—" : `${num(margin, 1)}%`} />
+                </>
+              ) : null}
               <StatTile
                 label={t("common.stock")}
                 value={values.stock_tracking_enabled ? num(Number(values.stock_quantity.replace(/,/g, ".")) || 0, 0) : "—"}
@@ -671,11 +848,55 @@ export function ProductForm({ productId }: { productId?: string }) {
           <Button variant="secondary" type="button" onClick={goBack} disabled={saving}>
             {t("common.cancel")}
           </Button>
-          <Button type="submit" size="lg" loading={saving} className="max-sm:w-full">
-            {saving ? t("common.saving") : t("common.save")}
-          </Button>
+          {!isEdit ? (
+            <>
+              {!hasNewVariants ? (
+                <Button
+                  variant="secondary"
+                  type="button"
+                  onClick={() => void handleSaveAndEditVariants()}
+                  disabled={saving}
+                  className="max-sm:w-full"
+                >
+                  {t("products.saveAndEditVariants")}
+                </Button>
+              ) : null}
+              <Button type="submit" size="lg" loading={saving} className="max-sm:w-full" data-testid="product-form-save">
+                {saving ? t("common.saving") : t("common.save")}
+              </Button>
+            </>
+          ) : (
+            <Button type="submit" size="lg" loading={saving} className="max-sm:w-full">
+              {saving ? t("common.saving") : t("common.save")}
+            </Button>
+          )}
         </div>
       </div>
     </form>
+
+    {approvalAsk && existing ? (
+      <ApprovalRequestDialog
+        open
+        requirement={approvalAsk}
+        entityType="product"
+        entityId={existing.id}
+        entityLabel={`${existing.name_en || existing.name_ar} · ${existing.sku}`}
+        previousValue={{
+          selling_price: Number(existing.selling_price),
+          cost_price: Number(existing.cost_price ?? 0),
+        }}
+        newValue={{
+          selling_price: Number(values.selling_price),
+          cost_price: Number(values.cost_price),
+        }}
+        payload={{ product_id: existing.id, values } as unknown as Record<string, unknown>}
+        summary={`${t("products.sellingPrice")}: ${money(Number(existing.selling_price))} → ${money(
+          Number(values.selling_price),
+        )}`}
+        onFiled={() => goBack()}
+        onClose={() => setApprovalAsk(null)}
+      />
+    ) : null}
+    </>
   );
 }

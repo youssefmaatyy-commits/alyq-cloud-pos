@@ -9,6 +9,8 @@ import {
 } from "react";
 import type { AppError } from "@/modules/products/data/repository";
 import { stockStatus, type Product, type StockStatus } from "@/modules/products/types";
+import type { ProductVariant } from "@/modules/products/variants";
+import { compareVariants } from "@/modules/products/variants";
 import { getInventoryMode, getInventoryRepository } from "../data";
 import type { InventoryRepository } from "../data/repository";
 import {
@@ -16,7 +18,9 @@ import {
   loadInventory,
   type InventoryAdjustmentResult,
 } from "../services/inventoryService";
-import { getCurrentUser, setCurrentUser, canAdjustStock, type InventoryUser } from "../permissions";
+import { getCurrentUser, canAdjustStock, type InventoryUser } from "../permissions";
+import { useAuth } from "@/lib/auth";
+import { useRealtimeWatch } from "@/lib/supabase/useRealtimeWatch";
 import type { StockMovement, StockMovementType, StockReason } from "../types";
 
 export interface InventoryContextValue {
@@ -24,11 +28,16 @@ export interface InventoryContextValue {
   repository: InventoryRepository;
   products: Product[];
   movements: StockMovement[];
+  /** Phase 43: every combination, display order — the breakdown rows. */
+  variants: ProductVariant[];
+  variantsByProduct: Map<string, ProductVariant[]>;
   loading: boolean;
   error: AppError | null;
-  refresh: () => Promise<void>;
+  refresh: (options?: { silent?: boolean }) => Promise<void>;
   adjustStock: (args: {
     productId: string;
+    /** The exact combination being corrected, when the product sells by variant. */
+    variantId?: string | null;
     type: StockMovementType;
     reason: StockReason;
     quantity: number;
@@ -37,11 +46,12 @@ export interface InventoryContextValue {
   /** Convenience selectors. */
   productById: (id: string) => Product | undefined;
   movementsForProduct: (id: string) => StockMovement[];
-  /** Permission helpers. */
+  /**
+   * Permission helpers. `user` is the signed-in user from the auth session
+   * (Authentication phase) and changes only on sign-in / sign-out.
+   */
   user: InventoryUser;
   canAdjust: boolean;
-  /** Switch the acting user (Phase 3 stand-in for real auth). */
-  setUser: (user: InventoryUser) => void;
   /** Read-only derived status. */
   statusOf: (id: string) => StockStatus;
 }
@@ -52,20 +62,30 @@ const InventoryContext = createContext<InventoryContextValue | null>(null);
 export function InventoryProvider({ children }: { children: ReactNode }) {
   const [products, setProducts] = useState<Product[]>([]);
   const [movements, setMovements] = useState<StockMovement[]>([]);
+  const [variants, setVariants] = useState<ProductVariant[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<AppError | null>(null);
-  const [user, setUser] = useState<InventoryUser>(() => getCurrentUser());
+  const { user: authUser } = useAuth();
+  const user = useMemo<InventoryUser>(() => getCurrentUser(), [authUser]);
 
   const repository = useMemo(() => getInventoryRepository(), []);
   const mode = useMemo(() => getInventoryMode(), []);
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
+  /**
+   * Re-read.
+   *
+   * `silent` is what a realtime event asks for: the data is replaced without the
+   * spinner, so a change made in another tab updates the numbers instead of
+   * flashing a loading screen over somebody who is reading it.
+   */
+  const refresh = useCallback(async (options?: { silent?: boolean }) => {
+    if (options?.silent !== true) setLoading(true);
     setError(null);
     try {
       const snapshot = await loadInventory();
       setProducts(snapshot.products);
       setMovements(snapshot.movements);
+      setVariants(snapshot.variants);
     } catch (err) {
       setError(err as AppError);
     } finally {
@@ -77,9 +97,16 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
     void refresh();
   }, [refresh]);
 
+  // Phase 16: stock is the one number two tills disagree about fastest. A sale,
+  // an adjustment or a repaired website hold (Phase 15) re-reads this provider,
+  // so availability and the low-stock list follow the shelf rather than the last
+  // time somebody opened the page.
+  useRealtimeWatch(["products", "stock_movements"], () => refresh({ silent: true }));
+
   const adjustStock = useCallback(
     async (args: {
       productId: string;
+      variantId?: string | null;
       type: StockMovementType;
       reason: StockReason;
       quantity: number;
@@ -93,16 +120,17 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
       setProducts((prev) =>
         prev.map((p) => (p.id === result.product.id ? result.product : p)),
       );
+      if (result.variant) {
+        // The combination's own row moves too, so the breakdown is current.
+        setVariants((prev) =>
+          prev.map((v) => (v.id === result.variant!.id ? result.variant! : v)),
+        );
+      }
       setMovements((prev) => [result.movement, ...prev]);
       return result;
     },
     [user],
   );
-
-  const changeUser = useCallback((next: InventoryUser) => {
-    setCurrentUser(next);
-    setUser(next);
-  }, []);
 
   const productById = useCallback(
     (id: string) => products.find((p) => p.id === id),
@@ -123,12 +151,27 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
     [products],
   );
 
+  const variantsByProduct = useMemo(() => {
+    const grouped = new Map<string, ProductVariant[]>();
+    for (const variant of variants) {
+      const list = grouped.get(variant.product_id);
+      if (list) list.push(variant);
+      else grouped.set(variant.product_id, [variant]);
+    }
+    // Display order at the point of grouping, so every consumer renders the
+    // same sequence: colour, then NUMERIC size.
+    for (const list of grouped.values()) list.sort(compareVariants);
+    return grouped;
+  }, [variants]);
+
   const value = useMemo<InventoryContextValue>(
     () => ({
       mode,
       repository,
       products,
       movements,
+      variants,
+      variantsByProduct,
       loading,
       error,
       refresh,
@@ -138,9 +181,8 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
       user,
       canAdjust: canAdjustStock(user),
       statusOf,
-      setUser: changeUser,
     }),
-    [mode, repository, products, movements, loading, error, refresh, adjustStock, productById, movementsForProduct, user, statusOf, changeUser],
+    [mode, repository, products, movements, variants, variantsByProduct, loading, error, refresh, adjustStock, productById, movementsForProduct, user, statusOf],
   );
 
   return <InventoryContext.Provider value={value}>{children}</InventoryContext.Provider>;

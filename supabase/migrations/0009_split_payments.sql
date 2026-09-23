@@ -37,7 +37,7 @@ create policy "sale_payments_select_authenticated"
 
 drop policy if exists "sale_payments_no_direct_write" on public.sale_payments;
 create policy "sale_payments_no_direct_write"
-  on public.sale_payments for insert to authenticated using (false);
+  on public.sale_payments for insert to authenticated with check (false);
 
 -- ── backfill existing sales (single payment from legacy columns) ──────────
 insert into public.sale_payments (sale_id, method, amount, status, paid_at, paid_by, paid_by_name)

@@ -1,6 +1,13 @@
 import { getSupabaseClient } from "@/lib/supabase/client";
 import { AppError, toAppError } from "@/modules/products/data/repository";
-import type { CreateReturnInput, RefundRecord, ReturnItem, SalesReturn } from "../types";
+import type {
+  CreateReturnInput,
+  RefundRecord,
+  ReturnItem,
+  SalesReturn,
+  SettleRefundInput,
+  SettleRefundResult,
+} from "../types";
 import type { ReturnRepository } from "./repository";
 
 interface ReturnRow {
@@ -13,7 +20,7 @@ interface ReturnRow {
   reason: string;
   refund_amount: number | string;
   refund_method: "cash" | "visa" | "instapay";
-  refund_status: "completed" | "pending";
+  refund_status: "pending" | "completed" | "rejected";
   user_id: string;
   user_name: string;
   created_at: string;
@@ -24,6 +31,11 @@ interface ReturnItemRow {
   return_id: string;
   sale_item_id: string;
   product_id: string;
+  variant_id?: string | null;
+  variant_color_ar?: string | null;
+  variant_color_en?: string | null;
+  variant_size?: number | string | null;
+  variant_size_label?: string | null;
   name_ar: string;
   name_en: string;
   sku: string;
@@ -41,11 +53,15 @@ interface RefundRow {
   return_id: string | null;
   amount: number | string;
   payment_method: "cash" | "visa" | "instapay";
-  status: "completed" | "pending";
+  status: "pending" | "completed" | "rejected";
   reason: string | null;
   user_id: string;
   user_name: string;
   created_at: string;
+  rejection_reason: string | null;
+  settled_at: string | null;
+  settled_by: string | null;
+  settled_by_name: string | null;
 }
 
 function toNumber(value: number | string | null | undefined): number {
@@ -74,6 +90,14 @@ function mapReturn(row: ReturnRow, items: ReturnItemRow[] = []): SalesReturn {
       return_id: i.return_id,
       sale_item_id: i.sale_item_id,
       product_id: i.product_id,
+      // Written by `pos_process_return` from the sold line; read back so the
+      // return document still names the exact combination.
+      variant_id: i.variant_id ?? null,
+      variant_color_ar: i.variant_color_ar ?? null,
+      variant_color_en: i.variant_color_en ?? null,
+      variant_size:
+        i.variant_size === null || i.variant_size === undefined ? null : toNumber(i.variant_size),
+      variant_size_label: i.variant_size_label ?? null,
       name_ar: i.name_ar,
       name_en: i.name_en,
       sku: i.sku,
@@ -99,6 +123,10 @@ function mapRefund(row: RefundRow): RefundRecord {
     user_id: row.user_id,
     user_name: row.user_name,
     created_at: row.created_at,
+    rejection_reason: row.rejection_reason ?? null,
+    settled_at: row.settled_at ?? null,
+    settled_by: row.settled_by ?? null,
+    settled_by_name: row.settled_by_name ?? null,
   };
 }
 
@@ -209,6 +237,32 @@ export class SupabaseReturnRepository implements ReturnRepository {
         .order("created_at", { ascending: false });
       if (error) throw toAppError(error);
       return ((data as RefundRow[]) ?? []).map(mapRefund);
+    } catch (err) {
+      if (err instanceof AppError) throw err;
+      throw toAppError(err);
+    }
+  }
+
+  async settleRefund(refundId: string, input: SettleRefundInput): Promise<SettleRefundResult> {
+    try {
+      const client = this.require();
+      const { data, error } = await client.rpc("pos_settle_refund", {
+        p_refund_id: refundId,
+        p_user_id: input.user_id,
+        p_user_name: input.user_name,
+        p_decision: input.decision,
+        p_reason: input.reason?.trim() || null,
+      });
+      if (error) throw toAppError(error);
+
+      const settled = (data ?? {}) as { already_settled?: boolean };
+      const { data: row, error: rowError } = await client
+        .from("refund_records")
+        .select("*")
+        .eq("id", refundId)
+        .single();
+      if (rowError) throw toAppError(rowError);
+      return { refund: mapRefund(row as RefundRow), alreadySettled: settled.already_settled === true };
     } catch (err) {
       if (err instanceof AppError) throw err;
       throw toAppError(err);

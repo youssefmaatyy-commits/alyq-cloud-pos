@@ -104,7 +104,7 @@ create policy "sales_select_authenticated"
 -- are denied to ordinary roles.
 drop policy if exists "sales_no_direct_write" on public.sales;
 create policy "sales_no_direct_write"
-  on public.sales for insert to authenticated using (false);
+  on public.sales for insert to authenticated with check (false);
 
 drop policy if exists "sale_items_select_authenticated" on public.sale_items;
 create policy "sale_items_select_authenticated"
@@ -112,7 +112,7 @@ create policy "sale_items_select_authenticated"
 
 drop policy if exists "sale_items_no_direct_write" on public.sale_items;
 create policy "sale_items_no_direct_write"
-  on public.sale_items for insert to authenticated using (false);
+  on public.sale_items for insert to authenticated with check (false);
 
 -- ── complete sale (transactional) ─────────────────────────────────────────
 create or replace function public.pos_complete_sale(p_payload jsonb)
@@ -158,7 +158,9 @@ begin
     raise exception 'Negative discount' using errcode = 'check_violation';
   end if;
   if v_discount_type = 'percent' and v_discount_value > 100 then
-    raise exception 'Discount above 100%' using errcode = 'check_violation';
+    -- `%%` not `%`: RAISE treats a lone % as a format placeholder, and the
+    -- original single % made the whole function fail to compile.
+    raise exception 'Discount above 100%%' using errcode = 'check_violation';
   end if;
   if v_payment_method not in ('cash', 'instapay') then
     raise exception 'Invalid payment method' using errcode = 'check_violation';

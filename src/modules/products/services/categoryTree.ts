@@ -97,17 +97,9 @@ export function flattenCategoryTree(
   return out;
 }
 
-/** Indented label such as "Coffee · Arabic" honouring the active language. */
-export function categoryLabel(
-  node: CategoryNode,
-  pick: (ar: string, en: string) => string,
-): string {
-  return `${"· ".repeat(node.depth)}${pick(node.name_ar, node.name_en)}`;
-}
-
 /**
  * Searchable text resolver: returns a category's own name plus all ancestor
- * names, so searching "beverages" also finds products in Coffee.
+ * names, so searching "jewellery" also finds products in Earrings.
  */
 export function buildCategorySearchResolver(
   categories: Category[],
@@ -163,6 +155,16 @@ export function categoryNameIndex(
   pick: (ar: string, en: string) => string,
 ): Map<string, string> {
   return new Map(categories.map((c) => [c.id, pick(c.name_ar, c.name_en)]));
+}
+
+/**
+ * The register's category-filter set: ACTIVE categories only (Phase 44). An
+ * archived category keeps its products sellable, but the shelf itself leaves
+ * the filter — the chips describe where a cashier can still shelve mentally,
+ * not where products historically sat.
+ */
+export function sellableCategoryFilterIds(categories: Category[]): Set<string> {
+  return new Set(categories.filter((c) => c.active).map((c) => c.id));
 }
 
 export { UNCATEGORIZED_ID };

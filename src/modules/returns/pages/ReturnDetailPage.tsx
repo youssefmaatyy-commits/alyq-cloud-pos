@@ -4,19 +4,33 @@ import { useI18n } from "@/lib/i18n/I18nProvider";
 import { PageHeader } from "@/components/layout/AppShell";
 import {
   Badge,
+  Button,
   Card,
   EmptyState,
   LoadingBlock,
   RotateCcwIcon,
   SectionTitle,
   StatTile,
+  useToast,
 } from "@/components/ui";
 import { useReturns } from "../hooks/ReturnProvider";
+import { useCustomers } from "@/modules/customers";
+import { loadBrand } from "@/lib/branding/brand";
+import {
+  buildReturnReceiptHtml,
+  customerInfoIssue,
+  printHtmlDocument,
+  returnReceiptStrings,
+  usePos,
+} from "@/modules/pos";
 
 export function ReturnDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { t, date, num, isRTL } = useI18n();
   const { returnsList, refundsList, loading } = useReturns();
+  const { sales } = usePos();
+  const { customerById } = useCustomers();
+  const toast = useToast();
 
   const returnRecord = useMemo(() => {
     return returnsList.find((r) => r.id === id);
@@ -26,6 +40,81 @@ export function ReturnDetailPage() {
     if (!id) return undefined;
     return refundsList.find((ref) => ref.return_id === id);
   }, [refundsList, id]);
+
+  // The return record does not store the phone; resolve it from the original
+  // sale so the receipt can show it (works in demo and Supabase mode alike).
+  const linkedSale = useMemo(() => {
+    if (!returnRecord) return undefined;
+    return sales.find((s) => s.id === returnRecord.sale_id);
+  }, [sales, returnRecord]);
+
+  /**
+   * The return receipt inherits the customer from the original invoice. The
+   * return record stores the name; the phone is resolved from the linked sale
+   * first, then from the customer record as a fallback.
+   */
+  const linkedCustomer = useMemo(() => {
+    if (!returnRecord?.customer_id) return undefined;
+    return customerById(returnRecord.customer_id);
+  }, [customerById, returnRecord]);
+
+  const customerName = returnRecord?.customer_name ?? linkedCustomer?.name ?? null;
+  const customerPhone = linkedSale?.customer_phone ?? linkedCustomer?.phone ?? null;
+
+  /**
+   * Print the return receipt through the shared receipt service + print
+   * workflow (identical design and behaviour to the sales receipt).
+   */
+  const printReturnReceipt = async () => {
+    if (!returnRecord) return;
+
+    // A customer-linked return receipt must carry BOTH the customer name and
+    // phone (inherited from the original invoice). Anonymous returns keep the
+    // existing behaviour.
+    const issue = customerInfoIssue(customerName, customerPhone);
+    if (issue) {
+      console.error("[receipt-print] abort: incomplete customer information", {
+        return_number: returnRecord.return_number,
+        issue,
+        customer_name: customerName,
+        customer_phone: customerPhone,
+      });
+      toast.error(
+        t(issue === "missingName" ? "receipt.customerNameMissing" : "receipt.customerPhoneMissing"),
+      );
+      return;
+    }
+
+    toast.success(t("pos.printing"));
+
+    let html: string;
+    try {
+      // Phase 46: the shared brand logo when enabled; shipped asset otherwise.
+      const brand = await loadBrand();
+      html = buildReturnReceiptHtml({
+        returnRecord: { ...returnRecord, customer_name: customerName },
+        direction: isRTL ? "rtl" : "ltr",
+        customerPhone,
+        refundNumber: linkedRefund?.refund_number ?? null,
+        strings: returnReceiptStrings(t, returnRecord.refund_status),
+        logo_url: brand.receiptLogoEnabled ? brand.logoUrl : null,
+      });
+    } catch (err) {
+      console.error("[receipt-print] failed to build return receipt html", {
+        return_number: returnRecord.return_number,
+        error: err instanceof Error ? err.message : err,
+      });
+      toast.error(t("pos.printFailed"));
+      return;
+    }
+
+    const outcome = printHtmlDocument(html, returnRecord.return_number);
+    if (outcome === "embedded-blocked") {
+      toast.error(t("pos.printEmbedded"));
+    } else if (outcome === "failed") {
+      toast.error(t("barcode.printBlocked"));
+    }
+  };
 
   if (loading && !returnRecord) {
     return (
@@ -60,12 +149,17 @@ export function ReturnDetailPage() {
         backTo="/returns"
         backLabel={t("returns.title")}
         actions={
-          <Link
-            to={`/pos/sales/${returnRecord.sale_id}`}
-            className="inline-flex h-10 items-center gap-1.5 rounded-xl bg-white px-4 text-sm font-semibold text-slate-800 ring-1 ring-slate-300 hover:bg-slate-50"
-          >
-            {t("returns.saleNumber")}: {returnRecord.sale_number}
-          </Link>
+          <>
+            <Button variant="secondary" onClick={printReturnReceipt}>
+              🖨 {t("returns.printReceipt")}
+            </Button>
+            <Link
+              to={`/pos/sales/${returnRecord.sale_id}`}
+              className="inline-flex h-10 items-center gap-1.5 rounded-xl bg-white px-4 text-sm font-semibold text-slate-800 ring-1 ring-slate-300 hover:bg-slate-50"
+            >
+              {t("returns.saleNumber")}: {returnRecord.sale_number}
+            </Link>
+          </>
         }
       />
 

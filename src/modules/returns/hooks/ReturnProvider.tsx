@@ -7,15 +7,24 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import type { CreateReturnInput, RefundRecord, SalesReturn } from "../types";
+import type {
+  CreateReturnInput,
+  RefundDecision,
+  RefundRecord,
+  SalesReturn,
+  SettleRefundResult,
+} from "../types";
 import { getReturnMode, getReturnRepository } from "../data";
 import type { ReturnRepository } from "../data/repository";
 import {
   loadRefunds,
   loadReturns,
   processReturn,
+  settleRefund as settleRefundRequest,
+  type ProcessReturnResult,
 } from "../services/returnService";
 import { AppError } from "@/modules/products/data/repository";
+import { useRealtimeWatch } from "@/lib/supabase/useRealtimeWatch";
 
 export interface ReturnContextValue {
   mode: "supabase" | "demo";
@@ -24,13 +33,28 @@ export interface ReturnContextValue {
   refundsList: RefundRecord[];
   loading: boolean;
   error: AppError | null;
-  refresh: () => Promise<void>;
-  createReturn: (
-    input: CreateReturnInput,
-  ) => Promise<{ returnRecord: SalesReturn; refundRecord: RefundRecord }>;
+  refresh: (options?: { silent?: boolean }) => Promise<void>;
+  /**
+   * Record a return. `approvalRequest` is set when the refund crossed an
+   * approval limit (Phase 12): the return still exists and the stock is still
+   * right, but the refund opened `pending` and the money waits on a decision.
+   */
+  createReturn: (input: CreateReturnInput) => Promise<ProcessReturnResult>;
+  /**
+   * Complete or reject a pending refund. Throws FORBIDDEN when the acting user
+   * lacks `approve_refund`, so callers show the message rather than guessing.
+   */
+  settleRefund: (
+    refundId: string,
+    decision: RefundDecision,
+    reason: string | null,
+  ) => Promise<SettleRefundResult>;
   getReturnsForSale: (saleId: string) => SalesReturn[];
   getRefundsForSale: (saleId: string) => RefundRecord[];
   returnById: (id: string | null | undefined) => SalesReturn | undefined;
+  refundById: (id: string | null | undefined) => RefundRecord | undefined;
+  /** Refunds still waiting on an approver — the dashboard and list both read it. */
+  pendingRefunds: RefundRecord[];
 }
 
 const ReturnContext = createContext<ReturnContextValue | null>(null);
@@ -44,8 +68,15 @@ export function ReturnProvider({ children }: { children: ReactNode }) {
   const repository = useMemo(() => getReturnRepository(), []);
   const mode = useMemo(() => getReturnMode(), []);
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
+  /**
+   * Re-read.
+   *
+   * `silent` is what a realtime event asks for: the data is replaced without the
+   * spinner, so a change made in another tab updates the numbers instead of
+   * flashing a loading screen over somebody who is reading it.
+   */
+  const refresh = useCallback(async (options?: { silent?: boolean }) => {
+    if (options?.silent !== true) setLoading(true);
     setError(null);
     try {
       const [rets, refs] = await Promise.all([loadReturns(), loadRefunds()]);
@@ -62,11 +93,25 @@ export function ReturnProvider({ children }: { children: ReactNode }) {
     void refresh();
   }, [refresh]);
 
+  // Phase 16: the refund lifecycle — recorded at one till, settled or rejected by
+  // a manager somewhere else — arrives over the shared channel instead of waiting
+  // for somebody to reopen the page.
+  useRealtimeWatch(["sales_returns", "refund_records"], () => refresh({ silent: true }));
+
   const createReturn = useCallback(
     async (input: CreateReturnInput) => {
       const result = await processReturn(input);
       await refresh();
       return result;
+    },
+    [refresh],
+  );
+
+  const settleRefund = useCallback(
+    async (refundId: string, decision: RefundDecision, reason: string | null) => {
+      const outcome = await settleRefundRequest(refundId, decision, reason);
+      await refresh();
+      return outcome;
     },
     [refresh],
   );
@@ -86,6 +131,16 @@ export function ReturnProvider({ children }: { children: ReactNode }) {
     [returnsList],
   );
 
+  const refundById = useCallback(
+    (id: string | null | undefined) => (id ? refundsList.find((r) => r.id === id) : undefined),
+    [refundsList],
+  );
+
+  const pendingRefunds = useMemo(
+    () => refundsList.filter((r) => r.status === "pending"),
+    [refundsList],
+  );
+
   const value = useMemo<ReturnContextValue>(
     () => ({
       mode,
@@ -96,9 +151,12 @@ export function ReturnProvider({ children }: { children: ReactNode }) {
       error,
       refresh,
       createReturn,
+      settleRefund,
       getReturnsForSale,
       getRefundsForSale,
       returnById,
+      refundById,
+      pendingRefunds,
     }),
     [
       mode,
@@ -109,9 +167,12 @@ export function ReturnProvider({ children }: { children: ReactNode }) {
       error,
       refresh,
       createReturn,
+      settleRefund,
       getReturnsForSale,
       getRefundsForSale,
       returnById,
+      refundById,
+      pendingRefunds,
     ],
   );
 

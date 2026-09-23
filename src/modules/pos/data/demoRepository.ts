@@ -1,3 +1,4 @@
+import { applySaleListQuery } from "./saleListQuery";
 import type {
   CompleteSaleInput,
   ConfirmPaymentInput,
@@ -8,9 +9,13 @@ import type {
 import { AppError } from "@/modules/products/data/repository";
 import { getDemoRepository } from "@/modules/products/data/demoRepository";
 import { applyDemoAdjustment } from "@/modules/inventory/data/demoRepository";
+import { variantCost, variantLabel } from "@/modules/products/variants";
+import { getWebsiteRepository } from "@/modules/online/data";
+import { promotionUnitPrice } from "@/modules/online/services/pricing";
+import { getDemoShiftRepository } from "@/modules/shifts/data/demoRepository";
 import { safeStorage } from "@/modules/products/data/demoSeed";
-import { cartTotals, lineTotal, round2, validateDiscount } from "../services/posMath";
-import type { SalesRepository } from "./repository";
+import { cartTotals, lineTotals, round2, validateDiscount } from "../services/posMath";
+import type { SaleListQuery, SalesRepository } from "./repository";
 
 const SALES_KEY = "alyq.demo.sales.v1";
 const COUNTER_KEY = "alyq.demo.sale_counter.v1";
@@ -80,7 +85,10 @@ export class DemoSalesRepository implements SalesRepository {
     return formatSaleNumber(this.counter);
   }
 
-  async completeSale(input: CompleteSaleInput): Promise<Sale> {
+  async completeSale(input: CompleteSaleInput, _approvalRequestId?: string | null): Promise<Sale> {
+    // Demo mode has no database, so there is no server-side gate to satisfy: the
+    // limit is enforced by saleService before it gets here, exactly as it was.
+    // The parameter exists so both repositories answer to one interface.
     // Idempotency first: a retried submit (double-click, network retry) must
     // return the original sale rather than raising the in-flight error.
     const existing = this.sales.find((s) => s.client_ref === input.client_ref);
@@ -96,10 +104,31 @@ export class DemoSalesRepository implements SalesRepository {
         throw new AppError("VALIDATION", "Cart is empty", "cart");
       }
 
+      // ── open-shift requirement (Phase 27) ─────────────────────────────────
+      // Demo mode has no RPC, so the demo repository mirrors the rule the
+      // database applies in pos_complete_sale (migration 0040): a till sale
+      // needs the drawer to be open and is stamped with the shift; the
+      // online channel stays independent of it.
+      const shifts = await getDemoShiftRepository().listShifts();
+      const openShift = shifts.find((sh) => sh.status === "open") ?? null;
+      const openShiftId: string | null = input.source === "online" ? null : (openShift?.id ?? null);
+      if (input.source !== "online" && !openShift) {
+        throw new AppError("SHIFT_REQUIRED", "A shift must be open before a sale can be completed");
+      }
+
       // ── authoritative re-read: fresh stock + catalog prices ──
-      const fresh = await getDemoRepository().listProducts();
+      const catalog = getDemoRepository();
+      const fresh = await catalog.listProducts();
+      const freshVariants = await catalog.listVariants();
 
       const items: SaleItem[] = [];
+      const promotionSnapshot = input.source === "online" ? null : await getWebsiteRepository().getSnapshot();
+      const promotionTargets = new Map<string, Set<string>>();
+      for (const target of promotionSnapshot?.promotionTargets ?? []) {
+        const ids = promotionTargets.get(target.promotion_id) ?? new Set<string>();
+        ids.add(`${target.target_kind}:${target.target_id}`);
+        promotionTargets.set(target.promotion_id, ids);
+      }
       for (const line of input.lines) {
         const product = fresh.find((p) => p.id === line.product_id);
         if (!product) throw new AppError("NOT_FOUND", `Product ${line.product_id} not found`, "cart");
@@ -111,25 +140,105 @@ export class DemoSalesRepository implements SalesRepository {
         if (!Number.isFinite(qty) || qty <= 0) {
           throw new AppError("VALIDATION", `Invalid quantity for ${product.sku}`, "cart");
         }
-        if (qty > product.stock_quantity) {
+
+        // ── Phase 43: the shelf is the EXACT variant's ──────────────────────
+        // The same three refusals the database raises from pos_complete_sale: no
+        // combination named, a combination that is not this product's, an
+        // archived combination, or more units than that combination holds. A
+        // sibling size or colour never authorises the sale.
+        let variant = null as (typeof freshVariants)[number] | null;
+        let unit = round2(product.selling_price);
+        if (product.variants_enabled) {
+          if (!line.variant_id) {
+            throw new AppError(
+              "VALIDATION",
+              `Choose the colour and the size for ${product.sku}`,
+              "cart",
+            );
+          }
+          variant =
+            freshVariants.find((v) => v.id === line.variant_id && v.product_id === product.id) ??
+            null;
+          if (!variant) {
+            throw new AppError(
+              "VALIDATION",
+              `That colour and size does not belong to ${product.sku}`,
+              "cart",
+            );
+          }
+          if (!variant.active) {
+            throw new AppError(
+              "VALIDATION",
+              `${variantLabel(variant)} is no longer sold`,
+              "cart",
+            );
+          }
+          if (qty > variant.stock_quantity) {
+            throw new AppError(
+              "VALIDATION",
+              `Only ${variant.stock_quantity} of ${variantLabel(variant)} in stock`,
+              "cart",
+            );
+          }
+          unit = round2(variant.price_override ?? product.selling_price);
+        } else if (qty > product.stock_quantity) {
           throw new AppError(
             "VALIDATION",
             `Only ${product.stock_quantity} of ${product.sku} in stock`,
             "cart",
           );
         }
-        const unit = round2(product.selling_price);
+
+        const officialUnit = unit;
+        const promotion = promotionSnapshot
+          ? promotionUnitPrice(
+              product.id,
+              variant?.id ?? null,
+              product.category_id ?? null,
+              officialUnit,
+              promotionSnapshot.promotions,
+              promotionTargets,
+              new Date(),
+              "pos",
+            )
+          : { unit: officialUnit, promotionId: null };
+        unit = promotion.unit;
+        const automaticDiscount = round2(Math.max(0, officialUnit - unit) * qty);
+        const promotionName = promotion.promotionId
+          ? promotionSnapshot?.promotions.find((entry) => entry.id === promotion.promotionId)?.name_en ?? null
+          : null;
+        const itemDiscount = {
+          type: line.discount_type ?? "none",
+          value: Number(line.discount_value ?? 0),
+        } as const;
+        if (validateDiscount(itemDiscount.type, itemDiscount.value)) {
+          throw new AppError("VALIDATION", "Invalid item discount", "discount");
+        }
+        const calculated = lineTotals({ unit_price: unit, qty, item_discount: itemDiscount });
         items.push({
           id: `sli-${items.length}-${Date.now()}`,
           sale_id: "pending",
           product_id: product.id,
+          variant_id: variant?.id ?? null,
+          variant_color_ar: variant?.color_ar ?? null,
+          variant_color_en: variant?.color_en ?? null,
+          variant_size: variant?.size ?? null,
+          variant_size_label: variant?.size_label ?? null,
           name_ar: product.name_ar,
           name_en: product.name_en,
-          sku: product.sku,
-          barcode: product.barcode,
+          sku: variant?.sku ?? product.sku,
+          barcode: variant?.barcode ?? product.barcode,
           unit_price: unit,
           quantity: qty,
-          line_total: lineTotal(unit, qty),
+          gross_total: calculated.gross,
+          line_total: calculated.net,
+          discount_type: itemDiscount.type,
+          discount_value: itemDiscount.value,
+          discount_amount: calculated.discount,
+          automatic_promotion_id: promotion.promotionId,
+          automatic_promotion_name: promotionName,
+          automatic_discount_amount: automaticDiscount,
+          unit_cost: round2(variant ? variantCost(variant, product) : Number(product.cost_price ?? 0)),
         });
       }
 
@@ -138,7 +247,7 @@ export class DemoSalesRepository implements SalesRepository {
         throw new AppError("VALIDATION", "Invalid discount", "discount");
       }
       const totals = cartTotals(
-        items.map((i) => ({ unit_price: i.unit_price, qty: i.quantity })),
+        items.map((i) => ({ unit_price: i.unit_price, qty: i.quantity, item_discount: { type: i.discount_type ?? "none", value: i.discount_value ?? 0 } })),
         { type: input.discount_type, value: input.discount_value },
       );
 
@@ -155,15 +264,23 @@ export class DemoSalesRepository implements SalesRepository {
       // cash-change summary; it is not persisted on the payment record.
       const cashTendered: number[] = [];
       const payments: Sale["payments"] = input.payments.map((p, i) => {
-        if (p.method !== "cash" && p.method !== "instapay") {
+        // The till takes cash and InstaPay. Cash on delivery is only ever
+        // attached to a sale an approved website order created, and only this
+        // flow sets `source`, so the till's behaviour is unchanged.
+        if (p.method === "cod" && input.source !== "online") {
+          throw new AppError("VALIDATION", `Invalid payment method: ${p.method}`, "payment");
+        }
+        if (p.method !== "cash" && p.method !== "instapay" && p.method !== "cod") {
           throw new AppError("VALIDATION", `Invalid payment method: ${p.method}`, "payment");
         }
         const amount = round2(p.amount);
         if (!Number.isFinite(amount) || amount <= 0) {
           throw new AppError("VALIDATION", "Payment amount must be greater than zero", "payment");
         }
-        // Cash is always paid; InstaPay may be pending or paid.
-        const status = p.method === "cash" ? "paid" : p.status === "paid" ? "paid" : "pending";
+        // Cash is always paid; cash on delivery never is (the money has not been
+        // collected — it arrives with the courier); InstaPay may be either.
+        const status =
+          p.method === "cash" ? "paid" : p.method === "cod" ? "pending" : p.status === "paid" ? "paid" : "pending";
         if (p.method === "cash") {
           const t = round2(p.tendered ?? amount);
           if (!Number.isFinite(t) || t < amount) {
@@ -211,7 +328,12 @@ export class DemoSalesRepository implements SalesRepository {
         subtotal: totals.subtotal,
         discount_type: input.discount_type,
         discount_value: round2(input.discount_value || 0),
-        discount_amount: totals.discountAmount,
+        discount_amount: totals.invoiceDiscountAmount,
+        item_discount_amount: totals.itemDiscountAmount,
+        total_discount_amount: round2(totals.discountAmount + items.reduce((sum, item) => sum + (item.automatic_discount_amount ?? 0), 0)),
+        automatic_discount_amount: round2(items.reduce((sum, item) => sum + (item.automatic_discount_amount ?? 0), 0)),
+        automatic_promotion_id: items.find((item) => item.automatic_promotion_id)?.automatic_promotion_id ?? null,
+        automatic_promotion_name: items.find((item) => item.automatic_promotion_name)?.automatic_promotion_name ?? null,
         total: totals.total,
         amount_received: amountReceived,
         change,
@@ -223,11 +345,13 @@ export class DemoSalesRepository implements SalesRepository {
         customer_name: input.customer_name ?? null,
         customer_phone: input.customer_phone ?? null,
         created_at: now,
+        shift_id: openShiftId,
         voided_at: null,
         void_reason: null,
         paid_at: allPaid ? now : lastInstaPay?.paid_at ?? null,
         paid_by: allPaid ? input.user_id : lastInstaPay?.paid_by ?? null,
         paid_by_name: allPaid ? input.user_name : lastInstaPay?.paid_by_name ?? null,
+        source: input.source ?? "pos",
       };
 
       // ── deduct stock + record a movement per line (re-read each time
@@ -237,6 +361,9 @@ export class DemoSalesRepository implements SalesRepository {
         await applyDemoAdjustment(
           {
             productId: item.product_id,
+            // The movement names the shelf it came off, so the ledger and the
+            // invoice agree line for line.
+            variantId: item.variant_id,
             type: "issue",
             reason: "other",
             quantity: item.quantity,
@@ -309,9 +436,15 @@ export class DemoSalesRepository implements SalesRepository {
     return delay(confirmed);
   }
 
-  async listSales(): Promise<Sale[]> {
+  async listSales(query: SaleListQuery = {}): Promise<Sale[]> {
+    return delay(applySaleListQuery(this.sales, query));
+  }
+
+  async countSales(query: SaleListQuery = {}): Promise<number | null> {
+    // The offline backend holds the whole set in memory, so its total is exact
+    // and free. Paging is ignored, exactly as the live count ignores it.
     return delay(
-      [...this.sales].sort((a, b) => b.created_at.localeCompare(a.created_at)),
+      applySaleListQuery(this.sales, query, { ignorePaging: true }).length,
     );
   }
 

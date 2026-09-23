@@ -17,8 +17,14 @@ import { Link } from "react-router-dom";
 import { usePos } from "../hooks/PosProvider";
 import { canVoidSale, canConfirmPayment } from "../permissions";
 import type { Sale } from "../types";
-import { buildReceiptHtml } from "../services/receipt";
+import { buildReceiptHtml, customerInfoIssue, printHtmlDocument } from "../services/receipt";
+import { salesReceiptStrings } from "../services/receiptStrings";
+import { loadBrand } from "@/lib/branding/brand";
 import { getSalesRepository } from "../data";
+import {
+  confirmPayment as confirmPaymentAction,
+  voidSale as voidSaleAction,
+} from "../services/saleService";
 import { getCurrentUser } from "@/modules/inventory/permissions";
 import { useReturns } from "@/modules/returns";
 import { ReturnFormModal } from "@/modules/returns/components/ReturnFormModal";
@@ -49,43 +55,55 @@ export function SaleDetailPage() {
     setSale(found);
   }, [sales, id]);
 
-  const print = useCallback(() => {
+  /**
+   * Reprint the sales receipt from a completed transaction. Uses the shared
+   * print workflow so a reprint behaves exactly like the receipt printed at
+   * the till (popup, then hidden in-page frame fallback).
+   */
+  const print = useCallback(async () => {
     if (!sale) return;
-    const html = buildReceiptHtml({
-      sale,
-      direction: isRTL ? "rtl" : "ltr",
-      strings: {
-        businessName: t("receipt.businessName"),
-        businessTagline: t("receipt.businessTagline"),
-        saleLabel: t("receipt.saleLabel"),
-        dateLabel: t("receipt.dateLabel"),
-        cashierLabel: t("receipt.cashierLabel"),
-        itemLabel: t("receipt.itemLabel"),
-        qtyLabel: t("receipt.qtyLabel"),
-        priceLabel: t("receipt.priceLabel"),
-        totalLabel: t("receipt.totalLabel"),
-        subtotalLabel: t("receipt.subtotalLabel"),
-        discountLabel: t("receipt.discountLabel"),
-        paymentLabel: t("receipt.paymentLabel"),
-        receivedLabel: t("receipt.receivedLabel"),
-        changeLabel: t("receipt.changeLabel"),
-        customerLabel: t("receipt.customerLabel"),
-        customerPhoneLabel: t("receipt.customerPhoneLabel"),
-        paidLabel: t("pos.paid"),
-        remainingLabel: t("pos.remaining"),
-        statusLabel: t("receipt.statusLabel"),
-        thankYou: t("receipt.thankYou"),
-        voidedNotice: t("receipt.voidedNotice"),
-      },
-    });
-    const win = window.open("", "_blank", "width=420,height=640");
-    if (!win) {
-      toast.error(t("barcode.printBlocked"));
+
+    // Customer-linked receipts must carry BOTH the customer name and phone.
+    // Anonymous/guest sales keep their existing behaviour.
+    const issue = customerInfoIssue(sale.customer_name, sale.customer_phone);
+    if (issue) {
+      console.error("[receipt-print] abort: incomplete customer information", {
+        sale_number: sale.sale_number,
+        issue,
+      });
+      toast.error(
+        t(issue === "missingName" ? "receipt.customerNameMissing" : "receipt.customerPhoneMissing"),
+      );
       return;
     }
-    win.document.open();
-    win.document.write(html);
-    win.document.close();
+
+    toast.success(t("pos.printing"));
+
+    let html: string;
+    try {
+      // Phase 46: the shared brand logo when enabled; shipped asset otherwise.
+      const brand = await loadBrand();
+      html = buildReceiptHtml({
+        sale,
+        direction: isRTL ? "rtl" : "ltr",
+        strings: salesReceiptStrings(t),
+        logo_url: brand.receiptLogoEnabled ? brand.logoUrl : null,
+      });
+    } catch (err) {
+      console.error("[receipt-print] failed to build receipt html", {
+        sale_number: sale.sale_number,
+        error: err instanceof Error ? err.message : err,
+      });
+      toast.error(t("pos.printFailed"));
+      return;
+    }
+
+    const outcome = printHtmlDocument(html, sale.sale_number);
+    if (outcome === "embedded-blocked") {
+      toast.error(t("pos.printEmbedded"));
+    } else if (outcome === "failed") {
+      toast.error(t("barcode.printBlocked"));
+    }
   }, [sale, isRTL, t, toast]);
 
   const voidSale = useCallback(async () => {
@@ -94,7 +112,10 @@ export function SaleDetailPage() {
     try {
       const user = getCurrentUser();
       const repo = getSalesRepository();
-      await repo.voidSale(sale.id, {
+      // The service asserts `void_sale`; the page only decides whether to show
+      // the button. A denial arrives as AppError("FORBIDDEN") and is reported
+      // like any other failure to void.
+      await voidSaleAction(sale.id, {
         user_id: user.id,
         user_name: user.name,
         reason: null,
@@ -117,7 +138,7 @@ export function SaleDetailPage() {
     try {
       const user = getCurrentUser();
       const repo = getSalesRepository();
-      await repo.confirmPayment(sale.id, { user_id: user.id, user_name: user.name });
+      await confirmPaymentAction(sale.id, { user_id: user.id, user_name: user.name });
       toast.success(t("pos.paymentConfirmed"));
       setConfirmPay(false);
       await refreshSales();
@@ -177,6 +198,7 @@ export function SaleDetailPage() {
     <div>
       <PageHeader
         title={t("pos.receiptTitle")}
+        crumbs={[{ label: t("home.management.title"), to: "/management" }, { label: t("nav.sales"), to: "/pos/sales" }, { label: sale.sale_number }]}
         subtitle={sale.sale_number}
         backTo="/pos/sales"
         backLabel={t("pos.salesTitle")}
@@ -251,6 +273,7 @@ export function SaleDetailPage() {
                   <td className="py-2.5 text-center text-sm font-bold tabular-nums">{item.quantity}</td>
                   <td className="py-2.5 text-end text-xs tabular-nums text-slate-600">
                     {num(item.unit_price, 2)}
+                    {item.discount_amount ? <span className="block text-[10px] text-rose-600">−{num(item.discount_amount, 2)} item</span> : null}
                   </td>
                   <td className="py-2.5 text-end text-sm font-bold tabular-nums text-slate-900">
                     {num(item.line_total, 2)}
@@ -270,7 +293,11 @@ export function SaleDetailPage() {
                 <dd className="tabular-nums">{num(sale.subtotal, 2)}</dd>
               </div>
               <div className="flex justify-between text-slate-600">
-                <dt>{t("pos.discount")}</dt>
+                <dt>Item discounts / خصم الأصناف</dt>
+                <dd className="tabular-nums text-rose-600">−{num(sale.item_discount_amount ?? 0, 2)}</dd>
+              </div>
+              <div className="flex justify-between text-slate-600">
+                <dt>Invoice discount / خصم الفاتورة</dt>
                 <dd className="tabular-nums text-rose-600">−{num(sale.discount_amount, 2)}</dd>
               </div>
               <div className="flex justify-between border-t border-slate-200 pt-2 text-base font-extrabold text-slate-900">

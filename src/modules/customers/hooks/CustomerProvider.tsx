@@ -17,6 +17,7 @@ import {
 } from "../services/customerService";
 import type { CustomerFormValues } from "../validation";
 import { AppError } from "@/modules/products/data/repository";
+import { canAct } from "@/lib/permissions/enforce";
 
 export interface CustomerContextValue {
   mode: "supabase" | "demo";
@@ -24,6 +25,14 @@ export interface CustomerContextValue {
   customers: Customer[];
   loading: boolean;
   error: AppError | null;
+  /**
+   * Phase 17: whether this seat may read the book at all. Consumers use it to
+   * decline quietly rather than to render an error — the till's customer picker
+   * disappears for a role without `view_customers`, and a sale simply proceeds
+   * without one. The service still asserts the capability on every call; this
+   * flag only saves the UI from asking for something it will be refused.
+   */
+  canView: boolean;
   refresh: () => Promise<void>;
   saveCustomer: (
     values: CustomerFormValues,
@@ -42,8 +51,20 @@ export function CustomerProvider({ children }: { children: ReactNode }) {
 
   const repository = useMemo(() => getCustomerRepository(), []);
   const mode = useMemo(() => getCustomerMode(), []);
+  // Read at render time so an identity change (a role swap, an exception saved
+  // in another tab) is picked up when the provider next renders.
+  const canView = canAct("view_customers");
 
   const refresh = useCallback(async () => {
+    // Do not even ask when the answer is no: an empty list is the honest state
+    // for a seat that may not read the book, and a permission error rendered as
+    // a data failure would send somebody looking for a database problem.
+    if (!canAct("view_customers")) {
+      setCustomers([]);
+      setError(null);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -58,7 +79,7 @@ export function CustomerProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     void refresh();
-  }, [refresh]);
+  }, [refresh, canView]);
 
   const saveCustomer = useCallback(
     async (values: CustomerFormValues, currentId?: string) => {
@@ -89,12 +110,13 @@ export function CustomerProvider({ children }: { children: ReactNode }) {
       customers,
       loading,
       error,
+      canView,
       refresh,
       saveCustomer,
       deleteCustomer,
       customerById,
     }),
-    [mode, repository, customers, loading, error, refresh, saveCustomer, deleteCustomer, customerById],
+    [mode, repository, customers, loading, error, canView, refresh, saveCustomer, deleteCustomer, customerById],
   );
 
   return <CustomerContext.Provider value={value}>{children}</CustomerContext.Provider>;
