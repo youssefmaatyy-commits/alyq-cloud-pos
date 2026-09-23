@@ -137,6 +137,14 @@ export function SettingsHomePage() {
       labelKey: "admin.settings.group.system",
       cards: [
         {
+          to: "/settings/operations",
+          capability: "manage_settings",
+          icon: "◎",
+          titleKey: "admin.settings.card.operations.title",
+          descKey: "admin.settings.card.operations.desc",
+          testId: "settings-card-operations",
+        },
+        {
           // Phase 47: the Danger Zone lives last and reads differently on
           // purpose — a card for the acts you must never reach by accident.
           to: "/settings/system",

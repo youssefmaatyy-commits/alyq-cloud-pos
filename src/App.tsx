@@ -58,6 +58,7 @@ import { BackupPage } from "@/modules/backup";
 import { BrandingPage } from "@/modules/settings/pages/BrandingPage";
 import { SettingsHomePage } from "@/modules/settings/pages/SettingsHomePage";
 import { SystemSettingsPage } from "@/modules/settings/pages/SystemSettingsPage";
+import { OperationsCenterPage } from "@/modules/operations/pages/OperationsCenterPage";
 import { StoreManagementHome, SalesHome, CatalogHome, InventoryHome, OnlineHome } from "./components/layout/moduleHomes";
 
 import {
@@ -389,6 +390,7 @@ function SettingsArea() {
             strongest capability in the table; the route guard has already
             refused every other role before this renders. */}
         <Route path="system" element={<SystemSettingsPage />} />
+        <Route path="operations" element={<OperationsCenterPage />} />
         <Route path="*" element={<Navigate to="/settings" replace />} />
       </Routes>
     </SettingsProvider>

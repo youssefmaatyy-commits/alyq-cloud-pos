@@ -122,6 +122,9 @@ export const ROUTE_CAPABILITIES: ReadonlyArray<readonly [string, Capability]> = 
   // capability that has always owned system-wide configuration), so the child
   // names its own gate explicitly.
   ["/settings/approvals", "manage_settings"],
+  // Phase 56: the operations center is system configuration. Viewing it and
+  // running cleanup both ask for `manage_settings`; the service asserts again.
+  ["/settings/operations", "manage_settings"],
   // Phase 49: the settings INDEX is the grouped directory, and a directory
   // gate must never be wider than its widest room — the manager who may read
   // the audit trail and the backups could not previously open the very page

@@ -107,6 +107,10 @@ export const AUDIT_ACTIONS = [
   // `initiated` is the outcome — the link opening is not delivery, and the order
   // status is not moved by it. Live mode needs the vocabulary row (0056).
   "whatsapp.initiated",
+  // Phase 56: a confirmed cleanup or retention pass. Preview is not audited.
+  // The trail says what was removed and how many — never a secret, never a sale.
+  "operations.cleanup_executed",
+  "operations.retention_applied",
   "website_settings.updated",
   // Identity (Phase 10). A session event is written by the app because there is
   // no table behind it; the user and role events are written by the settings
