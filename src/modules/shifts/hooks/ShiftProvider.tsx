@@ -25,7 +25,7 @@ import {
   openShift as openShiftRequest,
   queryShifts,
 } from "../services/shiftService";
-import { computeShiftSummary } from "../services/shiftCalculations";
+import { computeShiftSummary, padShiftSummary } from "../services/shiftCalculations";
 import type {
   CloseShiftInput,
   NewShift,
@@ -120,7 +120,7 @@ export function ShiftProvider({ children }: { children: ReactNode }) {
       if (!shift) return null;
       // A closed shift shows its frozen snapshot; an open one is recomputed
       // live from the sales/returns/refunds/expenses currently loaded.
-      if (shift.status === "closed" && shift.summary) return shift.summary;
+      if (shift.status === "closed" && shift.summary) return padShiftSummary(shift.summary);
       return computeShiftSummary(shift, sources);
     },
     [sources],
@@ -186,6 +186,9 @@ export function ShiftProvider({ children }: { children: ReactNode }) {
         entity_label: closed.shift_number,
         details: {
           opening_cash: closed.opening_cash,
+          cash_sales: live.cash_sales,
+          cash_refunds: live.cash_refunds,
+          cash_expenses: live.cash_expenses,
           expected_cash: live.expected_cash,
           actual_cash: closed.closing_cash,
           difference: closed.summary?.difference ?? 0,

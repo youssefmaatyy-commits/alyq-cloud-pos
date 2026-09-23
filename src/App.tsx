@@ -41,6 +41,7 @@ import {
 } from "@/modules/returns";
 import { ExpenseProvider, ExpensesPage } from "@/modules/expenses";
 import {
+  EndOfDayPage,
   ShiftDashboardPage,
   ShiftHistoryPage,
   ShiftProvider,
@@ -290,6 +291,7 @@ function AuthenticatedApp() {
                             <Route path="/refunds/:id" element={<RefundDetailPage />} />
                             <Route path="/shifts" element={<ShiftDashboardPage />} />
                             <Route path="/shifts/history" element={<ShiftHistoryPage />} />
+                            <Route path="/shifts/eod" element={<EndOfDayPage />} />
                             <Route path="/expenses" element={<ExpensesPage />} />
                             {/* Approval limits (Phase 12). The inbox is readable by
                                 every signed-in role — an approver sees every

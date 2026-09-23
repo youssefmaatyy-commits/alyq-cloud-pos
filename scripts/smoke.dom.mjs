@@ -1728,7 +1728,9 @@ async function main() {
   const preCloseInput = [...preCloseDialog.querySelectorAll("input")].find((i) => i.inputMode === "decimal");
   typeInto(preCloseInput, String(kpiValue("Expected cash")));
   await sleep(250);
-  clickEl([...preCloseDialog.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === "Close shift"));
+  clickEl([...preCloseDialog.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === "Review close"));
+  await sleep(300);
+  clickEl([...dialog().querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === "Confirm close"));
   await sleep(300);
 
   for (let i = 0; i < 10 && !bodyText().includes("No shift is currently open"); i += 1) {
@@ -1854,7 +1856,16 @@ async function main() {
   typeInto(countedInput, String(expectedCash));
   await sleep(250);
   assert.ok(closeDialog.textContent.includes("Balanced"), "live difference reads balanced");
-  clickEl([...dialog().querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === "Close shift"));
+  clickEl([...dialog().querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === "Review close"));
+  await sleep(350);
+  const reviewDialog = dialog();
+  assert.ok(reviewDialog?.textContent.includes("Review before closing"), "close requires an explicit review");
+  assert.ok(reviewDialog.textContent.includes("Opening balance"), "review shows opening cash");
+  assert.ok(reviewDialog.textContent.includes("Cash sales"), "review shows cash sales");
+  assert.ok(reviewDialog.textContent.includes("Cash refunds"), "review shows cash refunds");
+  assert.ok(reviewDialog.textContent.includes("Cash expenses"), "review shows cash expenses");
+  assert.ok(reviewDialog.textContent.includes("Expected cash"), "review shows expected cash");
+  clickEl([...reviewDialog.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === "Confirm close"));
   for (let i = 0; i < 12 && !bodyText().includes("No shift is currently open"); i += 1) await sleep(300);
   assert.ok(bodyText().includes("No shift is currently open"), "shift closed and the dashboard is empty again");
   console.log("  ✓ shift closed with a balanced drawer");
@@ -1889,6 +1900,13 @@ async function main() {
   clickEl([...detailDialog.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === "Close"));
   await sleep(300);
   console.log("  ✓ shift history + detail keep the opening/closing details and difference");
+
+  await navigate("#/shifts/eod");
+  for (let i = 0; i < 12 && !bodyText().includes("End-of-day report"); i += 1) await sleep(300);
+  assert.ok(bodyText().includes("End-of-day report"), "end-of-day report renders");
+  assert.ok(bodyText().includes("SH-000002"), "the closed shift is in the day's roll-up");
+  assert.ok(bodyText().includes("Closed shifts"), "EOD totals closed drawers");
+  console.log("  ✓ end-of-day report lists the closed drawer");
 
   // ── POS sales are untouched by the shift ──
   await navigate("#/pos/sales");

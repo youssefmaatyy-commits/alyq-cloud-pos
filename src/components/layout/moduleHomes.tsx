@@ -87,6 +87,7 @@ export function SalesHome({ embedded = false }: { embedded?: boolean }) {
         },
         { key: "customers", to: "/customers", icon: <ClipboardIcon />, title: t("nav.customers"), description: t("home.management.customers") },
         { key: "shift-history", to: "/shifts/history", icon: <HistoryIcon />, title: t("nav.shiftHistory"), description: t("home.sales.shifts.desc") },
+        { key: "shift-eod", to: "/shifts/eod", icon: <ReportIcon />, title: t("nav.shiftEod"), description: t("home.sales.eod.desc") },
       ]}
     />
   );

@@ -764,6 +764,7 @@ test("reports: the route table, the page's assertion and the RPCs name one capab
   assert.equal(capabilityForPath("/expenses"), "view_shifts");
   assert.equal(capabilityForPath("/shifts"), "view_shifts");
   assert.equal(capabilityForPath("/shifts/history"), "view_shifts");
+  assert.equal(capabilityForPath("/shifts/eod"), "view_shifts");
   const entries = Object.fromEntries(ROUTE_CAPABILITIES);
   assert.equal(entries["/reports"], "view_reports");
   assert.equal(entries["/reports/advanced"], "view_reports");

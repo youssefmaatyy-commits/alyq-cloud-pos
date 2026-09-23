@@ -37,6 +37,7 @@ export const ROUTE_CAPABILITIES: ReadonlyArray<readonly [string, Capability]> = 
   ["/returns", "process_return"],
   ["/refunds", "process_refund"],
   ["/shifts/history", "view_shifts"],
+  ["/shifts/eod", "view_shifts"],
   ["/shifts", "view_shifts"],
   ["/expenses", "view_shifts"],
   // Reports is read-only, but it is not the same read as the shift book. Phase 23

@@ -24,10 +24,26 @@ export interface ShiftSummary {
   /** Voided sales inside the window — reported, never counted as revenue. */
   voided_count: number;
   voided_total: number;
+  /**
+   * List-price sales before discounts. Informational only — expected cash
+   * uses already-net paid cash and never subtracts these again.
+   */
+  gross_sales: number;
+  /** Invoice totals (net of discounts). Alias of sales_total, kept named. */
+  net_sales: number;
+  discounts_automatic: number;
+  discounts_promo: number;
+  discounts_manual_item: number;
+  discounts_invoice: number;
+  discounts_total: number;
   /** Cash applied to non-voided sales (drawer in). */
   cash_sales: number;
   /** Confirmed InstaPay applied to non-voided sales (no drawer impact). */
   instapay_sales: number;
+  /** Confirmed Visa/card — reported, never in the drawer. */
+  visa_sales: number;
+  /** Other paid methods actually used (today: COD). Never in the drawer. */
+  other_sales: number;
   /** InstaPay still awaiting confirmation — excluded from totals. */
   instapay_pending: number;
   /** Sales paid with more than one payment method. */

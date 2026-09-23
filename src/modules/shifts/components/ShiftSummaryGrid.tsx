@@ -18,10 +18,16 @@ export function ShiftSummaryGrid({ summary, compact }: { summary: ShiftSummary; 
   const { t, money, num } = useI18n();
 
   const salesRows: Row[] = [
-    { key: "sales", labelKey: "shifts.salesTotal", value: summary.sales_total, hintKey: "shifts.salesCountHint" },
+    { key: "gross", labelKey: "shifts.grossSales", value: summary.gross_sales ?? summary.sales_total },
+    { key: "discounts", labelKey: "shifts.discounts", value: summary.discounts_total ?? 0 },
+    { key: "sales", labelKey: "shifts.netSales", value: summary.net_sales ?? summary.sales_total, hintKey: "shifts.salesCountHint" },
     { key: "cash", labelKey: "shifts.cashSales", value: summary.cash_sales },
     { key: "instapay", labelKey: "shifts.instapaySales", value: summary.instapay_sales },
+    { key: "visa", labelKey: "shifts.visaSales", value: summary.visa_sales ?? 0 },
   ];
+  if ((summary.other_sales ?? 0) > 0) {
+    salesRows.push({ key: "other", labelKey: "shifts.otherSales", value: summary.other_sales });
+  }
 
   const outRows: Row[] = [
     { key: "returns", labelKey: "shifts.returnsTotal", value: summary.returns_total, hintKey: "shifts.returnsCountHint" },
@@ -106,6 +112,23 @@ export function ShiftSummaryGrid({ summary, compact }: { summary: ShiftSummary; 
           </div>
         </div>
       </div>
+
+      {!compact && (summary.discounts_total ?? 0) > 0 ? (
+        <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-600 sm:grid-cols-4">
+          <span className="rounded-lg bg-[#faf7f2] px-2 py-1">
+            {t("shifts.discountAuto")}: {money(summary.discounts_automatic ?? 0)}
+          </span>
+          <span className="rounded-lg bg-[#faf7f2] px-2 py-1">
+            {t("shifts.discountPromo")}: {money(summary.discounts_promo ?? 0)}
+          </span>
+          <span className="rounded-lg bg-[#faf7f2] px-2 py-1">
+            {t("shifts.discountManualItem")}: {money(summary.discounts_manual_item ?? 0)}
+          </span>
+          <span className="rounded-lg bg-[#faf7f2] px-2 py-1">
+            {t("shifts.discountInvoice")}: {money(summary.discounts_invoice ?? 0)}
+          </span>
+        </div>
+      ) : null}
 
       {!compact && (summary.mixed_count > 0 || summary.instapay_pending > 0 || summary.voided_count > 0) ? (
         <div className="flex flex-wrap gap-3 text-[11px] text-slate-600">

@@ -185,6 +185,7 @@ const ALL_PATHS = [
   "/refunds",
   "/shifts",
   "/shifts/history",
+  "/shifts/eod",
   "/expenses",
   "/approvals",
   "/reports",

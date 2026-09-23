@@ -28,6 +28,7 @@ import { EMPTY_SHIFT_FILTERS, type Shift, type ShiftFiltersValue } from "../type
 // builder next to it (Phase 14, requirement 4).
 import { buildShiftAnalyticsSheets } from "@/modules/reports/services/analyticsExport";
 import { OPEN_DATE_RANGE } from "@/modules/reports/services/financialExport";
+import { buildShiftDetailSheets } from "../services/eodExport";
 
 export function ShiftHistoryPage() {
   const { t, date, num, money } = useI18n();
@@ -39,9 +40,10 @@ export function ShiftHistoryPage() {
   const [approving, setApproving] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
+  const listedShifts = useMemo(() => filterShifts(filters), [filterShifts, filters]);
   const closedShifts = useMemo(
-    () => filterShifts(filters).filter((s) => s.status === "closed"),
-    [filterShifts, filters],
+    () => listedShifts.filter((s) => s.status === "closed"),
+    [listedShifts],
   );
 
   const totals = useMemo(() => {
@@ -90,10 +92,10 @@ export function ShiftHistoryPage() {
             <ExportButton
               name="shift-report"
               authority="report"
-              count={closedShifts.length}
+              count={listedShifts.length}
               build={() =>
                 buildShiftAnalyticsSheets({
-                  shifts: closedShifts,
+                  shifts: listedShifts,
                   summaryFor,
                   range: OPEN_DATE_RANGE,
                   t,
@@ -120,6 +122,11 @@ export function ShiftHistoryPage() {
       </div>
 
       <p className="mb-4 text-xs font-medium text-slate-600">
+        <Link to="/shifts/eod" className="font-semibold text-[#b08d57] hover:text-[#8c6b3a]">
+          {t("shifts.eodLink")} →
+        </Link>{" "}
+        {t("shifts.eodSubtitle")}
+        <span className="mx-2 text-slate-300">·</span>
         <Link to="/reports/advanced" className="font-semibold text-indigo-600 hover:text-indigo-700">
           {t("shifts.advancedLink")} →
         </Link>{" "}
@@ -165,9 +172,9 @@ export function ShiftHistoryPage() {
         <div className="alyq-card">
           <LoadingBlock label={t("common.loading")} />
         </div>
-      ) : closedShifts.length === 0 ? (
+      ) : listedShifts.length === 0 ? (
         <Card>
-          <EmptyState icon="🕒" title={t("shifts.empty")} description={t("shifts.emptyHint")} />
+          <EmptyState icon="🕒" title={t("shifts.emptyAll")} description={t("shifts.emptyAllHint")} />
         </Card>
       ) : (
         <div className="alyq-card overflow-x-auto">
@@ -187,13 +194,16 @@ export function ShiftHistoryPage() {
               </tr>
             </thead>
             <tbody>
-              {closedShifts.map((shift) => {
+              {listedShifts.map((shift) => {
                 const summary = shift.summary ?? summaryFor(shift);
                 return (
                   <tr key={shift.id} className="border-b border-slate-50 last:border-0 hover:bg-slate-50/60">
                     <td className="px-4 py-3">
                       <span className="font-mono text-xs font-bold text-indigo-700">{shift.shift_number}</span>
                       <p className="text-[11px] text-slate-500">{shift.branch} · {shift.register}</p>
+                      <Badge tone={shift.status === "open" ? "warning" : "neutral"}>
+                        {shift.status === "open" ? t("shifts.statusOpen") : t("shifts.statusClosed")}
+                      </Badge>
                     </td>
                     <td className="px-3 py-3 text-xs text-slate-700">{shift.opened_by_name}</td>
                     <td className="px-3 py-3 text-[11px] text-slate-500" dir="ltr">
@@ -218,8 +228,8 @@ export function ShiftHistoryPage() {
                     </td>
                     <td className="px-3 py-3 text-center">
                       <Badge tone={differenceTone(summary?.difference ?? null)}>
-                        {summary?.difference === null || summary?.difference === undefined
-                          ? "—"
+                        {shift.status === "open" || summary?.difference === null || summary?.difference === undefined
+                          ? t("shifts.pendingOpen")
                           : `${num(summary.difference, 2)} · ${
                               summary.difference === 0
                                 ? t("shifts.balanced")
@@ -265,6 +275,21 @@ export function ShiftHistoryPage() {
               <Button onClick={() => void approve()} disabled={approving}>
                 {approving ? t("common.saving") : t("shifts.approveAdjustment")}
               </Button>
+            ) : null}
+            {selected && selectedSummary ? (
+              <ExportButton
+                name={`shift-${selected.shift_number}`}
+                authority="report"
+                count={1}
+                build={() =>
+                  buildShiftDetailSheets({
+                    shift: selected,
+                    summary: selectedSummary,
+                    expenses: selectedExpenses,
+                    t,
+                  })
+                }
+              />
             ) : null}
             <Button variant="secondary" onClick={() => setSelected(null)}>
               {t("common.close")}

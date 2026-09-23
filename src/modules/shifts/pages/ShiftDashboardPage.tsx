@@ -62,6 +62,9 @@ export function ShiftDashboardPage() {
             <Button variant="secondary" onClick={() => void refresh()} title={t("common.refresh")}>
               ⟳
             </Button>
+            <Link to="/shifts/eod" className={GHOST_LINK}>
+              {t("shifts.eodLink")}
+            </Link>
             <Link to="/shifts/history" className={GHOST_LINK}>
               {t("shifts.historyTitle")}
             </Link>

@@ -130,7 +130,7 @@ async function main() {
   await waitFor(() => testid("module-management"), { label: "the Catalog module home" });
   check(
     "Store Management offers all catalog, inventory and operations destinations",
-    ["products", "categories", "content", "import", "media", "overview", "low", "out", "movements", "adjustments", "suppliers", "invoices", "returns", "refunds", "shifts", "shift-history", "expenses", "customers", "approvals"].every((k) => testid(`module-card-${k}`)),
+    ["products", "categories", "content", "import", "media", "overview", "low", "out", "movements", "adjustments", "suppliers", "invoices", "returns", "refunds", "shifts", "shift-history", "shift-eod", "expenses", "customers", "approvals"].every((k) => testid(`module-card-${k}`)),
   );
   clickTestid("module-card-products");
   await waitFor(() => window.location.hash.includes("#/products") && testid("breadcrumbs")?.textContent.includes("Products"), {

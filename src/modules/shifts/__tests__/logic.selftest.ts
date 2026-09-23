@@ -82,7 +82,13 @@ function sale(partial: {
   total: number;
   created_at?: string;
   status?: Sale["status"];
-  payments: { method: "cash" | "instapay"; amount: number; status: "paid" | "pending" }[];
+  payments: { method: "cash" | "instapay" | "visa" | "cod"; amount: number; status: "paid" | "pending" }[];
+  items?: Sale["items"];
+  shift_id?: string | null;
+  source?: Sale["source"];
+  discount_amount?: number;
+  automatic_discount_amount?: number;
+  item_discount_amount?: number;
 }): Sale {
   const payments = partial.payments.map((p, index) => ({
     id: `${partial.id}-p${index}`,
@@ -100,13 +106,15 @@ function sale(partial: {
     client_ref: partial.id,
     status: partial.status ?? "completed",
     subtotal: partial.total,
-    discount_type: "none",
-    discount_value: 0,
-    discount_amount: 0,
+    discount_type: partial.discount_amount ? "fixed" : "none",
+    discount_value: partial.discount_amount ?? 0,
+    discount_amount: partial.discount_amount ?? 0,
+    automatic_discount_amount: partial.automatic_discount_amount ?? 0,
+    item_discount_amount: partial.item_discount_amount ?? 0,
     total: partial.total,
     user_id: "user-demo-admin",
     user_name: "ALYQ Admin",
-    items: [],
+    items: partial.items ?? [],
     payments,
     created_at: partial.created_at ?? "2026-03-01T09:00:00.000Z",
     voided_at: null,
@@ -118,6 +126,8 @@ function sale(partial: {
     paid_at: null,
     paid_by: null,
     paid_by_name: null,
+    shift_id: partial.shift_id,
+    source: partial.source,
   };
 }
 
