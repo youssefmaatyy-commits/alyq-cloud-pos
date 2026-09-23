@@ -32,10 +32,12 @@ const PROTECTED = new Set([
   "customer_history",
   "promotion_snapshot",
   "financial_snapshot",
+  "stocktake",
+  "stocktake_line",
 ]);
 
 const PROTECTED_NOTE =
-  "Sales, sale items, online orders, returns, audit history, shift closes, and backup snapshots are not cleanup targets.";
+  "Sales, sale items, online orders, returns, audit history, shift closes, financial snapshots, stocktake history, and backup snapshots are not cleanup targets.";
 
 export interface CleanupCandidate {
   id: string;

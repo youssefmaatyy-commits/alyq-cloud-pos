@@ -69,6 +69,12 @@ export type AppErrorCode =
   | "VARIANTS_IN_USE"
   | "VARIANTS_STOCK_MISMATCH"
   | "VARIANT_STOCK_READONLY"
+  /** The shelf moved since the stocktake snapshot. Nothing was adjusted. */
+  | "STOCKTAKE_CONFLICT"
+  /** A physical count is still missing. */
+  | "STOCKTAKE_INCOMPLETE"
+  /** The session is already historical. */
+  | "STOCKTAKE_FINALIZED"
   | "VALIDATION"
   | "NETWORK"
   | "DB"

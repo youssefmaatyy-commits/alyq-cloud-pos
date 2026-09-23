@@ -153,7 +153,7 @@ export function buildOperationalNotifications(
 
   for (const session of snapshot.stocktakes) {
     if (session.status === "finalized") continue;
-    out.push(row("stocktake_open", session.id, session.createdAt, "/inventory", session.id));
+    out.push(row("stocktake_open", session.id, session.createdAt, "/inventory/stocktake", session.id));
   }
 
   if (snapshot.backupStatus === "overdue" || snapshot.backupStatus === "never") {

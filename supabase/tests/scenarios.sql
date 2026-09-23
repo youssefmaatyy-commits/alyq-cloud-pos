@@ -6276,6 +6276,251 @@ begin
 end
 $promo50$;
 
+-- $stocktake60$ — live stocktake (0060).
+-- Gold/17 and Silver/17 are independent lines. Finalize is one transaction.
+-- A shelf that moved since the snapshot rejects the whole count. A second
+-- finalize does not write a second movement. Restore order carries the tables
+-- and no stocktake trigger writes the ledger, so a restore cannot replay it.
+do $stocktake60$
+declare
+  v_admin uuid := '00000000-0000-4000-8000-0000000000a1';
+  v_viewer uuid := '00000000-0000-4000-8000-0000000000e1';
+  v_cat uuid := '00000000-0000-4000-8000-00000000c064';
+  v_ring uuid := '00000000-0000-4000-8000-00000000c060';
+  v_gold uuid := '00000000-0000-4000-8000-00000000c061';
+  v_silver uuid := '00000000-0000-4000-8000-00000000c062';
+  v_plain uuid := '00000000-0000-4000-8000-00000000c063';
+  v_doc jsonb;
+  v_id uuid;
+  v_id2 uuid;
+  v_counts jsonb;
+  v_result jsonb;
+  v_mov integer;
+  v_n integer;
+  v_expected integer;
+  v_ref text;
+  v_owner text;
+  v_shelf text;
+begin
+  perform pg_temp.become(v_admin, 'authenticated');
+
+  insert into public.categories (id, name_ar, name_en)
+  values (v_cat, 'جرد فحص', 'Stocktake scenario');
+
+  insert into public.products (id, sku, name_ar, name_en, category_id, selling_price, stock_quantity, active, stock_tracking_enabled)
+  values (v_plain, 'SCN-ST-PLAIN', 'سادة', 'Scenario Plain', v_cat, 10, 10, true, true);
+
+  insert into public.products (id, sku, name_ar, name_en, category_id, selling_price, stock_quantity, active, stock_tracking_enabled)
+  values (v_ring, 'SCN-ST-RING', 'خاتم', 'Scenario Ring', v_cat, 100, 7, true, true);
+
+  insert into public.product_variants (id, product_id, sku, barcode, color_key, color_en, color_ar, size, stock_quantity, active)
+  values
+    (v_gold, v_ring, 'SCN-ST-G17', 'STG1700000001', 'gold', 'Gold', 'ذهبي', 17, 0, true),
+    (v_silver, v_ring, 'SCN-ST-S17', 'STS1700000001', 'silver', 'Silver', 'فضي', 17, 0, true);
+
+  perform public.enable_product_variants(
+    v_ring,
+    jsonb_build_object(v_gold::text, 4, v_silver::text, 3),
+    v_admin::text,
+    'Amina Admin');
+
+  v_doc := public.stocktake_create(false, null);
+  if coalesce((v_doc->>'ok')::boolean, false) is not true then
+    raise exception 'stocktake_create failed: %', v_doc;
+  end if;
+  v_id := (v_doc->'session'->>'id')::uuid;
+  v_ref := v_doc->'session'->>'reference';
+
+  if (select count(*) from public.stocktake_lines where stocktake_id = v_id and product_id = v_ring) <> 2 then
+    raise exception 'gold and silver were not independent stocktake lines';
+  end if;
+  if exists (
+    select 1 from public.stocktake_lines
+     where stocktake_id = v_id and product_id = v_ring and variant_id is null
+  ) then
+    raise exception 'the ring was counted as one rolled-up shelf';
+  end if;
+  if (select expected_quantity from public.stocktake_lines where stocktake_id = v_id and variant_id = v_gold) <> 4
+     or (select expected_quantity from public.stocktake_lines where stocktake_id = v_id and variant_id = v_silver) <> 3 then
+    raise exception 'the variant snapshots were not 4 and 3';
+  end if;
+
+  select jsonb_agg(jsonb_build_object(
+    'line_id', l.id,
+    'physical_quantity', case
+      when l.variant_id = v_gold then 2
+      when l.product_id = v_plain and l.variant_id is null then 12
+      else l.expected_quantity
+    end
+  ))
+    into v_counts
+    from public.stocktake_lines l
+   where l.stocktake_id = v_id;
+
+  v_result := public.stocktake_save_counts(v_id, v_counts, 'review', true);
+  if coalesce((v_result->>'ok')::boolean, false) is not true then
+    raise exception 'save counts failed: %', v_result;
+  end if;
+
+  select count(*) into v_mov from public.stock_movements;
+  v_result := public.stocktake_finalize(v_id);
+  if coalesce((v_result->>'ok')::boolean, false) is not true then
+    raise exception 'finalize failed: %', v_result;
+  end if;
+  if (v_result->>'movements')::integer <> 2 then
+    raise exception 'finalize reported % movements, expected 2', v_result->>'movements';
+  end if;
+  if (select count(*) from public.stock_movements) <> v_mov + 2 then
+    raise exception 'finalize wrote a different number of ledger rows than it reported';
+  end if;
+
+  if (select stock_quantity from public.product_variants where id = v_gold) <> 2
+     or (select stock_quantity from public.product_variants where id = v_silver) <> 3
+     or (select stock_quantity from public.products where id = v_plain) <> 12
+     or (select stock_quantity from public.products where id = v_ring) <> 5 then
+    raise exception 'finalize did not land gold 2, silver 3, plain 12, ring rollup 5';
+  end if;
+  select expected_quantity into v_expected
+    from public.stocktake_lines where stocktake_id = v_id and variant_id = v_gold;
+  if v_expected <> 4 then
+    raise exception 'the gold snapshot was rewritten to %', v_expected;
+  end if;
+  if exists (
+    select 1 from public.stocktake_lines
+     where stocktake_id = v_id and variant_id = v_silver and movement_id is not null
+  ) then
+    raise exception 'the zero-variance silver line wrote a movement';
+  end if;
+  if not exists (
+    select 1 from public.stock_movements
+     where variant_id = v_gold and reason = 'recount' and notes = 'Stocktake ' || v_ref
+  ) then
+    raise exception 'the gold movement is not linked to the stocktake reference';
+  end if;
+
+  select count(*) into v_mov from public.stock_movements;
+  v_result := public.stocktake_finalize(v_id);
+  if v_result->>'code' <> 'STOCKTAKE_FINALIZED' then
+    raise exception 'a second finalize was not refused: %', v_result;
+  end if;
+  if (select count(*) from public.stock_movements) <> v_mov then
+    raise exception 'a second finalize wrote another movement';
+  end if;
+
+  begin
+    update public.stocktake_lines set physical_quantity = 0 where stocktake_id = v_id;
+    get diagnostics v_n = row_count;
+    if v_n <> 0 then
+      raise exception 'authenticated rewrote a finalized stocktake line';
+    end if;
+  exception when insufficient_privilege then
+    null;
+  end;
+
+  v_doc := public.stocktake_create(false, null);
+  v_id2 := (v_doc->'session'->>'id')::uuid;
+  if (select expected_quantity from public.stocktake_lines where stocktake_id = v_id2 and variant_id = v_silver) <> 3 then
+    raise exception 'the second count did not snapshot silver at 3';
+  end if;
+  update public.product_variants set stock_quantity = 1 where id = v_silver;
+
+  select jsonb_agg(jsonb_build_object('line_id', l.id, 'physical_quantity', l.expected_quantity))
+    into v_counts
+    from public.stocktake_lines l
+   where l.stocktake_id = v_id2;
+  perform public.stocktake_save_counts(v_id2, v_counts, 'review', false);
+  select count(*) into v_mov from public.stock_movements;
+  v_result := public.stocktake_finalize(v_id2);
+  if v_result->>'code' <> 'STOCKTAKE_CONFLICT' then
+    raise exception 'a moved shelf was absorbed: %', v_result;
+  end if;
+  if (select count(*) from public.stock_movements) <> v_mov then
+    raise exception 'a rejected stocktake still wrote a movement';
+  end if;
+  if (select stock_quantity from public.product_variants where id = v_silver) <> 1 then
+    raise exception 'the rejected stocktake changed silver stock';
+  end if;
+  if (select expected_quantity from public.stocktake_lines where stocktake_id = v_id2 and variant_id = v_silver) <> 3 then
+    raise exception 'the conflict rewrote the silver snapshot';
+  end if;
+  if (select count(*) from public.audit_log where action = 'stocktake.conflict' and entity_id = v_id2::text) < 1 then
+    raise exception 'the rejected conflict was not audited';
+  end if;
+  if (select count(*) from public.audit_log where action = 'stocktake.created' and entity_id = v_id::text) < 1
+     or (select count(*) from public.audit_log where action = 'stocktake.updated' and entity_id = v_id::text) < 1
+     or (select count(*) from public.audit_log where action = 'stocktake.finalized' and entity_id = v_id::text) < 1 then
+    raise exception 'created, review, or finalize was not audited';
+  end if;
+
+  perform pg_temp.become(v_viewer, 'authenticated');
+  begin
+    perform public.stocktake_finalize(v_id2);
+    raise exception 'a viewer finalized a stocktake';
+  exception when insufficient_privilege then
+    null;
+  end;
+  begin
+    perform public.stocktake_create(false, null);
+    raise exception 'a viewer opened a stocktake';
+  exception when insufficient_privilege then
+    null;
+  end;
+  if not exists (select 1 from public.stocktakes where id = v_id) then
+    raise exception 'a viewer with view_inventory could not read the stocktake';
+  end if;
+
+  if not ('stocktakes' = any (public.backup_table_order()))
+     or not ('stocktake_lines' = any (public.backup_table_order()))
+     or not ('stocktakes' = any (public.backup_restore_order()))
+     or not ('stocktake_lines' = any (public.backup_restore_order())) then
+    raise exception 'backup does not carry stocktake sessions and lines';
+  end if;
+  if array_position(public.backup_table_order(), 'stocktake_lines')
+     <= array_position(public.backup_table_order(), 'stock_movements') then
+    raise exception 'stocktake lines would restore before the movements they point at';
+  end if;
+  if exists (
+    select 1
+      from pg_trigger t
+      join pg_class c on c.oid = t.tgrelid
+      join pg_proc p on p.oid = t.tgfoid
+     where c.relname in ('stocktakes', 'stocktake_lines')
+       and not t.tgisinternal
+       and pg_get_functiondef(p.oid) ilike '%insert into public.stock_movements%'
+  ) then
+    raise exception 'a stocktake trigger writes the ledger, so a restore could replay movements';
+  end if;
+
+  -- Factory reset deletes variants before products. The finalized line must let
+  -- variant_id clear and keep the shelf name and the quantity it counted.
+  select r.rolname into v_owner
+    from pg_class c
+    join pg_roles r on r.oid = c.relowner
+   where c.oid = 'public.product_variants'::regclass;
+  perform set_config('role', v_owner, true);
+  select shelf_key into v_shelf
+    from public.stocktake_lines
+   where stocktake_id = v_id and variant_id = v_silver;
+  if v_shelf is null then
+    raise exception 'silver line was missing before the variant release';
+  end if;
+  delete from public.stock_movements where variant_id = v_silver;
+  delete from public.product_variants where id = v_silver;
+  if not exists (
+    select 1 from public.stocktake_lines
+     where stocktake_id = v_id
+       and shelf_key = v_shelf
+       and variant_id is null
+       and expected_quantity = 3
+       and physical_quantity = 3
+  ) then
+    raise exception 'releasing a variant rewrote or dropped the finalized shelf';
+  end if;
+
+  raise notice 'stocktake (0060) — variants stay independent, finalize is one ledger transaction, conflicts reject without writing, finalized rows stay historical, viewers cannot finalize, and backup carries the count without replaying it';
+end
+$stocktake60$;
+
 do $$
 begin
   perform set_config('request.jwt.claim.sub', '', true);

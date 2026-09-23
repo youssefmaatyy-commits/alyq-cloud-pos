@@ -18,6 +18,7 @@ import {
 } from "./repository";
 import { buildDemoCategories, buildDemoProducts, safeStorage } from "./demoSeed";
 import { demoProductReferences, demoVariantReferences } from "./productReferences";
+import { demoStocktakeBlocksProduct, demoStocktakeBlocksVariant } from "@/modules/inventory/services/stocktake";
 
 const STORAGE_KEY = "alyq.demo.catalog.v1";
 const LATENCY = 140;
@@ -199,6 +200,12 @@ export class DemoRepository implements CatalogRepository {
         `Product ${id} has historical transactions and cannot be permanently deleted`,
       );
     }
+    if (demoStocktakeBlocksProduct(id)) {
+      throw new AppError(
+        "PRODUCT_HAS_HISTORY",
+        `Product ${id} has stocktake history and cannot be permanently deleted`,
+      );
+    }
     this.state.products = this.state.products.filter((p) => p.id !== id);
     this.persist();
     await delay(undefined, 60);
@@ -325,6 +332,12 @@ export class DemoRepository implements CatalogRepository {
       throw new AppError(
         "VARIANT_IN_USE",
         `${variantLabel(variant)} has ${references} historical record(s); archive it instead`,
+      );
+    }
+    if (demoStocktakeBlocksVariant(id)) {
+      throw new AppError(
+        "VARIANT_IN_USE",
+        `${variantLabel(variant)} is named by a stocktake; archive it instead`,
       );
     }
     this.state.variants = this.state.variants.filter((v) => v.id !== id);

@@ -18,7 +18,8 @@ import { usePos } from "@/modules/pos";
 import { useReturns } from "@/modules/returns";
 import { useOnlineOrders } from "@/modules/online/hooks/OnlineOrdersProvider";
 import { useShifts } from "@/modules/shifts";
-import { listStocktakes } from "@/modules/inventory/services/stocktake";
+import { listStocktakeSessions } from "@/modules/inventory/services/stocktakeService";
+import type { StocktakeSession } from "@/modules/inventory/services/stocktake";
 import { loadStatus } from "@/modules/backup/services/backupService";
 import { getWebsiteRepository } from "@/modules/online/data";
 import type { BackupStatus } from "@/modules/backup/types";
@@ -72,6 +73,7 @@ export function OperationsCenterPage() {
   const [phrase, setPhrase] = useState("");
   const [result, setResult] = useState<string | null>(null);
   const [retentionDays, setRetentionDays] = useState(String(DEFAULT_RETENTION_DAYS));
+  const [stocktakes, setStocktakes] = useState<Pick<StocktakeSession, "id" | "status" | "createdAt">[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -106,6 +108,15 @@ export function OperationsCenterPage() {
           if (!cancelled) setBackupStatus(null);
         });
     }
+    listStocktakeSessions()
+      .then((rows) => {
+        if (!cancelled) {
+          setStocktakes(rows.map((session) => ({ id: session.id, status: session.status, createdAt: session.createdAt })));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setStocktakes([]);
+      });
     if (!isSupabaseConfigured) {
       setSupabaseReachable(false);
       return () => {
@@ -211,11 +222,7 @@ export function OperationsCenterPage() {
             closedAt: shift.closed_at,
           })),
           promotions,
-          stocktakes: listStocktakes().map((session) => ({
-            id: session.id,
-            status: session.status,
-            createdAt: session.createdAt,
-          })),
+          stocktakes,
           backupStatus,
           backupAt,
           storageUsedBytes: sumRegisteredBytes(files),
@@ -226,7 +233,7 @@ export function OperationsCenterPage() {
         new Date().toISOString(),
         new Set(readIds),
       ),
-    [stock, orders, returnsList, shifts, promotions, backupStatus, backupAt, files, warningBytes, supabaseReachable, capabilities, readIds],
+    [stock, orders, returnsList, shifts, promotions, stocktakes, backupStatus, backupAt, files, warningBytes, supabaseReachable, capabilities, readIds],
   );
 
   const references = useMemo(

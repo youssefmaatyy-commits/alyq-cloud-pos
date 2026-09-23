@@ -73,11 +73,15 @@ export const LIVE_TABLES: readonly string[] = [
   "audit_log",
   "online_orders",
   "sales_returns",
+  // 0060: the count session, before its lines. Lines follow the movements they
+  // point at so a restore inserts history and does not replay it.
+  "stocktakes",
   // grandchildren
   "promotion_targets",
   "sale_items",
   "sale_payments",
   "stock_movements",
+  "stocktake_lines",
   "product_content",
   // Phase 45: one content row per storefront category — a child of categories,
   // restored beside the rest of the presentation layer.
@@ -169,6 +173,8 @@ export const DEMO_STORES: readonly string[] = [
   "alyq.demo.shift_counter.v1",
   "alyq.demo.stock_movements.v1",
   "alyq.demo.stock_reservations.v1",
+  // Demo stocktake sessions. Restoring the JSON does not replay movements.
+  "alyq.inventory.stocktakes.v1",
   // approvals and the audit trail
   "alyq.demo.approval_requests.v1",
   "alyq.demo.approval_rules.v1",

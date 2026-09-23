@@ -114,6 +114,12 @@ export const AUDIT_ACTIONS = [
   // Phase 57: a reviewed import was applied or rolled back. Preview is not
   // audited. The row counts the outcome; it does not store the file.
   "import.applied",
+  // Phase 60: a physical count. Keystrokes are not audited. Created, an explicit
+  // review save, finalize, and a rejected shelf conflict are.
+  "stocktake.created",
+  "stocktake.updated",
+  "stocktake.finalized",
+  "stocktake.conflict",
   "website_settings.updated",
   // Identity (Phase 10). A session event is written by the app because there is
   // no table behind it; the user and role events are written by the settings
@@ -235,6 +241,8 @@ export const AUDIT_ENTITIES = [
   "promotion",
   /** A promo code (`coupons`) — created, changed or switched off. */
   "promo_code",
+  /** A physical count (`stocktakes`) — the session, not each keystroke. */
+  "stocktake",
 ] as const;
 export type AuditEntity = (typeof AUDIT_ENTITIES)[number];
 

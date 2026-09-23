@@ -479,6 +479,13 @@ export const en = {
   "inventory.stocktake.completeCounts": "Complete every physical count before review",
   "inventory.stocktake.finalized": "Stocktake finalized and movements recorded",
   "inventory.stocktake.finalizeFailed": "Stocktake could not be finalized",
+  "inventory.stocktake.conflict": "Stock changed since this count started. Review the shelf before finalizing. Nothing was adjusted.",
+  "inventory.stocktake.incomplete": "Complete every physical count before finalizing.",
+  "inventory.stocktake.saveFailed": "The count could not be saved. Demo history was not used instead.",
+  "inventory.stocktake.loadFailed": "Stocktake history could not be loaded. Demo history was not used instead.",
+  "inventory.stocktake.emptyCatalogue": "There is no tracked stock to count.",
+  "inventory.stocktake.liveNote": "This stocktake is stored in the database and is shared across workstations.",
+  "inventory.stocktake.demoNote": "Demo mode keeps this stocktake on this browser only. It is not production history.",
   "inventory.stocktake.empty": "No stocktake in progress",
   "inventory.stocktake.emptyHint": "Start a stocktake to count current exact product and variant shelves.",
   "inventory.stocktake.history": "Stocktake history",
@@ -3615,6 +3622,7 @@ export const en = {
   "audit.entity.system": "System",
   "audit.entity.delivery_zone": "Delivery zone",
   "audit.entity.promotion": "Discount",
+  "audit.entity.stocktake": "Stocktake",
   "audit.entity.promo_code": "Promo code",
 
   "backup.title": "Backup & recovery",
@@ -4054,7 +4062,7 @@ export const en = {
   "operations.retention.days": "Minimum age in days",
   "operations.retention.none": "Nothing is past the retention age.",
   "operations.retention.noArchive": "There is no separate archive store. Eligible files are removed only after this preview and the confirmation phrase.",
-  "operations.stocktake.localNote": "Open stocktake warnings read the local stocktake session only. That history is not production storage.",
+  "operations.stocktake.localNote": "Open stocktake warnings read the stocktake record for this mode. Live mode uses the database. Demo mode keeps a local session and is not production storage.",
   "audit.action.operations.cleanup_executed": "Cleanup confirmed",
   "audit.action.operations.retention_applied": "Retention applied",
   "importCenter.title": "Import Center",
@@ -4090,6 +4098,10 @@ export const en = {
   "importCenter.parseError": "The file could not be read.",
   "importCenter.result": "Wrote {{written}}, skipped {{skipped}}, errors {{errors}}.",
   "audit.action.import.applied": "Import applied",
+  "audit.action.stocktake.created": "Stocktake started",
+  "audit.action.stocktake.updated": "Stocktake count saved",
+  "audit.action.stocktake.finalized": "Stocktake finalized",
+  "audit.action.stocktake.conflict": "Stocktake rejected a stock conflict",
 } as const;
 
 export type TranslationKey = keyof typeof en;
@@ -4563,6 +4575,13 @@ export const ar: Record<TranslationKey, string> = {
   "inventory.stocktake.completeCounts": "أكمل كل الكميات الفعلية قبل المراجعة",
   "inventory.stocktake.finalized": "تم اعتماد الجرد وتسجيل الحركات",
   "inventory.stocktake.finalizeFailed": "تعذر اعتماد الجرد",
+  "inventory.stocktake.conflict": "تغيّر المخزون منذ بدء هذا الجرد. راجع الرف قبل الاعتماد. لم يُعدَّل شيء.",
+  "inventory.stocktake.incomplete": "أكمل كل الكميات الفعلية قبل الاعتماد.",
+  "inventory.stocktake.saveFailed": "تعذر حفظ العد. لم يُستخدم سجل التجربة بدلاً منه.",
+  "inventory.stocktake.loadFailed": "تعذر تحميل سجل الجرد. لم يُستخدم سجل التجربة بدلاً منه.",
+  "inventory.stocktake.emptyCatalogue": "لا يوجد مخزون متابَع لعدّه.",
+  "inventory.stocktake.liveNote": "يُحفظ هذا الجرد في قاعدة البيانات ويظهر على كل الأجهزة.",
+  "inventory.stocktake.demoNote": "وضع التجربة يحفظ هذا الجرد على هذا المتصفح فقط. ليس سجل إنتاج.",
   "inventory.stocktake.empty": "لا يوجد جرد قيد التنفيذ",
   "inventory.stocktake.emptyHint": "ابدأ جرداً لعدّ رفوف المنتجات والاختيارات الحالية.",
   "inventory.stocktake.history": "سجل الجرد",
@@ -7680,6 +7699,7 @@ export const ar: Record<TranslationKey, string> = {
   "audit.entity.system": "النظام",
   "audit.entity.delivery_zone": "منطقة توصيل",
   "audit.entity.promotion": "خصم",
+  "audit.entity.stocktake": "جرد",
   "audit.entity.promo_code": "كود خصم",
 
   "backup.title": "النسخ الاحتياطي والاستعادة",
@@ -8113,7 +8133,7 @@ export const ar: Record<TranslationKey, string> = {
   "operations.retention.days": "الحد الأدنى للعمر بالأيام",
   "operations.retention.none": "لا شيء تجاوز مدة الاحتفاظ.",
   "operations.retention.noArchive": "لا يوجد مخزن أرشفة منفصل. الملفات المؤهلة تُزال فقط بعد هذه المعاينة وعبارة التأكيد.",
-  "operations.stocktake.localNote": "تحذيرات الجرد المفتوح تقرأ جلسة الجرد المحلية فقط. هذا السجل ليس تخزين إنتاج.",
+  "operations.stocktake.localNote": "تحذيرات الجرد المفتوح تقرأ سجل الجرد الخاص بهذا الوضع. الوضع الحي يستخدم قاعدة البيانات. وضع التجربة يحتفظ بجلسة محلية وليس تخزين إنتاج.",
   "audit.action.operations.cleanup_executed": "تأكيد التنظيف",
   "audit.action.operations.retention_applied": "تطبيق الاحتفاظ",
   "importCenter.title": "مركز الاستيراد",
@@ -8149,6 +8169,10 @@ export const ar: Record<TranslationKey, string> = {
   "importCenter.parseError": "تعذرت قراءة الملف.",
   "importCenter.result": "كُتب {{written}}، وتُخطي {{skipped}}، والأخطاء {{errors}}.",
   "audit.action.import.applied": "تطبيق الاستيراد",
+  "audit.action.stocktake.created": "بدء الجرد",
+  "audit.action.stocktake.updated": "حفظ عدّ الجرد",
+  "audit.action.stocktake.finalized": "اعتماد الجرد",
+  "audit.action.stocktake.conflict": "رفض الجرد لتعارض المخزون",
 };
 
 export const dictionaries = { en, ar } as const;

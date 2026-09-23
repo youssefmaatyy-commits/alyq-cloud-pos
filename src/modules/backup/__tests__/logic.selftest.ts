@@ -270,7 +270,7 @@ const migration = fs.readFileSync(
 // promotion tables forward. Order parity reads the LATEST file; grants and
 // vocabulary stay 0029.
 const orderMigration = fs.readFileSync(
-  path.join(repoRoot(), "supabase/migrations/0050_promotions.sql"),
+  path.join(repoRoot(), "supabase/migrations/0060_live_stocktake.sql"),
   "utf8",
 );
 
@@ -552,6 +552,7 @@ test("the offline allowlist is the business, and the session is not in it", () =
     "alyq.demo.promotions.v1",
     "alyq.demo.promotion_targets.v1",
     "alyq.demo.promo_code_usages.v1",
+    "alyq.inventory.stocktakes.v1",
   ]) {
     assert.ok(DEMO_STORES.includes(required), `${required} is carried`);
   }
