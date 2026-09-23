@@ -758,3 +758,23 @@ session; and the client only ever holds the Supabase anon key.
 6. Schema compatibility is a single version number. A future version needs an
    explicit upgrade path; today a mismatch is refused rather than guessed at.
 7. The data-health report diagnoses and never repairs, by design.
+
+---
+
+## Phase 53 — Profit, margin, best sellers & slow movers — Code complete (session)
+
+Profitability is a first-class Advanced Reports tab (`Profitability`, never
+`Profit` — smoke `clickTab` uses `startsWith` and would otherwise hit Products).
+COGS uses `sale_items.unit_cost` frozen at completion (migration 0055); a missing
+snapshot is unknown, never today's catalogue cost and never free. Ranking,
+margins and slow-mover classification stay in TypeScript. Best sellers are real
+transactions (units, then net). Slow movers are stock on hand with no lookback
+sales — not low stock or out of stock.
+
+**Stocktake audit:** Phase 52 stocktake history is still demo/local only
+(`localStorage` key `alyq.inventory.stocktakes.v1` in
+`src/modules/inventory/services/stocktake.ts`). There is no live Supabase
+persistence for stocktake sessions. Recorded as a Final Audit blocker; this
+phase did not rewrite stocktake.
+
+Do not deploy 0055 to hosted Supabase from this session. Canonical is not pushed.

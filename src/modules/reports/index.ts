@@ -116,3 +116,25 @@ export {
   summarizeSuppliers,
 } from "./services/suppliersExport";
 export type { SuppliersExportInput, SupplierActivityRow } from "./services/suppliersExport";
+
+export {
+  buildProfitability,
+  historicalUnitCost,
+  rankBestSellers,
+} from "./services/profitability";
+export type {
+  BestSellerRank,
+  ProfitabilityKpis,
+  ProfitabilityReport,
+  ProductProfitRow,
+  ReportChannel,
+  SlowLookbackDays,
+  VariantProfitRow,
+} from "./services/profitability";
+export { buildProfitabilitySheets } from "./services/profitabilityExport";
+export {
+  fetchProfitabilitySummary,
+  fetchProductProfitability,
+  fetchSlowMovers,
+  fetchVariantProfitability,
+} from "./services/reportAggregates";

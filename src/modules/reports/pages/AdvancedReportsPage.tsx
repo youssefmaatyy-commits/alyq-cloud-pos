@@ -4,11 +4,12 @@
  * The Reports hub answers "give me the file". This screen answers the questions
  * somebody asks *before* they know which file they want: who sold the most, what
  * stopped moving, which customer owes us, which drawer was short, what the month
- * actually made. Six reports, one date window, one permission.
+ * actually made. Eight reports, one date window, one permission.
  *
  * It is a reading surface over the existing providers and the existing
- * arithmetic — nothing here fetches a repository, and nothing here computes a
- * figure a second time:
+ * arithmetic — the profit tab additionally lists realized online orders once
+ * (promo codes and delivery fees), and nothing here computes a figure a second
+ * time:
  *
  *   · sales / product / customer / expense / shift numbers come from the
  *     analytics services, which are the same functions the export buttons call,
@@ -45,6 +46,8 @@ import { useCustomers } from "@/modules/customers/hooks/CustomerProvider";
 import { useExpenses } from "@/modules/expenses/hooks/ExpenseProvider";
 import { useReturns } from "@/modules/returns/hooks/ReturnProvider";
 import { useShifts } from "@/modules/shifts/hooks/ShiftProvider";
+import { getOnlineOrdersRepository } from "@/modules/online/data";
+import type { OnlineOrder } from "@/modules/online/types";
 import { withinDateRange } from "@/lib/export";
 import { assertCanViewReports } from "../services/reportAccess";
 import { computeFinancialTotals, buildFinancialSheets, type FinancialTotals } from "../services/financialExport";
@@ -63,9 +66,18 @@ import { CustomerReportTab } from "../components/tabs/CustomerReportTab";
 import { ExpenseReportTab } from "../components/tabs/ExpenseReportTab";
 import { ShiftReportTab } from "../components/tabs/ShiftReportTab";
 import { VariantReportTab } from "../components/tabs/VariantReportTab";
+import { ProfitabilityTab } from "../components/tabs/ProfitabilityTab";
 import type { ReportTabProps } from "../components/tabs/types";
 
-type TabId = "sales" | "products" | "variants" | "customers" | "expenses" | "shifts" | "financial";
+type TabId =
+  | "sales"
+  | "products"
+  | "variants"
+  | "customers"
+  | "expenses"
+  | "shifts"
+  | "financial"
+  | "profit";
 
 export function AdvancedReportsPage() {
   const { t, money, num, lang } = useI18n();
@@ -75,6 +87,7 @@ export function AdvancedReportsPage() {
   const { expenses } = useExpenses();
   const { returnsList, refundsList, loading: returnsLoading } = useReturns();
   const { shifts, summaryFor } = useShifts();
+  const [orders, setOrders] = useState<OnlineOrder[]>([]);
 
   const [tab, setTab] = useState<TabId>("sales");
   // Everything is in scope to begin with, and no preset is highlighted: a
@@ -93,6 +106,7 @@ export function AdvancedReportsPage() {
       products,
       variants,
       returns: returnsList,
+      orders,
       customers,
       expenses,
       shifts,
@@ -100,8 +114,23 @@ export function AdvancedReportsPage() {
       pick: (arabic: string | null | undefined, english: string | null | undefined) =>
         lang === "ar" ? arabic || english || "" : english || arabic || "",
     }),
-    [exportRange, sales, products, variants, returnsList, customers, expenses, shifts, summaryFor, lang],
+    [exportRange, sales, products, variants, returnsList, orders, customers, expenses, shifts, summaryFor, lang],
   );
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const list = await getOnlineOrdersRepository().listOrders({ limit: null });
+        if (!cancelled) setOrders(list);
+      } catch {
+        if (!cancelled) setOrders([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // The financial picture, from the hub's own totals — including what the
   // refunds took back out of it, which is the figure nobody can see elsewhere.
@@ -218,6 +247,7 @@ export function AdvancedReportsPage() {
                 { id: "expenses", label: t("reports.adv.tabExpenses"), count: expenses.length },
                 { id: "shifts", label: t("reports.adv.tabShifts"), count: shifts.length },
                 { id: "financial", label: t("reports.adv.tabFinancial") },
+                { id: "profit", label: t("reports.adv.tabProfit") },
               ]}
             />
           </Card>
@@ -228,6 +258,7 @@ export function AdvancedReportsPage() {
           {tab === "customers" ? <CustomerReportTab {...tabProps} /> : null}
           {tab === "expenses" ? <ExpenseReportTab {...tabProps} /> : null}
           {tab === "shifts" ? <ShiftReportTab {...tabProps} /> : null}
+          {tab === "profit" ? <ProfitabilityTab {...tabProps} /> : null}
 
           {tab === "financial" ? (
             <div className="space-y-4">

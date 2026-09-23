@@ -82,6 +82,8 @@ interface SaleItemRow {
   automatic_promotion_id?: string | null;
   automatic_promotion_name?: string | null;
   automatic_discount_amount?: number | string | null;
+  /** Present from migration 0055 onward; older rows are null (unknown cost). */
+  unit_cost?: number | string | null;
 }
 
 function toNumber(value: number | string | null | undefined): number {
@@ -151,6 +153,7 @@ function mapSale(row: SaleRow, items: SaleItemRow[] = [], payments: SalePaymentR
       automatic_promotion_id: i.automatic_promotion_id ?? null,
       automatic_promotion_name: i.automatic_promotion_name ?? null,
       automatic_discount_amount: i.automatic_discount_amount == null ? 0 : toNumber(i.automatic_discount_amount),
+      unit_cost: i.unit_cost == null ? null : toNumber(i.unit_cost),
     })),
     payments: payments.map(mapPayment),
     customer_id: row.customer_id ?? null,

@@ -70,6 +70,11 @@ export interface SaleItem {
   automatic_promotion_id?: string | null;
   automatic_promotion_name?: string | null;
   automatic_discount_amount?: number;
+  /**
+   * Cost per unit frozen at sale time (Phase 53). Null on rows written before
+   * the snapshot existed — unknown, never treated as free.
+   */
+  unit_cost?: number | null;
 }
 
 /**

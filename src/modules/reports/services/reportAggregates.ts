@@ -164,3 +164,95 @@ export async function fetchFinancialSummary(range: DateRange): Promise<Aggregate
     unitCount: n(raw.unitCount),
   }));
 }
+
+/** Additive profitability parts (Phase 53). Margins stay in TypeScript. */
+export interface ProfitabilitySummaryParts {
+  invoiceCount: number;
+  unitsSold: number;
+  grossSales: number;
+  automaticDiscounts: number;
+  manualItemDiscounts: number;
+  manualInvoiceDiscounts: number;
+  promoCodeDiscounts: number;
+  netSales: number;
+  cogs: number;
+  cogsUnknownUnits: number;
+  refundsAmount: number;
+  refundedUnits: number;
+  deliveryFeesCollected: number;
+  shippingDiscount: number;
+}
+
+export async function fetchProfitabilitySummary(
+  range: DateRange,
+  channel: string = "all",
+): Promise<AggregateResult<ProfitabilitySummaryParts>> {
+  return callRpc(
+    "reports_profitability_summary",
+    { ...boundsOf(range), p_channel: channel },
+    (raw) => ({
+      invoiceCount: n(raw.invoiceCount),
+      unitsSold: n(raw.unitsSold),
+      grossSales: n(raw.grossSales),
+      automaticDiscounts: n(raw.automaticDiscounts),
+      manualItemDiscounts: n(raw.manualItemDiscounts),
+      manualInvoiceDiscounts: n(raw.manualInvoiceDiscounts),
+      promoCodeDiscounts: n(raw.promoCodeDiscounts),
+      netSales: n(raw.netSales),
+      cogs: n(raw.cogs),
+      cogsUnknownUnits: n(raw.cogsUnknownUnits),
+      refundsAmount: n(raw.refundsAmount),
+      refundedUnits: n(raw.refundedUnits),
+      deliveryFeesCollected: n(raw.deliveryFeesCollected),
+      shippingDiscount: n(raw.shippingDiscount),
+    }),
+  );
+}
+
+export async function fetchProductProfitability(
+  range: DateRange,
+  channel: string = "all",
+): Promise<AggregateResult<Record<string, unknown>[]>> {
+  const client = safeClient();
+  if (!client || typeof client.rpc !== "function") return { ok: false, reason: NO_DATABASE };
+  const { data, error } = await client.rpc("reports_product_profitability", {
+    ...boundsOf(range),
+    p_channel: channel,
+  });
+  if (error) return { ok: false, reason: error.message || "reports_product_profitability" };
+  return Array.isArray(data)
+    ? { ok: true, value: data as Record<string, unknown>[] }
+    : { ok: false, reason: "reports_product_profitability returned nothing" };
+}
+
+export async function fetchVariantProfitability(
+  range: DateRange,
+  channel: string = "all",
+): Promise<AggregateResult<Record<string, unknown>[]>> {
+  const client = safeClient();
+  if (!client || typeof client.rpc !== "function") return { ok: false, reason: NO_DATABASE };
+  const { data, error } = await client.rpc("reports_variant_profitability", {
+    ...boundsOf(range),
+    p_channel: channel,
+  });
+  if (error) return { ok: false, reason: error.message || "reports_variant_profitability" };
+  return Array.isArray(data)
+    ? { ok: true, value: data as Record<string, unknown>[] }
+    : { ok: false, reason: "reports_variant_profitability returned nothing" };
+}
+
+export async function fetchSlowMovers(
+  lookbackDays: number = 90,
+  channel: string = "all",
+): Promise<AggregateResult<Record<string, unknown>[]>> {
+  const client = safeClient();
+  if (!client || typeof client.rpc !== "function") return { ok: false, reason: NO_DATABASE };
+  const { data, error } = await client.rpc("reports_slow_movers", {
+    p_lookback_days: lookbackDays,
+    p_channel: channel,
+  });
+  if (error) return { ok: false, reason: error.message || "reports_slow_movers" };
+  return Array.isArray(data)
+    ? { ok: true, value: data as Record<string, unknown>[] }
+    : { ok: false, reason: "reports_slow_movers returned nothing" };
+}

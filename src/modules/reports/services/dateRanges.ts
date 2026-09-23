@@ -34,18 +34,38 @@ export function isoDate(date: Date): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
-export type RangePreset = "allTime" | "today" | "thisMonth" | "last30";
+export type RangePreset =
+  | "allTime"
+  | "today"
+  | "yesterday"
+  | "last7"
+  | "last30"
+  | "thisMonth"
+  | "previousMonth";
 
 /** The calendar span a preset covers, in local time. */
 export function presetRange(preset: RangePreset, now: Date = new Date()): DateRangeValue {
   switch (preset) {
     case "today":
       return { from: isoDate(now), to: isoDate(now) };
+    case "yesterday": {
+      const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+      const key = isoDate(day);
+      return { from: key, to: key };
+    }
     case "thisMonth":
       return { from: isoDate(new Date(now.getFullYear(), now.getMonth(), 1)), to: isoDate(now) };
+    case "previousMonth": {
+      const first = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const last = new Date(now.getFullYear(), now.getMonth(), 0);
+      return { from: isoDate(first), to: isoDate(last) };
+    }
+    case "last7": {
+      const from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6);
+      return { from: isoDate(from), to: isoDate(now) };
+    }
     case "last30": {
-      const from = new Date(now);
-      from.setDate(from.getDate() - 29); // 30 days inclusive of today
+      const from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 29); // 30 days inclusive of today
       return { from: isoDate(from), to: isoDate(now) };
     }
     case "allTime":

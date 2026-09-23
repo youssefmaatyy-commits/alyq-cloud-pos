@@ -154,9 +154,11 @@ enforced in the screen, in the service and in the database alike; the register o
 47 such acts and the matrix that ties each to its guard and its database
 protection are in
 [`docs/PERMISSION_MATRIX.md`](docs/PERMISSION_MATRIX.md). The live schema
-(migrations 0001–0029) covers identity, roles, shifts, expenses, the audit trail,
+(migrations 0001–0055) covers identity, roles, shifts, expenses, the audit trail,
 card payment at the register, the refund lifecycle, the storefront's catalog
-reads, order placement, payment proofs and resolution, and backups — with the
+reads, order placement, payment proofs and resolution, backups, promotions,
+POS item discounts, and the Phase 53 sale-line cost snapshot used by
+profitability reports — with the
 database enforcing the permission matrix itself. The plan, acceptance criteria and
 testing strategy live in
 [`docs/PRODUCTION_READINESS_PLAN.md`](docs/PRODUCTION_READINESS_PLAN.md), and the

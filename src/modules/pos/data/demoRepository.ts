@@ -9,7 +9,7 @@ import type {
 import { AppError } from "@/modules/products/data/repository";
 import { getDemoRepository } from "@/modules/products/data/demoRepository";
 import { applyDemoAdjustment } from "@/modules/inventory/data/demoRepository";
-import { variantLabel } from "@/modules/products/variants";
+import { variantCost, variantLabel } from "@/modules/products/variants";
 import { getWebsiteRepository } from "@/modules/online/data";
 import { promotionUnitPrice } from "@/modules/online/services/pricing";
 import { getDemoShiftRepository } from "@/modules/shifts/data/demoRepository";
@@ -238,6 +238,7 @@ export class DemoSalesRepository implements SalesRepository {
           automatic_promotion_id: promotion.promotionId,
           automatic_promotion_name: promotionName,
           automatic_discount_amount: automaticDiscount,
+          unit_cost: round2(variant ? variantCost(variant, product) : Number(product.cost_price ?? 0)),
         });
       }
 

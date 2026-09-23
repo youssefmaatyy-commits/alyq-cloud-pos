@@ -49,8 +49,11 @@ export function DateRangePicker({
   const presets: { id: RangePreset; label: string }[] = [
     { id: "allTime", label: t("export.range.allTime") },
     { id: "today", label: t("export.range.today") },
-    { id: "thisMonth", label: t("export.range.thisMonth") },
+    { id: "yesterday", label: t("export.range.yesterday") },
+    { id: "last7", label: t("export.range.last7") },
     { id: "last30", label: t("export.range.last30") },
+    { id: "thisMonth", label: t("export.range.thisMonth") },
+    { id: "previousMonth", label: t("export.range.previousMonth") },
   ];
 
   return (

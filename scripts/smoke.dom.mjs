@@ -2229,7 +2229,7 @@ async function main() {
   assert.ok(advertisedCount("Payments") > 0, "and the payment lines come back");
   console.log("  ✓ the date range narrows every export, and an empty range writes nothing");
 
-  // ── Phase 14 · Advanced reports: six tabs over one window, and their file ──
+  // ── Phase 14 · Advanced reports: every tab over one window, and their file ──
   // The hub above proves the raw extracts still write. This proves the screen
   // that answers questions *before* anybody knows which file they want renders
   // the same data — the invoices, the expense and the closed shift this suite
@@ -2327,6 +2327,23 @@ async function main() {
   assert.ok(bodyText().includes("Net after refunds"), "net of what the refunds took back out");
   assert.ok(bodyText().includes("Net profit"), "alongside the hub's own financial totals");
 
+  // Label is "Profitability" on purpose: clickTab uses startsWith, and
+  // "Products".startsWith("Profit") is true.
+  await clickTab("Profitability", "Discount impact");
+  assert.ok(bodyText().includes("Gross sales"), "management KPIs lead the profit tab");
+  assert.ok(bodyText().includes("Slow-mover lookback"), "slow movers are their own control, not low stock");
+  const profitReport = await captureTabExport("profitability");
+  assert.ok(profitReport.sheetNames.includes("Summary"), "the profit workbook opens on a summary");
+  assert.ok(
+    profitReport.sheetNames.includes("Product profitability") &&
+      profitReport.sheetNames.includes("Variant profitability"),
+    "with product and variant profitability sheets",
+  );
+  assert.ok(
+    profitReport.sheetNames.includes("Best sellers") && profitReport.sheetNames.includes("Slow movers"),
+    "and real best-seller / slow-mover sheets, not Featured",
+  );
+
   // One window drives every tab: a range holding nothing empties the screen and
   // says so, instead of showing yesterday's figures under today's dates.
   await clickTab("Sales", "Sales by employee");
@@ -2339,7 +2356,7 @@ async function main() {
   click("All time", mainEl());
   for (let i = 0; i < 25 && bodyText().includes("Nothing in this window"); i += 1) await sleep(200);
   assert.ok(tableRows() >= 3, "clearing the range brings the figures back");
-  console.log("  ✓ advanced reports: six tabs over one window, four real workbooks, empty range explained");
+  console.log("  ✓ advanced reports: every tab over one window, real workbooks, empty range explained");
 
   // ── Phase 14 · Dashboard: KPI cards and four SVG charts, behind the gate ──
   await navigate("#/");

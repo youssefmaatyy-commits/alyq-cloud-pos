@@ -35,6 +35,7 @@ export function ReportTable<T>({
   emptyHint,
   footerNote,
   dense = false,
+  onRowClick,
 }: {
   columns: ReportColumn<T>[];
   rows: readonly T[];
@@ -45,6 +46,7 @@ export function ReportTable<T>({
   emptyHint?: string;
   footerNote?: string;
   dense?: boolean;
+  onRowClick?(row: T): void;
 }) {
   const cellPad = dense ? "px-3 py-2" : "px-3 py-2.5";
 
@@ -78,7 +80,10 @@ export function ReportTable<T>({
           {rows.map((row, index) => (
             <tr
               key={rowKey(row, index)}
-              className="border-b border-slate-50 last:border-0 hover:bg-slate-50/60"
+              className={`border-b border-slate-50 last:border-0 hover:bg-slate-50/60${
+                onRowClick ? " cursor-pointer" : ""
+              }`}
+              onClick={onRowClick ? () => onRowClick(row) : undefined}
             >
               {columns.map((column, columnIndex) => (
                 <td

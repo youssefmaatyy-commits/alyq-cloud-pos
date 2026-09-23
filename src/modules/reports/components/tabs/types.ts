@@ -5,6 +5,7 @@ import type { Product } from "@/modules/products/types";
 import type { ProductVariant } from "@/modules/products/variants";
 import type { Customer } from "@/modules/customers/types";
 import type { SalesReturn } from "@/modules/returns/types";
+import type { OnlineOrder } from "@/modules/online/types";
 import type { Expense } from "@/modules/expenses/types";
 import type { Shift } from "@/modules/shifts/types";
 import type { DateRange } from "../../services/financialExport";
@@ -44,4 +45,9 @@ export interface ReportTabProps {
    * returns, which is exactly what it knows.
    */
   returns?: readonly SalesReturn[];
+  /**
+   * Phase 53: realized online orders (those with a sale_id), for promo-code
+   * and delivery-fee KPIs. Optional — missing means those extras are zero.
+   */
+  orders?: readonly OnlineOrder[];
 }
