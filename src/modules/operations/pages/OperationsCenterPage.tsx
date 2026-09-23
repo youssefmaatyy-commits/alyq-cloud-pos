@@ -8,6 +8,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { canAct } from "@/lib/permissions/enforce";
+import { operationsAccess } from "@/lib/permissions/workspaces";
 import { isSupabaseConfigured, getSupabaseClient } from "@/lib/supabase/client";
 import { PageHeader } from "@/components/layout/AppShell";
 import { Badge, Button, Card, EmptyState, TextInput } from "@/components/ui";
@@ -43,7 +44,8 @@ const TABS: Tab[] = ["overview", "notifications", "usage", "storage", "cleanup",
 
 export function OperationsCenterPage() {
   const { t } = useI18n();
-  const allowed = canAct("manage_settings");
+  const access = operationsAccess(canAct);
+  const allowed = access.view;
   const [tab, setTab] = useState<Tab>("overview");
   const catalog = useCatalog();
   const { customers } = useCustomers();
@@ -177,6 +179,7 @@ export function OperationsCenterPage() {
       "manage_website",
       "view_backups",
       "manage_settings",
+      "run_health_check",
     ] as const;
     return new Set(known.filter((capability) => canAct(capability)));
   }, []);
@@ -327,7 +330,7 @@ export function OperationsCenterPage() {
         crumbs={[{ label: t("nav.dashboard"), to: "/" }, { label: t("admin.settings.title"), to: "/settings" }, { label: t("operations.title") }]}
       />
       <div className="mb-4 flex flex-wrap gap-1">
-        {TABS.map((key) => (
+        {TABS.filter((key) => access.cleanup || (key !== "storage" && key !== "cleanup" && key !== "retention")).map((key) => (
           <button
             key={key}
             type="button"
@@ -436,32 +439,36 @@ export function OperationsCenterPage() {
             </div>
           </dl>
           <p className="text-xs text-stone-500">{t("operations.usage.estimateNote")}</p>
-          <label className="block text-xs font-bold text-stone-700">
-            {t("operations.usage.threshold")}
-            <TextInput
-              className="mt-1 max-w-xs"
-              value={threshold}
-              inputMode="numeric"
-              onChange={(event) => setThreshold(event.target.value)}
-              placeholder={t("operations.usage.thresholdHint")}
-            />
-          </label>
-          <Button
-            type="button"
-            variant="secondary"
-            onClick={() => {
-              const parsed = Number(threshold);
-              const next = Number.isFinite(parsed) && parsed > 0 ? parsed : null;
-              saveStorageWarningBytes(next);
-              setThreshold(next === null ? "" : String(next));
-            }}
-          >
-            {t("common.save")}
-          </Button>
+          {access.cleanup ? (
+            <>
+              <label className="block text-xs font-bold text-stone-700">
+                {t("operations.usage.threshold")}
+                <TextInput
+                  className="mt-1 max-w-xs"
+                  value={threshold}
+                  inputMode="numeric"
+                  onChange={(event) => setThreshold(event.target.value)}
+                  placeholder={t("operations.usage.thresholdHint")}
+                />
+              </label>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => {
+                  const parsed = Number(threshold);
+                  const next = Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+                  saveStorageWarningBytes(next);
+                  setThreshold(next === null ? "" : String(next));
+                }}
+              >
+                {t("common.save")}
+              </Button>
+            </>
+          ) : null}
         </Card>
       ) : null}
 
-      {tab === "storage" || tab === "cleanup" || tab === "retention" ? (
+      {access.cleanup && (tab === "storage" || tab === "cleanup" || tab === "retention") ? (
         <Card className="space-y-3">
           <p className="text-xs leading-relaxed text-stone-600">{t("operations.storage.backupNote")}</p>
           <p className="text-xs font-semibold text-stone-700">{t("operations.cleanup.protected")}</p>

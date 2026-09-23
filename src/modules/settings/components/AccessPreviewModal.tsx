@@ -4,6 +4,7 @@ import { useI18n } from "@/lib/i18n/I18nProvider";
 import { APP_ROLES, CAPABILITIES, type AppRole } from "@/lib/permissions/roles";
 import { capabilityLabelKey } from "@/lib/permissions/catalog";
 import { actionTally, previewAccess } from "@/lib/permissions/preview";
+import { workspaceDoors } from "@/lib/permissions/workspaces";
 import { customRoleName, type CustomRole } from "@/lib/permissions/customRoles";
 import type { ManagedUser } from "../types";
 import { roleLabel } from "./UserStatusBadge";
@@ -93,6 +94,7 @@ export function AccessPreviewModal({ open, onClose, roles, users, initialRoleId 
       : roleLabel(t, subject.kind === "system" ? subject.role : "viewer");
 
   const tally = actionTally(preview.capabilities);
+  const doors = workspaceDoors(new Set(preview.capabilities));
 
   return (
     <Modal open={open} onClose={onClose} size="lg" title={t("settings.preview.title")}>
@@ -179,6 +181,14 @@ export function AccessPreviewModal({ open, onClose, roles, users, initialRoleId 
               >
                 {translate(`permissions.action.${entry.action}`)} · {num(entry.count)}
               </span>
+            ))}
+          </div>
+          <div className="mt-3 flex flex-wrap gap-1.5 border-t border-slate-200 pt-2.5">
+            <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{t("settings.preview.workspaces")}</span>
+            {doors.map((door) => (
+              <Badge key={door.key} tone={door.open ? "success" : "neutral"}>
+                {t(door.labelKey as Parameters<typeof t>[0])}
+              </Badge>
             ))}
           </div>
 

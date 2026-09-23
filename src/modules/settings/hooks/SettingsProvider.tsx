@@ -166,7 +166,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 
   const saveRole = useCallback(
     async (form: RoleFormState) => {
-      const roleContext = { existing: rolesRef.current };
+      const roleContext = { existing: rolesRef.current, users: usersRef.current };
       const saved = form.id
         ? await updateRole(form, roleContext)
         : await createRole(form, roleContext);
@@ -178,7 +178,10 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 
   const toggleRoleActive = useCallback(
     async (role: CustomRole) => {
-      const saved = await setRoleActive(role.id, !role.active, { existing: rolesRef.current });
+      const saved = await setRoleActive(role.id, !role.active, {
+        existing: rolesRef.current,
+        users: usersRef.current,
+      });
       await refresh();
       return saved;
     },

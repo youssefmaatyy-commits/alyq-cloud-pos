@@ -35,6 +35,7 @@ import {
   type ExportSheet,
   type Translate,
 } from "@/lib/export";
+import { withoutSensitiveMoney } from "./sensitiveExport";
 import { paymentTotals } from "@/modules/pos/services/salesExport";
 import { PAYMENT_METHODS, type PaymentMethod, type Sale, type SalePayment } from "@/modules/pos/types";
 import type { Product } from "@/modules/products/types";
@@ -62,6 +63,12 @@ export interface FinancialExportInput {
   summaryFor(shift: Shift): ShiftSummary | null;
   range: DateRange;
   t: Translate;
+  /**
+   * Cost, COGS and profit. Defaults to shown so a caller that forgets the flag
+   * does not silently change a pinned workbook. The screen passes
+   * `canAct("view_cost")`.
+   */
+  maySeeCost?: boolean;
 }
 
 /** Every money figure the Summary sheet reports. */
@@ -385,7 +392,8 @@ export function buildFinancialSheets(input: FinancialExportInput): BuiltSheet[] 
   // Defined in `cashLedgerSheetOf` below, for the same reason as payments.
   const cashSheet = cashLedgerSheetOf({ sales, expenses, refundsList, shifts, t });
 
-  return buildSheets([summary, payments, returns, refunds, expensesSheet, shiftsSheet, cashSheet]);
+  const sheets = buildSheets([summary, payments, returns, refunds, expensesSheet, shiftsSheet, cashSheet]);
+  return input.maySeeCost === false ? withoutSensitiveMoney(sheets, t) : sheets;
 }
 
 // ── Sheets shared with the standalone Returns and Expenses exports ─────────

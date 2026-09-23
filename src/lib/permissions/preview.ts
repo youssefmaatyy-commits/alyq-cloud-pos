@@ -34,7 +34,7 @@ import {
 } from "./catalog";
 import { resolveCapabilities } from "./customRoles";
 import { applyExceptions, type CapabilityExceptions } from "./exceptions";
-import { capabilityForPath } from "./routes";
+import { capabilityForPath, pathAdmits } from "./routes";
 
 /** One sidebar destination, in the order the sidebar lists them. */
 export interface PreviewScreen {
@@ -68,10 +68,18 @@ export const PREVIEW_SCREENS: readonly PreviewScreen[] = [
   { path: "/online/website", labelKey: "nav.websiteSettings" },
   { path: "/online/marketing", labelKey: "nav.marketing" },
   { path: "/online/content", labelKey: "nav.websiteContent" },
+  { path: "/online/zones", labelKey: "online.zones.title" },
+  { path: "/online/discounts", labelKey: "online.promos.title" },
+  { path: "/products/import", labelKey: "nav.importExport" },
   { path: "/audit", labelKey: "nav.audit" },
   { path: "/settings", labelKey: "nav.settings" },
   { path: "/settings/users", labelKey: "nav.settingsUsers" },
   { path: "/settings/roles", labelKey: "nav.settingsRoles" },
+  { path: "/settings/approvals", labelKey: "admin.settings.card.approvals.title" },
+  { path: "/settings/branding", labelKey: "admin.settings.card.branding.title" },
+  { path: "/settings/backup", labelKey: "nav.settingsBackup" },
+  { path: "/settings/operations", labelKey: "operations.title" },
+  { path: "/settings/system", labelKey: "admin.settings.card.system.title" },
 ];
 
 /** A screen, and the capability that decides it. */
@@ -125,8 +133,9 @@ export function previewAccess({ role, customRole, exceptions }: AccessPreviewInp
   const held = new Set(capabilities);
 
   const screens = previewScreens();
-  const visible = screens.filter((screen) => !screen.capability || held.has(screen.capability));
-  const hidden = screens.filter((screen) => screen.capability && !held.has(screen.capability));
+  const admits = (capability: Capability) => held.has(capability);
+  const visible = screens.filter((screen) => pathAdmits(screen.path, admits));
+  const hidden = screens.filter((screen) => !pathAdmits(screen.path, admits));
 
   const groups: PreviewGroup[] = CAPABILITY_GROUPS.map((group) => ({
     key: group.key,

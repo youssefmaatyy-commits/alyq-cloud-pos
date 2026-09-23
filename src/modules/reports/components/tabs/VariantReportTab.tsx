@@ -20,6 +20,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { useI18n } from "@/lib/i18n/I18nProvider";
+import { canAct } from "@/lib/permissions/enforce";
 import { Badge, Card, ExportButton, LoadingBlock, StatTile } from "@/components/ui";
 import {
   buildSheets,
@@ -47,6 +48,7 @@ type Source =
 
 export function VariantReportTab({ range, sales, products, variants, returns, pick }: ReportTabProps) {
   const { t, money, num } = useI18n();
+  const maySeeCost = canAct("view_cost");
 
   // ── the database's answer, over EVERY invoice in the window ──────────────
   const [source, setSource] = useState<Source>({ status: "pending" });
@@ -157,6 +159,9 @@ export function VariantReportTab({ range, sales, products, variants, returns, pi
     },
     { key: "stock", label: t("reports.adv.variantsOnShelf"), align: "end", render: (row) => num(row.stock) },
   ];
+  const visibleColumns = maySeeCost
+    ? columns
+    : columns.filter((column) => column.key !== "cost" && column.key !== "profit" && column.key !== "margin");
 
   const top = [...rows].sort((a, b) => b.revenue - a.revenue).slice(0, TOP_LIMIT);
 
@@ -181,15 +186,17 @@ export function VariantReportTab({ range, sales, products, variants, returns, pi
         { header: t("reports.invoices"), value: (row) => row.invoices, kind: "number" },
         { header: t("export.col.unitsSold"), value: (row) => row.units, kind: "number" },
         { header: t("export.col.revenue"), value: (row) => row.revenue, kind: "money" },
-        { header: t("export.col.unitCost"), value: (row) => row.cost, kind: "money" },
-        { header: t("export.col.profit"), value: (row) => roundMoney(row.revenue - row.cost), kind: "money" },
+        ...(maySeeCost
+          ? [
+              { header: t("export.col.unitCost"), value: (row: VariantPerformanceRow) => row.cost, kind: "money" as const },
+              { header: t("export.col.profit"), value: (row: VariantPerformanceRow) => roundMoney(row.revenue - row.cost), kind: "money" as const },
+            ]
+          : []),
         { header: t("reports.adv.variantsReturned"), value: (row) => row.returnedUnits, kind: "number" },
         { header: t("reports.adv.variantsOnShelf"), value: (row) => row.stock, kind: "number" },
-        {
-          header: t("export.col.stockValue"),
-          value: (row) => row.stockValue,
-          kind: "money",
-        },
+        ...(maySeeCost
+          ? [{ header: t("export.col.stockValue"), value: (row: VariantPerformanceRow) => row.stockValue, kind: "money" as const }]
+          : []),
       ],
       notes: [
         t("export.note.generatedBy", { app: t("app.name") }),
@@ -254,7 +261,7 @@ export function VariantReportTab({ range, sales, products, variants, returns, pi
             <LoadingBlock label={t("common.loading")} />
           ) : (
             <ReportTable
-              columns={columns}
+              columns={visibleColumns}
               rows={top}
               rowKey={(row) => row.variantId}
               dense

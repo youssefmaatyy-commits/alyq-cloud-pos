@@ -9,6 +9,7 @@
  */
 import { useMemo } from "react";
 import { useI18n } from "@/lib/i18n/I18nProvider";
+import { canAct } from "@/lib/permissions/enforce";
 import { Badge, BoxIcon, Card, ExportButton, LayersIcon, StatTile, WarehouseIcon } from "@/components/ui";
 import {
   bestSellers,
@@ -27,6 +28,7 @@ const SLOW_LIMIT = 10;
 
 export function ProductReportTab({ sales, products, variants, range, pick }: ReportTabProps) {
   const { t, money, num } = useI18n();
+  const maySeeCost = canAct("view_cost");
 
   const ranged = useMemo(() => buildSalesAnalytics({ sales, shifts: [], range }).sales, [sales, range]);
   const rows = useMemo(() => productPerformance(ranged, products), [ranged, products]);
@@ -73,42 +75,59 @@ export function ProductReportTab({ sales, products, variants, range, pick }: Rep
   ];
 
   const ranked: RankedRow[] = best.map((row, index) => ({ ...row, rank: index + 1 }));
+  const moneyKeys = new Set(["cost", "profit", "margin", "tied"]);
+  const visiblePerformance = maySeeCost
+    ? performanceColumns
+    : performanceColumns.filter((column) => !moneyKeys.has(column.key));
+  const visibleBest = maySeeCost ? bestColumns : bestColumns.filter((column) => !moneyKeys.has(column.key));
+  const visibleSlow = maySeeCost ? slowColumns : slowColumns.filter((column) => !moneyKeys.has(column.key));
 
   return (
     <div className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatTile
-          label={t("export.metric.grossProfit")}
-          value={money(margin.profit)}
-          tone={margin.profit >= 0 ? "success" : "danger"}
-          icon={<LayersIcon />}
-          hint={`${num(margin.margin, 1)}% ${t("export.col.margin").toLowerCase()}`}
-        />
-        <StatTile
-          label={t("export.metric.cogs")}
-          value={money(margin.cogs)}
-          tone="warning"
-          hint={`${num(margin.soldProducts)} ${t("reports.adv.soldProducts").toLowerCase()}`}
-        />
-        <StatTile
-          label={t("export.sheet.stockValue")}
-          value={money(stock.atCost)}
-          tone="info"
-          icon={<WarehouseIcon />}
-          hint={`${num(stock.units)} ${t("export.col.unitsSold").toLowerCase()} · ${num(stock.tracked)} ${t(
-            "export.col.product",
-          ).toLowerCase()}`}
-        />
-        <StatTile
-          label={t("export.col.potentialMargin")}
-          value={money(stock.potentialMargin)}
-          tone="primary"
-          icon={<BoxIcon />}
-          hint={`${money(stock.atRetail)} ${t("export.col.retailValue").toLowerCase()}`}
-        />
+        {maySeeCost ? (
+          <>
+            <StatTile
+              label={t("export.metric.grossProfit")}
+              value={money(margin.profit)}
+              tone={margin.profit >= 0 ? "success" : "danger"}
+              icon={<LayersIcon />}
+              hint={`${num(margin.margin, 1)}% ${t("export.col.margin").toLowerCase()}`}
+            />
+            <StatTile
+              label={t("export.metric.cogs")}
+              value={money(margin.cogs)}
+              tone="warning"
+              hint={`${num(margin.soldProducts)} ${t("reports.adv.soldProducts").toLowerCase()}`}
+            />
+            <StatTile
+              label={t("export.sheet.stockValue")}
+              value={money(stock.atCost)}
+              tone="info"
+              icon={<WarehouseIcon />}
+              hint={`${num(stock.units)} ${t("export.col.unitsSold").toLowerCase()} · ${num(stock.tracked)} ${t(
+                "export.col.product",
+              ).toLowerCase()}`}
+            />
+            <StatTile
+              label={t("export.col.potentialMargin")}
+              value={money(stock.potentialMargin)}
+              tone="primary"
+              icon={<BoxIcon />}
+              hint={`${money(stock.atRetail)} ${t("export.col.retailValue").toLowerCase()}`}
+            />
+          </>
+        ) : (
+          <StatTile
+            label={t("export.col.revenue")}
+            value={money(margin.revenue)}
+            tone="success"
+            icon={<LayersIcon />}
+          />
+        )}
       </div>
 
-      {margin.lossMakers.length > 0 ? (
+      {maySeeCost && margin.lossMakers.length > 0 ? (
         <Card className="border-rose-200 bg-rose-50">
           <div className="flex flex-wrap items-center gap-2">
             <Badge tone="danger">{t("export.note.lossMakers")}</Badge>
@@ -126,19 +145,19 @@ export function ProductReportTab({ sales, products, variants, range, pick }: Rep
       <Card className="space-y-4">
         <ReportSection
           title={t("reports.adv.productProfitability")}
-          hint={t("export.note.costIsCurrent")}
+          hint={maySeeCost ? t("export.note.costIsCurrent") : t("reports.adv.bestSellersHint")}
           aside={
             <ExportButton
               name="product-report"
               authority="report"
               size="sm"
               count={rows.length}
-              build={() => buildProductAnalyticsSheets({ sales, products, range, t, pick })}
+              build={() => buildProductAnalyticsSheets({ sales, products, range, t, pick, maySeeCost })}
             />
           }
         >
           <ReportTable
-            columns={performanceColumns}
+            columns={visiblePerformance}
             rows={[...rows].sort((a, b) => b.revenue - a.revenue).slice(0, 25)}
             rowKey={(row) => row.productId}
             dense
@@ -150,7 +169,7 @@ export function ProductReportTab({ sales, products, variants, range, pick }: Rep
 
         <ReportSection title={t("export.sheet.bestSellers")} hint={t("reports.adv.bestSellersHint")}>
           <ReportTable
-            columns={bestColumns}
+            columns={visibleBest}
             rows={ranked}
             rowKey={(row) => row.productId}
             dense
@@ -161,19 +180,23 @@ export function ProductReportTab({ sales, products, variants, range, pick }: Rep
 
         <ReportSection title={t("export.sheet.slowMovers")} hint={t("export.note.slowMovers")}>
           <ReportTable
-            columns={slowColumns}
+            columns={visibleSlow}
             rows={slow}
             rowKey={(row) => row.productId}
             dense
             emptyLabel={t("reports.adv.noSlowMovers")}
             emptyHint={t("reports.adv.noSlowMoversHint")}
-            totals={[
-              t("export.totalRow"),
-              null,
-              num(slow.reduce((acc, row) => acc + row.stock, 0)),
-              null,
-              money(slow.reduce((acc, row) => acc + row.tiedUp, 0)),
-            ]}
+            totals={
+              maySeeCost
+                ? [
+                    t("export.totalRow"),
+                    null,
+                    num(slow.reduce((acc, row) => acc + row.stock, 0)),
+                    null,
+                    money(slow.reduce((acc, row) => acc + row.tiedUp, 0)),
+                  ]
+                : [t("export.totalRow"), null, num(slow.reduce((acc, row) => acc + row.stock, 0)), null]
+            }
           />
         </ReportSection>
 

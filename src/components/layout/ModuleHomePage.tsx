@@ -12,7 +12,7 @@ import { ChevronIcon } from "@/components/ui/icons";
 import { PageHeader } from "@/components/layout/AppShell";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { canAct } from "@/lib/permissions/enforce";
-import { capabilityForPath } from "@/lib/permissions/routes";
+import { pathAdmits } from "@/lib/permissions/routes";
 import type { Capability } from "@/lib/permissions/roles";
 
 export interface ModuleCard {
@@ -45,8 +45,11 @@ export function ModuleHomePage({
 }) {
   const { t } = useI18n();
   const visible = cards.filter((card) => {
-    const capability = card.capability ?? capabilityForPath(card.to);
-    return !capability || canAct(capability);
+    // An explicit card capability is narrower than the path (stock adjustments
+    // sit on a screen the path only asks to view). Otherwise the path, including
+    // alternates, is the same door the route guard uses.
+    if (card.capability) return canAct(card.capability);
+    return pathAdmits(card.to, (capability) => canAct(capability));
   });
   if (visible.length === 0) return null;
 

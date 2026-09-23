@@ -5,7 +5,7 @@
  * catalogue is not enough to open this screen, and a stock file never writes
  * the product row directly.
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { canAct } from "@/lib/permissions/enforce";
 import { PageHeader } from "@/components/layout/AppShell";
@@ -19,14 +19,14 @@ import { fieldSpecs } from "../services/columns";
 import { readImportTable } from "../services/readFile";
 import { buildImportPreview } from "../services/preview";
 import { commitImport } from "../services/commit";
+import { importKindsAdmitted } from "../services/access";
 import { buildErrorReportCsv } from "../services/errorReport";
 import type { CommitMode, CustomerMatchPolicy, ImportKind, ImportPreview, ProductMatchPolicy, StockMode } from "../types";
-
-const KINDS: ImportKind[] = ["products", "variants", "customers", "categories", "stock"];
 
 export function ImportCenterPage() {
   const { t } = useI18n();
   const allowed = canAct("import_data");
+  const admitted = useMemo(() => importKindsAdmitted((capability) => canAct(capability)), []);
   const catalog = useCatalog();
   const { customers, refresh: refreshCustomers } = useCustomers();
   const inventory = useInventory();
@@ -63,11 +63,28 @@ export function ImportCenterPage() {
     });
   }, [kind, headers, table, overrides, stockMode, customerPolicy, productPolicy, sheetCount, catalog.products, catalog.variants, catalog.categories, customers]);
 
+  useEffect(() => {
+    if (admitted.length > 0 && !admitted.includes(kind)) {
+      setKind(admitted[0]);
+      setOverrides({});
+      setResult(null);
+    }
+  }, [admitted, kind]);
+
   if (!allowed) {
     return (
       <div>
         <PageHeader title={t("importCenter.title")} subtitle={t("importCenter.subtitle")} />
         <Card><EmptyState icon="🔒" title={t("perm.denied")} description={t("importCenter.denied")} /></Card>
+      </div>
+    );
+  }
+
+  if (admitted.length === 0) {
+    return (
+      <div data-testid="import-center">
+        <PageHeader title={t("importCenter.title")} subtitle={t("importCenter.subtitle")} />
+        <Card><EmptyState icon="🔒" title={t("perm.denied")} description={t("importCenter.noKinds")} /></Card>
       </div>
     );
   }
@@ -84,7 +101,7 @@ export function ImportCenterPage() {
       />
       <p className="text-xs text-stone-500">{t("importCenter.limits", { rows: IMPORT_LIMITS.maxRows, mb: IMPORT_LIMITS.maxBytes / (1024 * 1024) })}</p>
       <div className="flex flex-wrap gap-1">
-        {KINDS.map((item) => (
+        {admitted.map((item) => (
           <button key={item} type="button" data-testid={`import-kind-${item}`} onClick={() => { setKind(item); setOverrides({}); setResult(null); }} className={`rounded-full px-3 py-1 text-xs font-bold ${kind === item ? "bg-stone-900 text-white" : "bg-white text-stone-700 ring-1 ring-stone-200"}`}>
             {t(`importCenter.kind.${item}`)}
           </button>

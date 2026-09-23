@@ -122,9 +122,13 @@ export const ROUTE_CAPABILITIES: ReadonlyArray<readonly [string, Capability]> = 
   // capability that has always owned system-wide configuration), so the child
   // names its own gate explicitly.
   ["/settings/approvals", "manage_settings"],
-  // Phase 56: the operations center is system configuration. Viewing it and
-  // running cleanup both ask for `manage_settings`; the service asserts again.
-  ["/settings/operations", "manage_settings"],
+  // Phase 58: viewing health, usage and notifications is `run_health_check`.
+  // Cleanup, retention and the storage threshold stay `manage_settings`.
+  // The primary stays a single capability so the route table and the preview
+  // agree; `manage_settings` is an alternate in ROUTE_ALTERNATES, not a second
+  // name for the same act. A seat that can only clean up can still open the
+  // screen; a seat that can only look cannot delete.
+  ["/settings/operations", "run_health_check"],
   // Phase 57: viewing products is not importing them. The center re-checks
   // the write for each kind; stock also requires adjust_stock.
   ["/products/import", "import_data"],
@@ -148,6 +152,33 @@ export function capabilityForPath(pathname: string): Capability | null {
     if (!best || prefix.length > best.path.length) best = { path: prefix, capability };
   }
   return best?.capability ?? null;
+}
+
+/**
+ * Alternates that also open a path. The primary in `ROUTE_CAPABILITIES` is
+ * what `capabilityForPath` returns — one string, so existing audits keep
+ * working. An alternate does not widen a shipped role that already holds the
+ * primary; it admits a custom role that holds the other act and not the first.
+ */
+export const ROUTE_ALTERNATES: ReadonlyArray<readonly [string, Capability]> = [
+  ["/settings/operations", "manage_settings"],
+];
+
+/**
+ * Whether this path is open to someone who holds `held`. Unguarded paths
+ * (a session is enough) return true. Hidden navigation is not this check —
+ * the route guard calls it, and a forged URL meets the same answer.
+ */
+export function pathAdmits(pathname: string, held: (capability: Capability) => boolean): boolean {
+  const primary = capabilityForPath(pathname);
+  if (!primary) return true;
+  if (held(primary)) return true;
+  const path = normalizePath(pathname);
+  for (const [prefix, capability] of ROUTE_ALTERNATES) {
+    if (path !== prefix && !path.startsWith(`${prefix}/`)) continue;
+    if (held(capability)) return true;
+  }
+  return false;
 }
 
 /** Trailing slash and query-free comparison form. */

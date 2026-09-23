@@ -1039,6 +1039,45 @@ test("role search finds a role by name, key, description, base role, or permissi
   assert.deepEqual(queryRoles([], "accountant", labelEn), [], "an empty catalogue stays empty");
 });
 
+test("the only manage_users overlay cannot be stripped or deactivated", async () => {
+  resetAll();
+  const overlay = await createRole(
+    roleForm({
+      name_en: "Sole desk",
+      name_ar: "المكتب الوحيد",
+      base_role: "cashier",
+      capabilities: ["manage_users", "manage_roles", "view_reports"],
+    }),
+    { existing: [] },
+  );
+  const admin = DEMO_USERS.find((user) => user.role === "admin");
+  assert.ok(admin);
+  await getDemoSettingsRepository().assignCustomRole(admin.id, overlay.id);
+
+  const before = readCustomRoles().find((role) => role.id === overlay.id);
+  assert.ok(before?.capabilities.includes("manage_users"));
+
+  const refused = (error: unknown) =>
+    error instanceof AppError && error.code === "FORBIDDEN" && error.message === "settings.roles.lockout";
+
+  await assert.rejects(() => updateRoleForTest(overlay.id, ["manage_roles", "view_reports"]), refused);
+  const roleContext = { existing: await loadManagedRoles(), users: await loadManagedUsers() };
+  await assert.rejects(() => setRoleActive(overlay.id, false, roleContext), refused);
+
+  const after = readCustomRoles().find((role) => role.id === overlay.id);
+  assert.deepEqual(after?.capabilities, before?.capabilities, "the edit did not land");
+  assert.equal(after?.active, true, "deactivation did not land");
+  const worn = readStaffDirectory().find((entry) => entry.id === admin.id);
+  assert.equal(worn?.custom_role_id, overlay.id);
+  assert.ok(
+    resolveCapabilities(
+      worn?.role ?? "cashier",
+      after ? { capabilities: after.capabilities, active: after.active } : null,
+      { extra: worn?.extra_capabilities ?? [], denied: worn?.denied_capabilities ?? [] },
+    ).includes("manage_users"),
+  );
+});
+
 // ── runner ───────────────────────────────────────────────────────────────────
 
 (async () => {

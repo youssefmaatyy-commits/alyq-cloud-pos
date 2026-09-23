@@ -79,8 +79,8 @@ const CAPABILITY: Record<NotificationKind, string> = {
   promotion_expiring: "manage_website",
   stocktake_open: "view_inventory",
   backup_warning: "view_backups",
-  storage_warning: "manage_settings",
-  system_warning: "manage_settings",
+  storage_warning: "run_health_check",
+  system_warning: "run_health_check",
 };
 
 function row(

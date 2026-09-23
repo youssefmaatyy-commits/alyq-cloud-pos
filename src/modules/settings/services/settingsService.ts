@@ -35,6 +35,12 @@ import { getSettingsMode, getSettingsRepository } from "../data";
 import type { CustomRoleInput } from "../data/repository";
 import { validateRoleForm, validateUserForm, type RoleFormContext, type UserFormContext } from "../validation";
 import { evaluatePassword } from "@/lib/auth/services/passwordPolicy";
+import { readStaffDirectory } from "@/lib/auth/data/staffDirectory";
+import {
+  assertManageUsersRemains,
+  type HolderSource,
+  type RoleSource,
+} from "./lockout";
 import type { ManagedUser, RoleFormState, UserFormState, UserPatch } from "../types";
 
 // ── reads ────────────────────────────────────────────────────────────────────
@@ -66,6 +72,65 @@ function userContext(context: UserMutationContext, requirePassword: boolean): Us
 
 export interface RoleMutationContext {
   existing: CustomRole[];
+  /** When the screen has the directory loaded. Demo mode can fall back to it. */
+  users?: readonly ManagedUser[];
+}
+
+function asHolder(user: Pick<ManagedUser, "id" | "active" | "role" | "custom_role_id" | "extra_capabilities" | "denied_capabilities">): HolderSource {
+  return {
+    id: user.id,
+    active: user.active,
+    role: user.role,
+    custom_role_id: user.custom_role_id,
+    extra_capabilities: user.extra_capabilities,
+    denied_capabilities: user.denied_capabilities,
+  };
+}
+
+function asRole(role: Pick<CustomRole, "id" | "active" | "capabilities" | "base_role">): RoleSource {
+  return { id: role.id, active: role.active, capabilities: role.capabilities, base_role: role.base_role };
+}
+
+/**
+ * The directory the last-holder check can see. An empty list is not treated as
+ * "nobody holds the grant" — live mode without `manage_users` cannot read it,
+ * and migration 0059 checks the same invariant when the client is bypassed.
+ */
+function holdersFor(users?: readonly ManagedUser[]): HolderSource[] {
+  const listed =
+    users && users.length > 0
+      ? users.map(asHolder)
+      : getSettingsMode() !== "demo"
+        ? []
+        : readStaffDirectory().map((entry) => ({
+            id: entry.id,
+            active: entry.active,
+            role: entry.role,
+            custom_role_id: entry.custom_role_id,
+            extra_capabilities: entry.extra_capabilities,
+            denied_capabilities: entry.denied_capabilities,
+          }));
+  if (listed.length === 0) return listed;
+  const actor = actingUser();
+  if (!actor.id || listed.some((user) => user.id === actor.id)) return listed;
+  if (!actor.capabilities?.includes("manage_users")) return listed;
+  // A partial directory that omits the caller must not pretend they lost the
+  // grant. The SQL trigger still sees the real table.
+  return [
+    ...listed,
+    {
+      id: actor.id,
+      active: true,
+      role: actor.role,
+      custom_role_id: null,
+      extra_capabilities: ["manage_users"],
+      denied_capabilities: [],
+    },
+  ];
+}
+
+function replaceHolder(users: readonly HolderSource[], next: HolderSource): HolderSource[] {
+  return users.map((user) => (user.id === next.id ? next : user));
 }
 
 // ── guardrails ───────────────────────────────────────────────────────────────
@@ -181,6 +246,11 @@ export async function updateUser(form: UserFormState, context: UserMutationConte
   if (value.role !== before.role) patch.role = value.role;
 
   assertNotSelfLockout(before.id, patch, actor);
+  if (patch.role !== undefined || patch.active !== undefined || patch.custom_role_id !== undefined) {
+    const directory = holdersFor(context.existing);
+    const projected = projectUserPatch(asHolder(before), patch, context.roles);
+    assertManageUsersRemains(directory, context.roles.map(asRole), replaceHolder(directory, projected), context.roles.map(asRole));
+  }
 
   if (Object.keys(patch).length === 0) return before;
 
@@ -202,6 +272,13 @@ export async function setUserActive(
 
   const actor = actingUser();
   assertNotSelfLockout(id, { active }, actor);
+  const directory = holdersFor(context.existing);
+  assertManageUsersRemains(
+    directory,
+    context.roles.map(asRole),
+    replaceHolder(directory, { ...asHolder(before), active }),
+    context.roles.map(asRole),
+  );
   if (before.active === active) return before;
 
   const updated = await getSettingsRepository().setUserActive(id, active);
@@ -227,6 +304,18 @@ export async function assignCustomRole(
 
   const actor = actingUser();
   assertNotSelfLockout(id, { custom_role_id: customRoleId }, actor);
+  const overlay = customRoleId ? context.roles.find((role) => role.id === customRoleId) : null;
+  const directory = holdersFor(context.existing);
+  assertManageUsersRemains(
+    directory,
+    context.roles.map(asRole),
+    replaceHolder(directory, {
+      ...asHolder(before),
+      custom_role_id: customRoleId,
+      role: overlay ? overlay.base_role : before.role,
+    }),
+    context.roles.map(asRole),
+  );
   if (before.custom_role_id === customRoleId) return before;
 
   const updated = await getSettingsRepository().assignCustomRole(id, customRoleId);
@@ -273,6 +362,18 @@ export async function setUserExceptions(
     denied: before.denied_capabilities,
   });
   if (sameExceptions(previous, next)) return before;
+
+  const directory = holdersFor(context.existing);
+  assertManageUsersRemains(
+    directory,
+    context.roles.map(asRole),
+    replaceHolder(directory, {
+      ...asHolder(before),
+      extra_capabilities: next.extra,
+      denied_capabilities: next.denied,
+    }),
+    context.roles.map(asRole),
+  );
 
   const updated = await getSettingsRepository().setUserExceptions(id, next);
   void auditPermissionsChanged(before, updated, actor);
@@ -382,6 +483,15 @@ export async function updateRole(form: RoleFormState, context: RoleMutationConte
   }
 
   const before = context.existing.find((role) => role.id === form.id) as CustomRole;
+  const nextRole = verdict.value;
+  const directory = holdersFor(context.users);
+  const beforeRoles = context.existing.map(asRole);
+  const afterRoles = beforeRoles.map((role) =>
+    role.id === form.id
+      ? { ...role, capabilities: nextRole.capabilities, active: nextRole.active }
+      : role,
+  );
+  assertManageUsersRemains(directory, beforeRoles, directory, afterRoles);
   const updated = await getSettingsRepository().updateCustomRole(form.id, verdict.value);
   const actor = actingUser();
 
@@ -421,6 +531,11 @@ export async function setRoleActive(
   const role = context.existing.find((entry) => entry.id === id);
   assertEditableRole(role, id);
   if (!role || role.active === active) return role as CustomRole;
+
+  const directory = holdersFor(context.users);
+  const beforeRoles = context.existing.map(asRole);
+  const afterRoles = beforeRoles.map((entry) => (entry.id === id ? { ...entry, active } : entry));
+  assertManageUsersRemains(directory, beforeRoles, directory, afterRoles);
 
   const updated = await getSettingsRepository().setCustomRoleActive(id, active);
   const actor = actingUser();
@@ -567,4 +682,24 @@ function auditUserChange(
  */
 function announceIdentityChange(): void {
   broadcastAuth({ kind: "session_changed", at: new Date().toISOString() });
+}
+
+/**
+ * The directory row a user patch becomes. A hand-edited system role clears the
+ * overlay first; assigning an overlay then moves the system role to its base.
+ * That is the order the demo repository and `admin_upsert_staff_profile` use.
+ */
+function projectUserPatch(user: HolderSource, patch: UserPatch, roles: readonly CustomRole[]): HolderSource {
+  const next = { ...user };
+  if (patch.role !== undefined && patch.role !== user.role) {
+    next.role = patch.role;
+    next.custom_role_id = null;
+  }
+  if (patch.active !== undefined) next.active = patch.active;
+  if (patch.custom_role_id !== undefined) {
+    next.custom_role_id = patch.custom_role_id;
+    const overlay = patch.custom_role_id ? roles.find((role) => role.id === patch.custom_role_id) : null;
+    if (overlay) next.role = overlay.base_role;
+  }
+  return next;
 }

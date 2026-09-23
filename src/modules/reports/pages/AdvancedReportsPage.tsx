@@ -39,7 +39,7 @@ import {
   StatTile,
   WalletIcon,
 } from "@/components/ui";
-import { deniedMessageKey } from "@/lib/permissions/enforce";
+import { canAct, deniedMessageKey } from "@/lib/permissions/enforce";
 import { useCatalog } from "@/modules/products/hooks/CatalogProvider";
 import { usePos } from "@/modules/pos/hooks/PosProvider";
 import { useCustomers } from "@/modules/customers/hooks/CustomerProvider";
@@ -87,6 +87,7 @@ export function AdvancedReportsPage() {
   const { expenses } = useExpenses();
   const { returnsList, refundsList, loading: returnsLoading } = useReturns();
   const { shifts, summaryFor } = useShifts();
+  const maySeeCost = canAct("view_cost");
   const [orders, setOrders] = useState<OnlineOrder[]>([]);
 
   const [tab, setTab] = useState<TabId>("sales");
@@ -247,7 +248,7 @@ export function AdvancedReportsPage() {
                 { id: "expenses", label: t("reports.adv.tabExpenses"), count: expenses.length },
                 { id: "shifts", label: t("reports.adv.tabShifts"), count: shifts.length },
                 { id: "financial", label: t("reports.adv.tabFinancial") },
-                { id: "profit", label: t("reports.adv.tabProfit") },
+                ...(maySeeCost ? [{ id: "profit" as const, label: t("reports.adv.tabProfit") }] : []),
               ]}
             />
           </Card>
@@ -258,7 +259,7 @@ export function AdvancedReportsPage() {
           {tab === "customers" ? <CustomerReportTab {...tabProps} /> : null}
           {tab === "expenses" ? <ExpenseReportTab {...tabProps} /> : null}
           {tab === "shifts" ? <ShiftReportTab {...tabProps} /> : null}
-          {tab === "profit" ? <ProfitabilityTab {...tabProps} /> : null}
+          {tab === "profit" && maySeeCost ? <ProfitabilityTab {...tabProps} /> : null}
 
           {tab === "financial" ? (
             <div className="space-y-4">
@@ -270,25 +271,42 @@ export function AdvancedReportsPage() {
                   icon={<WalletIcon />}
                   hint={`${num(financial.invoiceCount)} ${t("reports.invoices").toLowerCase()}`}
                 />
-                <StatTile
-                  label={t("export.metric.grossProfit")}
-                  value={money(financial.grossProfit)}
-                  tone="primary"
-                  icon={<LayersIcon />}
-                  hint={`${t("export.metric.cogs")}: ${money(financial.cogs)}`}
-                />
+                {maySeeCost ? (
+                  <StatTile
+                    label={t("export.metric.grossProfit")}
+                    value={money(financial.grossProfit)}
+                    tone="primary"
+                    icon={<LayersIcon />}
+                    hint={`${t("export.metric.cogs")}: ${money(financial.cogs)}`}
+                  />
+                ) : (
+                  <StatTile
+                    label={t("export.metric.returns")}
+                    value={money(financial.returnsTotal)}
+                    tone="neutral"
+                    icon={<LayersIcon />}
+                  />
+                )}
                 <StatTile
                   label={t("export.metric.expenses")}
                   value={money(financial.expenses)}
                   tone="warning"
                   icon={<ReceiptIcon />}
                 />
-                <StatTile
-                  label={t("export.metric.netProfit")}
-                  value={money(financial.netProfit)}
-                  tone={financial.netProfit >= 0 ? "success" : "danger"}
-                  hint={`${t("reports.adv.netAfterRefunds")}: ${money(netAfterRefunds)}`}
-                />
+                {maySeeCost ? (
+                  <StatTile
+                    label={t("export.metric.netProfit")}
+                    value={money(financial.netProfit)}
+                    tone={financial.netProfit >= 0 ? "success" : "danger"}
+                    hint={`${t("reports.adv.netAfterRefunds")}: ${money(netAfterRefunds)}`}
+                  />
+                ) : (
+                  <StatTile
+                    label={t("export.metric.refundsPaid")}
+                    value={money(financial.refundsPaid)}
+                    tone="neutral"
+                  />
+                )}
               </div>
 
               <Card>
@@ -316,6 +334,7 @@ export function AdvancedReportsPage() {
                           summaryFor,
                           range: exportRange,
                           t,
+                          maySeeCost,
                         })
                       }
                     />
@@ -325,12 +344,14 @@ export function AdvancedReportsPage() {
                     <Figure label={t("export.metric.returns")} value={money(financial.returnsTotal)} hint={num(financial.returnsCount)} />
                     <Figure label={t("export.metric.refundsPaid")} value={money(financial.refundsPaid)} hint={num(financial.refundsCount)} />
                     <Figure label={t("export.metric.refundsPending")} value={money(financial.refundsPending)} tone="warning" />
-                    <Figure
-                      label={t("reports.adv.netAfterRefunds")}
-                      value={money(netAfterRefunds)}
-                      tone={netAfterRefunds >= 0 ? "success" : "danger"}
-                      hint={t("reports.adv.netAfterRefundsHint")}
-                    />
+                    {maySeeCost ? (
+                      <Figure
+                        label={t("reports.adv.netAfterRefunds")}
+                        value={money(netAfterRefunds)}
+                        tone={netAfterRefunds >= 0 ? "success" : "danger"}
+                        hint={t("reports.adv.netAfterRefundsHint")}
+                      />
+                    ) : null}
                     <Figure label={t("export.metric.voided")} value={money(financial.voidedTotal)} hint={num(financial.voidedCount)} />
                     <Figure label={t("export.metric.unsettled")} value={money(financial.unsettled)} tone="warning" />
                     <Figure label={t("export.metric.cash")} value={money(financial.cash)} />

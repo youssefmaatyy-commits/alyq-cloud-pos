@@ -23,7 +23,7 @@ import {
 } from "@/components/ui";
 import { cn } from "@/utils/cn";
 import { canAct } from "@/lib/permissions/enforce";
-import { capabilityForPath } from "@/lib/permissions/routes";
+import { pathAdmits } from "@/lib/permissions/routes";
 import { useOptionalApprovals } from "@/modules/approvals";
 import { ReservationSummaryCard, useOnlineOrders } from "@/modules/online";
 import { mayViewReports } from "@/modules/reports/services/reportAccess";
@@ -103,6 +103,7 @@ export function DashboardPage() {
   const approvals = useOptionalApprovals();
   const { orders: onlineOrders, counts: onlineCounts, canManage: canManageOnline } = useOnlineOrders();
   const maySeePerformance = mayViewReports();
+  const maySeeCost = canAct("view_cost");
   const canSeeWebsite = canManageOnline || (canActWebsite());
   const mayOpenSales = canActRoute("/pos/sales");
   const mayOpenProducts = canActRoute("/products");
@@ -593,13 +594,15 @@ export function DashboardPage() {
               icon={<WalletIcon />}
               hint={t("dashboard.monthInvoices", { count: monthly.invoices })}
             />
-            <StatTile
-              label={t("dashboard.monthProfit")}
-              value={money(monthly.profit)}
-              tone={monthly.profit >= 0 ? "success" : "danger"}
-              icon={<LayersIcon />}
-              hint={t("dashboard.monthMargin", { margin: percent(monthly.margin) })}
-            />
+            {maySeeCost ? (
+              <StatTile
+                label={t("dashboard.monthProfit")}
+                value={money(monthly.profit)}
+                tone={monthly.profit >= 0 ? "success" : "danger"}
+                icon={<LayersIcon />}
+                hint={t("dashboard.monthMargin", { margin: percent(monthly.margin) })}
+              />
+            ) : null}
             <StatTile
               label={t("dashboard.monthExpenses")}
               value={money(monthExpenses)}
@@ -903,8 +906,7 @@ function channelTrendPoints(
 
 // Local capability checks — kept in one place so the KPI row reads cleanly.
 function canActRoute(path: string): boolean {
-  const required = capabilityForPath(path);
-  return !required || canAct(required);
+  return pathAdmits(path, (capability) => canAct(capability));
 }
 function canActWebsite(): boolean {
   return canAct("manage_website");

@@ -7,7 +7,7 @@ import { useAuth } from "@/lib/auth";
 import { ROLE_LABELS } from "@/lib/permissions/roles";
 import { canAct } from "@/lib/permissions/enforce";
 import { openStorefrontRoute } from "@/lib/storefront/storefrontLink";
-import { capabilityForPath } from "@/lib/permissions/routes";
+import { pathAdmits } from "@/lib/permissions/routes";
 import { useOnlineNotificationState } from "@/modules/online/hooks/OnlineNotificationsProvider";
 import { useOptionalApprovals } from "@/modules/approvals";
 import { normalizeText } from "@/modules/products/services/productQuery";
@@ -154,12 +154,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { signOut, signOutEverywhere, endReason, user: sessionUser } = useAuth();
   const navigate = useNavigate();
   const brand = useBrand();
-  const canOpen = (path: string) => {
-    const required = capabilityForPath(path);
-    // Resolved capabilities (custom roles included), so the sidebar and the
-    // route guard cannot disagree about what this person may open.
-    return !required || canAct(required);
-  };
+  const canOpen = (path: string) =>
+    // Same answer as the route guard, alternates included. A module door that
+    // has no open child is hidden by the callers below — not by a role name.
+    pathAdmits(path, (capability) => canAct(capability));
   const canManageOnline = canAct("manage_online_orders");
   const canManageWebsite = canAct("manage_website");
   const canManageUsers = canAct("manage_users");
@@ -345,7 +343,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           collapsed={navCollapsed}
         />
         <NavItem to="/reports" icon={<ReportIcon />} label={t("nav.reports")} visible={canOpen("/reports")} collapsed={navCollapsed} />
-        {canManageUsers || canManageRoles || canManageSettings || canOpen("/settings/backup") || canOpen("/audit") || canAct("manage_system_reset") || canManageWebsite ? (
+        {canManageUsers || canManageRoles || canManageSettings || canOpen("/settings/backup") || canOpen("/settings/operations") || canOpen("/audit") || canAct("manage_system_reset") || canManageWebsite ? (
           <NavItem
             to="/settings"
             icon={<ArchiveIcon />}

@@ -28,6 +28,8 @@ import {
 } from "@/components/ui";
 import { useOnlineNotificationState } from "@/modules/online/hooks/OnlineNotificationsProvider";
 import { useOptionalApprovals } from "@/modules/approvals";
+import { canAct } from "@/lib/permissions/enforce";
+import { importKindsAdmitted } from "@/modules/import/services/access";
 
 export function SalesHome({ embedded = false }: { embedded?: boolean }) {
   const { t } = useI18n();
@@ -95,6 +97,7 @@ export function SalesHome({ embedded = false }: { embedded?: boolean }) {
 
 export function CatalogHome({ embedded = false }: { embedded?: boolean }) {
   const { t } = useI18n();
+  const importOpen = importKindsAdmitted((capability) => canAct(capability)).length > 0;
   return (
     <ModuleHomePage
       embedded={embedded}
@@ -125,13 +128,16 @@ export function CatalogHome({ embedded = false }: { embedded?: boolean }) {
           title: t("online.ws.productContent"),
           description: t("home.catalog.content.desc"),
         },
-        {
-          key: "import",
-          to: "/products/import",
-          icon: <PlusCircleIcon />,
-          title: t("nav.importExport"),
-          description: t("home.catalog.import.desc"),
-        },
+        ...(importOpen
+          ? [{
+              key: "import",
+              to: "/products/import",
+              capability: "import_data" as const,
+              icon: <PlusCircleIcon />,
+              title: t("nav.importExport"),
+              description: t("home.catalog.import.desc"),
+            }]
+          : []),
         { key: "media", to: "/online/website?tab=productContent", icon: <EditIcon />, title: t("home.management.media"), description: t("home.management.media.desc") },
       ]}
     />

@@ -95,5 +95,5 @@ export const RETENTION_PHRASE = "APPLY RETENTION";
 export const DEFAULT_RETENTION_DAYS = 30;
 
 /** Shipped with this build. Not a claim about what a remote database has applied. */
-export const SHIPPED_MIGRATION_COUNT = 58;
-export const SHIPPED_LATEST_MIGRATION = "0058_import_center_audit.sql";
+export const SHIPPED_MIGRATION_COUNT = 59;
+export const SHIPPED_LATEST_MIGRATION = "0059_last_manage_users_holder.sql";

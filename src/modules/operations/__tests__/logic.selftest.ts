@@ -44,6 +44,7 @@ const ALL = new Set([
   "manage_website",
   "view_backups",
   "manage_settings",
+  "run_health_check",
 ]);
 
 function file(partial: Omit<Partial<RegisteredFile>, "kind"> & { id: string; path: string; kind: string }): RegisteredFile {
@@ -253,8 +254,8 @@ test("the cleanup vocabulary is shipped, labelled, and not a copy", () => {
   const sql = fs.readFileSync(path.join(root, "supabase/migrations/0057_operations_cleanup_audit.sql"), "utf8");
   assert.match(sql, /operations\.cleanup_executed/);
   assert.match(sql, /operations\.retention_applied/);
-  assert.equal(SHIPPED_LATEST_MIGRATION, "0058_import_center_audit.sql");
-  assert.equal(SHIPPED_MIGRATION_COUNT, 58);
+  assert.equal(SHIPPED_LATEST_MIGRATION, "0059_last_manage_users_holder.sql");
+  assert.equal(SHIPPED_MIGRATION_COUNT, 59);
   const names = fs.readdirSync(path.join(root, "supabase/migrations")).filter((name) => name.endsWith(".sql"));
   assert.equal(names.length, SHIPPED_MIGRATION_COUNT);
 });

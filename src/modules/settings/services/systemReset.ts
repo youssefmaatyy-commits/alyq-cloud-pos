@@ -296,11 +296,12 @@ function demoUser(): { id: string; name: string } {
 }
 
 function demoIsAdmin(): boolean {
-  // Capability through the app's own gate — same model the live RPC's
-  // system_assert_authorized() enforces, not a hand-rolled role string, and
-  // never a raw localStorage shape that can drift from the session store.
+  // Capability resolution, not a role-name comparison. The live RPC in 0047
+  // still requires both the capability and the admin role; this demo gate does
+  // not add a second role belt on top of a resolved grant. Phrase, re-auth,
+  // stock and RLS are unchanged.
   const user = getCurrentAuthUser();
-  return capabilitiesOfUser(user).includes("manage_system_reset") && user.role === "admin";
+  return capabilitiesOfUser(user).includes("manage_system_reset");
 }
 
 function demoAppendAudit(

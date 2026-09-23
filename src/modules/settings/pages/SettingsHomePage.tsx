@@ -19,6 +19,7 @@ import { useI18n } from "@/lib/i18n/I18nProvider";
 import type { TranslationKey } from "@/lib/i18n/dictionary";
 import { useAuth } from "@/lib/auth";
 import { canActAs } from "@/lib/permissions/enforce";
+import { pathAdmits } from "@/lib/permissions/routes";
 import { PageHeader } from "@/components/layout/AppShell";
 import { Card, EmptyState } from "@/components/ui";
 
@@ -138,7 +139,7 @@ export function SettingsHomePage() {
       cards: [
         {
           to: "/settings/operations",
-          capability: "manage_settings",
+          capability: "run_health_check",
           icon: "◎",
           titleKey: "admin.settings.card.operations.title",
           descKey: "admin.settings.card.operations.desc",
@@ -161,7 +162,10 @@ export function SettingsHomePage() {
   const visibleGroups = groups
     .map((group) => ({
       ...group,
-      cards: group.cards.filter((card) => card.capability === null || canActAs(user, card.capability)),
+      cards: group.cards.filter((card) => {
+        if (pathAdmits(card.to, (capability) => canActAs(user, capability))) return true;
+        return card.capability !== null && canActAs(user, card.capability);
+      }),
     }))
     .filter((group) => group.cards.length > 0);
 

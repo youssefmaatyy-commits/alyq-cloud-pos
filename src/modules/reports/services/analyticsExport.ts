@@ -35,6 +35,7 @@ import {
   type PickBilingual,
   type Translate,
 } from "@/lib/export";
+import { withoutSensitiveMoney } from "./sensitiveExport";
 import { EXPENSE_CATEGORIES, EXPENSE_PAYMENT_METHODS, type Expense } from "@/modules/expenses/types";
 import type { Customer } from "@/modules/customers/types";
 import type { Product } from "@/modules/products/types";
@@ -247,6 +248,8 @@ export interface ProductAnalyticsExportInput {
   range: DateRange;
   t: Translate;
   pick: PickBilingual;
+  /** Same flag as the financial workbook. Omitted means the cost columns stay. */
+  maySeeCost?: boolean;
 }
 
 export function buildProductAnalyticsSheets(input: ProductAnalyticsExportInput): BuiltSheet[] {
@@ -381,7 +384,8 @@ export function buildProductAnalyticsSheets(input: ProductAnalyticsExportInput):
     notes: [...notes, t("export.note.stockValue")],
   };
 
-  return buildSheets([summary, performance, best, slow, stockSheet] as ExportSheet<unknown>[]);
+  const sheets = buildSheets([summary, performance, best, slow, stockSheet] as ExportSheet<unknown>[]);
+  return input.maySeeCost === false ? withoutSensitiveMoney(sheets, t) : sheets;
 }
 
 // ── 3. customers ───────────────────────────────────────────────────────────

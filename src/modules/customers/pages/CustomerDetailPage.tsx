@@ -166,9 +166,11 @@ export function CustomerDetailPage() {
                 {t("common.edit")}
               </Button>
             ) : null}
-            <Link to="/pos" className="alyq-btn-primary alyq-cta h-10 gap-2 rounded-xl px-4 text-sm">
-              {t("nav.register")}
-            </Link>
+            {canAct("sell") ? (
+              <Link to="/pos" className="alyq-btn-primary alyq-cta h-10 gap-2 rounded-xl px-4 text-sm">
+                {t("nav.register")}
+              </Link>
+            ) : null}
           </>
         }
       />
@@ -184,7 +186,9 @@ export function CustomerDetailPage() {
             { key: "purchases", label: t("customers.tabs.purchases"), count: purchases.length },
             { key: "returns", label: t("customers.tabs.returns"), count: returns.length },
             { key: "insights", label: t("customers.tabs.insights") },
-            { key: "communication", label: t("customers.tabs.communication") },
+            ...(canAct("manage_online_orders")
+              ? [{ key: "communication" as const, label: t("customers.tabs.communication") }]
+              : []),
           ]}
         />
       </div>
@@ -476,7 +480,7 @@ export function CustomerDetailPage() {
         </div>
       ) : null}
 
-      {tab === "communication" ? (
+      {tab === "communication" && canAct("manage_online_orders") ? (
         <div className="space-y-3">
           {matchedOrders.length === 0 || !selectedOrder ? (
             <Card>

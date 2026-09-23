@@ -92,6 +92,7 @@ export function PermissionPicker({ value, onChange, baseRole, disabled, error }:
         <div>
           <p className="text-sm font-bold text-slate-900">{t("settings.roles.picker.title")}</p>
           <p className="text-xs font-medium text-slate-600">{t("settings.roles.picker.hint")}</p>
+          <p className="text-xs font-medium text-slate-500">{t("settings.roles.picker.workspaceHint")}</p>
         </div>
         <div className="flex items-center gap-2">
           <Badge tone="info">

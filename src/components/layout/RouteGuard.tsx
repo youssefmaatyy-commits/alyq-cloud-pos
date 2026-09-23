@@ -5,7 +5,7 @@ import { Button, Card, EmptyState } from "@/components/ui";
 import { ROLE_LABELS } from "@/lib/permissions/roles";
 import { canAct } from "@/lib/permissions/enforce";
 import { getCurrentAuthUser } from "@/lib/auth/services/sessionStore";
-import { capabilityForPath, isSelfGuardedPath } from "@/lib/permissions/routes";
+import { isSelfGuardedPath, pathAdmits } from "@/lib/permissions/routes";
 import { useInventory } from "@/modules/inventory/hooks/InventoryProvider";
 
 /**
@@ -35,11 +35,9 @@ export function RouteGuard({ children }: { children: ReactNode }) {
   // This shared directory serves order operators AND website-only roles.
   // Child routes still use their original individual guards.
   if (location.pathname.replace(/\/+$/, "") === "/online" && canAct("manage_website")) return <>{children}</>;
-  const required = capabilityForPath(location.pathname);
-  // The session's *resolved* capabilities, not the system matrix: a custom role
-  // replaces the matrix, so asking the role alone would deny a screen the
-  // database grants (and offer one it refuses).
-  if (!required || canAct(required)) return <>{children}</>;
+  // Resolved capabilities, including a path's alternate (operations may open on
+  // the health check or on settings). Hidden navigation is not this check.
+  if (pathAdmits(location.pathname, (capability) => canAct(capability))) return <>{children}</>;
 
   // Named after what the person actually is. An accountant wearing a custom role
   // should read "Accountant cannot open this screen", not "Manager cannot…".

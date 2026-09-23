@@ -20,6 +20,7 @@ import {
   WarehouseIcon,
 } from "@/components/ui";
 import { withinDateRange } from "@/lib/export";
+import { canAct } from "@/lib/permissions/enforce";
 import { useCatalog } from "@/modules/products/hooks/CatalogProvider";
 import { categoryNameIndex } from "@/modules/products/services/categoryTree";
 import { buildProductsSheets } from "@/modules/products/services/productsExport";
@@ -86,6 +87,7 @@ export function ReportsPage() {
   const { returnsList, refundsList, loading: returnsLoading } = useReturns();
   const { expenses } = useExpenses();
   const { shifts, summaryFor } = useShifts();
+  const maySeeCost = canAct("view_cost");
 
   const [range, setRange] = useState<DateRangeValue>(EMPTY_DATE_RANGE);
   const [preset, setPreset] = useState<RangePreset | null>("allTime");
@@ -356,13 +358,22 @@ export function ReportsPage() {
               icon={<WalletIcon />}
               hint={`${totals.invoiceCount} ${t("reports.invoices").toLowerCase()}`}
             />
-            <StatTile
-              label={t("reports.netProfit")}
-              value={money(totals.netProfit)}
-              tone={totals.netProfit >= 0 ? "primary" : "danger"}
-              icon={<ReportIcon />}
-              hint={t("export.metric.grossProfit")}
-            />
+            {maySeeCost ? (
+              <StatTile
+                label={t("reports.netProfit")}
+                value={money(totals.netProfit)}
+                tone={totals.netProfit >= 0 ? "primary" : "danger"}
+                icon={<ReportIcon />}
+                hint={t("export.metric.grossProfit")}
+              />
+            ) : (
+              <StatTile
+                label={t("reports.invoices")}
+                value={String(totals.invoiceCount)}
+                tone="primary"
+                icon={<ReportIcon />}
+              />
+            )}
             <StatTile
               label={t("reports.expenses")}
               value={money(totals.expenses)}
@@ -410,6 +421,7 @@ export function ReportsPage() {
                     summaryFor,
                     range: exportRange,
                     t,
+                    maySeeCost,
                   })
                 }
               />
@@ -463,7 +475,7 @@ export function ReportsPage() {
                   size="sm"
                   count={stockRows.length}
                   build={() =>
-                    buildInventorySheets({ products: stockRows, categoryName, t, pick })
+                    buildInventorySheets({ products: stockRows, categoryName, t, pick, maySeeCost })
                   }
                 />
               </ExportRow>
@@ -478,7 +490,7 @@ export function ReportsPage() {
                   size="sm"
                   count={catalogProducts.length}
                   build={() =>
-                    buildProductsSheets({ products: catalogProducts, categories, t, pick })
+                    buildProductsSheets({ products: catalogProducts, categories, t, pick, maySeeCost })
                   }
                 />
               </ExportRow>
