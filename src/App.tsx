@@ -59,6 +59,7 @@ import { BrandingPage } from "@/modules/settings/pages/BrandingPage";
 import { SettingsHomePage } from "@/modules/settings/pages/SettingsHomePage";
 import { SystemSettingsPage } from "@/modules/settings/pages/SystemSettingsPage";
 import { OperationsCenterPage } from "@/modules/operations/pages/OperationsCenterPage";
+import { ImportCenterPage } from "@/modules/import/pages/ImportCenterPage";
 import { StoreManagementHome, SalesHome, CatalogHome, InventoryHome, OnlineHome } from "./components/layout/moduleHomes";
 
 import {
@@ -256,6 +257,7 @@ function AuthenticatedApp() {
                             <Route path="/" element={<DashboardPage />} />
                             <Route path="/products" element={<ProductsPage />} />
                             <Route path="/products/new" element={<ProductFormPage mode="create" />} />
+                            <Route path="/products/import" element={<ImportCenterPage />} />
                             <Route path="/products/:id" element={<ProductDetailPage />} />
                             <Route path="/products/:id/edit" element={<ProductFormPage mode="edit" />} />
                             {/* Phase 49: the Catalog module landing. */}

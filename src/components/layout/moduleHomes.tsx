@@ -127,7 +127,7 @@ export function CatalogHome({ embedded = false }: { embedded?: boolean }) {
         },
         {
           key: "import",
-          to: "/products",
+          to: "/products/import",
           icon: <PlusCircleIcon />,
           title: t("nav.importExport"),
           description: t("home.catalog.import.desc"),

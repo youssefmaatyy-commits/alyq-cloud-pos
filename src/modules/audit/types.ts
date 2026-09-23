@@ -111,6 +111,9 @@ export const AUDIT_ACTIONS = [
   // The trail says what was removed and how many — never a secret, never a sale.
   "operations.cleanup_executed",
   "operations.retention_applied",
+  // Phase 57: a reviewed import was applied or rolled back. Preview is not
+  // audited. The row counts the outcome; it does not store the file.
+  "import.applied",
   "website_settings.updated",
   // Identity (Phase 10). A session event is written by the app because there is
   // no table behind it; the user and role events are written by the settings
