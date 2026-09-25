@@ -9,17 +9,9 @@
  */
 export { StorefrontApp } from "./StorefrontApp";
 
-// Customer-facing pages
-export { StoreHomePage } from "./pages/StoreHomePage";
-export { StoreProductsPage } from "./pages/StoreProductsPage";
-export { StoreProductPage } from "./pages/StoreProductPage";
-export { StoreCartPage } from "./pages/StoreCartPage";
-export { StoreCheckoutPage } from "./pages/StoreCheckoutPage";
-export { StoreConfirmationPage } from "./pages/StoreConfirmationPage";
-export { StoreTrackPage } from "./pages/StoreTrackPage";
-export { StoreAccountPage } from "./pages/StoreAccountPage";
-export { StoreAboutPage } from "./pages/StoreAboutPage";
-export { StoreContactPage } from "./pages/StoreContactPage";
+// The legacy customer pages are NOT exported by this production barrel. The
+// registered rollback suites import them directly through their test-only
+// esbuild projection; the public app routes only to the canonical V2 pages.
 
 // POS / back-office screens
 export { OnlineOrdersPage } from "./pages/OnlineOrdersPage";

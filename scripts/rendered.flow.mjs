@@ -127,6 +127,90 @@ async function layout(name, fullPage = true) {
   results.push({ name, ...measurements });
   console.log(`✓ ${name}: ${measurements.viewport}px, no overflow, images loaded, ${measurements.dir}`);
 }
+
+/** Real scrollport geometry, wheel/trackpad input, scrollbar drag, and touch.
+ * Both the desktop checkout and the tablet cart drawer use this contract. */
+async function cashierScroll(panel, { lang, name, height, touch = false }) {
+  await panel.evaluate((el) => { el.scrollTop = 0; });
+  const start = await panel.evaluate((el) => {
+    const cart = el.querySelector('[data-testid="pos-cart"]');
+    const payment = el.lastElementChild;
+    return {
+      overflow: getComputedStyle(el).overflowY,
+      rect: el.getBoundingClientRect().toJSON(),
+      cart: cart.getBoundingClientRect().toJSON(),
+      payment: payment.getBoundingClientRect().toJSON(),
+      clientHeight: el.clientHeight,
+      scrollHeight: el.scrollHeight,
+      clientWidth: el.clientWidth,
+      scrollWidth: el.scrollWidth,
+      scrollbarWidth: el.offsetWidth - el.clientWidth,
+    };
+  });
+  assert.equal(start.overflow, 'auto', `${name}: checkout is the scroll container`);
+  assert.ok(start.clientHeight > 0 && start.scrollHeight > start.clientHeight + 10, `${name}: checkout must actually overflow`);
+  assert.ok(start.cart.height >= 300, `${name}: cart/customer/discount must not collapse behind payment`);
+  assert.ok(start.payment.top >= start.cart.bottom + 10, `${name}: payment must not overlap cart`);
+  assert.ok(start.rect.bottom <= height + 1, `${name}: scrollport must end above the viewport bottom`);
+  assert.ok(start.scrollWidth <= start.clientWidth + 2, `${name}: no sideways cashier scroll`);
+  assert.ok(start.scrollbarWidth >= 8, `${name}: visible scrollbar can be dragged`);
+  if (await panel.getAttribute('data-testid') === 'pos-checkout-panel') {
+    assert.ok(await page.evaluate(() => document.documentElement.scrollHeight <= Math.max(
+      innerHeight, innerWidth < 1280 ? 680 : 632,
+    ) + 1), `${name}: expanding payment or the cart must not force additional document scrolling`);
+  }
+
+  const beforeWindowY = await page.evaluate(() => window.scrollY);
+  const box = await panel.boundingBox();
+  // Point at the payment area, not the nested cart-line list: the wheel must
+  // scroll checkout rather than accidentally selecting a second scrollport.
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height - 30);
+  await page.mouse.wheel(0, 5000);
+  await expect.poll(() => panel.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+  await expect.poll(() => panel.evaluate((el) => Math.abs(el.scrollHeight - el.clientHeight - el.scrollTop))).toBeLessThan(2);
+  const complete = await panel.evaluate((el, language) => {
+    const label = language === 'ar' ? 'إتمام البيع' : 'Complete sale';
+    const button = [...el.querySelectorAll('button')].find((item) => item.textContent.includes(label));
+    const pane = el.getBoundingClientRect();
+    const rect = button?.getBoundingClientRect();
+    return rect && { top: rect.top, bottom: rect.bottom, paneTop: pane.top, paneBottom: pane.bottom };
+  }, lang);
+  assert.ok(complete && complete.top >= complete.paneTop - 1 && complete.bottom <= complete.paneBottom + 1,
+    `${name}: Complete sale is reachable at the bottom of checkout`);
+  assert.equal(await page.evaluate(() => window.scrollY), beforeWindowY, `${name}: wheel did not move the whole page`);
+
+  // Chrome's headless default hides scrollbars, so the launch above explicitly
+  // enables them. Drag the thumb on the right in LTR or left in RTL.
+  await panel.evaluate((el) => { el.scrollTop = 0; });
+  const thumbX = lang === 'ar' ? box.x + 5 : box.x + box.width - 5;
+  await page.mouse.move(thumbX, box.y + 30);
+  await page.mouse.down();
+  await page.mouse.move(thumbX, box.y + box.height - 30, { steps: 10 });
+  await page.mouse.up();
+  await expect.poll(() => panel.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+
+  if (touch) {
+    await panel.evaluate((el) => { el.scrollTop = 0; });
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 });
+    try {
+      const x = box.x + box.width / 2;
+      const y = box.y + box.height - 35;
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+      for (let step = 1; step <= 14; step += 1) {
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: y - step * 32 }] });
+        await page.waitForTimeout(15);
+      }
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      await expect.poll(() => panel.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+    } finally {
+      await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: false });
+      await cdp.detach();
+    }
+    assert.equal(await page.evaluate(() => window.scrollY), beforeWindowY, `${name}: touch stays inside checkout`);
+  }
+  console.log(`✓ ${name}: wheel/trackpad, thumb drag${touch ? ', touch' : ''}, bottom controls reachable`);
+}
 try {
   await go('/');
   await page.locator('input[autocomplete="username"]').fill('admin');

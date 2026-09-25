@@ -36,7 +36,7 @@ import {
   type ReactNode,
 } from "react";
 import type { Product } from "@/modules/products/types";
-import { getOnlineOrdersRepository } from "../data";
+import { getOnlineOrdersRepository, getStoreAccountsRepository } from "../data";
 import {
   describeThrown,
   toOnlineError,
@@ -181,6 +181,10 @@ export interface StoreCartContextValue {
   entries: CartEntry[];
   unitCount: number;
   isEmpty: boolean;
+  /** Saved lines removed after the published catalogue loads. Presentation
+   * only: the shared cart remains the one source of truth. */
+  prunedCount: number;
+  acknowledgePruned: () => void;
 
   /**
    * Add one line. A product that sells by variant REFUSES without an exact
@@ -258,11 +262,14 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
     campaigns,
     catalogContext,
     settings,
+    loading: catalogueLoading,
+    error: catalogueError,
     checkCoupon: verifyCode,
     previewPricing,
   } = useStorefront();
   const { customer } = useStoreAccount();
   const orders = useMemo(() => getOnlineOrdersRepository(), []);
+  const accounts = useMemo(() => getStoreAccountsRepository(), []);
 
   const [stored] = useState<StoredCart>(() =>
     typeof window === "undefined"
@@ -271,6 +278,7 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
   );
 
   const [lines, setLines] = useState<CartLine[]>(stored.lines);
+  const [prunedCount, setPrunedCount] = useState(0);
   const [couponCode, setCouponCode] = useState<string | null>(stored.couponCode);
   const [couponInput, setCouponInput] = useState("");
   const [couponError, setCouponError] = useState<CouponCheckReason | null>(null);
@@ -294,25 +302,28 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
     [publishedVariants],
   );
 
-  // Drop lines whose product has gone off the website, and lines that name a
-  // combination that is no longer published (archived, or the product left
-  // variant mode): a cart that cannot be checked out is worse than a cart with
-  // one item missing, and the customer is told on the cart screen rather than
-  // at the last step. A variant-product line without a combination is dropped
-  // too — it can no longer be checked out, because the server refuses it.
+  // Drop saved lines only AFTER a successful catalogue load (an empty/error
+  // response while loading must never wipe a shopper's cart). Keep a count for
+  // the V2 notice, not a second storage reader or a separate cart model.
   const pruned = useRef(false);
   useEffect(() => {
-    if (pruned.current || products.length === 0) return;
+    if (pruned.current || catalogueLoading || catalogueError) return;
     pruned.current = true;
-    setLines((current) =>
-      current.filter((line) => {
-        const product = productsById.get(line.product_id);
-        if (!product || !product.active || !product.show_on_website) return false;
-        if (line.variant_id) return variantsById.has(line.variant_id);
-        return !product.variants_enabled;
-      }),
-    );
-  }, [products.length, productsById, variantsById]);
+    const valid = (line: CartLine) => {
+      const product = productsById.get(line.product_id);
+      if (!product || !product.active || !product.show_on_website) return false;
+      if (line.variant_id) {
+        const variant = variantsById.get(line.variant_id);
+        return Boolean(product.variants_enabled && variant?.active && variant.product_id === product.id);
+      }
+      return !product.variants_enabled;
+    };
+    const removed = lines.filter((line) => !valid(line)).length;
+    if (removed) {
+      setPrunedCount(removed);
+      setLines((current) => current.filter(valid));
+    }
+  }, [catalogueLoading, catalogueError, lines, productsById, variantsById]);
 
   // Persist.
   useEffect(() => {
@@ -523,6 +534,7 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
     setCouponCode(null);
     setCouponDiscount(0);
     setCouponError(null);
+    setPrunedCount(0);
   }, []);
 
   const addMany = useCallback(
@@ -666,9 +678,10 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
         clear();
         setLines([]);
         if (customer) {
-          await orders
-            .listMyOrders(customer.id)
-            .then(() => undefined)
+          // A live shopper is browser-local, not a privileged server identity.
+          // Remember only the reference+phone in the EXISTING account store;
+          // listMyOrders re-looks it up through the private tracking RPC.
+          await accounts.rememberOrder(customer.id, result.order.order_number, result.order.customer_phone)
             .catch(() => undefined);
         }
         return result.order;
@@ -695,7 +708,7 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
         setPlacing(false);
       }
     },
-    [clear, couponCode, customer, deliveryType, entries.length, lines, orders, paymentMethod],
+    [accounts, clear, couponCode, customer, deliveryType, deliveryZoneId, entries.length, lines, orders, paymentMethod],
   );
 
   const clientRefRef = useRef<string | null>(null);
@@ -746,6 +759,8 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
       entries,
       unitCount,
       isEmpty,
+      prunedCount,
+      acknowledgePruned: () => setPrunedCount(0),
       add,
       setQuantity,
       increase,
@@ -790,6 +805,7 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
       applyCoupon,
       checkout,
       clear,
+      clearCoupon,
       couponCode,
       couponError,
       couponInput,
@@ -810,6 +826,7 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
       paymentMethod,
       placing,
       problems,
+      prunedCount,
       remove,
       setQuantity,
       totals,

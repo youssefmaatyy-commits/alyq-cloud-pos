@@ -32,6 +32,8 @@ import { useAuth } from "@/lib/auth";
 import type { WebsiteRepository } from "@/modules/online/data/repository";
 import { toOnlineError } from "@/modules/online/data/repository";
 import { SettingsImageField } from "../SettingsImageField";
+import { resolvedSocialLinks } from "@/modules/online/services/settingsDefaults";
+import { invalidSocialSetting, socialChannelHref, validWhatsAppMessage } from "@/modules/online/services/socialSafety";
 import type {
   AnnouncementMessage,
   EditorialCampaign,
@@ -39,6 +41,7 @@ import type {
   HomepageSectionConfig,
   ProductContentMediaItem,
   SocialLinkConfig,
+  SocialPlatform,
   StorefrontCategoryContent,
   StorefrontCategoryContentDraft,
   WebsiteSettings,
@@ -461,81 +464,87 @@ export function FooterPanel({ draft, patch }: { draft: WebsiteSettings; patch: P
 
 export function SocialPanel({ draft, patch }: { draft: WebsiteSettings; patch: Patch }) {
   const { t } = useI18n();
-  const links = draft.social_links ?? [];
+  const effective = resolvedSocialLinks(draft);
+  const links = (["facebook", "instagram", "tiktok", "whatsapp"] as SocialPlatform[])
+    .map((platform) => effective.find((entry) => entry.platform === platform)!);
+  const invalid = invalidSocialSetting(draft);
 
-  const setLinks = (next: SocialLinkConfig[]) =>
-    patch((current) => ({ ...current, social_links: next }));
-
-  const platformLabel = (platform: SocialLinkConfig["platform"]) =>
-    ({ instagram: "Instagram", facebook: "Facebook", tiktok: "TikTok", whatsapp: "WhatsApp" })[platform];
+  // One shared draft for both storefronts. Materialize legacy-only values in
+  // the existing enabled rows on first edit, so disabling a fallback URL stays
+  // disabled without deleting its saved account. The flat legacy keys mirror
+  // only enabled rows (older contact surfaces read those directly).
+  const edit = (platform: SocialPlatform, change: Partial<SocialLinkConfig>) => patch((current) => {
+    const active = resolvedSocialLinks(current).find((entry) => entry.platform === platform)!;
+    const next: SocialLinkConfig = { ...active, ...change, platform };
+    const index = current.social_links.findIndex((entry) => entry.platform === platform);
+    const rows = index < 0 ? [...current.social_links, next] :
+      current.social_links.map((entry, position) => position === index ? next : entry);
+    return {
+      ...current, social_links: rows,
+      social: { ...current.social, [platform]: next.enabled ? next.url : "" },
+    };
+  });
 
   return (
     <Card className="space-y-3" data-testid="social-settings">
       <h2 className="text-sm font-bold text-slate-900">{t("online.s45.social")}</h2>
-      <p className="text-xs text-slate-500">{t("online.s45.socialHint")}</p>
-      <div className="space-y-3">
-        {links.map((link) => (
-          <div key={link.platform} className="rounded-xl border border-slate-200 bg-white p-3">
-            <p className="mb-2 text-xs font-black uppercase tracking-wide text-slate-500">
-              {platformLabel(link.platform)}
+      <p className="text-xs text-slate-600">{t("online.social.sharedScope")}</p>
+      {invalid ? <p role="alert" data-testid="social-validation-error" className="text-xs font-bold text-rose-700">
+        {t(`online.settings.${invalid.platform}`)}: {t(invalid.field === "message" ? "online.social.invalidMessage" :
+          invalid.reason === "required" ? "online.social.required" :
+            invalid.platform === "whatsapp" ? "online.social.invalidPhone" : "online.social.invalidProfile")}
+      </p> : null}
+      <div className="grid gap-3 sm:grid-cols-2">
+        {links.map((link) => {
+          const profileError = link.url.trim() ? !socialChannelHref(link.platform, link.url) : link.enabled;
+          const messageError = link.platform === "whatsapp" &&
+            (!validWhatsAppMessage(link.message_ar ?? "") || !validWhatsAppMessage(link.message_en ?? ""));
+          return <div key={link.platform} role="group" aria-label={t(`online.settings.${link.platform}`)}
+            data-testid={`social-channel-${link.platform}`}
+            className="min-w-0 rounded-xl border border-slate-200 bg-white p-3">
+            <p className="mb-2 text-xs font-black uppercase tracking-wide text-slate-700">
+              {t(`online.settings.${link.platform}`)}
             </p>
             <div className="space-y-2">
-              <ToggleSwitch
-                checked={link.enabled}
-                onChange={(value) =>
-                  setLinks(links.map((entry) => (entry.platform === link.platform ? { ...entry, enabled: value } : entry)))
-                }
-                label={t("online.s45.messageEnabled")}
-              />
-              <Field
+              <ToggleSwitch checked={link.enabled} onChange={(value) => edit(link.platform, { enabled: value })}
+                label={t("online.s45.messageEnabled")} />
+              <Field htmlFor={`social-url-${link.platform}`}
                 label={link.platform === "whatsapp" ? t("online.s45.whatsappNumber") : t("online.s45.profileUrl")}
-                hint={link.platform === "whatsapp" ? t("online.s45.whatsappHint") : t("online.s45.urlHint")}
-              >
-                <TextInput
-                  dir="ltr"
-                  value={link.url}
-                  onChange={(event) =>
-                    setLinks(
-                      links.map((entry) =>
-                        entry.platform === link.platform ? { ...entry, url: event.target.value } : entry,
-                      ),
-                    )
-                  }
-                />
+                hint={link.platform === "whatsapp" ? t("online.s45.whatsappHint") : t("online.s45.urlHint")}>
+                <TextInput id={`social-url-${link.platform}`} data-testid={`social-url-${link.platform}`}
+                  dir="ltr" value={link.url} aria-invalid={Boolean(profileError)}
+                  aria-describedby={profileError ? `social-url-error-${link.platform}` : undefined}
+                  onChange={(event) => edit(link.platform, { url: event.target.value })} />
               </Field>
+              {profileError ? <p id={`social-url-error-${link.platform}`} className="text-xs font-bold text-rose-700">
+                {t(!link.url.trim() ? "online.social.required" : link.platform === "whatsapp"
+                  ? "online.social.invalidPhone" : "online.social.invalidProfile")}
+              </p> : null}
+              {link.platform === "whatsapp" ? <div className="space-y-2">
+                <p className="text-xs leading-relaxed text-slate-600">{t("online.social.messageHint")}</p>
+                <Field label={t("online.social.messageAr")} htmlFor="social-message-ar">
+                  <TextArea id="social-message-ar" data-testid="social-message-ar" dir="rtl" rows={2}
+                    maxLength={800} aria-invalid={Boolean(messageError)} value={link.message_ar ?? ""}
+                    onChange={(event) => edit("whatsapp", { message_ar: event.target.value })} />
+                </Field>
+                <Field label={t("online.social.messageEn")} htmlFor="social-message-en">
+                  <TextArea id="social-message-en" data-testid="social-message-en" dir="ltr" rows={2}
+                    maxLength={800} aria-invalid={Boolean(messageError)} value={link.message_en ?? ""}
+                    onChange={(event) => edit("whatsapp", { message_en: event.target.value })} />
+                </Field>
+                {messageError ? <p className="text-xs font-bold text-rose-700">{t("online.social.invalidMessage")}</p> : null}
+              </div> : null}
               <Bilingual
                 labelAr={t("online.s45.labelAr")}
                 labelEn={t("online.s45.labelEn")}
                 valueAr={link.label_ar}
                 valueEn={link.label_en}
-                onAr={(value) =>
-                  setLinks(links.map((entry) => (entry.platform === link.platform ? { ...entry, label_ar: value } : entry)))
-                }
-                onEn={(value) =>
-                  setLinks(links.map((entry) => (entry.platform === link.platform ? { ...entry, label_en: value } : entry)))
-                }
+                onAr={(value) => edit(link.platform, { label_ar: value })}
+                onEn={(value) => edit(link.platform, { label_en: value })}
               />
             </div>
-          </div>
-        ))}
-        {links.length === 0 ? (
-          <Button
-            variant="secondary"
-            onClick={() =>
-              setLinks(
-                (["instagram", "facebook", "tiktok", "whatsapp"] as const).map((platform) => ({
-                  platform,
-                  enabled: false,
-                  url: "",
-                  label_ar: "",
-                  label_en: "",
-                })),
-              )
-            }
-          >
-            {t("online.s45.socialInit")}
-          </Button>
-        ) : null}
+          </div>;
+        })}
       </div>
     </Card>
   );

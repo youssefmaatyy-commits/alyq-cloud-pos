@@ -1761,7 +1761,13 @@ test("meta titles and descriptions are clipped and fall back sensibly", () => {
 
 test("the sitemap lists the storefront pages and escapes what it writes", () => {
   const pages = storefrontSitemapPages({ settings: settings(), products: CATALOG, contents: CONTENTS });
-  assert.ok(pages.length >= 4, "home, products, contact and the product pages");
+  assert.ok(pages.length >= 4, "home, products, About, Contact and published products");
+  assert.deepEqual(pages.slice(0, 4).map((page) => page.path),
+    ["#/store", "#/store/products", "#/store/about", "#/store/contact"],
+    "downloadable sitemap lists canonical indexable information pages");
+  assert.equal(pages.some((page) => ["#/store/cart", "#/store/track", "#/store/account",
+    "#/store/checkout", "#/store/confirmation"].includes(page.path)), false,
+    "private/noindex routes never appear in the downloadable sitemap");
   const xml = buildSitemapXml({ baseUrl: "https://shop.example.com/", pages });
   assert.match(xml, /<\?xml version="1\.0" encoding="UTF-8"\?>/);
   assert.match(xml, /<loc>https:\/\/shop\.example\.com\/#\/store<\/loc>/);

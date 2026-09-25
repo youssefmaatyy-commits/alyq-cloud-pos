@@ -24,11 +24,17 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-import { DEFAULT_BUNDLE, buildAppBundle } from "./lib/app-bundle.mjs";
+import { DEFAULT_BUNDLE, LEGACY_ROLLBACK_BUNDLE, buildAppBundle } from "./lib/app-bundle.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const BUNDLE = DEFAULT_BUNDLE;
 const FILTERS = process.argv.slice(2).filter((a) => !a.startsWith("-"));
+// These historical suites assert the retained legacy UI's markup and theming.
+// Exercise that rollback source in an ephemeral test-only bundle; do not expose
+// a legacy URL or localStorage switch in the public application. Every other
+// suite, including canonical shopping/checkout, runs on the shipped route tree.
+const LEGACY_ROLLBACK_SUITES = new Set(["store", "lifecycle", "storefront", "promotions",
+  "dashboardux", "final", "theme", "storepolish", "dangerzone", "visualaudit"]);
 
 const SUITES = [
   { id: "smoke", file: "scripts/smoke.dom.mjs", title: "DOM smoke (products, inventory, POS, returns, shifts)" },
@@ -79,6 +85,31 @@ const SUITES = [
     id: "storepolish",
     file: "scripts/storepolish.flow.mjs",
     title: "Storefront polish (Phase 49): gold-on-ivory palette, hero CTAs + fallback, slim header, editorial rhythm, quiet quick-add, Phase 43 variant proof, cart/checkout hierarchy, RTL, footer",
+  },
+  {
+    id: "storefront-v2",
+    file: "scripts/storefront-v2.flow.mjs",
+    title: "Storefront V2 Phase 1 regressions on canonical routes: configured content, exact variants, cart, AR/RTL",
+  },
+  {
+    id: "v2-studio",
+    file: "scripts/storefront-v2-studio.flow.mjs",
+    title: "Storefront V2 Phase 2 regressions: Admin draft/save/reload, scoped reset, ticker, RTL, canonical shop and POS",
+  },
+  {
+    id: "v2-social",
+    file: "scripts/storefront-v2-social.flow.mjs",
+    title: "Storefront V2 Phase 2 social regressions: shared Admin save/reload, safe links, RTL, canonical shop and POS",
+  },
+  {
+    id: "v2-journey",
+    file: "scripts/storefront-v2-journey.flow.mjs",
+    title: "Storefront V2 Phase 3: exact-variant bag, COD/InstaPay, private tracking, browser account and safe reorder",
+  },
+  {
+    id: "v2-cutover",
+    file: "scripts/storefront-v2-cutover.flow.mjs",
+    title: "Storefront V2 Phase 4A: canonical public routing, metadata, saved links, safe preview redirects and POS isolation",
   },
   {
     id: "nav",
@@ -154,16 +185,28 @@ try {
   if (!error?.errors) console.error(c.dim(`  ${String(error)}`));
   process.exit(1);
 }
-console.log(c.dim(`  ${BUNDLE} (${(bytes / 1024).toFixed(0)} kB)\n`));
+console.log(c.dim(`  ${BUNDLE} (${(bytes / 1024).toFixed(0)} kB)`));
+if (selected.some((suite) => LEGACY_ROLLBACK_SUITES.has(suite.id))) {
+  try {
+    const legacy = await buildAppBundle({ outfile: LEGACY_ROLLBACK_BUNDLE, legacyRollback: true });
+    console.log(c.dim(`  ${LEGACY_ROLLBACK_BUNDLE} (${(legacy.bytes / 1024).toFixed(0)} kB) — test-only legacy rollback`));
+  } catch (error) {
+    console.error(c.red(`✗ legacy rollback test bundle failed: ${error}`));
+    process.exit(1);
+  }
+}
+console.log();
 
 // ── run ───────────────────────────────────────────────────────────────────
 const results = [];
 
 for (const suite of selected) {
-  console.log(c.bold(`▶ ${suite.title}`));
+  console.log(c.bold(`▶ ${suite.title}${LEGACY_ROLLBACK_SUITES.has(suite.id) ? " [test-only legacy rollback bundle]" : ""}`));
   const run = spawnSync(process.execPath, [path.join(ROOT, suite.file)], {
     stdio: "inherit",
     cwd: ROOT,
+    env: { ...process.env, ALYQ_TEST_BUNDLE: LEGACY_ROLLBACK_SUITES.has(suite.id)
+      ? LEGACY_ROLLBACK_BUNDLE : BUNDLE },
   });
   const ok = run.status === 0;
   results.push({ ...suite, ok });

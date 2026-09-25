@@ -30,6 +30,8 @@
  */
 import { JSDOM } from "jsdom";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { bundleFileUrl } from "./lib/app-bundle.mjs";
 
 const dom = new JSDOM('<!doctype html><html lang="en"><body><div id="root"></div></body></html>', {
@@ -1275,11 +1277,10 @@ async function main() {
   clickExact("Close", dialog());
   console.log("  ✓ the delivery address and fee are in the staff order view as well");
 
-  // ── 10c · every other configured external link follows the same policy ────
-  // Real https profiles and the map link render exactly where they did before;
-  // values that would execute — javascript:, data:, vbscript:, in mixed case or
-  // padded with whitespace — render no link at all, while the valid WhatsApp
-  // link keeps working throughout.
+  // ── 10c · configured external links and forged old rows ──────────────────
+  // Real https profiles and the map link render exactly where they did before.
+  // Admin now rejects unsafe social URLs before saving; a forged/pre-existing
+  // row with unsafe values still renders no executable link.
   await navigate("#/online/website", 900);
   clickExact("General");
   await sleep(500);
@@ -1334,7 +1335,9 @@ async function main() {
   );
   console.log("  ✓ valid Facebook, Instagram, TikTok and map links render on the storefront");
 
-  // Now the same fields, filled with values that must never become hrefs.
+  // New social contract: unsafe accounts refuse the entire Save, preserving
+  // the last published document. A fresh process tests that a forged/old row
+  // still renders no executable links in either storefront or contact page.
   await navigate("#/online/website", 900);
   clickExact("General");
   await sleep(500);
@@ -1343,50 +1346,27 @@ async function main() {
   setInputValue(fieldByPlaceholder("https://tiktok.com/@…"), " javascript:alert(1)");
   setFieldUnderLabel("Map link", "vbscript:msgbox(1)");
   await sleep(200);
+  const beforeUnsafe = JSON.stringify(websiteSettings());
   await saveBuilder();
-  await waitFor(
-    () => (websiteSettings()?.social?.facebook ?? "") === "JaVaScRiPt:alert(1)",
-    { label: "the unsafe values to be saved as typed" },
-  );
+  await waitFor(() => document.querySelector('[data-testid="social-validation-error"]'),
+    { label: "unsafe social save to be refused" });
+  assert.equal(JSON.stringify(websiteSettings()), beforeUnsafe, "unsafe accounts cannot overwrite the last saved document");
 
-  await navigate("#/store", 900);
-  await waitFor(() => productCards().length > 0, { label: "the storefront to reload" });
-  hrefsNow = [...document.querySelectorAll("a")].map((a) =>
-    (a.getAttribute("href") ?? "").trim().toLowerCase(),
-  );
-  assert.ok(
-    !hrefsNow.some(
-      (href) =>
-        href.startsWith("javascript:") || href.startsWith("data:") || href.startsWith("vbscript:"),
-    ),
-    "no executable scheme reaches any href on the storefront",
-  );
-  assert.equal(linkWithLabel("Facebook"), null, "the mixed-case javascript: value renders no icon");
-  assert.equal(linkWithLabel("Instagram"), null, "nor does the data: value");
-  assert.equal(linkWithLabel("TikTok"), null, "nor does the whitespace-padded javascript: value");
-  assert.ok(
-    !hrefsNow.some((href) => href.includes("maps.google")),
-    "and the vbscript: map value replaced the map link with nothing",
-  );
-  assert.ok(
-    hrefsNow.some((href) => href.includes("wa.me/201001234567")),
-    "while the valid WhatsApp link keeps working",
-  );
-  await navigate("#/store/contact", 800);
-  await waitFor(() => bodyText().includes("Contact us"), { label: "the contact page" });
-  assert.ok(
-    ![...document.querySelectorAll("a")].some((a) => {
-      const href = (a.getAttribute("href") ?? "").trim().toLowerCase();
-      return (
-        href.startsWith("javascript:") ||
-        href.startsWith("data:") ||
-        href.startsWith("vbscript:") ||
-        href === "#"
-      );
-    }),
-    "the contact page renders no executable link and no dead '#'",
-  );
-  console.log("  ✓ javascript:/data:/vbscript: values — any casing, any padding — render no link at all");
+  const forged = readJson(SETTINGS_KEY);
+  forged.settings.social.facebook = "JaVaScRiPt:alert(1)";
+  forged.settings.social.instagram = "data:text/html,<script>alert(1)</script>";
+  forged.settings.social.tiktok = " javascript:alert(1)";
+  forged.settings.social_links = forged.settings.social_links.map((row) => ({ ...row,
+    url: row.platform === "facebook" ? forged.settings.social.facebook :
+      row.platform === "instagram" ? forged.settings.social.instagram :
+        row.platform === "tiktok" ? forged.settings.social.tiktok : row.url }));
+  forged.settings.contact.map_url = "vbscript:msgbox(1)";
+  const guarded = spawnSync(process.execPath, [fileURLToPath(new URL("./lib/unsafe-social-reload.mjs", import.meta.url))], {
+    cwd: process.cwd(), encoding: "utf8", timeout: 60_000,
+    env: { ...process.env, ALYQ_TEST_UNSAFE_SOCIAL: JSON.stringify(forged) },
+  });
+  assert.equal(guarded.status, 0, `forged-row safety failed: ${guarded.error ?? ""}\n${guarded.stdout}\n${guarded.stderr}`);
+  console.log("  ✓ unsafe social URL rejected on Save; old/forged rows render no executable links after fresh boot");
 
   // Hand the next section the same starting point it has always had: the
   // storefront home, in English, with the catalogue on screen.

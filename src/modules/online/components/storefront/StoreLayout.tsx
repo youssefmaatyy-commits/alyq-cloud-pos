@@ -32,6 +32,7 @@ import {
 } from "../../services/settingsDefaults";
 import type { AnnouncementMessage, SocialLinkConfig } from "../../types";
 import { StoreImage } from "./StorePrimitives";
+import { SocialIcon } from "./SocialIcon";
 
 /** `wa.me/<number>?text=…` from whatever the admin typed. */
 export function whatsappHref(raw: string, message?: string): string | null {
@@ -48,46 +49,6 @@ export function whatsappHref(raw: string, message?: string): string | null {
   if (digits.length < 8) return null;
   const number = digits.startsWith("20") ? digits : `20${digits.replace(/^0/, "")}`;
   return `https://wa.me/${number}${message ? `?text=${encodeURIComponent(message)}` : ""}`;
-}
-
-function SocialIcon({ kind }: { kind: "facebook" | "instagram" | "tiktok" | "whatsapp" | "instapay" }) {
-  const paths: Record<typeof kind, ReactNode> = {
-    facebook: (
-      <path
-        fill="currentColor"
-        d="M13.5 21v-7h2.4l.4-2.9h-2.8V9.2c0-.8.2-1.4 1.4-1.4h1.5V5.2c-.3 0-1.2-.1-2.2-.1-2.2 0-3.7 1.3-3.7 3.8v2.2H8v2.9h2.5V21h3Z"
-      />
-    ),
-    instagram: (
-      <path
-        fill="currentColor"
-        d="M12 8.4A3.6 3.6 0 1 0 12 15.6 3.6 3.6 0 0 0 12 8.4Zm0 5.9a2.3 2.3 0 1 1 0-4.6 2.3 2.3 0 0 1 0 4.6Zm4.6-6.1a.9.9 0 1 1-1.8 0 .9.9 0 1 1 1.8 0ZM12 5.2c1.9 0 2.1 0 2.9.1.9 0 1.4.2 1.7.3.4.2.7.4 1 .7.3.3.5.6.7 1 .1.3.3.8.3 1.7.1.8.1 1 .1 2.9s0 2.1-.1 2.9c0 .9-.2 1.4-.3 1.7-.2.4-.4.7-.7 1-.3.3-.6.5-1 .7-.3.1-.8.3-1.7.3-.8.1-1 .1-2.9.1s-2.1 0-2.9-.1c-.9 0-1.4-.2-1.7-.3a2.8 2.8 0 0 1-1-.7 2.8 2.8 0 0 1-.7-1c-.1-.3-.3-.8-.3-1.7-.1-.8-.1-1-.1-2.9s0-2.2.1-3c0-1 .2-1.7.4-2.3.3-.6.6-1.2 1.1-1.7.5-.5 1.1-.8 1.7-1.1.6-.2 1.3-.4 2.3-.4.8-.1 1.1-.1 3-.1s2.2 0 3-.1c1 0 1.7-.2 2.3-.4a4.7 4.7 0 0 0 1.7-1.1c.5-.5.8-1.1 1.1-1.7.2-.6.4-1.3.4-2.3.1-.8.1-1.1.1-3s0-2.2-.1-3c0-1-.2-1.7-.4-2.3a4.7 4.7 0 0 0-1.1-1.7 4.7 4.7 0 0 0-1.7-1.1c-.6-.2-1.3-.4-2.3-.4-.8-.1-1.1-.1-3-.1Z"
-      />
-    ),
-    tiktok: (
-      <path
-        fill="currentColor"
-        d="M16.6 5.8a4.3 4.3 0 0 1-1.1-2.8h-3v12.1a2.5 2.5 0 1 1-1.8-2.4V9.6a5.6 5.6 0 1 0 4.8 5.5V9.4a7.2 7.2 0 0 0 4.1 1.3V7.6a4.3 4.3 0 0 1-3-1.8Z"
-      />
-    ),
-    whatsapp: (
-      <path
-        fill="currentColor"
-        d="M12 3.5a8.4 8.4 0 0 0-7.2 12.7L3.5 20.5l4.4-1.2A8.4 8.4 0 1 0 12 3.5Zm0 15.3a7 7 0 0 1-3.6-1l-.3-.2-2.6.7.7-2.5-.2-.3a7 7 0 1 1 6 3.3Zm3.9-5.2c-.2-.1-1.3-.6-1.5-.7-.2-.1-.4-.1-.5.1l-.7.9c-.1.2-.3.2-.5.1a5.7 5.7 0 0 1-2.8-2.5c-.1-.2 0-.4.1-.5l.4-.5c.1-.1.1-.3 0-.4l-.6-1.5c-.1-.3-.3-.3-.5-.3h-.5c-.2 0-.5.1-.7.4-.9 1-.6 2.4.4 3.8a10 10 0 0 0 3.9 3.4c1.4.6 2.5.5 3.3-.1.3-.3.5-.7.5-1.1v-.6c0-.2-.2-.3-.4-.4Z"
-      />
-    ),
-    instapay: (
-      <path
-        fill="currentColor"
-        d="M4 6.5h16a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1Zm1 2v7h14v-7H5Zm1.5 1.5h4v1h-4v-1Zm0 2.5h7v1h-7v-1Z"
-      />
-    ),
-  };
-  return (
-    <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden>
-      {paths[kind]}
-    </svg>
-  );
 }
 
 // ── the announcement stage ──────────────────────────────────────────────────

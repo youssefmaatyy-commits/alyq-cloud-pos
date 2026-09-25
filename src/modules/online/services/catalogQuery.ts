@@ -55,6 +55,9 @@ export interface CatalogFilters {
   color: string | null;
   /** Exact numeric variant size, or null for every size. */
   size: number | null;
+  /** Optional published letter-size label, e.g. S/M/L. Kept separate from
+   * numeric size so a stored size 17 is never silently matched as a label. */
+  sizeLabel?: string | null;
   /** Inclusive price bounds on the effective price; `null` = unbounded. */
   minPrice: number | null;
   maxPrice: number | null;
@@ -72,6 +75,7 @@ export const EMPTY_CATALOG_FILTERS: CatalogFilters = {
   brand: null,
   color: null,
   size: null,
+  sizeLabel: null,
   minPrice: null,
   maxPrice: null,
   availability: "any",
@@ -237,6 +241,18 @@ function matchesIdentifier(product: Product, needle: string): boolean {
   );
 }
 
+/** A colour/size facet names ONE published combination, never a colour from
+ * one shelf paired with a size from another. Shared by search and V2 display. */
+export function variantMatchesCatalogFilters(variant: StoreVariant,
+  filters: Pick<CatalogFilters, "color" | "size" | "sizeLabel">): boolean {
+  const color = filters.color ? normalizeText(filters.color) : null;
+  const label = filters.sizeLabel ? normalizeText(filters.sizeLabel) : null;
+  return variant.active &&
+    (!color || [variant.color_key, variant.color_en ?? "", variant.color_ar ?? ""].some((value) => normalizeText(value) === color)) &&
+    (filters.size === null || variant.size === filters.size) &&
+    (!label || normalizeText(variant.size_label ?? "") === label);
+}
+
 /**
  * Search, filter and sort the catalogue.
  *
@@ -254,8 +270,7 @@ export function searchCatalog(
   const identifier = filters.search.trim().toLowerCase();
   const wantedIds = filters.productIds ? new Set(filters.productIds) : null;
   const brandNeedle = filters.brand ? normalizeText(filters.brand) : null;
-  const wantedColor = filters.color ? normalizeText(filters.color) : null;
-  const wantedSize = filters.size !== null && Number.isFinite(filters.size) ? filters.size : null;
+  const hasVariantFilter = Boolean(filters.color || filters.size !== null || filters.sizeLabel);
   const min = filters.minPrice !== null && Number.isFinite(filters.minPrice) ? filters.minPrice : null;
   const max = filters.maxPrice !== null && Number.isFinite(filters.maxPrice) ? filters.maxPrice : null;
 
@@ -267,19 +282,21 @@ export function searchCatalog(
     const entry = toCatalogProduct(product, context);
 
     if (brandNeedle && entry.brand !== brandNeedle) continue;
-    if (wantedColor || wantedSize !== null) {
-      const exact = entry.variants.some((variant) => {
-        const colorMatches = !wantedColor || [variant.color_key, variant.color_en ?? "", variant.color_ar ?? ""].some((value) => normalizeText(value) === wantedColor);
-        const sizeMatches = wantedSize === null || variant.size === wantedSize;
-        return colorMatches && sizeMatches;
-      });
-      if (!exact) continue;
+    let selectedVariants: StoreVariant[] | null = null;
+    if (hasVariantFilter) {
+      // Sold-out shelves still match the facet; availability is tested on the
+      // matching combination, not on a different in-stock sibling.
+      selectedVariants = (context.variants?.get(product.id) ?? []).filter((variant) =>
+        variantMatchesCatalogFilters(variant, filters));
+      if (!selectedVariants.length) continue;
     }
     if (min !== null && entry.price < min) continue;
     if (max !== null && entry.price > max) continue;
 
-    if (filters.availability === "in_stock" && !entry.inStock) continue;
-    if (filters.availability === "out_of_stock" && entry.inStock) continue;
+    const selectedInStock = selectedVariants ? selectedVariants.some((variant) =>
+      variantAvailableToPromise(variant, context.reservedVariant?.get(variant.id) ?? 0) > 0) : entry.inStock;
+    if (filters.availability === "in_stock" && !selectedInStock) continue;
+    if (filters.availability === "out_of_stock" && selectedInStock) continue;
 
     if (terms.length > 0) {
       // An exact barcode or SKU beats a text match: the customer knows what they
@@ -478,6 +495,7 @@ export function filtersFromSearchParams(params: URLSearchParams): CatalogFilters
     brand: params.get("brand"),
     color: params.get("color"),
     size: params.get("size") !== null && Number.isFinite(Number(params.get("size"))) ? Number(params.get("size")) : null,
+    sizeLabel: (params.get("size_label") ?? "").trim().slice(0, 60) || null,
     minPrice: params.get("min") !== null && Number.isFinite(min) ? min : null,
     maxPrice: params.get("max") !== null && Number.isFinite(max) ? max : null,
     availability: availability && AVAILABILITY_FILTERS.includes(availability) ? availability : "any",
@@ -495,6 +513,7 @@ export function filtersToSearchParams(filters: CatalogFilters): URLSearchParams 
   if (filters.brand) params.set("brand", filters.brand);
   if (filters.color) params.set("color", filters.color);
   if (filters.size !== null) params.set("size", String(filters.size));
+  if (filters.sizeLabel?.trim()) params.set("size_label", filters.sizeLabel.trim().slice(0, 60));
   if (filters.minPrice !== null) params.set("min", String(filters.minPrice));
   if (filters.maxPrice !== null) params.set("max", String(filters.maxPrice));
   if (filters.availability !== "any") params.set("availability", filters.availability);

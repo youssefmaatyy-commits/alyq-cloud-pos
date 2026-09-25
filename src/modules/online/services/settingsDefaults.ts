@@ -22,6 +22,7 @@ import {
   PRODUCT_CARD_GAPS as PRODUCT_CARD_GAP_KEYS,
   PRODUCT_CARD_ALIGNS as PRODUCT_CARD_ALIGN_KEYS,
   TRUST_ICONS as TRUST_ICON_KEYS,
+  V2_BODY_FONTS, V2_DISPLAY_FONTS, V2_BADGE_STYLES, V2_BUTTON_STYLES,
 } from "../types";
 import type {
   AnnouncementMessage,
@@ -30,11 +31,15 @@ import type {
   HomepageSectionConfig,
   HomepageSectionKey,
   SocialLinkConfig,
+  StorefrontV2Settings,
   TrustItem,
   WebsiteSettings,
 } from "../types";
 import { HOMEPAGE_SECTIONS } from "../types";
 import { defaultWhatsAppUpdates, resolveWhatsAppUpdates } from "./whatsapp";
+import {
+  invalidSocialSetting, normalizeWhatsAppPhone, socialProfileHref, validWhatsAppMessage, whatsappChannelHref,
+} from "./socialSafety";
 
 /** The shop's name before the admin sets one. Both languages, like everything. */
 const DEFAULT_STORE_NAME_AR = "أَلِــيْـــق";
@@ -153,8 +158,45 @@ const DEFAULT_SECTION_TITLES: Record<HomepageSectionKey, { ar: string; en: strin
   contact: { ar: "تواصل معنا", en: "Get in touch" },
 };
 
+/** Null/"inherit" means use the shared website setting, not a second copy. */
+export const DEFAULT_STOREFRONT_V2_SETTINGS: StorefrontV2Settings = {
+  mobile_logo_url: null,
+  logo_height: null,
+  mobile_logo_height: null,
+  header_bg: null,
+  header_text: null,
+  page_bg: null,
+  surface_bg: null,
+  text_color: null,
+  muted_text: null,
+  accent_color: null,
+  border_color: null,
+  button_bg: null,
+  button_text: null,
+  button_style: "inherit",
+  badge_bg: null,
+  badge_text: null,
+  badge_style: "inherit",
+  hero_bg: null,
+  hero_text: null,
+  announcement_bg: null,
+  announcement_text: null,
+  footer_bg: null,
+  footer_text: null,
+  footer_link: null,
+  body_font: "inherit",
+  display_font: "inherit",
+  mobile_columns: null,
+  sticky_header: null,
+  show_search: null,
+  show_account: null,
+  show_cart: null,
+  show_language: true,
+};
+
 /** The settings a brand-new shop gets. */
 export const DEFAULT_WEBSITE_SETTINGS: WebsiteSettings = {
+  storefront_v2: { ...DEFAULT_STOREFRONT_V2_SETTINGS },
   version: 1,
   currency: "EGP",
   contact: {
@@ -541,6 +583,20 @@ const THEME_COLOR_FIELDS = [
 
 /** Reject the whole settings write instead of silently replacing a mistyped
  * colour with the shipped default (or saving the other fields over last valid). */
+export const V2_COLOR_FIELDS = [
+  "header_bg", "header_text", "page_bg", "surface_bg", "text_color",
+  "muted_text", "accent_color", "border_color", "button_bg", "button_text",
+  "badge_bg", "badge_text", "hero_bg", "hero_text", "announcement_bg",
+  "announcement_text", "footer_bg", "footer_text", "footer_link",
+] as const satisfies readonly (keyof StorefrontV2Settings)[];
+export type V2ColorField = (typeof V2_COLOR_FIELDS)[number];
+
+/** V2 colour overrides must be opaque to allow reliable contrast calculation. */
+export function safeV2Color(value: unknown, fallback: string): string {
+  return typeof value === "string" && /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(value.trim())
+    ? value.trim() : fallback;
+}
+
 export function invalidSettingsColor(settings: WebsiteSettings): string | null {
   for (const field of THEME_COLOR_FIELDS) {
     if (!isHexColor(settings.theme[field])) return field;
@@ -548,6 +604,12 @@ export function invalidSettingsColor(settings: WebsiteSettings): string | null {
   for (const field of ["bg_color", "text_color"] as const) {
     const value = settings.announcement[field];
     if (value && !isHexColor(value)) return `announcement.${field}`;
+  }
+  for (const field of V2_COLOR_FIELDS) {
+    const value = settings.storefront_v2?.[field];
+    if (value !== null && value !== undefined && safeV2Color(value, "") === "") {
+      return `storefront_v2.${field}`;
+    }
   }
   return null;
 }
@@ -758,7 +820,7 @@ const safeUrlField = (value: unknown, max = 1000): string => {
   if (raw.length > max) return "";
   return configuredHref(raw) ?? "";
 };
-const safeImageField = (value: unknown): string | null => {
+export const safeImageField = (value: unknown): string | null => {
   const raw = typeof value === "string" ? value.trim() : "";
   if (raw === "") return null;
   // Images are media URLs from the project's own storage: absolute http(s), a
@@ -771,18 +833,55 @@ const safeImageField = (value: unknown): string | null => {
 const oneOf = <T>(value: unknown, allowed: readonly T[], fallback: T): T =>
   (allowed as readonly unknown[]).includes(value as T) ? (value as T) : fallback;
 
+/** Shared by save and public rendering because existing SQL does not validate
+ * newly introduced JSON keys. Only explicit, supported fields survive. */
+export function sanitizeStorefrontV2Settings(input: unknown): StorefrontV2Settings {
+  const raw = isPlainObject(input) ? input : {};
+  const colors = Object.fromEntries(V2_COLOR_FIELDS.map((key) => [
+    key,
+    raw[key] === null || raw[key] === undefined ? null : safeV2Color(raw[key], "") || null,
+  ])) as Pick<StorefrontV2Settings, V2ColorField>;
+  const nullableHeight = (value: unknown, max: number): number | null =>
+    value === null || value === undefined ? null :
+      typeof value === "number" && Number.isFinite(value) ? clampInt(value, 20, max, 48) : null;
+  return {
+    ...DEFAULT_STOREFRONT_V2_SETTINGS,
+    ...colors,
+    mobile_logo_url: safeImageField(raw.mobile_logo_url),
+    logo_height: nullableHeight(raw.logo_height, 96),
+    mobile_logo_height: nullableHeight(raw.mobile_logo_height, 64),
+    mobile_columns: oneOf(raw.mobile_columns, [null, 1, 2] as const, null),
+    button_style: enumOf(raw.button_style, V2_BUTTON_STYLES, "inherit"),
+    badge_style: enumOf(raw.badge_style, V2_BADGE_STYLES, "inherit"),
+    body_font: enumOf(raw.body_font, V2_BODY_FONTS, "inherit"),
+    display_font: enumOf(raw.display_font, V2_DISPLAY_FONTS, "inherit"),
+    sticky_header: oneOf(raw.sticky_header, [null, true, false] as const, null),
+    show_search: oneOf(raw.show_search, [null, true, false] as const, null),
+    show_account: oneOf(raw.show_account, [null, true, false] as const, null),
+    show_cart: oneOf(raw.show_cart, [null, true, false] as const, null),
+    show_language: bool(raw.show_language, true),
+  };
+}
+
 /**
  * Normalize a settings draft into a document the database guard will accept
  * and the storefront can render safely: enums repaired to defaults rather
  * than trusted, hrefs dropped unless they pass the one safe-URL policy,
  * images reduced to http(s) media URLs, arrays bounded, numbers clamped.
  *
- * This runs before every save; the SQL trigger in 0045 re-checks the same
- * rules server-side, so a forged write fails there too.
+ * This runs before every save. The existing SQL trigger re-checks its shared
+ * fields; it predates V2 and does not validate new JSON keys. V2 therefore
+ * also uses this typed allowlist on reads and at the public render boundary.
  */
 export function sanitizeSettings(input: unknown): WebsiteSettings {
   const base = resolveSettings(input) as unknown as Json;
   const out = base as unknown as WebsiteSettings;
+  const invalidSocial = invalidSocialSetting(out);
+  if (invalidSocial) throw new Error(`Invalid ${invalidSocial.platform} ${invalidSocial.field} in website settings`);
+
+  // V2-only presentation fields are deliberately not part of the SQL guard.
+  // Rebuild the group from an allowlist before writing the existing JSON row.
+  out.storefront_v2 = sanitizeStorefrontV2Settings(out.storefront_v2);
 
   // theme
   const theme = out.theme as unknown as Json;
@@ -915,13 +1014,27 @@ export function sanitizeSettings(input: unknown): WebsiteSettings {
     sort_order: clampInt(c.sort_order, 0, 9999, index),
   }));
 
-  // social links
+  // Legacy flat contact fields and the shared enabled rows are kept in sync by
+  // the Admin. Save canonical profile URLs and an international WhatsApp number
+  // (or an already saved, checked wa.me link); never silently guess +20.
+  for (const platform of ["facebook", "instagram", "tiktok"] as const) {
+    out.social[platform] = out.social[platform] ? socialProfileHref(platform, out.social[platform]) ?? "" : "";
+  }
+  const whatsapp = out.social.whatsapp.trim();
+  out.social.whatsapp = /^https:\/\//i.test(whatsapp) ? whatsappChannelHref(whatsapp) ?? "" :
+    whatsapp ? normalizeWhatsAppPhone(whatsapp) ?? "" : "";
   out.social_links = (Array.isArray(out.social_links) ? out.social_links : []).slice(0, 8).map((l) => ({
     platform: oneOf(l.platform, ["instagram", "facebook", "tiktok", "whatsapp"] as const, "instagram"),
     enabled: bool(l.enabled, false),
-    url: str(l.url, 500).trim(),
+    url: l.platform === "whatsapp" ? str(l.url, 500).trim() :
+      l.platform === "facebook" || l.platform === "instagram" || l.platform === "tiktok"
+        ? socialProfileHref(l.platform, l.url) ?? "" : "",
     label_ar: str(l.label_ar, 40),
     label_en: str(l.label_en, 40),
+    ...(l.platform === "whatsapp" ? {
+      message_ar: validWhatsAppMessage(l.message_ar ?? "") ? l.message_ar ?? "" : "",
+      message_en: validWhatsAppMessage(l.message_en ?? "") ? l.message_en ?? "" : "",
+    } : {}),
   }));
 
   // trust items
