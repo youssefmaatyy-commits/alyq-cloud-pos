@@ -46,7 +46,7 @@ export function CartPanel() {
         </div>
       ) : (
         <>
-          <ul className="min-h-0 flex-1 divide-y divide-stone-100 overflow-y-auto px-3">
+          <ul className="pos-grip-scrollbar min-h-0 flex-1 divide-y divide-stone-100 overflow-y-auto px-3">
             {lines.map((line) => {
               const key = lineKey(line);
               const amounts = lineTotals(line);

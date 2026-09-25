@@ -77,6 +77,39 @@
 }
 
 @layer components {
+  /* ── POS grip scrollbar ───────────────────────────────────────────────── */
+  /* Scoped ONLY to POS checkout/cart scroll areas so the scrollbar is easy
+     to grab on a till. Global (Admin/Storefront) scrollbar rules in the base
+     layer are intentionally left untouched. Native wheel/trackpad/touch
+     scrolling is unaffected: this only restyles the scrollbar itself.
+     Chromium/WebKit: 14px lane with an ~8px solid visible grip. */
+  .pos-grip-scrollbar::-webkit-scrollbar {
+    width: 14px;
+    height: 14px;
+  }
+  .pos-grip-scrollbar::-webkit-scrollbar-track {
+    background-color: transparent;
+  }
+  .pos-grip-scrollbar::-webkit-scrollbar-thumb {
+    min-height: 48px;
+    background-color: var(--color-stone-400);
+    border-radius: 9999px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  .pos-grip-scrollbar::-webkit-scrollbar-thumb:hover {
+    background-color: var(--color-stone-500);
+  }
+  /* Firefox: standard properties. Gated so Chromium 121+ (which disables
+     ::-webkit-scrollbar styling whenever scrollbar-width/-color is set)
+     keeps the 14px WebKit lane above. */
+  @supports not selector(::-webkit-scrollbar) {
+    .pos-grip-scrollbar {
+      scrollbar-width: auto;
+      scrollbar-color: var(--color-stone-400) transparent;
+    }
+  }
+
   /* ── Surfaces ─────────────────────────────────────────────────────────── */
   .alyq-card {
     border-radius: var(--radius-card);
