@@ -1372,17 +1372,18 @@ async function main() {
   );
   console.log("  ✓ out-of-stock products cannot be sold");
 
-  // POS responsive layout: grid + cart collapse points present
+  // POS responsive layout: columns follow available product-pane width, not
+  // the viewport (jsdom has no CSS geometry; Chromium checks pixels separately).
   await navigate("#/pos");
   const posResponsive = [...document.querySelectorAll("main *")].some((el) =>
     [...el.classList].some((c) => c.startsWith("sm:") || c.startsWith("lg:")),
   );
   assert.ok(posResponsive, "POS uses responsive breakpoints");
-  const gridCols = [...document.querySelectorAll("main *")].some((el) =>
-    el.classList.contains("grid-cols-2"),
+  assert.ok(
+    document.querySelector('[data-testid="pos-grid"]')?.style.gridTemplateColumns.includes("auto-fill"),
+    "POS card count follows the product pane, without a horizontal carousel",
   );
-  assert.ok(gridCols, "product grid reflows on small screens");
-  console.log("  ✓ POS responsive layout");
+  console.log("  ✓ POS responsive layout contract");
 
   // ── Phase 7 · Customers + Returns + Refunds ──
   // Customers list

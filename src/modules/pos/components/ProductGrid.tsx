@@ -94,29 +94,29 @@ export function ProductGrid() {
     lines.filter((l) => l.product_id === id).reduce((sum, l) => sum + l.qty, 0);
 
   return (
-    <div className="flex h-full flex-col gap-3">
+    <div className="flex h-full min-h-0 min-w-0 flex-col gap-3">
       {/* search bar — doubles as the scanner input */}
-      <div className="flex gap-2">
+      <div className="flex min-w-0 gap-2">
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           onKeyDown={onSearchKeyDown}
           placeholder={t("pos.searchPlaceholder")}
           aria-label={t("pos.search")}
-          className="h-11 flex-1 rounded-xl border border-stone-200 bg-white px-3 text-sm font-medium shadow-sm outline-none transition focus:border-stone-500 focus:ring-2 focus:ring-stone-900/10"
+          className="h-11 min-w-0 flex-1 rounded-xl border border-stone-200 bg-white px-3 text-sm font-medium shadow-sm outline-none transition focus:border-stone-500 focus:ring-2 focus:ring-stone-900/10"
         />
       </div>
 
-      {/* category chips (Phase 46): same filter, same sellable-shelf rules, one
-          click instead of a dropdown. Scrolls sideways on a narrow till. */}
+      {/* Category chips wrap instead of becoming an invisible horizontal
+          scrollbar on narrow tills. The same sellable-shelf rules still apply. */}
       {categoryOptions.length > 0 ? (
-        <div className="flex gap-1.5 overflow-x-auto pb-0.5" role="group" aria-label={t("products.category")}>
+        <div className="flex min-w-0 flex-wrap gap-1.5 pb-0.5" role="group" aria-label={t("products.category")}>
           <button
             type="button"
             aria-pressed={category === "all"}
             data-testid="pos-category-chip-all"
             onClick={() => setCategory("all")}
-            className={`h-8 shrink-0 rounded-full px-3.5 text-xs font-bold transition ${
+            className={`min-h-8 max-w-full rounded-full px-3.5 py-1 text-xs font-bold break-words transition ${
               category === "all"
                 ? "bg-stone-900 text-[#f3ede1]"
                 : "border border-stone-200 bg-white text-stone-600 hover:border-stone-400"
@@ -131,7 +131,7 @@ export function ProductGrid() {
               aria-pressed={category === id}
               data-testid={`pos-category-chip-${id}`}
               onClick={() => setCategory(id)}
-              className={`h-8 shrink-0 rounded-full px-3.5 text-xs font-bold transition ${
+              className={`min-h-8 max-w-full rounded-full px-3.5 py-1 text-xs font-bold break-words transition ${
                 category === id
                   ? "bg-stone-900 text-[#f3ede1]"
                   : "border border-stone-200 bg-white text-stone-600 hover:border-stone-400"
@@ -143,8 +143,16 @@ export function ProductGrid() {
         </div>
       ) : null}
 
-      {/* grid */}
-      <div className="grid flex-1 grid-cols-2 gap-2.5 overflow-y-auto pb-1 sm:grid-cols-3 xl:grid-cols-4" data-testid="pos-grid">
+      {/* Auto-fill uses the PRODUCT PANE width, not the viewport: three useful
+          cards alongside the cart at 1366px, four at 1920px, and fewer if the
+          sidebar/zoom/RTL labels need more room. No horizontal carousel. On
+          desktop, contain the list's overscroll; on tablet the list is auto-
+          height, so trapping overscroll would prevent wheel-scrolling the page. */}
+      <div
+        className="grid min-h-0 min-w-0 flex-1 content-start gap-2.5 overflow-y-auto pb-1 lg:overscroll-y-contain"
+        style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 11rem), 1fr))" }}
+        data-testid="pos-grid"
+      >
         {filtered.map((product) => {
           // A variant product is never "out" because the rollup says so — it is
           // out when no active combination has stock left.
@@ -160,6 +168,7 @@ export function ProductGrid() {
             <button
               key={product.id}
               type="button"
+              data-testid={`pos-product-${product.id}`}
               disabled={out}
               onClick={() => {
                 // A variant product opens the picker; the register never chooses
@@ -167,7 +176,7 @@ export function ProductGrid() {
                 if (sellsByVariant) setPicking(product.id);
                 else addLine(product);
               }}
-              className={`group flex flex-col rounded-2xl border bg-white p-3 text-start shadow-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-stone-900/20 ${
+              className={`group flex min-w-0 flex-col rounded-2xl border bg-white p-3 text-start shadow-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-stone-900/20 ${
                 out
                   ? "cursor-not-allowed border-stone-200 opacity-60"
                   : "border-stone-200/80 hover:border-[#b08d57] hover:shadow-md"
@@ -192,33 +201,40 @@ export function ProductGrid() {
                   </span>
                 ) : null}
               </div>
-              <p className="line-clamp-2 min-h-[2.5em] text-xs font-semibold leading-snug text-stone-900">
+              <p className="line-clamp-2 min-h-[2.5em] min-w-0 break-words text-xs font-semibold leading-snug text-stone-900">
                 {pick(product.name_ar, product.name_en)}
               </p>
-              <p className="mt-0.5 truncate font-mono text-[10px] text-stone-500">{product.sku}</p>
-              <div className="mt-1.5 flex items-center justify-between gap-2">
-                <span className="text-sm font-extrabold tabular-nums text-stone-900">
+              <p className="mt-0.5 min-w-0 break-all font-mono text-[10px] text-stone-500">{product.sku}</p>
+              {/* A long price or Arabic stock badge wraps to its own line rather
+                  than setting a minimum width for the entire card/checkout. */}
+              <div className="mt-1.5 flex min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-0.5">
+                <span className="min-w-0 break-all text-sm font-extrabold tabular-nums text-stone-900" data-testid="pos-product-price" dir="ltr">
                   {(sellsByVariant && sellable[0]?.price_override != null
                     ? sellable[0].price_override
                     : product.selling_price
                   ).toFixed(2)}
                 </span>
-                {out ? (
-                  <Badge tone="danger">{t("inventory.status.out")}</Badge>
-                ) : sellsByVariant && sellable.some((v) => v.stock_quantity <= v.low_stock_level) ? (
-                  <Badge tone="warning">
-                    {t("inventory.status.low")} · {totalUnits}
-                  </Badge>
-                ) : (
-                  <span className="text-[11px] font-semibold text-stone-500 tabular-nums">
-                    {sellsByVariant ? `${sellable.length}/${combinations.filter((v) => v.active).length}` : totalUnits}
-                  </span>
-                )}
+                <span className="min-w-0 max-w-full text-[11px] font-semibold text-stone-500 tabular-nums" data-testid="pos-product-stock">
+                  {out ? (
+                    <Badge tone="danger" className="max-w-full break-words text-start">{t("inventory.status.out")}</Badge>
+                  ) : sellsByVariant && sellable.some((v) => v.stock_quantity <= v.low_stock_level) ? (
+                    <Badge tone="warning" className="max-w-full break-words text-start">
+                      {t("inventory.status.low")} · {totalUnits}
+                    </Badge>
+                  ) : (
+                    sellsByVariant ? `${sellable.length}/${combinations.filter((v) => v.active).length}` : totalUnits
+                  )}
+                </span>
               </div>
               {sellsByVariant ? (
-                <p className="mt-1 text-[10px] font-bold uppercase tracking-wide text-[#8a6a3b]">
+                <p className="mt-1 min-w-0 break-words text-[10px] font-bold uppercase tracking-wide text-[#8a6a3b]" data-testid="pos-variant-hint">
                   {t("pos.variants.hint")}
                 </p>
+              ) : null}
+              {!out ? (
+                <span className="mt-auto max-w-full break-words pt-2 text-[11px] font-bold text-[#8a6a3b]" data-testid="pos-product-action">
+                  {sellsByVariant ? t("pos.variants.choose") : t("common.add")}
+                </span>
               ) : null}
             </button>
           );

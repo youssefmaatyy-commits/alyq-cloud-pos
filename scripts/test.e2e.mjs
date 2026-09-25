@@ -136,6 +136,11 @@ const SUITES = [
     file: "scripts/posux.flow.mjs",
     title: "POS UX (Phase 46): speed register, exact-shelf picker, third-refusal, separate lines, receipt variants, barcode scan",
   },
+  {
+    id: "poslayout",
+    file: "scripts/poslayout.flow.mjs",
+    title: "POS crowded product pane: tail-card reachability, Add-to-cart, stable checkout and RTL",
+  },
   { id: "crash", file: "scripts/crash.flow.mjs", title: "Crash recovery (ErrorBoundary: the screen, no leaked detail, the sibling survives)" },
   {
     id: "reports",
