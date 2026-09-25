@@ -1122,10 +1122,13 @@ export type SocialPlatform = (typeof SOCIAL_PLATFORMS)[number];
 export interface SocialLinkConfig {
   platform: SocialPlatform;
   enabled: boolean;
-  /** Profile URL, or a phone number for WhatsApp. */
+  /** Profile URL, or an international phone number for WhatsApp. */
   url: string;
   label_ar: string;
   label_en: string;
+  /** Optional shared contact-link copy, used only for WhatsApp (not order updates). */
+  message_ar?: string;
+  message_en?: string;
 }
 
 export interface HeaderSettings {
@@ -1218,7 +1221,54 @@ export interface WhatsAppUpdatesSettings {
   templates: Record<WhatsAppTemplateKey, WhatsAppMessageTemplate>;
 }
 
+export const V2_BODY_FONTS = ["inherit", "system", "modern", "classic"] as const;
+export type V2BodyFont = (typeof V2_BODY_FONTS)[number];
+export const V2_DISPLAY_FONTS = ["inherit", "editorial", "modern", "classic"] as const;
+export type V2DisplayFont = (typeof V2_DISPLAY_FONTS)[number];
+export const V2_BADGE_STYLES = ["inherit", "pill", "square"] as const;
+export const V2_BUTTON_STYLES = ["inherit", "rounded", "pill", "square"] as const;
+
+/** Nullable values inherit shared website settings (or the V2 default). This
+ * group only changes V2's presentation; it is not a second content CMS. */
+export interface StorefrontV2Settings {
+  mobile_logo_url: string | null;
+  logo_height: number | null;
+  mobile_logo_height: number | null;
+  header_bg: string | null;
+  header_text: string | null;
+  page_bg: string | null;
+  surface_bg: string | null;
+  text_color: string | null;
+  muted_text: string | null;
+  accent_color: string | null;
+  border_color: string | null;
+  button_bg: string | null;
+  button_text: string | null;
+  button_style: (typeof V2_BUTTON_STYLES)[number];
+  badge_bg: string | null;
+  badge_text: string | null;
+  badge_style: (typeof V2_BADGE_STYLES)[number];
+  hero_bg: string | null;
+  hero_text: string | null;
+  announcement_bg: string | null;
+  announcement_text: string | null;
+  footer_bg: string | null;
+  footer_text: string | null;
+  footer_link: string | null;
+  body_font: V2BodyFont;
+  display_font: V2DisplayFont;
+  /** Null inherits shared mobile_columns, clamped to the V2 1–2 range. */
+  mobile_columns: 1 | 2 | null;
+  sticky_header: boolean | null;
+  show_search: boolean | null;
+  show_account: boolean | null;
+  show_cart: boolean | null;
+  show_language: boolean;
+}
+
 export interface WebsiteSettings {
+  /** Opt-in V2 appearance overrides; legacy #/store never reads this group. */
+  storefront_v2: StorefrontV2Settings;
   /** Bumped if the document's shape ever changes incompatibly. */
   version: 1;
   /** Fixed: the whole app prices in Egyptian pounds. */

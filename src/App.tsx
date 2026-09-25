@@ -71,20 +71,21 @@ import {
   OnlineReportsPage,
   PromotionsPage,
   StockHoldsPage,
-  StoreAccountPage,
-  StoreCartPage,
-  StoreCheckoutPage,
-  StoreConfirmationPage,
-  StoreAboutPage,
-  StoreContactPage,
   StoreContentPage,
-  StoreHomePage,
-  StoreProductPage,
-  StoreProductsPage,
-  StoreTrackPage,
   StorefrontApp,
   WebsiteSettingsPage,
 } from "@/modules/online";
+import { StorefrontV2Home } from "@/modules/online/v2/StorefrontV2Home";
+import { StorefrontV2Catalog } from "@/modules/online/v2/StorefrontV2Catalog";
+import { StorefrontV2Product } from "@/modules/online/v2/StorefrontV2Product";
+import { StorefrontV2Cart } from "@/modules/online/v2/StorefrontV2Cart";
+import { StorefrontV2Checkout } from "@/modules/online/v2/StorefrontV2Checkout";
+import { StorefrontV2Confirmation } from "@/modules/online/v2/StorefrontV2Confirmation";
+import { StorefrontV2Track } from "@/modules/online/v2/StorefrontV2Track";
+import { StorefrontV2Account } from "@/modules/online/v2/StorefrontV2Account";
+import { StorefrontV2About } from "@/modules/online/v2/StorefrontV2About";
+import { StorefrontV2Contact } from "@/modules/online/v2/StorefrontV2Contact";
+import { StorefrontV2PreviewRedirect } from "@/modules/online/v2/StorefrontV2PreviewRedirect";
 
 /**
  * ALYQ Cloud POS — application root.
@@ -213,19 +214,20 @@ export default function App() {
                   <StorefrontApp />
                 </ErrorBoundary>
               }>
-                <Route index element={<StoreHomePage />} />
-                <Route path="products" element={<StoreProductsPage />} />
-                {/* `:key` is the slug when a product has one and the id when it
-                    does not — both resolve, so a shared link never dies. */}
-                <Route path="products/:key" element={<StoreProductPage />} />
-                <Route path="cart" element={<StoreCartPage />} />
-                <Route path="checkout" element={<StoreCheckoutPage />} />
-                <Route path="confirmation" element={<StoreConfirmationPage />} />
-                <Route path="track" element={<StoreTrackPage />} />
-                <Route path="account" element={<StoreAccountPage />} />
-                {/* Phase 45: the shop's own About page, from website_settings.about. */}
-                <Route path="about" element={<StoreAboutPage />} />
-                <Route path="contact" element={<StoreContactPage />} />
+                {/* One public V2 tree; old preview bookmarks only redirect. Keep
+                    legacy components in source for rollback, not on a debug URL. */}
+                <Route index element={<StorefrontV2Home />} />
+                <Route path="products" element={<StorefrontV2Catalog />} />
+                {/* `:key` accepts both published slugs and product IDs. */}
+                <Route path="products/:key" element={<StorefrontV2Product />} />
+                <Route path="cart" element={<StorefrontV2Cart />} />
+                <Route path="checkout" element={<StorefrontV2Checkout />} />
+                <Route path="confirmation" element={<StorefrontV2Confirmation />} />
+                <Route path="track" element={<StorefrontV2Track />} />
+                <Route path="account" element={<StorefrontV2Account />} />
+                <Route path="about" element={<StorefrontV2About />} />
+                <Route path="contact" element={<StorefrontV2Contact />} />
+                <Route path="v2/*" element={<StorefrontV2PreviewRedirect />} />
                 <Route path="*" element={<Navigate to="/store" replace />} />
               </Route>
               <Route path="*" element={<AuthenticatedApp />} />

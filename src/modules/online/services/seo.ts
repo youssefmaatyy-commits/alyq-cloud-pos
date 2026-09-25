@@ -3,8 +3,8 @@
  *
  * The app is a hash-routed single-page bundle, which is the honest starting
  * point here: no server renders these pages, so there is nothing to serve a
- * `sitemap.xml` from. What *can* be done without touching routing (which this
- * project explicitly protects) is:
+ * `sitemap.xml` from. What *can* be done client-side on the canonical
+ * storefront routes is:
  *
  *   1. per-product SEO fields an admin writes once — `seo_title`,
  *      `seo_description`, `slug` — stored on `product_content`;
@@ -338,11 +338,13 @@ export function storefrontSitemapPages(input: {
   // resolveSettings is called so a null document still yields a usable sitemap.
   void resolveSettings(input.settings);
   const contentByProduct = new Map(input.contents.map((content) => [content.product_id, content]));
+  // Download only public, indexable destinations. A cart and a private
+  // reference+phone lookup have no business appearing in a public sitemap.
   const pages: SitemapPage[] = [
     { path: "#/store", changeFrequency: "daily", priority: 1 },
     { path: "#/store/products", changeFrequency: "daily", priority: 0.9 },
-    { path: "#/store/cart", changeFrequency: "weekly", priority: 0.4 },
-    { path: "#/store/track", changeFrequency: "weekly", priority: 0.4 },
+    { path: "#/store/about", changeFrequency: "monthly", priority: 0.5 },
+    { path: "#/store/contact", changeFrequency: "monthly", priority: 0.5 },
   ];
   for (const product of input.products) {
     // Off the website or inactive means out of the sitemap: listing a product the

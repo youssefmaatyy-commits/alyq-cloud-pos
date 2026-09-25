@@ -18,7 +18,7 @@
 import { useSearchParams } from "react-router-dom";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { canActAs } from "@/lib/permissions/enforce";
-import { openStorefrontRoute } from "@/lib/storefront/storefrontLink";
+import { openStorefrontRoute, tryOpenBeside } from "@/lib/storefront/storefrontLink";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import type { TranslationKey } from "@/lib/i18n/dictionary";
 import { useAuth } from "@/lib/auth";
@@ -42,6 +42,7 @@ import { WhatsAppTemplatesPanel } from "../components/admin/WhatsAppTemplatesPan
 import { getWebsiteRepository } from "../data";
 import { toOnlineError, type OnlineErrorCode } from "../data/repository";
 import { invalidSettingsColor, resolveSettings, sanitizeSettings, STORE_PALETTE } from "../services/settingsDefaults";
+import { socialChannelHref } from "../services/socialSafety";
 import { storefrontInvalidation } from "../hooks/storefrontInvalidation";
 import {
   moveSection,
@@ -70,6 +71,8 @@ import type {
 } from "../types";
 import { SettingsImageField } from "../components/admin/SettingsImageField";
 import { StorefrontPreview } from "../components/admin/StorefrontPreview";
+import { StorefrontV2Studio } from "../components/admin/StorefrontV2Studio";
+import { StorefrontV2DraftPreview } from "../components/admin/StorefrontV2DraftPreview";
 import {
   CampaignsPanel,
   CategoriesContentPanel,
@@ -92,6 +95,7 @@ type Tab =
   | "productDisplay"
   | "productContent"
   | "theme"
+  | "v2"
   | "header"
   | "footer"
   | "social"
@@ -110,6 +114,7 @@ const TABS: { key: Tab; labelKey: string }[] = [
   { key: "productDisplay", labelKey: "online.ws.productDisplay" },
   { key: "productContent", labelKey: "online.ws.productContent" },
   { key: "theme", labelKey: "online.ws.theme" },
+  { key: "v2", labelKey: "online.v2.title" },
   { key: "header", labelKey: "online.ws.header" },
   { key: "footer", labelKey: "online.ws.footer" },
   { key: "social", labelKey: "online.ws.social" },
@@ -420,8 +425,15 @@ export function WebsiteSettingsPage() {
         ))}
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[1fr_22rem]">
-        <div className="space-y-4">
+      {(["general", "homepage", "hero", "sections", "categories", "campaigns", "productDisplay", "productContent", "theme", "header", "footer", "social"] as Tab[]).includes(tab) ? (
+        <p className="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700" data-testid="shared-setting-scope">
+          {t("online.v2.sharedNote")}
+        </p>
+      ) : null}
+
+      <div className={tab === "v2" ? "grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(27rem,.8fr)]" : "grid gap-4 xl:grid-cols-[1fr_22rem]"}>
+        <div className="min-w-0 space-y-4">
+          {tab === "v2" ? <StorefrontV2Studio draft={draft} patch={patch} onOpenShared={setTab} /> : null}
           {tab === "theme" ? (
             <>
               {/* Phase 49: three safe starting points. A preset writes only the
@@ -475,8 +487,8 @@ export function WebsiteSettingsPage() {
                     onChange={(url) => patch((current) => ({ ...current, images: { ...current.images, favicon_url: url } }))}
                   />
                   <SettingsImageField
-                    label={t("online.settings.background")}
-                    hint={t("online.settings.backgroundHint")}
+                    label={`${t("online.settings.background")} · ${t("online.v2.legacyOnly")}`}
+                    hint={t("online.v2.legacyBackgroundHint")}
                     value={draft.images.background_url}
                     onChange={(url) => patch((current) => ({ ...current, images: { ...current.images, background_url: url } }))}
                   />
@@ -577,7 +589,8 @@ export function WebsiteSettingsPage() {
                       ))}
                     </SelectInput>
                   </Field>
-                  <Field label={t("online.settings.headerStyle")}>
+                  <Field label={`${t("online.settings.headerStyle")} · ${t("online.v2.legacyOnly")}`}
+                    hint={t("online.v2.legacyHeaderHint")}>
                     <SelectInput
                       value={draft.theme.header_style}
                       onChange={(event) =>
@@ -617,8 +630,8 @@ export function WebsiteSettingsPage() {
                   onChange={(checked) =>
                     patch((current) => ({ ...current, theme: { ...current.theme, dark_mode: checked } }))
                   }
-                  label={t("online.settings.darkMode")}
-                  hint={t("online.settings.darkModeHint")}
+                  label={`${t("online.settings.darkMode")} · ${t("online.v2.legacyOnly")}`}
+                  hint={`${t("online.settings.darkModeHint")} ${t("online.v2.legacyDarkHint")}`}
                 />
               </Card>
 
@@ -1020,6 +1033,7 @@ export function WebsiteSettingsPage() {
 
               <Card className="space-y-3">
                 <h2 className="text-sm font-bold text-slate-900">{t("online.settings.social")}</h2>
+                <p className="text-[11px] leading-relaxed text-slate-500">{t("online.social.sharedScope")}</p>
                 <p className="text-[11px] leading-relaxed text-slate-500">{t("online.settings.socialHint")}</p>
                 <div className="grid gap-3 sm:grid-cols-2">
                   {(
@@ -1029,18 +1043,34 @@ export function WebsiteSettingsPage() {
                       ["tiktok", t("online.settings.tiktok"), "https://tiktok.com/@…"],
                       ["whatsapp", t("online.settings.whatsapp"), "201001234567"],
                     ] as ["facebook" | "instagram" | "tiktok" | "whatsapp", string, string][]
-                  ).map(([field, label, placeholder]) => (
-                    <Field key={field} label={label}>
-                      <TextInput
-                        value={draft.social[field]}
-                        dir="ltr"
-                        placeholder={placeholder}
-                        onChange={(event) =>
-                          patch((current) => ({ ...current, social: { ...current.social, [field]: event.target.value } }))
-                        }
-                      />
-                    </Field>
-                  ))}
+                  ).map(([field, label, placeholder]) => {
+                    const invalid = Boolean(draft.social[field] && !socialChannelHref(field, draft.social[field]));
+                    return <div key={field}>
+                      <Field label={label} htmlFor={`general-social-${field}`}>
+                        <TextInput id={`general-social-${field}`} value={draft.social[field]}
+                          aria-invalid={invalid} dir="ltr" placeholder={placeholder}
+                          onChange={(event) => patch((current) => {
+                            const url = event.target.value;
+                            const existing = current.social_links.find((entry) => entry.platform === field);
+                            const row = { platform: field, enabled: Boolean(url.trim()), url,
+                              label_ar: existing?.label_ar ?? "", label_en: existing?.label_en ?? "",
+                              ...(field === "whatsapp" ? {
+                                message_ar: existing?.message_ar ?? "", message_en: existing?.message_en ?? "",
+                              } : {}) };
+                            return {
+                              ...current, social: { ...current.social, [field]: url },
+                              social_links: existing ? current.social_links.map((entry) =>
+                                entry.platform === field ? row : entry) : [...current.social_links, row],
+                            };
+                          })}
+                        />
+                      </Field>
+                      {invalid ? <p role="alert" data-testid="social-validation-error"
+                        className="mt-1 text-xs font-bold text-rose-700">
+                        {t(field === "whatsapp" ? "online.social.invalidPhone" : "online.social.invalidProfile")}
+                      </p> : null}
+                    </div>;
+                  })}
                 </div>
               </Card>
 
@@ -1432,17 +1462,34 @@ export function WebsiteSettingsPage() {
           ) : null}
         </div>
 
-        {/* live preview */}
-        <aside className="xl:sticky xl:top-4 xl:self-start">
-          <p className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">
-            {t("online.settings.preview")}
-          </p>
-          <PreviewDeviceSwitcher settings={draft} />
-          <p className="mt-2 text-[11px] leading-relaxed text-slate-500">{t("online.ws.previewNote")}</p>
-          <p className="mt-2 text-[11px] leading-relaxed text-slate-500">{t("online.settings.previewHint")}</p>
-          <p className="mt-1 text-[11px] font-semibold text-slate-500">
-            {t("online.settings.currencyLocked", { currency: draft.currency })}
-          </p>
+        {/* The existing preview is a legacy-themed fragment; never label it V2. */}
+        <aside className="min-w-0 xl:sticky xl:top-4 xl:self-start">
+          {tab === "v2" ? <>
+            <p className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-600">
+              {t("online.v2.only")} · {t("online.v2.previewTitle")}
+            </p>
+            <StorefrontV2DraftPreview settings={draft} products={products} />
+            <a href="#/store" target="_blank" rel="noopener noreferrer"
+              data-testid="v2-preview-open-saved"
+              onClick={(event) => {
+                event.preventDefault();
+                if (!tryOpenBeside("#/store")) window.location.hash = "/store";
+              }}
+              className="mt-3 inline-flex min-h-10 items-center rounded-lg bg-slate-900 px-4 text-xs font-bold text-white hover:bg-slate-700">
+              {t("online.v2.previewSaved")} ↗
+            </a>
+            <p className="mt-2 text-[11px] text-slate-600">{t("online.v2.savedOnly")}</p>
+          </> : <>
+            <p className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">
+              {t("online.v2.legacyPreview")}
+            </p>
+            <PreviewDeviceSwitcher settings={draft} />
+            <p className="mt-2 text-[11px] leading-relaxed text-slate-500">{t("online.ws.previewNote")}</p>
+            <p className="mt-2 text-[11px] leading-relaxed text-slate-500">{t("online.settings.previewHint")}</p>
+            <p className="mt-1 text-[11px] font-semibold text-slate-500">
+              {t("online.settings.currencyLocked", { currency: draft.currency })}
+            </p>
+          </>}
         </aside>
       </div>
     </div>

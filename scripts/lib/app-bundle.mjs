@@ -26,6 +26,7 @@ import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { assetMockPlugin } from "./asset-mock.plugin.mjs";
+import { legacyStoreRollbackPlugin } from "./legacy-store-rollback.plugin.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "..", "..");
@@ -38,6 +39,7 @@ const ROOT = path.resolve(HERE, "..", "..");
  * platform the suites run on.
  */
 export const DEFAULT_BUNDLE = path.join(os.tmpdir(), "alyq-app.mjs");
+export const LEGACY_ROLLBACK_BUNDLE = path.join(os.tmpdir(), "alyq-legacy-rollback.mjs");
 
 /**
  * A `file:` URL for the bundle, for dynamic `import()`. A bare filesystem
@@ -45,7 +47,7 @@ export const DEFAULT_BUNDLE = path.join(os.tmpdir(), "alyq-app.mjs");
  * `?query` suffix is how the auth/backup suites boot the app once per
  * scenario without sharing a module graph.
  */
-export function bundleFileUrl(outfile = DEFAULT_BUNDLE, query) {
+export function bundleFileUrl(outfile = process.env.ALYQ_TEST_BUNDLE || DEFAULT_BUNDLE, query) {
   const href = pathToFileURL(outfile).href;
   return query ? `${href}?${query}` : href;
 }
@@ -116,14 +118,17 @@ export const testBuildOptions = (overrides = {}) => ({
  * @param {object} [options]
  * @param {string} [options.outfile] defaults to `os.tmpdir()/alyq-app.mjs`
  * @param {string} [options.entryPoint] defaults to `src/main.tsx`
+ * @param {boolean} [options.legacyRollback] test-only legacy routing projection
  * @returns {Promise<{ outfile: string, bytes: number }>}
  */
-export async function buildAppBundle({ outfile = DEFAULT_BUNDLE, entryPoint } = {}) {
+export async function buildAppBundle({ outfile = DEFAULT_BUNDLE, entryPoint, legacyRollback = false } = {}) {
   const esbuild = await import("esbuild"); // surfaced as "run npm install" by callers
   const entry = entryPoint ?? path.join(ROOT, "src", "main.tsx");
 
   fs.mkdirSync(path.dirname(outfile), { recursive: true });
-  await esbuild.build(testBuildOptions({ entryPoints: [entry], outfile }));
+  await esbuild.build(testBuildOptions({ entryPoints: [entry], outfile,
+    ...(legacyRollback ? { plugins: [legacyStoreRollbackPlugin(), ...testPlugins()] } : {}),
+  }));
 
   return { outfile, bytes: fs.statSync(outfile).size };
 }

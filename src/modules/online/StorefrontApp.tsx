@@ -12,23 +12,22 @@
  *   3. `StoreCartProvider`    the basket, which reads both (a signed-in shopper's
  *      saved address pre-fills checkout, and a campaign price needs the catalogue).
  *
- * `StoreLayout` sits inside all three so the header can show the cart count and
- * the account link, and `<Outlet/>` is the page.
+ * `StorefrontV2Shell` sits inside all three so the header can show the cart
+ * count and account link, and `<Outlet/>` renders the single public page tree.
+ * The former `StoreLayout` and pages remain in source for route-level rollback.
  */
 import { Outlet } from "react-router-dom";
 import { StorefrontProvider } from "./hooks/StorefrontProvider";
 import { StoreAccountProvider } from "./hooks/StoreAccountProvider";
 import { StoreCartProvider } from "./hooks/StoreCartProvider";
-import { StoreLayout } from "./components/storefront/StoreLayout";
+import { StorefrontV2Shell } from "./v2/StorefrontV2Shell";
 
 export function StorefrontApp() {
   return (
     <StorefrontProvider>
       <StoreAccountProvider>
         <StoreCartProvider>
-          <StoreLayout>
-            <Outlet />
-          </StoreLayout>
+          <StorefrontV2Shell><Outlet /></StorefrontV2Shell>
         </StoreCartProvider>
       </StoreAccountProvider>
     </StorefrontProvider>
