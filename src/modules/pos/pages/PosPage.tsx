@@ -18,9 +18,9 @@ import { CustomerSearchSelect } from "@/modules/customers/components/CustomerSea
 /**
  * POS register screen.
  *
- * Layout: sticky product grid on the left, cart + payment on the right.
- * On mobile the grid is full-width and the cart panel collapses into a
- * compact horizontal sheet with the payment section below.
+ * Layout: the product column scrolls independently beside the sticky cart +
+ * payment panel on desktop. Below lg the products fill the page and checkout
+ * moves into the mobile cart sheet.
  *
  * Barcode scanners work anywhere on this page (see `useBarcodeScanner`):
  * their rapid keystrokes are detected and added to the cart directly.
@@ -134,19 +134,29 @@ export function PosPage() {
   }
 
   return (
-    <div className="flex h-full flex-col">
+    // Desktop: subtract the shell's 3.5rem top bar and 3rem main padding.
+    // The remaining flex height accounts for this page's header and footer;
+    // only very short viewports may need document scroll to keep a full product
+    // card visible in the list (the checkout still scrolls independently).
+    <div className="flex h-full flex-col lg:h-[calc(100dvh-6.5rem)] lg:min-h-[36rem] xl:min-h-[33rem]">
       <PageHeader title={t("nav.register")} subtitle={t("app.tagline")} actions={headerActions} />
 
-      <div className="grid flex-1 gap-4 lg:grid-cols-[1fr_380px]">
-        <div className="min-h-[420px]">
+      <div className="grid min-w-0 flex-1 gap-4 lg:min-h-0 lg:grid-cols-[minmax(0,1fr)_380px] lg:items-start">
+        {/* A zero-minimum track and item stop the products' intrinsic width from
+            pushing the fixed-width checkout off screen. Only the product list
+            scrolls at desktop sizes; wheel/trackpad/touch stay native and do
+            not move the payment controls. Below lg the page scrolls normally. */}
+        <div className="min-h-[420px] min-w-0 lg:h-full lg:min-h-0" data-testid="pos-product-column">
           <ProductGrid />
         </div>
 
-        {/* Desktop/tablet: the sale panel lives beside the grid. On phones the
-            same panels move into a drawer (below) behind a sticky summary bar —
-            identical behaviour, a thumb-reachable way in. */}
-        <aside className="hidden flex-col gap-4 lg:flex lg:sticky lg:top-16 lg:max-h-[calc(100vh-9rem)]">
-          <div className={isEmpty ? "" : "min-h-[260px] lg:min-h-0 lg:flex-1"}>
+        {/* Desktop checkout scrolls as its own viewport-bounded column. A
+            max-height without overflow let the payment controls spill past the
+            sticky grid; when the cart was full its flex-1/min-h-0 wrapper could
+            even collapse to zero and overlap payment. Keep the cart tall enough
+            for its own line-list scroll, and never shrink it to fit payment. */}
+        <aside className="hidden min-w-0 flex-col gap-4 lg:sticky lg:top-16 lg:flex lg:max-h-full lg:overflow-y-auto lg:overscroll-y-contain lg:self-start" data-testid="pos-checkout-panel">
+          <div className={isEmpty ? "lg:shrink-0" : "min-h-[260px] lg:h-[min(60dvh,34rem)] lg:min-h-[22rem] lg:shrink-0"}>
             <CartPanel />
           </div>
           <PaymentPanel />
@@ -249,7 +259,11 @@ function MobileCartSheet() {
                 ✕
               </button>
             </div>
-            <CartPanel />
+            {/* Keep the cart from shrinking to zero when split payment is
+                taller than this drawer; its line list scrolls inside it. */}
+            <div className="h-[min(60dvh,34rem)] min-h-[22rem] shrink-0">
+              <CartPanel />
+            </div>
             <PaymentPanel />
           </div>
         </div>

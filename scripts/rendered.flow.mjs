@@ -80,6 +80,9 @@ try {
   browser = await chromium.launch({
     executablePath: process.env.CHROMIUM_EXECUTABLE || undefined,
     args: ['--no-sandbox', '--disable-dev-shm-usage'],
+    // The POS checkout test drags a *real* scrollbar thumb, which Playwright
+    // otherwise hides in headless Chromium by default.
+    ignoreDefaultArgs: ['--hide-scrollbars'],
   });
 } catch (error) {
   // A missing Chromium installation still must not orphan the managed Vite
@@ -355,7 +358,10 @@ try {
           const grid = await page.getByTestId('product-grid').first().evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(' ').length);
           assert.equal(grid, width === 1440 ? 4 : 2, 'actual rendered product columns');
           const logo = await page.locator('header a[href="#/store"]').boundingBox();
-          assert.ok(Math.abs(logo.x + logo.width / 2 - width / 2) < 5, 'wordmark is geometrically centered');
+          // With visible scrollbars, center in the content viewport rather
+          // than the scrollbar gutter at the window edge.
+          const contentWidth = await page.evaluate(() => document.documentElement.clientWidth);
+          assert.ok(Math.abs(logo.x + logo.width / 2 - contentWidth / 2) < 5, 'wordmark is geometrically centered');
           for (const box of await page.locator('header a:visible, header button:visible').evaluateAll((els) => els.map((el) => el.getBoundingClientRect().height))) assert.ok(box >= 40, 'header touch targets');
         }
         if (name === 'pdp') {
@@ -420,9 +426,202 @@ try {
   }
   await go('/pos');
   await expect(page.locator('#alyq-store-theme')).toHaveCount(0);
+
+  // The register needs more rows than can fit on screen to detect an unusable
+  // clipped product slider. Clone a real seeded plain product ONLY in this
+  // browser's demo fixture, then reload so the demo repository sees the data.
+  // No stock/price/checkout implementation is changed by this visual fixture.
+  await page.evaluate(() => {
+    const key = 'alyq.demo.catalog.v1';
+    const data = JSON.parse(localStorage.getItem(key));
+    const baseProduct = data.products.find((product) => product.sku === 'ALYQ-1002');
+    if (!baseProduct) throw new Error('Missing POS layout fixture template');
+    for (let i = 0; i < 24; i += 1) {
+      data.products.push({
+        ...baseProduct,
+        id: `pos-layout-${i}`,
+        sku: `POS-LAYOUT-${i}`,
+        barcode: null,
+        name_en: `Long display bracelet number ${i}`,
+        name_ar: `سوار عرض طويل رقم ${i}`,
+        image_url: null,
+        selling_price: 4250,
+        stock_quantity: 12,
+        low_stock_level: 1,
+        show_on_website: false,
+        is_featured: false,
+      });
+    }
+    localStorage.setItem(key, JSON.stringify(data));
+  });
+  await page.reload();
+
+  for (const lang of ['en', 'ar']) {
+    await page.evaluate((language) => localStorage.setItem('alyq.lang', language), lang);
+    await page.reload();
+    // 1093×614 is the CSS viewport of a 1366×768 laptop at ~125% browser zoom.
+    for (const [width, height, expectedColumns] of [[1366, 768, 3], [1920, 1080, 4], [1366, 600, 3], [1093, 614, 1], [820, 900, 4]]) {
+      await page.setViewportSize({ width, height });
+      await go('/pos');
+      const grid = page.getByTestId('pos-grid');
+      const target = page.getByTestId('pos-product-pos-layout-23');
+      await expect(target).toBeAttached();
+      await expect(page.getByTestId(`pos-product-${productId}`).getByTestId('pos-variant-hint')).toBeVisible();
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await grid.evaluate((element) => { element.scrollTop = 0; });
+
+      // Measure *every* card and its price, stock label, variant hint and Add /
+      // Choose action, including cards below the fold. document.scrollWidth
+      // alone misses overflow trapped inside the product grid.
+      const measure = await page.evaluate(() => {
+        const element = (id) => document.querySelector(`[data-testid="${id}"]`);
+        const grid = element('pos-grid');
+        const pane = element('pos-product-column');
+        const checkout = element('pos-checkout-panel');
+        const gridRect = grid.getBoundingClientRect();
+        const paneRect = pane.getBoundingClientRect();
+        const checkoutRect = checkout.getBoundingClientRect();
+        const visibleCheckout = getComputedStyle(checkout).display !== 'none';
+        const errors = [];
+        const insideX = (inner, outer) => inner.left >= outer.left - 1 && inner.right <= outer.right + 1;
+        const cards = [...grid.querySelectorAll('button[data-testid^="pos-product-"]')];
+        for (const card of cards) {
+          const cardRect = card.getBoundingClientRect();
+          if (!insideX(cardRect, gridRect) || !insideX(cardRect, paneRect)) errors.push(`${card.dataset.testid}: outside product column`);
+          if (card.scrollWidth > card.clientWidth + 2) errors.push(`${card.dataset.testid}: clipped card content`);
+          for (const id of ['pos-product-price', 'pos-product-stock', 'pos-variant-hint', 'pos-product-action']) {
+            const content = card.querySelector(`[data-testid="${id}"]`);
+            if (content && !insideX(content.getBoundingClientRect(), cardRect)) errors.push(`${card.dataset.testid}: ${id} clipped`);
+          }
+          if (!card.querySelector('[data-testid="pos-product-price"]') || !card.querySelector('[data-testid="pos-product-stock"]')) errors.push(`${card.dataset.testid}: missing price/stock`);
+          if (!card.disabled && !card.querySelector('[data-testid="pos-product-action"]')) errors.push(`${card.dataset.testid}: missing Add/Choose`);
+        }
+        const categories = pane.querySelector('[role="group"][aria-label]');
+        return {
+          docWidth: document.documentElement.scrollWidth,
+          docHeight: document.documentElement.scrollHeight,
+          gridWidth: grid.scrollWidth,
+          gridClientWidth: grid.clientWidth,
+          gridHeight: grid.clientHeight,
+          gridScrollHeight: grid.scrollHeight,
+          columns: getComputedStyle(grid).gridTemplateColumns.split(' ').length,
+          gridRect: { left: gridRect.left, right: gridRect.right },
+          checkoutRect: { left: checkoutRect.left, right: checkoutRect.right },
+          visibleCheckout,
+          cards: cards.length,
+          errors,
+          categoriesWrap: categories ? getComputedStyle(categories).flexWrap : null,
+          dir: document.documentElement.dir,
+        };
+      });
+      assert.equal(measure.dir, lang === 'ar' ? 'rtl' : 'ltr', `${lang} register direction`);
+      assert.ok(measure.cards >= 28, `${lang}-${width}: populated grid`);
+      assert.equal(measure.columns, expectedColumns, `${lang}-${width}: columns follow available product width`);
+      assert.ok(measure.docWidth <= width + 1, `${lang}-${width}: page overflows horizontally ${JSON.stringify(measure)}`);
+      assert.ok(measure.gridWidth <= measure.gridClientWidth + 2, `${lang}-${width}: product list scrolls sideways ${JSON.stringify(measure)}`);
+      assert.deepEqual(measure.errors, [], `${lang}-${width}: cards/details must not clip`);
+      assert.equal(measure.categoriesWrap, 'wrap', `${lang}-${width}: category chips are all reachable without sideways scrolling`);
+      if (width >= 1024) {
+        assert.equal(measure.visibleCheckout, true, 'desktop checkout stays beside products');
+        // The 6.5rem shell chrome plus the register's 36rem (<xl) / 33rem
+        // (xl+) minimum keeps a full card visible even when category chips
+        // wrap. Extra document height would mean checkout escaped its row.
+        assert.ok(measure.docHeight <= Math.max(height, width < 1280 ? 680 : 632) + 1,
+          `${lang}-${width}: desktop page must not scroll beyond the minimum usable card height ${JSON.stringify(measure)}`);
+        assert.ok(measure.gridScrollHeight > measure.gridHeight, `${lang}-${width}: products must scroll vertically`);
+        if (lang === 'ar') assert.ok(measure.checkoutRect.right <= measure.gridRect.left, 'RTL cart is on the left');
+        else assert.ok(measure.checkoutRect.left >= measure.gridRect.right, 'LTR cart is on the right');
+      } else {
+        assert.equal(measure.visibleCheckout, false, 'tablet checkout lives in the mobile sheet');
+      }
+      await layout(`${lang}-${width}-pos-products`, false);
+
+      const beforeScroll = await page.evaluate(() => window.scrollY);
+      const gridBox = await grid.boundingBox();
+      const targetBefore = await target.boundingBox();
+      if (width >= 1024) {
+        assert.ok(targetBefore.y > gridBox.y + gridBox.height, `${lang}-${width}: the target must START off-screen`);
+        const panel = page.getByTestId('pos-checkout-panel');
+        const panelBefore = await panel.boundingBox();
+        await page.mouse.move(gridBox.x + gridBox.width / 2, gridBox.y + gridBox.height / 2);
+        await page.mouse.wheel(0, 50000); // enough even for a single column at laptop zoom
+        await expect.poll(() => grid.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+        await expect.poll(() => grid.evaluate((element) =>
+          Math.abs(element.scrollHeight - element.clientHeight - element.scrollTop))).toBeLessThan(2);
+        const targetAfter = await target.boundingBox();
+        assert.ok(targetAfter.y >= gridBox.y - 1 && targetAfter.y + targetAfter.height <= gridBox.y + gridBox.height + 2,
+          `${lang}-${width}: wheel/trackpad brings the tail card entirely into view ${JSON.stringify({ targetAfter, gridBox, scroll: await grid.evaluate((el) => [el.scrollTop, el.scrollHeight, el.clientHeight]) })}`);
+        const panelAfter = await panel.boundingBox();
+        for (const axis of ['x', 'y', 'width', 'height']) {
+          assert.ok(Math.abs(panelAfter[axis] - panelBefore[axis]) < 2, `${lang}-${width}: checkout ${axis} moved with product scroll`);
+        }
+        assert.equal(await page.evaluate(() => window.scrollY), beforeScroll, `${lang}-${width}: wheel stays in the product pane`);
+      } else {
+        assert.ok(targetBefore.y > height, `${lang}-${width}: tablet target starts below the fold`);
+        await page.mouse.move(gridBox.x + gridBox.width / 2, gridBox.y + 40);
+        await page.mouse.wheel(0, 1200);
+        await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+        await target.scrollIntoViewIfNeeded();
+      }
+      await target.click();
+      if (width >= 1024) {
+        const checkout = page.getByTestId('pos-checkout-panel');
+        await expect(checkout.getByTestId('cart-line-pos-layout-23::')).toBeVisible();
+        // Opening a variant card must still require an exact colour/size: the
+        // layout may change, but the sale/stock rules must not.
+        if (width === 1366 && height === 768) {
+          await page.getByTestId(`pos-product-${productId}`).click();
+          const picker = page.getByRole('dialog', { name: lang === 'ar' ? 'اختر اللون والمقاس' : 'Choose colour and size' });
+          await expect(picker).toBeVisible();
+          await picker.locator('button[aria-label]').first().click();
+        }
+        // The POS provider keeps the selected customer across page visits.
+        // Explicitly switch to walk-in before testing the guest scenario.
+        if (await checkout.locator('#customer-select').inputValue()) {
+          await checkout.locator('button[title]').filter({ hasText: '✕' }).first().click();
+        }
+        await expect(checkout.locator('#customer-select')).toHaveValue('');
+        const split = checkout.getByRole('switch');
+        if (await split.getAttribute('aria-checked') !== 'true') await split.click();
+        await checkout.getByTestId('cash-input').fill('50');
+        await checkout.getByTestId('instapay-input').fill('100');
+        await cashierScroll(checkout, { lang, height, name: `${lang}-${width}-walk-in-split` });
+
+        if (width === 1366 && height === 768) {
+          // A long cart previously collapsed to 0px under the tall payment
+          // form. The cart rows must retain their own usable scrollport while
+          // the whole cashier column can still reach Complete sale.
+          for (let i = 0; i < 10; i += 1) await page.getByTestId(`pos-product-pos-layout-${i}`).click();
+          const customer = checkout.locator('#customer-select');
+          await customer.fill('سارة');
+          await checkout.locator('[role="listbox"] button').filter({ hasText: 'سارة' }).first().click();
+          await expect(customer).toHaveValue('سارة المحمود');
+          const cart = await checkout.getByTestId('pos-cart').evaluate((el) => {
+            const list = el.querySelector('ul');
+            return { count: list.children.length, client: list.clientHeight, scroll: list.scrollHeight };
+          });
+          assert.ok(cart.count >= 10 && cart.client > 32 && cart.scroll > cart.client,
+            `${lang}: long-cart rows remain scrollable beside payment`);
+          await cashierScroll(checkout, { lang, height, name: `${lang}-1366-selected-long-cart`, touch: true });
+        }
+      } else {
+        for (let i = 0; i < 10; i += 1) await page.getByTestId(`pos-product-pos-layout-${i}`).click();
+        await page.getByTestId('pos-mobile-cart-open').click();
+        const drawer = page.getByTestId('pos-mobile-cart-drawer');
+        await expect(drawer.getByTestId('cart-line-pos-layout-23::')).toBeVisible();
+        const split = drawer.getByRole('switch');
+        if (await split.getAttribute('aria-checked') !== 'true') await split.click();
+        await drawer.getByTestId('cash-input').fill('50');
+        await drawer.getByTestId('instapay-input').fill('100');
+        await cashierScroll(drawer, { lang, height, name: `${lang}-${width}-tablet-long-cart`, touch: true });
+        await drawer.locator('button[aria-label]').first().click();
+      }
+      console.log(`✓ ${lang}-${width} POS: ${measure.columns} complete columns, tail card reached and selected, checkout scrollable`);
+    }
+  }
   assert.deepEqual(errors, [], 'no browser errors');
   await writeFile(`${output}/measurements.json`, JSON.stringify(results, null, 2));
-  console.log(`Rendered acceptance: ${results.length} screens passed; EN/AR at 1440, 375, 390, 430.`);
+  console.log(`Rendered acceptance: ${results.length} screens passed, including EN/AR POS at 1366×768, 1366×600, 1093×614, 1920 and tablet 820.`);
 } finally {
   await browser.close();
   // SIGKILL (TerminateProcess on Windows): a plain SIGTERM has been observed

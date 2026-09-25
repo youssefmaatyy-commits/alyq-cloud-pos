@@ -490,6 +490,9 @@ export function resolveSettings(stored: unknown): WebsiteSettings {
       : undefined;
   return {
     ...merged,
+    // The old database guard does not know V2's fields. Repair even on reads
+    // (including rows written outside this editor), not only on admin saves.
+    storefront_v2: sanitizeStorefrontV2Settings(merged.storefront_v2),
     // Old installs persisted the *whole* previous default theme, so changing
     // code defaults alone could never change their shop. Upgrade only that
     // exact untouched palette; even a single custom saved colour is honoured.
