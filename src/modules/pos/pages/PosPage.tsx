@@ -155,7 +155,7 @@ export function PosPage() {
             sticky grid; when the cart was full its flex-1/min-h-0 wrapper could
             even collapse to zero and overlap payment. Keep the cart tall enough
             for its own line-list scroll, and never shrink it to fit payment. */}
-        <aside className="hidden min-w-0 flex-col gap-4 lg:sticky lg:top-16 lg:flex lg:max-h-full lg:overflow-y-auto lg:overscroll-y-contain lg:self-start" data-testid="pos-checkout-panel">
+        <aside className="pos-grip-scrollbar hidden min-w-0 flex-col gap-4 lg:sticky lg:top-16 lg:flex lg:max-h-full lg:overflow-y-auto lg:overscroll-y-contain lg:self-start" data-testid="pos-checkout-panel">
           <div className={isEmpty ? "lg:shrink-0" : "min-h-[260px] lg:h-[min(60dvh,34rem)] lg:min-h-[22rem] lg:shrink-0"}>
             <CartPanel />
           </div>
@@ -245,7 +245,7 @@ function MobileCartSheet() {
             role="dialog"
             aria-label={t("pos.cart")}
             data-testid="pos-mobile-cart-drawer"
-            className="absolute inset-x-0 bottom-0 flex max-h-[88vh] flex-col gap-3 overflow-y-auto rounded-t-3xl bg-[#f7f5f2] p-3 pb-6 shadow-2xl"
+            className="pos-grip-scrollbar absolute inset-x-0 bottom-0 flex max-h-[88vh] flex-col gap-3 overflow-y-auto rounded-t-3xl bg-[#f7f5f2] p-3 pb-6 shadow-2xl"
           >
             <div className="mx-auto h-1.5 w-12 rounded-full bg-stone-300" aria-hidden />
             <div className="flex items-center justify-between px-1">
