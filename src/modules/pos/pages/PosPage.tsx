@@ -143,7 +143,14 @@ export function PosPage() {
     <div className="flex h-full flex-col lg:h-[calc(100dvh-6.5rem)] lg:min-h-[36rem] xl:min-h-[33rem]">
       <PageHeader title={t("nav.register")} subtitle={t("app.tagline")} actions={headerActions} />
 
-      <div className="grid min-w-0 flex-1 gap-4 lg:min-h-0 lg:grid-cols-[minmax(0,35fr)_minmax(0,65fr)] lg:rtl:grid-cols-[minmax(0,65fr)_minmax(0,35fr)] lg:items-start">
+      {/* The single desktop row must be a definite track, not auto-sized:
+          a content-sized row makes the checkout aside's percentage height
+          cyclic (it falls back to content height), so the cart wrapper's
+          flex-1 never receives a bounded height and the line list cannot
+          scroll. minmax(0,1fr) sizes the row from the shell-derived grid
+          height — floored at 0 so a long cart can never inflate it — giving
+          both columns a definite height to resolve against. */}
+      <div className="grid min-w-0 flex-1 gap-4 lg:min-h-0 lg:grid-rows-[minmax(0,1fr)] lg:grid-cols-[minmax(0,35fr)_minmax(0,65fr)] lg:rtl:grid-cols-[minmax(0,65fr)_minmax(0,35fr)] lg:items-start">
         {/* A zero-minimum track and item stop the search column's intrinsic
             width from pushing the fixed-width checkout off screen. The search
             column holds one input and a compact result dropdown — it never
@@ -153,12 +160,14 @@ export function PosPage() {
           <PosSearchPanel />
         </div>
 
-        {/* Desktop checkout fills its whole 65% track and owns no scroll
-            container of its own: a second, full-height scrollbar here competed
-            with the cart's line list and visually divided the Current Sale
-            workspace. The cart wrapper keeps its bounded height so the line
-            list scrolls inside the cart, payment sits below it, and the
-            w-full/min-w-0 guards keep both panels as wide as the track. */}
+        {/* Desktop checkout fills its whole 65% track — h-full now resolves,
+            because the grid row above is a definite minmax(0,1fr) track — and
+            owns no scroll container of its own: a second, full-height
+            scrollbar here competed with the cart's line list and visually
+            divided the Current Sale workspace. The cart wrapper keeps its
+            bounded height so the line list scrolls inside the cart, payment
+            sits below it, and the w-full/min-w-0 guards keep both panels as
+            wide as the track. */}
         <aside className="hidden w-full min-w-0 flex-col gap-4 lg:order-2 lg:rtl:order-1 lg:sticky lg:top-16 lg:flex lg:h-full lg:min-h-0 lg:self-start" data-testid="pos-checkout-panel">
           <div className={isEmpty ? "w-full lg:shrink-0" : "w-full min-h-[260px] lg:min-h-0 lg:flex-1"}>
             <CartPanel />
