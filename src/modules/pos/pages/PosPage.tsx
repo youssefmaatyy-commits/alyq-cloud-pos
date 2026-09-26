@@ -11,17 +11,17 @@ import { usePos } from "../hooks/PosProvider";
 import { useBarcodeScanner } from "../hooks/useBarcodeScanner";
 import { PosSearchPanel } from "../components/PosSearchPanel";
 import { CartPanel } from "../components/CartPanel";
-import { PaymentPanel } from "../components/PaymentPanel";
 import { SaleCompletedModal } from "../components/SaleCompletedModal";
 import { CustomerSearchSelect } from "@/modules/customers/components/CustomerSearchSelect";
 
 /**
  * POS register screen.
  *
- * Layout: a scan/search-first workspace beside the sticky cart + payment
- * panel on desktop — there is no browsable product grid, so the left column
- * never scrolls a catalogue. Below lg the search fills the page and checkout
- * moves into the mobile cart sheet.
+ * Layout: a scan/search-first workspace (~35%) beside ONE Current Sale card
+ * (~65%) on desktop — the card holds the fixed header, the scrolling cart
+ * line table and the fixed totals/payment footer. There is no browsable
+ * product grid, so the left column never scrolls a catalogue. Below lg the
+ * search fills the page and checkout moves into the mobile cart sheet.
  *
  * Barcode scanners work anywhere on this page (see `useBarcodeScanner`):
  * their rapid keystrokes are detected and added to the cart directly. A scan
@@ -29,7 +29,7 @@ import { CustomerSearchSelect } from "@/modules/customers/components/CustomerSea
  */
 export function PosPage() {
   const { t } = useI18n();
-  const { addBySku, loading, error, isEmpty, reloadCatalog } = usePos();
+  const { addBySku, loading, error, reloadCatalog } = usePos();
   const toast = useToast();
 
   // Where "Open website" goes: the shop built into this bundle by default, or
@@ -136,20 +136,20 @@ export function PosPage() {
   }
 
   return (
-    // Desktop: subtract the shell's 3.5rem top bar and 3rem main padding.
-    // The remaining flex height accounts for this page's header and footer;
-    // the search column is short by design (the cart's own line list scrolls
-    // when the sale is long — the checkout itself never scrolls).
-    <div className="flex h-full flex-col lg:h-[calc(100dvh-6.5rem)] lg:min-h-[36rem] xl:min-h-[33rem]">
+    // Desktop: subtract the shell's 3.5rem top bar and 3rem main padding. The
+    // min-height floor keeps the Current Sale card's fixed sections (header +
+    // totals + payment) usable on short screens — below it the page itself
+    // scrolls instead of crushing the cart list to zero.
+    <div className="flex h-full flex-col lg:h-[calc(100dvh-6.5rem)] lg:min-h-[41rem]">
       <PageHeader title={t("nav.register")} subtitle={t("app.tagline")} actions={headerActions} />
 
       {/* The single desktop row must be a definite track, not auto-sized:
           a content-sized row makes the checkout aside's percentage height
-          cyclic (it falls back to content height), so the cart wrapper's
-          flex-1 never receives a bounded height and the line list cannot
-          scroll. minmax(0,1fr) sizes the row from the shell-derived grid
-          height — floored at 0 so a long cart can never inflate it — giving
-          both columns a definite height to resolve against. */}
+          cyclic (it falls back to content height), so the card's flex-1 cart
+          list never receives a bounded height and cannot scroll.
+          minmax(0,1fr) sizes the row from the shell-derived grid height —
+          floored at 0 so a long cart can never inflate it — giving both
+          columns a definite height to resolve against. */}
       <div className="grid min-w-0 flex-1 gap-4 lg:min-h-0 lg:grid-rows-[minmax(0,1fr)] lg:grid-cols-[minmax(0,35fr)_minmax(0,65fr)] lg:rtl:grid-cols-[minmax(0,65fr)_minmax(0,35fr)] lg:items-start">
         {/* A zero-minimum track and item stop the search column's intrinsic
             width from pushing the fixed-width checkout off screen. The search
@@ -160,41 +160,23 @@ export function PosPage() {
           <PosSearchPanel />
         </div>
 
-        {/* Desktop checkout fills its whole 65% track — h-full now resolves,
-            because the grid row above is a definite minmax(0,1fr) track — and
-            owns no scroll container of its own: a second, full-height
-            scrollbar here competed with the cart's line list and visually
-            divided the Current Sale workspace. The cart wrapper keeps its
-            bounded height so the line list scrolls inside the cart, payment
-            sits below it, and the w-full/min-w-0 guards keep both panels as
-            wide as the track. */}
-        <aside className="hidden w-full min-w-0 flex-col gap-4 lg:order-2 lg:rtl:order-1 lg:sticky lg:top-16 lg:flex lg:h-full lg:min-h-0 lg:self-start" data-testid="pos-checkout-panel">
-          <div className={isEmpty ? "w-full lg:shrink-0" : "w-full min-h-[260px] lg:min-h-0 lg:flex-1"}>
+        {/* Desktop checkout fills its whole 65% track with ONE Current Sale
+            card (header → scrolling cart lines → totals + payment). The card
+            owns the checkout's only scroll: its cart line list. The wrapper
+            carries the flexible track sizing so the card can resolve h-full
+            against a definite height; w-full/min-w-0 keep it as wide as the
+            track. On RTL the 65fr track is mirrored to the right side. */}
+        <aside
+          className="hidden w-full min-w-0 flex-col lg:order-2 lg:rtl:order-1 lg:sticky lg:top-16 lg:flex lg:h-full lg:min-h-0 lg:self-start"
+          data-testid="pos-checkout-panel"
+        >
+          <div className="w-full min-w-0 lg:min-h-0 lg:flex-1">
             <CartPanel />
           </div>
-          <PaymentPanel />
         </aside>
       </div>
 
-      {/* Discoverability row (Phase 46). The register had no keyboard bindings,
-          so nothing is claimed or rebound — these are the real controls,
-          reachable in one look: customer, discount, new sale. */}
-      <div className="mt-3 hidden flex-wrap items-center gap-2 border-t border-stone-200 pt-3 text-xs font-semibold text-stone-500 lg:flex" data-testid="pos-footer">
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1.5 ring-1 ring-stone-200">
-          🧑‍🤝‍🧑 {t("pos.footer.customer")}
-        </span>
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1.5 ring-1 ring-stone-200">
-          % {t("pos.footer.discount")}
-        </span>
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1.5 ring-1 ring-stone-200">
-          📷 {t("pos.scanHint")}
-        </span>
-        <span className="ms-auto inline-flex items-center gap-1.5 rounded-full bg-stone-900 px-3 py-1.5 text-[#f3ede1]">
-          {t("pos.footer.completeInPanel")}
-        </span>
-      </div>
-
-      {/* Mobile: sticky cart summary → drawer with the same panels. */}
+      {/* Mobile: sticky cart summary → drawer with the same card. */}
       <MobileCartSheet />
 
       <SaleCompletedModal />
@@ -206,8 +188,9 @@ export function PosPage() {
  * Phone layout for the register (Phase 46).
  *
  * The sale panel is hidden on small screens; a sticky bar carries the honest
- * running count and total and opens a drawer holding the very same
- * CartPanel + PaymentPanel — one checkout flow, not a second mobile one.
+ * running count and total and opens a drawer holding the very same Current
+ * Sale card (cart, totals and payment together) — one checkout flow, not a
+ * second mobile one.
  */
 function MobileCartSheet() {
   const { t, num } = useI18n();
@@ -272,12 +255,12 @@ function MobileCartSheet() {
                 ✕
               </button>
             </div>
-            {/* Keep the cart from shrinking to zero when split payment is
-                taller than this drawer; its line list scrolls inside it. */}
-            <div className="h-[min(60dvh,34rem)] min-h-[22rem] shrink-0">
+            {/* The whole sale — cart lines, totals and payment — is one card.
+                At natural height the drawer scrolls it as a whole, so the
+                cashier reaches the payment button by scrolling the sheet. */}
+            <div className="min-h-[22rem] shrink-0">
               <CartPanel />
             </div>
-            <PaymentPanel />
           </div>
         </div>
       ) : null}

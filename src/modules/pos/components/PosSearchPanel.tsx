@@ -2,9 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { Badge, useToast } from "@/components/ui";
 import type { Product } from "@/modules/products/types";
-import { variantPrice } from "@/modules/products/variants";
+import { variantLabel, variantPrice } from "@/modules/products/variants";
 import { usePos } from "../hooks/PosProvider";
 import { VariantPicker } from "./VariantPicker";
+import { ProductThumb } from "./ProductThumb";
 import { POS_SEARCH_RESULT_CAP, matchPosProducts } from "../services/posSearch";
 
 /**
@@ -31,7 +32,7 @@ import { POS_SEARCH_RESULT_CAP, matchPosProducts } from "../services/posSearch";
  * stop the global handler would add the same code a second time.
  */
 export function PosSearchPanel() {
-  const { t, pick } = useI18n();
+  const { t, pick, lang } = useI18n();
   const toast = useToast();
   const { products, variants, addLine, addBySku, lines, variantsOf } = usePos();
 
@@ -204,6 +205,18 @@ export function PosSearchPanel() {
                   : product.stock_quantity;
                 const selected = index === activeIndex;
                 const count = inSale(product.id);
+                // When the query names a combination's OWN code (SKU or
+                // barcode), the row says exactly which shelf that code is —
+                // informational only: adding still goes through `addBySku`
+                // (Enter) or the picker (click), never a fabricated choice.
+                const wanted = query.trim().toUpperCase();
+                const exactVariant = wanted
+                  ? activeCombos.find(
+                      (v) =>
+                        v.sku.toUpperCase() === wanted ||
+                        (v.barcode ?? "").toUpperCase() === wanted,
+                    ) ?? null
+                  : null;
                 return (
                   <li key={product.id} className="min-w-0">
                     <button
@@ -224,6 +237,10 @@ export function PosSearchPanel() {
                             : "bg-white hover:bg-stone-50"
                       }`}
                     >
+                      <ProductThumb
+                        url={product.image_url}
+                        name={pick(product.name_ar, product.name_en)}
+                      />
                       <span className="min-w-0 flex-1">
                         <span className="block min-w-0 truncate text-sm font-bold text-stone-900">
                           {pick(product.name_ar, product.name_en)}
@@ -232,7 +249,11 @@ export function PosSearchPanel() {
                           <span className="min-w-0 break-all font-mono text-[11px] text-stone-500">
                             {product.sku}
                           </span>
-                          {sellsByVariant ? (
+                          {exactVariant ? (
+                            <span className="text-[10px] font-bold text-[#8a6a3b]" dir="auto">
+                              {variantLabel(exactVariant, lang)} · {exactVariant.sku}
+                            </span>
+                          ) : sellsByVariant ? (
                             <span className="text-[10px] font-bold uppercase tracking-wide text-[#8a6a3b]">
                               {t("pos.variants.hint")}
                             </span>
@@ -275,6 +296,13 @@ export function PosSearchPanel() {
                             ? variantPrice(sellable[0], product)
                             : product.selling_price
                           ).toFixed(2)}
+                        </span>
+                        {/* The row IS the add action; the tile says so. */}
+                        <span
+                          aria-hidden
+                          className="grid h-8 w-8 place-items-center rounded-xl bg-stone-900 text-base font-bold leading-none text-[#f3ede1]"
+                        >
+                          +
                         </span>
                       </span>
                     </button>

@@ -131,47 +131,138 @@ async function layout(name, fullPage = true) {
   console.log(`✓ ${name}: ${measurements.viewport}px, no overflow, images loaded, ${measurements.dir}`);
 }
 
-/** Real scrollport geometry, wheel/trackpad input, scrollbar drag, and touch.
- * Both the desktop checkout and the tablet cart drawer use this contract. */
-async function cashierScroll(panel, { lang, name, height, touch = false }) {
-  await panel.evaluate((el) => { el.scrollTop = 0; });
-  const start = await panel.evaluate((el) => {
+/** Real scrollport geometry, wheel/trackpad input, scrollbar drag and touch.
+ * The rebuilt register's contract: the Current Sale card's cart line list is
+ * the checkout's ONLY scroll area. The card's header (customer selector),
+ * totals and the Complete-sale button are pinned by flex and must stay on
+ * screen while the line list scrolls — nothing else may move.
+ * (The pre-rebuild contract let the whole checkout column scroll to reach
+ * payment; the approved register architecture pins payment instead.) */
+async function cartScrollContract(checkout, { lang, name, touch = false }) {
+  const list = checkout.locator('[data-testid="pos-cart"] ul');
+  await list.evaluate((el) => { el.scrollTop = 0; });
+  const readFixed = (el) => {
     const cart = el.querySelector('[data-testid="pos-cart"]');
-    const payment = el.lastElementChild;
+    const list = cart.querySelector('ul');
+    const customer = cart.querySelector('#customer-select');
+    const complete = [...cart.querySelectorAll('button')].find((b) =>
+      b.textContent.includes('إتمام البيع') || b.textContent.includes('Complete sale'));
+    const totalRow = [...cart.querySelectorAll(':scope > div > div > div')].find((d) =>
+      d.textContent.trim().startsWith('الإجمالي') || d.textContent.trim().startsWith('Total'));
+    const inViewport = (r) => r && r.top >= -1 && r.bottom <= innerHeight + 1;
     return {
-      overflow: getComputedStyle(el).overflowY,
-      rect: el.getBoundingClientRect().toJSON(),
-      cart: cart.getBoundingClientRect().toJSON(),
-      payment: payment.getBoundingClientRect().toJSON(),
-      clientHeight: el.clientHeight,
-      scrollHeight: el.scrollHeight,
-      clientWidth: el.clientWidth,
-      scrollWidth: el.scrollWidth,
-      scrollbarWidth: el.offsetWidth - el.clientWidth,
+      checkoutOverflow: getComputedStyle(el).overflowY,
+      listOverflow: getComputedStyle(list).overflowY,
+      clientHeight: list.clientHeight,
+      scrollHeight: list.scrollHeight,
+      scrollWidth: list.scrollWidth,
+      clientWidth: list.clientWidth,
+      scrollbarWidth: list.offsetWidth - list.clientWidth,
+      customerVisible: inViewport(customer?.getBoundingClientRect()),
+      totalVisible: inViewport(totalRow?.getBoundingClientRect()),
+      completeVisible: inViewport(complete?.getBoundingClientRect()),
+      customer: customer?.getBoundingClientRect().toJSON(),
+      totalRow: totalRow?.getBoundingClientRect().toJSON(),
+      complete: complete?.getBoundingClientRect().toJSON(),
     };
-  });
-  assert.equal(start.overflow, 'auto', `${name}: checkout is the scroll container`);
-  assert.ok(start.clientHeight > 0 && start.scrollHeight > start.clientHeight + 10, `${name}: checkout must actually overflow`);
-  assert.ok(start.cart.height >= 300, `${name}: cart/customer/discount must not collapse behind payment`);
-  assert.ok(start.payment.top >= start.cart.bottom + 10, `${name}: payment must not overlap cart`);
-  assert.ok(start.rect.bottom <= height + 1, `${name}: scrollport must end above the viewport bottom`);
-  assert.ok(start.scrollWidth <= start.clientWidth + 2, `${name}: no sideways cashier scroll`);
-  assert.ok(start.scrollbarWidth >= 8, `${name}: visible scrollbar can be dragged`);
-  if (await panel.getAttribute('data-testid') === 'pos-checkout-panel') {
-    assert.ok(await page.evaluate(() => document.documentElement.scrollHeight <= Math.max(
-      innerHeight, innerWidth < 1280 ? 680 : 632,
-    ) + 1), `${name}: expanding payment or the cart must not force additional document scrolling`);
+  };
+  const start = await checkout.evaluate(readFixed);
+  assert.notEqual(start.checkoutOverflow, 'auto', `${name}: the checkout column owns no competing scrollbar`);
+  assert.equal(start.listOverflow, 'auto', `${name}: the cart line list is the scroll container`);
+  assert.ok(start.clientHeight > 0 && start.scrollHeight > start.clientHeight + 10, `${name}: the cart line list must actually overflow`);
+  assert.ok(start.customerVisible, `${name}: the customer selector stays on screen without scrolling`);
+  assert.ok(start.totalVisible, `${name}: the totals stay on screen without scrolling`);
+  assert.ok(start.completeVisible, `${name}: Complete sale stays on screen without scrolling`);
+  assert.ok(start.scrollWidth <= start.clientWidth + 2, `${name}: no sideways cart scroll`);
+  assert.ok(start.scrollbarWidth >= 8, `${name}: visible scrollbar lane can be dragged`);
+
+  // Wheel over the list scrolls ONLY the list: the pinned sections must not
+  // move by a pixel and the page must not scroll.
+  const beforeWindowY = await page.evaluate(() => window.scrollY);
+  const box = await list.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + Math.min(box.height / 2, 120));
+  await page.mouse.wheel(0, 5000);
+  await expect.poll(() => list.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+  await expect.poll(() => list.evaluate((el) => Math.abs(el.scrollHeight - el.clientHeight - el.scrollTop))).toBeLessThan(2);
+  assert.equal(await page.evaluate(() => window.scrollY), beforeWindowY, `${name}: wheel did not move the whole page`);
+  const after = await checkout.evaluate(readFixed);
+  for (const key of ['customer', 'totalRow', 'complete']) {
+    assert.ok(Math.abs(start[key].top - after[key].top) < 2 && Math.abs(start[key].bottom - after[key].bottom) < 2,
+      `${name}: ${key} stayed pinned while the cart scrolled`);
   }
 
+  // The thumb is on the list's own edge (inside the card padding): drag it.
+  // Start squarely ON the thumb (it is pinned to the lane top after the
+  // scrollTop reset and is at least 44px tall) — a start point below it lands
+  // on the track, whose click behaviour is not a drag. One retry makes the
+  // synthesized gesture robust against dropped input events.
+  await list.evaluate((el) => { el.scrollTop = 0; });
+  const thumbX = lang === 'ar' ? box.x + 7 : box.x + box.width - 7;
+  const dragThumb = async (startY) => {
+    await page.mouse.move(thumbX, startY);
+    await page.mouse.down();
+    await page.mouse.move(thumbX, box.y + box.height - 20, { steps: 12 });
+    await page.mouse.up();
+  };
+  await dragThumb(box.y + Math.min(20, box.height / 2));
+  if ((await list.evaluate((el) => el.scrollTop)) === 0) {
+    await list.evaluate((el) => { el.scrollTop = 0; });
+    await dragThumb(box.y + Math.min(10, box.height / 2));
+  }
+  await expect.poll(() => list.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+
+  if (touch) {
+    await list.evaluate((el) => { el.scrollTop = 0; });
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 });
+    try {
+      const x = box.x + box.width / 2;
+      const y = box.y + box.height / 2;
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+      for (let step = 1; step <= 14; step += 1) {
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: y - step * 32 }] });
+        await page.waitForTimeout(15);
+      }
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      await expect.poll(() => list.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+    } finally {
+      await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: false });
+      await cdp.detach();
+    }
+    assert.equal(await page.evaluate(() => window.scrollY), beforeWindowY, `${name}: touch stays inside the cart list`);
+  }
+  console.log(`✓ ${name}: cart-only wheel${touch ? '/touch' : ''} + thumb drag; customer/totals/payment pinned`);
+}
+
+/** The tablet/phone drawer keeps its own whole-sheet scroll: the same Current
+ * Sale card renders at natural height and the sheet carries it. */
+async function drawerScroll(drawer, { lang, name, touch = false }) {
+  await drawer.evaluate((el) => { el.scrollTop = 0; });
+  const start = await drawer.evaluate((el) => {
+    const cart = el.querySelector('[data-testid="pos-cart"]');
+    return {
+      overflow: getComputedStyle(el).overflowY,
+      clientHeight: el.clientHeight,
+      scrollHeight: el.scrollHeight,
+      scrollWidth: el.scrollWidth,
+      clientWidth: el.clientWidth,
+      scrollbarWidth: el.offsetWidth - el.clientWidth,
+      cartHeight: cart ? cart.getBoundingClientRect().height : 0,
+    };
+  });
+  assert.equal(start.overflow, 'auto', `${name}: the drawer is the scroll container`);
+  assert.ok(start.clientHeight > 0 && start.scrollHeight > start.clientHeight + 10, `${name}: the drawer must actually overflow`);
+  assert.ok(start.cartHeight >= 300, `${name}: the sale card must not collapse inside the drawer`);
+  assert.ok(start.scrollWidth <= start.clientWidth + 2, `${name}: no sideways drawer scroll`);
+  assert.ok(start.scrollbarWidth >= 8, `${name}: visible drawer scrollbar can be dragged`);
+
   const beforeWindowY = await page.evaluate(() => window.scrollY);
-  const box = await panel.boundingBox();
-  // Point at the payment area, not the nested cart-line list: the wheel must
-  // scroll checkout rather than accidentally selecting a second scrollport.
+  const box = await drawer.boundingBox();
   await page.mouse.move(box.x + box.width / 2, box.y + box.height - 30);
   await page.mouse.wheel(0, 5000);
-  await expect.poll(() => panel.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
-  await expect.poll(() => panel.evaluate((el) => Math.abs(el.scrollHeight - el.clientHeight - el.scrollTop))).toBeLessThan(2);
-  const complete = await panel.evaluate((el, language) => {
+  await expect.poll(() => drawer.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+  await expect.poll(() => drawer.evaluate((el) => Math.abs(el.scrollHeight - el.clientHeight - el.scrollTop))).toBeLessThan(2);
+  const complete = await drawer.evaluate((el, language) => {
     const label = language === 'ar' ? 'إتمام البيع' : 'Complete sale';
     const button = [...el.querySelectorAll('button')].find((item) => item.textContent.includes(label));
     const pane = el.getBoundingClientRect();
@@ -179,21 +270,19 @@ async function cashierScroll(panel, { lang, name, height, touch = false }) {
     return rect && { top: rect.top, bottom: rect.bottom, paneTop: pane.top, paneBottom: pane.bottom };
   }, lang);
   assert.ok(complete && complete.top >= complete.paneTop - 1 && complete.bottom <= complete.paneBottom + 1,
-    `${name}: Complete sale is reachable at the bottom of checkout`);
+    `${name}: Complete sale is reachable at the bottom of the drawer`);
   assert.equal(await page.evaluate(() => window.scrollY), beforeWindowY, `${name}: wheel did not move the whole page`);
 
-  // Chrome's headless default hides scrollbars, so the launch above explicitly
-  // enables them. Drag the thumb on the right in LTR or left in RTL.
-  await panel.evaluate((el) => { el.scrollTop = 0; });
+  await drawer.evaluate((el) => { el.scrollTop = 0; });
   const thumbX = lang === 'ar' ? box.x + 5 : box.x + box.width - 5;
   await page.mouse.move(thumbX, box.y + 30);
   await page.mouse.down();
   await page.mouse.move(thumbX, box.y + box.height - 30, { steps: 10 });
   await page.mouse.up();
-  await expect.poll(() => panel.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+  await expect.poll(() => drawer.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
 
   if (touch) {
-    await panel.evaluate((el) => { el.scrollTop = 0; });
+    await drawer.evaluate((el) => { el.scrollTop = 0; });
     const cdp = await page.context().newCDPSession(page);
     await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 });
     try {
@@ -205,15 +294,16 @@ async function cashierScroll(panel, { lang, name, height, touch = false }) {
         await page.waitForTimeout(15);
       }
       await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-      await expect.poll(() => panel.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+      await expect.poll(() => drawer.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
     } finally {
       await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: false });
       await cdp.detach();
     }
-    assert.equal(await page.evaluate(() => window.scrollY), beforeWindowY, `${name}: touch stays inside checkout`);
+    assert.equal(await page.evaluate(() => window.scrollY), beforeWindowY, `${name}: touch stays inside the drawer`);
   }
-  console.log(`✓ ${name}: wheel/trackpad, thumb drag${touch ? ', touch' : ''}, bottom controls reachable`);
+  console.log(`✓ ${name}: drawer wheel/thumb${touch ? '/touch' : ''}, bottom controls reachable`);
 }
+
 try {
   await go('/');
   await page.locator('input[autocomplete="username"]').fill('admin');
@@ -533,8 +623,11 @@ try {
       if (width >= 1024) {
         assert.equal(measure.visibleCheckout, true, 'desktop checkout stays beside the search column');
         // The register row is viewport-bounded (shell chrome above it); extra
-        // document height would mean the result list escaped its column.
-        assert.ok(measure.docHeight <= Math.max(height, 620) + 1,
+        // document height would mean the result list escaped its column. The
+        // one sanctioned exception is the register's own 41rem min-height
+        // floor: on a viewport shorter than that, the page (never the card)
+        // scrolls so the cart list keeps a usable height.
+        assert.ok(measure.docHeight <= Math.max(height, 760) + 1,
           `${lang}-${width}: desktop page must not scroll beyond the register row ${JSON.stringify(measure)}`);
         assert.ok(measure.listScrollHeight > measure.listHeight, `${lang}-${width}: results must scroll vertically`);
         if (lang === 'ar') assert.ok(measure.checkoutRect.right <= measure.columnRect.left, 'RTL cart is on the left');
@@ -597,12 +690,13 @@ try {
         if (await split.getAttribute('aria-checked') !== 'true') await split.click();
         await checkout.getByTestId('cash-input').fill('50');
         await checkout.getByTestId('instapay-input').fill('100');
-        await cashierScroll(checkout, { lang, height, name: `${lang}-${width}-walk-in-split` });
+        await cartScrollContract(checkout, { lang, name: `${lang}-${width}-walk-in-split` });
 
         if (width === 1366 && height === 768) {
           // A long cart previously collapsed to 0px under the tall payment
-          // form. The cart rows must retain their own usable scrollport while
-          // the whole cashier column can still reach Complete sale.
+          // form. The cart line list is now the checkout's only scrollport,
+          // and payment is pinned below it — the rows must keep a usable
+          // scrollport while Complete sale stays on screen unscrolled.
           for (let i = 0; i < 10; i += 1) {
             await search.fill(`POS-LAYOUT-${i}`);
             await search.press('Enter');
@@ -618,7 +712,7 @@ try {
           });
           assert.ok(cart.count >= 10 && cart.client > 32 && cart.scroll > cart.client,
             `${lang}: long-cart rows remain scrollable beside payment`);
-          await cashierScroll(checkout, { lang, height, name: `${lang}-1366-selected-long-cart`, touch: true });
+          await cartScrollContract(checkout, { lang, name: `${lang}-1366-selected-long-cart`, touch: true });
         }
       } else {
         for (let i = 0; i < 10; i += 1) {
@@ -633,7 +727,7 @@ try {
         if (await split.getAttribute('aria-checked') !== 'true') await split.click();
         await drawer.getByTestId('cash-input').fill('50');
         await drawer.getByTestId('instapay-input').fill('100');
-        await cashierScroll(drawer, { lang, height, name: `${lang}-${width}-tablet-long-cart`, touch: true });
+        await drawerScroll(drawer, { lang, name: `${lang}-${width}-tablet-long-cart`, touch: true });
         await drawer.locator('button[aria-label]').first().click();
       }
       console.log(`✓ ${lang}-${width} POS: search-first register, tail row reached and selected, checkout scrollable`);
