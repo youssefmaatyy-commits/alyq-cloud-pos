@@ -84,6 +84,14 @@ assert.ok(checkout.classList.contains("lg:max-h-full"), "checkout remains inside
 assert.ok(checkout.classList.contains("lg:overflow-y-auto"), "checkout, not the page, owns its vertical overflow");
 assert.ok(checkout.classList.contains("lg:overscroll-y-contain"), "checkout scroll cannot drag the whole page");
 assert.ok(checkout.firstElementChild.classList.contains("lg:shrink-0"), "the cart never collapses under a tall payment form");
+const searchColumn = testid("pos-search-column");
+const desktopRow = checkout.parentElement;
+assert.ok(desktopRow.classList.contains("lg:grid-cols-[minmax(0,35fr)_minmax(0,65fr)]"), "desktop tracks give search 35% and checkout 65%");
+assert.ok(desktopRow.classList.contains("lg:rtl:grid-cols-[minmax(0,65fr)_minmax(0,35fr)]"), "RTL mirrors the desktop tracks");
+assert.ok(searchColumn.classList.contains("lg:order-1") && searchColumn.classList.contains("lg:rtl:order-2"), "LTR search order is first and RTL search order is second");
+assert.ok(checkout.classList.contains("lg:order-2") && checkout.classList.contains("lg:rtl:order-1"), "LTR checkout order is second and RTL checkout order is first");
+assert.ok(!desktopRow.className.includes("_380px") && !desktopRow.className.includes("minmax(21rem,24rem)"), "old narrow and widened rails stay absent");
+assert.ok(!searchColumn.className.includes("max-w-[96rem]"), "search column remains fluid without the reverted cap");
 console.log("  ✓ crowded catalogue, no grid: one scan/search box beside a stable checkout");
 
 // ── name search returns compact rows with price + stock ─────────────────────

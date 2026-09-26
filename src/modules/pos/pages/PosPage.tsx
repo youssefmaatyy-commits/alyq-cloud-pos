@@ -143,13 +143,13 @@ export function PosPage() {
     <div className="flex h-full flex-col lg:h-[calc(100dvh-6.5rem)] lg:min-h-[36rem] xl:min-h-[33rem]">
       <PageHeader title={t("nav.register")} subtitle={t("app.tagline")} actions={headerActions} />
 
-      <div className="grid min-w-0 flex-1 gap-4 lg:min-h-0 lg:grid-cols-[minmax(0,1fr)_380px] lg:items-start">
+      <div className="grid min-w-0 flex-1 gap-4 lg:min-h-0 lg:grid-cols-[minmax(0,35fr)_minmax(0,65fr)] lg:rtl:grid-cols-[minmax(0,65fr)_minmax(0,35fr)] lg:items-start">
         {/* A zero-minimum track and item stop the search column's intrinsic
             width from pushing the fixed-width checkout off screen. The search
             column holds one input and a compact result dropdown — it never
             scrolls a catalogue; only the cart's own line list scrolls when
             the sale is long. Below lg the page scrolls normally. */}
-        <div className="min-w-0 lg:h-full lg:min-h-0" data-testid="pos-search-column">
+        <div className="min-w-0 lg:order-1 lg:rtl:order-2 lg:h-full lg:min-h-0" data-testid="pos-search-column">
           <PosSearchPanel />
         </div>
 
@@ -158,7 +158,7 @@ export function PosPage() {
             sticky grid; when the cart was full its flex-1/min-h-0 wrapper could
             even collapse to zero and overlap payment. Keep the cart tall enough
             for its own line-list scroll, and never shrink it to fit payment. */}
-        <aside className="pos-grip-scrollbar hidden min-w-0 flex-col gap-4 lg:sticky lg:top-16 lg:flex lg:max-h-full lg:overflow-y-auto lg:overscroll-y-contain lg:self-start" data-testid="pos-checkout-panel">
+        <aside className="pos-grip-scrollbar hidden min-w-0 flex-col gap-4 lg:order-2 lg:rtl:order-1 lg:sticky lg:top-16 lg:flex lg:max-h-full lg:overflow-y-auto lg:overscroll-y-contain lg:self-start" data-testid="pos-checkout-panel">
           <div className={isEmpty ? "lg:shrink-0" : "min-h-[260px] lg:h-[min(60dvh,34rem)] lg:min-h-[22rem] lg:shrink-0"}>
             <CartPanel />
           </div>
