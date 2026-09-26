@@ -170,12 +170,17 @@ console.log("  ✓ 4 · the ring stands: Gold/17 = 2, Silver/17 = 2");
 
 // ── 5 · POS sells Gold/17 ×2, to the customer ───────────────────────────────
 await navigate("#/pos", 700);
-await waitFor(() => testid("pos-grid"), { label: "the product grid" });
-setField('input[aria-label="Search"]', "Finale");
-await sleep(450);
-const tileFor = (name) => buttons().find((b) => (b.textContent ?? "").includes(name));
-await waitFor(() => tileFor("Finale Ring"), { label: "the ring tile" });
-clickEl(tileFor("Finale Ring"));
+await waitFor(() => testid("pos-scan-search"), { label: "the scan/search box" });
+assert.ok(!testid("pos-grid"), "no product-card grid");
+const searchFor = async (text) => {
+  setField('[data-testid="pos-scan-search"]', text);
+  await sleep(450);
+};
+const rowFor = (name) =>
+  [...document.querySelectorAll("[data-pos-result-index]")].find((b) => (b.textContent ?? "").includes(name));
+await searchFor("Finale");
+await waitFor(() => rowFor("Finale Ring"), { label: "the ring row" });
+clickEl(rowFor("Finale Ring"));
 const picker = () =>
   [...document.querySelectorAll('[role="dialog"]')].find((d) => (d.textContent ?? "").includes("Choose colour and size"));
 await waitFor(() => picker(), { label: "the exact-shelf picker" });
@@ -184,7 +189,9 @@ const sizeButton = (label) =>
 const cartLines = () => [...document.querySelectorAll('[data-testid^="cart-line-"]')];
 clickEl(sizeButton("Gold / 17"));
 await waitFor(() => !picker(), { label: "the picker to close" });
-clickEl(tileFor("Finale Ring"));
+await searchFor("Finale");
+await waitFor(() => rowFor("Finale Ring"), { label: "the ring row again" });
+clickEl(rowFor("Finale Ring"));
 await waitFor(() => picker(), { label: "the picker again" });
 clickEl(sizeButton("Gold / 17"));
 await waitFor(() => cartLines().length === 1 && cartLines()[0].textContent.includes("Gold / 17"), {
@@ -225,10 +232,9 @@ assert.equal(tillSale.customer_name, "نهى المصري", "the sale carries th
 console.log(`  ✓ 5 · ${tillSaleNumber}: Gold/17 ×2 sold to نهى المصري`);
 
 // ── 6 · the third Gold/17 is refused ────────────────────────────────────────
-setField('input[aria-label="Search"]', "Finale");
-await sleep(450);
-await waitFor(() => tileFor("Finale Ring"), { label: "the ring tile back on the grid" });
-clickEl(tileFor("Finale Ring"));
+await searchFor("Finale");
+await waitFor(() => rowFor("Finale Ring"), { label: "the ring row back in results" });
+clickEl(rowFor("Finale Ring"));
 await waitFor(() => picker(), { label: "the picker a third time" });
 {
   // the sold-out shelf is not even offered: Gold shows 0 on its chip and no

@@ -393,27 +393,27 @@ async function main() {
     "active categories stay in the picker",
   );
 
+  // The register is scan/search-first: no category chips, no browsable grid.
+  // Archiving a shelf must not strand its products — they stay searchable.
+  const posRows = () => [...document.querySelectorAll("[data-pos-result-index]")];
   await navigate("#/pos", 600);
-  await waitFor(() => squeezed().includes("CAT-A") || squeezed().includes("Old Ring"), {
-    label: "the POS grid",
-  });
-  // Phase 46: the register filters by category CHIPS, not a select. The chips
-  // are built from sellable categories only.
-  const posChips = () =>
-    [...document.querySelectorAll('button[data-testid^="pos-category-chip-"]')].map((b) =>
-      (b.textContent ?? "").replace(/\s+/g, " ").trim(),
-    );
-  await waitFor(() => posChips().length > 0, { label: "the POS category chips" });
-  assert.ok(!posChips().includes("Rings Old"), "the archived category leaves the POS filter");
-  assert.ok(
-    (squeezed().includes("OldRingA") || squeezed().includes("CAT-A")),
-    "the archived category's PRODUCTS still sit on the register",
+  await waitFor(() => document.querySelector('[data-testid="pos-scan-search"]'), { label: "the scan/search box" });
+  assert.equal(
+    document.querySelectorAll('[data-testid^="pos-category-chip-"]').length,
+    0,
+    "the register offers no category chips",
   );
-  assert.ok(
-    posChips().includes("Hidden Rings"),
-    "the still-active Hidden Rings sits on the filter (it is archived later)",
+  setField('[data-testid="pos-scan-search"]', "CAT-A");
+  await waitFor(
+    () => posRows().some((r) => (r.textContent ?? "").includes("Old Ring A")),
+    { label: "the archived shelf's product in results" },
   );
-  console.log("  ✓ products still sellable; archived shelves leave the picker and the register");
+  assert.equal(
+    document.querySelectorAll('[data-testid^="pos-category-chip-"]').length,
+    0,
+    "archiving a shelf adds no filter to the register",
+  );
+  console.log("  ✓ products still sellable; archived shelves leave the picker, not the search");
 
   // 6.5 ─ archive Hidden Rings NOW: the move scene must meet it archived, the
   //       way the task states it — an archived shelf is no destination.
@@ -512,12 +512,14 @@ async function main() {
   const hiddenPiece = (hiddenState.products ?? []).find((p) => p.name_en === "Hidden Piece");
   assert.ok(hiddenPiece?.active, "the Hidden Piece was NOT auto-archived");
   await navigate("#/pos", 600);
-  await waitFor(() => squeezed().includes("CAT-H") || squeezed().includes("HiddenPiece"), {
-    label: "the register to show the hidden shelf's product",
-  });
-  assert.ok(
-    squeezed().includes("HiddenPiece") || squeezed().includes("CAT-H"),
-    "a product of an archived category still sits on the register",
+  await waitFor(() => document.querySelector('[data-testid="pos-scan-search"]'), { label: "the scan/search box" });
+  setField('[data-testid="pos-scan-search"]', "CAT-H");
+  await waitFor(
+    () =>
+      [...document.querySelectorAll("[data-pos-result-index]")].some((r) =>
+        (r.textContent ?? "").includes("Hidden Piece"),
+      ),
+    { label: "the register to offer the hidden shelf's product" },
   );
   console.log("  ✓ the archived shelf hides; its product keeps selling");
 

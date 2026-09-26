@@ -261,7 +261,7 @@ try {
   assert.equal(await page.getByTestId("store-v2").count(), 1, "canonical catalogue uses the saved V2 design");
   assert.equal(await page.evaluate(() => document.documentElement.style.getPropertyValue("--v2-bg")), "",
     "V2 colours stay scoped to the storefront, not the document root");
-  await go("#/pos", '[data-testid="pos-grid"]');
+  await go("#/pos", '[data-testid="pos-scan-search"]');
   assert.equal(await page.getByTestId("store-v2").count(), 0, "POS is not V2");
   assert.equal(await page.locator("#alyq-store-theme").count(), 0, "POS has no store theme");
   assert.deepEqual(failures, [], "no browser console/network failures");

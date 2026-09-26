@@ -247,7 +247,7 @@ try {
   await go("#/store/contact", '[data-testid="v2-contact"]');
   assert.equal(await page.getByTestId("store-v2").count(), 1, "canonical contact uses V2 and hides disabled channels");
   assert.equal(await page.locator('.v2-contact-channels a').count(), 0);
-  await go("#/pos", '[data-testid="pos-grid"]');
+  await go("#/pos", '[data-testid="pos-scan-search"]');
   assert.equal(await page.getByTestId("store-v2").count(), 0, "POS remains outside V2");
   assert.deepEqual(failures, [], "browser had no page errors, console errors or 4xx on the preview server");
   console.log("✓ enable → disable survives canonical reload EN/AR; Contact and POS remain isolated; no browser errors");

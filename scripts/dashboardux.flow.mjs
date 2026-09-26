@@ -88,16 +88,18 @@ async function main() {
   clickEl([...shiftDialog.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === "Open shift"));
   await waitFor(() => /SH-\d{6}/.test(bodyText()), { label: "the shift to open" });
 
-  // 1c. ring one sale through the grid
+  // 1c. ring one sale through the scan/search box
   await navigate("#/pos");
-  const searchBox = () => document.querySelector('input[aria-label="Search"]');
+  const searchBox = () => document.querySelector('[data-testid="pos-scan-search"]');
   await waitFor(() => searchBox(), { label: "the register search" });
-  setField('input[aria-label="Search"]', plainName.split(" ")[0]);
+  setField('[data-testid="pos-scan-search"]', plainName.split(" ")[0]);
   await sleep(400);
-  const tile = () =>
-    [...document.querySelectorAll("button")].find((b) => (b.textContent ?? "").includes(plainName));
-  await waitFor(() => tile() && !tile().disabled, { label: "the product tile" });
-  clickEl(tile());
+  const row = () =>
+    [...document.querySelectorAll("[data-pos-result-index]")].find((b) =>
+      (b.textContent ?? "").includes(plainName),
+    );
+  await waitFor(() => row() && !row().disabled, { label: "the product row" });
+  clickEl(row());
   await sleep(300);
   setField('[data-testid="cash-input"]', "500");
   await sleep(250);
@@ -373,12 +375,14 @@ async function main() {
   await navigate("#/pos", 700);
   await waitFor(() => testid("pos-mobile-cart-open") === null, { label: "the empty register" });
   // put something in the cart, so the sticky summary has something to say
-  await waitFor(() => testid("pos-category-chip-all"), { label: "the category chips" });
-  const mobileTile = [...document.querySelectorAll("button")].find(
+  await waitFor(() => testid("pos-scan-search"), { label: "the scan/search box" });
+  setField('[data-testid="pos-scan-search"]', plainName);
+  await sleep(400);
+  const mobileRow = [...document.querySelectorAll("[data-pos-result-index]")].find(
     (b) => (b.textContent ?? "").includes(plainName) && !b.disabled,
   );
-  assert.ok(mobileTile, "the tile is on the grid");
-  clickEl(mobileTile);
+  assert.ok(mobileRow, "the product is in the results");
+  clickEl(mobileRow);
   await sleep(400);
   await waitFor(() => testid("pos-mobile-cart-open"), { label: "the sticky mobile cart bar" });
   clickTestid("pos-mobile-cart-open");

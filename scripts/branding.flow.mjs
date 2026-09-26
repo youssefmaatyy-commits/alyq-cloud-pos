@@ -145,13 +145,16 @@ const plain = (ux.readJson("alyq.demo.catalog.v1")?.products ?? []).find(
   (p) => p.active && p.stock_tracking_enabled && !p.variants_enabled && p.stock_quantity > 0,
 );
 assert.ok(plain, "a plain product is sellable");
-const searchBox = () => document.querySelector('input[aria-label="Search"]');
+const searchBox = () => document.querySelector('[data-testid="pos-scan-search"]');
 await waitFor(() => searchBox(), { label: "the register search" });
-setField('input[aria-label="Search"]', plain.name_en.split(" ")[0]);
+setField('[data-testid="pos-scan-search"]', plain.name_en.split(" ")[0]);
 await sleep(450);
-const tile = () => [...document.querySelectorAll("button")].find((b) => (b.textContent ?? "").includes(plain.name_en));
-await waitFor(() => tile() && !tile().disabled, { label: "the plain product tile" });
-clickEl(tile());
+const row = () =>
+  [...document.querySelectorAll("[data-pos-result-index]")].find((b) =>
+    (b.textContent ?? "").includes(plain.name_en),
+  );
+await waitFor(() => row() && !row().disabled, { label: "the plain product row" });
+clickEl(row());
 await sleep(300);
 setField('[data-testid="cash-input"]', "500");
 await sleep(250);

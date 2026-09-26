@@ -335,7 +335,9 @@ async function main() {
     return ["Gold", "Silver", "17", "18"].every((part) => text.includes(part));
   }, { label: "all four inventory shelves" });
   await navigate("#/pos");
-  await waitFor(() => [...document.querySelectorAll("button")].some((button) => (button.textContent ?? "").includes("Variant UI Ring")), { label: "variant product in POS" });
+  await waitFor(() => document.querySelector('[data-testid="pos-scan-search"]'), { label: "the scan/search box" });
+  setField('[data-testid="pos-scan-search"]', "Variant UI Ring");
+  await waitFor(() => [...document.querySelectorAll("[data-pos-result-index]")].some((row) => (row.textContent ?? "").includes("Variant UI Ring")), { label: "variant product in POS search" });
   await navigate(`#/store/products/${uiProduct.id}`);
   await waitFor(() => bodyText().includes("Gold") && bodyText().includes("Silver"), { label: "variant colors in storefront" });
   console.log("  ✓ Edit Product, Inventory, POS, and Storefront expose all six combinations");
@@ -512,11 +514,19 @@ async function main() {
   await waitFor(() => /SH-\d{6}/.test(bodyText()), { label: "the shift to open" });
 
   await navigate("#/pos");
-  const tile = () =>
-    [...document.querySelectorAll("button")].find((b) => (b.textContent ?? "").includes("Variant Ring"));
-  await waitFor(() => tile(), { label: "the ring tile in the POS grid" });
-  assert.ok(!tile().disabled, "the rollup says 4, so the tile is sellable");
-  clickEl(tile());
+  await waitFor(() => document.querySelector('[data-testid="pos-scan-search"]'), { label: "the scan/search box" });
+  const searchFor = async (text) => {
+    setField('[data-testid="pos-scan-search"]', text);
+    await sleep(450);
+  };
+  const row = () =>
+    [...document.querySelectorAll("[data-pos-result-index]")].find((b) =>
+      (b.textContent ?? "").includes("Variant Ring"),
+    );
+  await searchFor("Variant Ring");
+  await waitFor(() => row(), { label: "the ring row in the POS results" });
+  assert.ok(!row().disabled, "the rollup says 4, so the row is sellable");
+  clickEl(row());
   const picker = () =>
     [...document.querySelectorAll('[role="dialog"]')].find((d) =>
       (d.textContent ?? "").includes("Choose colour and size"),
@@ -543,22 +553,26 @@ async function main() {
 
   clickEl(sizeButton("Gold / 17")); // 1st
   await waitFor(() => !picker(), { label: "the picker to close after the first pick" });
-  const qtyBadge = () => {
-    const t = tile();
-    return t ? t.querySelector("span.rounded-full")?.textContent ?? "0" : null;
-  };
-  await waitFor(() => qtyBadge() === "1", { label: "the cart badge to show one ring" });
-  clickEl(tile());
+  const qtyOnLine = () =>
+    [...document.querySelectorAll('[data-testid^="cart-line-"]')]
+      .find((l) => (l.textContent ?? "").includes("Gold / 17"))
+      ?.querySelector('[data-testid^="cart-quantity-"]')?.textContent ?? null;
+  await waitFor(() => qtyOnLine() === "1", { label: "the cart line to show one ring" });
+  await searchFor("Variant Ring");
+  await waitFor(() => row(), { label: "the ring row again" });
+  clickEl(row());
   await waitFor(() => picker(), { label: "the picker again" });
   clickEl(sizeButton("Gold / 17")); // 2nd
-  await waitFor(() => qtyBadge() === "2", { label: "the cart badge to show two rings" });
+  await waitFor(() => qtyOnLine() === "2", { label: "the cart line to show two rings" });
 
-  clickEl(tile()); // the third Gold/17
+  await searchFor("Variant Ring"); // the third Gold/17
+  await waitFor(() => row(), { label: "the ring row a third time" });
+  clickEl(row());
   await waitFor(() => picker(), { label: "the picker a third time" });
   clickEl(sizeButton("Gold / 17"));
   await sleep(500);
   assert.ok(picker(), "the refused pick leaves the picker open — nothing was added");
-  assert.equal(qtyBadge(), "2", "the THIRD Gold / 17 never reached the cart (shelf says 2)");
+  assert.equal(qtyOnLine(), "2", "the THIRD Gold / 17 never reached the cart (shelf says 2)");
   console.log("  ✓ acceptance: Gold/17 ×3 refused while the product rollup still reads 4");
 
   // Silver / 17 is untouched and sellable: its colour chip answers, its shelf

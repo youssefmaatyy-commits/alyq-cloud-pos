@@ -228,8 +228,18 @@ function makeHarness(dom, consoleErrors) {
     /** Add the first product to the cart and fill the exact cash amount. */
     stageSale: async () => {
       await navigate("#/pos");
-      for (let i = 0; i < 12 && !bodyText().includes("ALYQ-1001"); i += 1) await sleep(300);
-      clickEl(byText("Classic Gold Ring") ?? byText("ALYQ-1001"));
+      let scanBox = null;
+      for (let i = 0; i < 12 && !(scanBox = document.querySelector('[data-testid="pos-scan-search"]')); i += 1) {
+        await sleep(300);
+      }
+      if (!scanBox) throw new Error("the scan/search box never rendered");
+      typeInto(scanBox, "Classic");
+      await sleep(400);
+      const row = [...document.querySelectorAll("[data-pos-result-index]")].find((b) =>
+        (b.textContent ?? "").includes("Classic Gold Ring"),
+      );
+      if (!row) throw new Error("the Classic Gold Ring row never rendered");
+      clickEl(row);
       await sleep(350);
       const exact = byText("Exact");
       if (exact) clickEl(exact);

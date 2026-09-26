@@ -149,7 +149,8 @@ const checks = [
     path: "#/pos",
     name: "POS (till)",
     check: () => {
-      assert.ok(testid("pos-grid"), "pos: the grid renders");
+      assert.ok(testid("pos-scan-search"), "pos: the scan/search box renders");
+      assert.ok(!testid("pos-grid"), "pos: no product-card grid renders");
       assert.ok(testid("cash-input"), "pos: the sale panel renders");
     },
   },
@@ -239,14 +240,16 @@ setInputValue([...sd.querySelectorAll("input")].find((i) => i.inputMode === "dec
 clickEl([...sd.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === "Open shift"));
 await waitFor(() => /SH-\d{6}/.test(bodyText()), { label: "the shift to open" });
 await navigate("#/pos", 700);
-await waitFor(() => document.querySelector('input[aria-label="Search"]'), { label: "the register" });
+await waitFor(() => document.querySelector('[data-testid="pos-scan-search"]'), { label: "the register" });
 const sellable = (ux.readJson("alyq.demo.catalog.v1")?.products ?? []).find(
   (p) => p.active && p.stock_tracking_enabled && !p.variants_enabled && p.stock_quantity > 0,
 );
-setField('input[aria-label="Search"]', sellable.name_en.split(" ")[0]);
+setField('[data-testid="pos-scan-search"]', sellable.name_en.split(" ")[0]);
 await sleep(400);
-const tile = [...document.querySelectorAll("button")].find((b) => (b.textContent ?? "").includes(sellable.name_en));
-clickEl(tile);
+const sellRow = [...document.querySelectorAll("[data-pos-result-index]")].find((b) =>
+  (b.textContent ?? "").includes(sellable.name_en),
+);
+clickEl(sellRow);
 await sleep(300);
 setField('[data-testid="cash-input"]', "500");
 await sleep(250);

@@ -176,7 +176,7 @@ try {
   await page.getByTestId("shell-brand").waitFor({ state: "attached" });
   await go("#/online/website?tab=v2", "v2-studio");
   assert.equal(await page.getByTestId("v2-preview-open-saved").getAttribute("href"), "#/store");
-  await go("#/pos", "pos-grid");
+  await go("#/pos", "pos-scan-search");
   assert.equal(await page.getByTestId("store-v2").count(), 0);
   assert.equal((await head()).canonical, "");
   assert.equal((await head()).robots, undefined);
