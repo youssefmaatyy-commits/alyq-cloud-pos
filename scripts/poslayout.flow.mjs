@@ -80,10 +80,23 @@ assert.equal(
 const checkout = testid("pos-checkout-panel");
 assert.ok(checkout?.contains(testid("pos-cart")), "checkout holds the cart beside the search column");
 assert.ok(checkout.parentElement.parentElement.classList.contains("lg:h-[calc(100dvh-6.5rem)]"), "desktop register fits below the shell chrome");
-assert.ok(checkout.classList.contains("lg:max-h-full"), "checkout remains inside the bounded register row");
-assert.ok(checkout.classList.contains("lg:overflow-y-auto"), "checkout, not the page, owns its vertical overflow");
-assert.ok(checkout.classList.contains("lg:overscroll-y-contain"), "checkout scroll cannot drag the whole page");
+assert.ok(checkout.classList.contains("w-full"), "the checkout aside fills its full 65% track");
+assert.ok(
+  !checkout.classList.contains("lg:max-h-full") &&
+    !checkout.classList.contains("lg:overflow-y-auto") &&
+    !checkout.classList.contains("lg:overscroll-y-contain"),
+  "the checkout aside owns no competing full-height vertical scrollbar",
+);
+assert.ok(checkout.firstElementChild.classList.contains("w-full"), "the cart wrapper fills the checkout width");
 assert.ok(checkout.firstElementChild.classList.contains("lg:shrink-0"), "the cart never collapses under a tall payment form");
+assert.ok(
+  testid("pos-cart").classList.contains("w-full") && testid("pos-cart").classList.contains("min-w-0"),
+  "CartPanel fills the available width",
+);
+assert.ok(
+  checkout.lastElementChild.classList.contains("w-full") && checkout.lastElementChild.classList.contains("min-w-0"),
+  "PaymentPanel fills the available width",
+);
 const searchColumn = testid("pos-search-column");
 const desktopRow = checkout.parentElement;
 assert.ok(desktopRow.classList.contains("lg:grid-cols-[minmax(0,35fr)_minmax(0,65fr)]"), "desktop tracks give search 35% and checkout 65%");
@@ -203,8 +216,9 @@ console.log("  ✓ long cart: 13 lines with their own scroll, checkout and table
 // ── POS grip scrollbar: long-thumb regression ────────────────────────────
 // jsdom has no layout engine and cannot measure a rendered scrollbar thumb, so
 // the geometry is asserted against the stylesheet the browser actually applies,
-// and the DOM half below proves the class stays scoped to the POS cart and
-// checkout surfaces (there is no product grid left to scope it away from).
+// and the DOM half below proves the class stays scoped to the POS cart line
+// list and the mobile/tablet drawer surfaces (there is no product grid left
+// to scope it away from).
 // Block comments are dropped first: the Firefox gate's own comment names
 // `scrollbar-width/-color` and would otherwise read as a leaked declaration.
 const stripComments = (source) => {
@@ -295,8 +309,8 @@ assert.ok(globalScrollbar, "the global scrollbar rule still exists");
 assert.equal(px(globalScrollbar, "width"), 10, "the global scrollbar stays 10px wide");
 assert.equal(px(globalScrollbar, "height"), 10, "the global scrollbar stays 10px tall");
 
-// Scope: only the POS checkout/cart surfaces.
-assert.ok(checkout.classList.contains("pos-grip-scrollbar"), "the desktop checkout panel keeps the grip scrollbar");
+// Scope: only the POS cart line list and the mobile/tablet drawer surfaces.
+assert.ok(!checkout.classList.contains("pos-grip-scrollbar"), "the outer checkout panel carries no grip scrollbar lane");
 const checkoutLines = checkout.querySelector('[data-testid^="cart-line-"]')?.closest("ul");
 assert.ok(checkoutLines?.classList.contains("pos-grip-scrollbar"), "the cart line-items list keeps the grip scrollbar");
 assert.ok(drawer.classList.contains("pos-grip-scrollbar"), "the mobile/tablet cart drawer keeps the grip scrollbar");
@@ -304,9 +318,9 @@ assert.ok(!resultsBox()?.classList.contains("pos-grip-scrollbar"), "the search d
 const strays = [...document.querySelectorAll(".pos-grip-scrollbar")]
   .filter((el) => el !== checkout && el !== drawer && !checkout.contains(el) && !drawer.contains(el))
   .map((el) => `${el.tagName.toLowerCase()}.${el.className}`);
-assert.deepEqual(strays, [], `the grip scrollbar stays on the POS cart/checkout surfaces only: ${strays.join(", ")}`);
+assert.deepEqual(strays, [], `the grip scrollbar stays on the POS cart/drawer scroll surfaces only: ${strays.join(", ")}`);
 clickEl(drawer.querySelector('button[aria-label]'));
-console.log("  ✓ cart + checkout keep the long-thumb grip scrollbar, scoped to those surfaces");
+console.log("  ✓ cart line list + drawer keep the long-thumb grip scrollbar; the outer checkout does not scroll");
 
 clickExact("العربية");
 await waitFor(() => document.documentElement.dir === "rtl", { label: "Arabic register layout" });

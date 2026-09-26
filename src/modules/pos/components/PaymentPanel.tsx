@@ -153,7 +153,7 @@ export function PaymentPanel() {
   };
 
   return (
-    <div className="rounded-2xl border border-stone-200 bg-white p-4">
+    <div className="w-full min-w-0 rounded-2xl border border-stone-200 bg-white p-4">
       <div className="mb-3 flex items-center justify-between">
         <p className="text-[11px] font-bold uppercase tracking-wider text-stone-600">
           {t("pos.payment")}
