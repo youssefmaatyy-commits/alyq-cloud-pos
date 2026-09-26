@@ -82,7 +82,10 @@
      to grab on a till. Global (Admin/Storefront) scrollbar rules in the base
      layer are intentionally left untouched. Native wheel/trackpad/touch
      scrolling is unaffected: this only restyles the scrollbar itself.
-     Chromium/WebKit: 14px lane with an ~8px solid visible grip. */
+     Chromium/WebKit: 14px lane with an ~8px solid visible grip.
+     The thumb is sized for a finger, not a mouse: `min-height` is the whole
+     box and the 3px transparent border above trims 6px off it, so 96px here
+     is a ~90px visible draggable thumb on a till. */
   .pos-grip-scrollbar::-webkit-scrollbar {
     width: 14px;
     height: 14px;
@@ -91,7 +94,7 @@
     background-color: transparent;
   }
   .pos-grip-scrollbar::-webkit-scrollbar-thumb {
-    min-height: 48px;
+    min-height: 96px;
     background-color: var(--color-stone-400);
     border-radius: 9999px;
     border: 3px solid transparent;
