@@ -2664,7 +2664,15 @@ async function main() {
   assert.ok(bodyText().includes("قسم المبيعات") || bodyText().includes("الكاشير"), "Sales section header in Arabic");
   await navigate("#/pos");
   assert.ok(bodyText().includes("البيع الحالي") || bodyText().includes("السلة فارغة"), "cart panel in Arabic");
+  // The rebuilt split-tender panel shows the cash field by default and reveals
+  // InstaPay/Visa only when the cashier splits the payment — the method labels
+  // are no longer permanently visible, so assert them through the split toggle.
+  assert.ok(bodyText().includes("نقدي"), "cash payment method in Arabic");
+  toggleSwitch("تقسيم الدفع");
+  await sleep(250);
   assert.ok(bodyText().includes("نقدي") && bodyText().includes("إنستا باي"), "payment methods in Arabic");
+  toggleSwitch("تقسيم الدفع");
+  await sleep(250);
   assert.ok(!bodyText().includes("Complete sale"), "no untranslated POS copy in RTL");
 
   await navigate("#/pos/sales");
