@@ -9,7 +9,7 @@ import {
 } from "@/lib/storefront/storefrontLink";
 import { usePos } from "../hooks/PosProvider";
 import { useBarcodeScanner } from "../hooks/useBarcodeScanner";
-import { ProductGrid } from "../components/ProductGrid";
+import { PosSearchPanel } from "../components/PosSearchPanel";
 import { CartPanel } from "../components/CartPanel";
 import { PaymentPanel } from "../components/PaymentPanel";
 import { SaleCompletedModal } from "../components/SaleCompletedModal";
@@ -18,12 +18,14 @@ import { CustomerSearchSelect } from "@/modules/customers/components/CustomerSea
 /**
  * POS register screen.
  *
- * Layout: the product column scrolls independently beside the sticky cart +
- * payment panel on desktop. Below lg the products fill the page and checkout
+ * Layout: a scan/search-first workspace beside the sticky cart + payment
+ * panel on desktop — there is no browsable product grid, so the left column
+ * never scrolls a catalogue. Below lg the search fills the page and checkout
  * moves into the mobile cart sheet.
  *
  * Barcode scanners work anywhere on this page (see `useBarcodeScanner`):
- * their rapid keystrokes are detected and added to the cart directly.
+ * their rapid keystrokes are detected and added to the cart directly. A scan
+ * typed into the focused search box is added by the box itself, exactly once.
  */
 export function PosPage() {
   const { t } = useI18n();
@@ -41,15 +43,15 @@ export function PosPage() {
     void reloadCatalog();
   }, [reloadCatalog]);
 
-  // Scan → add to cart. No-op UI is needed on success (the badge on the
-  // product card updates); a miss shows a transient warning via the title.
+  // Scan → add to cart. No-op UI is needed on success (the cart updates);
+  // a miss shows a transient toast plus a pulse on the scan/search box.
   const onScan = (code: string) => {
     const added = addBySku(code);
     if (!added) {
       toast.error(t("pos.codeUnavailable"));
-      // small non-blocking visual cue: shake the search box via a class
+      // small non-blocking visual cue: pulse the scan/search box via a class
       const input = document.querySelector<HTMLInputElement>(
-        'input[aria-label="' + t("pos.search") + '"]',
+        'input[data-testid="pos-scan-search"]',
       );
       if (input) {
         input.classList.add("animate-pulse");
@@ -136,18 +138,19 @@ export function PosPage() {
   return (
     // Desktop: subtract the shell's 3.5rem top bar and 3rem main padding.
     // The remaining flex height accounts for this page's header and footer;
-    // only very short viewports may need document scroll to keep a full product
-    // card visible in the list (the checkout still scrolls independently).
+    // the search column is short by design (the checkout still scrolls
+    // independently when the cart is long).
     <div className="flex h-full flex-col lg:h-[calc(100dvh-6.5rem)] lg:min-h-[36rem] xl:min-h-[33rem]">
       <PageHeader title={t("nav.register")} subtitle={t("app.tagline")} actions={headerActions} />
 
       <div className="grid min-w-0 flex-1 gap-4 lg:min-h-0 lg:grid-cols-[minmax(0,1fr)_380px] lg:items-start">
-        {/* A zero-minimum track and item stop the products' intrinsic width from
-            pushing the fixed-width checkout off screen. Only the product list
-            scrolls at desktop sizes; wheel/trackpad/touch stay native and do
-            not move the payment controls. Below lg the page scrolls normally. */}
-        <div className="min-h-[420px] min-w-0 lg:h-full lg:min-h-0" data-testid="pos-product-column">
-          <ProductGrid />
+        {/* A zero-minimum track and item stop the search column's intrinsic
+            width from pushing the fixed-width checkout off screen. The search
+            column holds one input and a compact result dropdown — it never
+            scrolls a catalogue; only the cart's own line list scrolls when
+            the sale is long. Below lg the page scrolls normally. */}
+        <div className="min-w-0 lg:h-full lg:min-h-0" data-testid="pos-search-column">
+          <PosSearchPanel />
         </div>
 
         {/* Desktop checkout scrolls as its own viewport-bounded column. A
@@ -203,7 +206,7 @@ function MobileCartSheet() {
   const count = lines.reduce((sum, line) => sum + line.qty, 0);
 
   // Closing the drawer on an emptied cart keeps the flow honest: after "New
-  // sale" the cashier is back on the grid, not staring at an empty drawer.
+  // sale" the cashier is back on the search box, not staring at an empty drawer.
   useEffect(() => {
     if (isEmpty) setOpen(false);
   }, [isEmpty]);

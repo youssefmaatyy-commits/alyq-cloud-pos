@@ -9,7 +9,7 @@ export { useBarcodeScanner } from "./hooks/useBarcodeScanner";
 export { PosPage } from "./pages/PosPage";
 export { SalesHistoryPage } from "./pages/SalesHistoryPage";
 export { SaleDetailPage } from "./pages/SaleDetailPage";
-export { ProductGrid } from "./components/ProductGrid";
+export { PosSearchPanel } from "./components/PosSearchPanel";
 export { CartPanel } from "./components/CartPanel";
 export { PaymentPanel } from "./components/PaymentPanel";
 export { SaleCompletedModal } from "./components/SaleCompletedModal";

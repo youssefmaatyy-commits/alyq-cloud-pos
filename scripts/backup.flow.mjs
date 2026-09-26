@@ -426,7 +426,9 @@ await step(3, "Taking a snapshot records date, size and author", async () => {
 
   // The requirement behind the design: taking a snapshot must not stop the shop.
   await app.navigate("#/pos");
-  await app.waitFor(() => app.bodyText().includes("ALYQ-1001"), { what: "the till after a snapshot" });
+  await app.waitFor(() => app.document.querySelector('[data-testid="pos-scan-search"]'), {
+    what: "the till after a snapshot",
+  });
   await app.openPanel();
 
   return [

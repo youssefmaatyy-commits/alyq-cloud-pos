@@ -354,10 +354,17 @@ async function main() {
   // a stock movement. Baseline first: right now it IS sellable and IS on the
   // storefront — the two things archiving must take away.
   await navigate("#/pos");
-  await waitFor(
-    () => [...document.querySelectorAll("button")].some((b) => (b.textContent ?? "").includes("Lifecycle Ring")),
-    { label: "the ring to appear in the POS grid" },
-  );
+  await waitFor(() => document.querySelector('[data-testid="pos-scan-search"]'), { label: "the scan/search box" });
+  const searchFor = async (text) => {
+    setField('[data-testid="pos-scan-search"]', text);
+    await sleep(450);
+  };
+  const rowsFor = (name) =>
+    [...document.querySelectorAll("[data-pos-result-index]")].filter((b) =>
+      (b.textContent ?? "").includes(name),
+    );
+  await searchFor("Lifecycle Ring");
+  await waitFor(() => rowsFor("Lifecycle Ring").length > 0, { label: "the ring in the POS results" });
   console.log("  ✓ baseline: the new product is sellable at the POS");
 
   await navigate("#/store/products", 700);
@@ -371,14 +378,10 @@ async function main() {
   console.log("  ✓ baseline: the new product is visible on the storefront");
 
   await navigate("#/pos");
-  await waitFor(
-    () => [...document.querySelectorAll("button")].some((b) => (b.textContent ?? "").includes("Lifecycle Ring")),
-    { label: "the POS grid" },
-  );
-  const ringCard = [...document.querySelectorAll("button")].find((b) =>
-    (b.textContent ?? "").includes("Lifecycle Ring"),
-  );
-  clickEl(ringCard);
+  await waitFor(() => document.querySelector('[data-testid="pos-scan-search"]'), { label: "the scan/search box" });
+  await searchFor("Lifecycle Ring");
+  await waitFor(() => rowsFor("Lifecycle Ring").length > 0, { label: "the ring in the POS results" });
+  clickEl(rowsFor("Lifecycle Ring")[0]);
   await sleep(300);
   setField('[data-testid="cash-input"]', "120");
   await sleep(250);
@@ -466,20 +469,16 @@ async function main() {
   );
   console.log("  ✓ archive: cancel is safe; confirm disables double-submit and toasts success");
 
-  // 7 ─ it disappears from the POS selling grid…
+  // 7 ─ it disappears from POS search…
   await navigate("#/pos");
-  await waitFor(
-    () => [...document.querySelectorAll("button")].some((b) => (b.textContent ?? "").includes("ALYQ-1001")),
-    { label: "the POS grid" },
-  );
-  setField('input[aria-label="Search"]', "Lifecycle Ring");
-  await sleep(400);
+  await waitFor(() => document.querySelector('[data-testid="pos-scan-search"]'), { label: "the scan/search box" });
+  await searchFor("Lifecycle Ring");
   assert.ok(
-    ![...document.querySelectorAll("button")].some((b) => (b.textContent ?? "").includes("Lifecycle Ring")),
+    rowsFor("Lifecycle Ring").length === 0,
     "archived product is not sellable at the POS",
   );
-  setField('input[aria-label="Search"]', "");
-  console.log("  ✓ archived product is hidden from the POS selling grid");
+  await searchFor("");
+  console.log("  ✓ archived product is hidden from POS search");
 
   // 8 ─ …and from the storefront / new-order selection…
   await navigate("#/store/products", 700);
@@ -517,14 +516,10 @@ async function main() {
 
   // 11 ─ …and it is sellable again at the POS (history now 2 lines, still no cascade)
   await navigate("#/pos");
-  await waitFor(
-    () => [...document.querySelectorAll("button")].some((b) => (b.textContent ?? "").includes("Lifecycle Ring")),
-    { label: "the ring back in the POS grid" },
-  );
-  const ringCard2 = [...document.querySelectorAll("button")].find((b) =>
-    (b.textContent ?? "").includes("Lifecycle Ring"),
-  );
-  clickEl(ringCard2);
+  await waitFor(() => document.querySelector('[data-testid="pos-scan-search"]'), { label: "the scan/search box" });
+  await searchFor("Lifecycle Ring");
+  await waitFor(() => rowsFor("Lifecycle Ring").length > 0, { label: "the ring back in the POS results" });
+  clickEl(rowsFor("Lifecycle Ring")[0]);
   await sleep(300);
   setField('[data-testid="cash-input"]', "120");
   await sleep(250);

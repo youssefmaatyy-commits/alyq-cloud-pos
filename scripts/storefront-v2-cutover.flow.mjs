@@ -99,7 +99,7 @@ await go("#/online/website?tab=v2", "v2-studio");
 check("Admin opens saved design at the canonical public URL, not a draft or preview route",
   testid("v2-preview-open-saved")?.getAttribute("href") === "#/store" &&
   testid("v2-draft-preview")?.querySelectorAll(".v2-footer-social a").length === 0);
-await go("#/pos", "pos-grid");
+await go("#/pos", "pos-scan-search");
 check("POS has no V2 shell or residual public canonical metadata",
   !testid("store-v2") && !document.querySelector('link[rel="canonical"]') &&
   !document.querySelector('#alyq-store-jsonld') && !document.querySelector('meta[name="robots"]'));

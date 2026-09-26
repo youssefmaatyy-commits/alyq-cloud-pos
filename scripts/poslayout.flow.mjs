@@ -1,11 +1,15 @@
 /**
- * POS product-pane DOM regression. A crowded catalogue must keep the last
- * product as a real focusable, selectable card, not a clipped carousel item.
+ * POS scan/search workspace DOM regression.
  *
- * jsdom intentionally has NO pixel/layout engine: the width, scroll distance
- * and checkout position at 1366/1920/tablet are verified separately in the
- * Chromium checks in rendered.flow.mjs. This suite protects the reachable DOM
- * and add-to-cart interaction in every `npm run test:e2e` run.
+ * A crowded catalogue must NOT render a browsable product-card grid: the
+ * register is one scan/search box plus a compact, capped result list. This
+ * suite pins that contract — no grid, no cards, no category chips, no product
+ * scrolling — while the cart keeps its own scroll and the checkout stays put.
+ *
+ * jsdom intentionally has NO pixel/layout engine: the desktop geometry at
+ * 1366/1920/tablet is verified separately in the Chromium checks in
+ * rendered.flow.mjs. This suite protects the reachable DOM and the
+ * search/scan-to-cart interaction in every `npm run test:e2e` run.
  */
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -19,17 +23,28 @@ const ux = await createUxHarness({
     localStorage.setItem("alyq.lang", "en");
   },
 });
-const { assert, dom, waitFor, navigate, clickEl, clickExact, setField, setReactValue, signInAs, testid } = ux;
+const { assert, dom, sleep, waitFor, navigate, clickEl, clickExact, setField, setReactValue, signInAs, testid, toastText } = ux;
 const { document } = dom.window;
 const catalog = () => ux.readJson("alyq.demo.catalog.v1");
+
+const searchBox = () => testid("pos-scan-search");
+const resultsBox = () => testid("pos-search-results");
+const rows = () => [...document.querySelectorAll('[data-pos-result-index]')];
+const cartLines = () => [...document.querySelectorAll('[data-testid^="cart-line-"]')];
+const searchFor = async (text) => {
+  setField('[data-testid="pos-scan-search"]', text);
+  await sleep(450);
+};
+const pressEnter = () =>
+  searchBox().dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
 
 await signInAs("admin");
 await waitFor(() => catalog()?.products?.length > 0, { label: "the demo catalogue" });
 
 // Real product-form saves, so the POS reload path and the registration UI
-// participate in the test. The original last sellable seed will be several
-// complete rows beyond the initially visible products on desktop.
-for (let i = 1; i <= 18; i += 1) {
+// participate in the test. 26 created + 5 sellable seeds = 31 matches for a
+// one-letter query, which also proves the result list stays capped.
+for (let i = 1; i <= 26; i += 1) {
   await navigate("#/products/new", 80);
   await waitFor(() => document.querySelector("#sku"), { label: `product form ${i}` });
   setField("#name_ar", `سوار التمرير ${i}`);
@@ -45,52 +60,128 @@ for (let i = 1; i <= 18; i += 1) {
   clickEl(testid("product-form-save"));
   await waitFor(() => dom.window.location.hash === "#/products", { label: `saved product ${i}` });
 }
+const idOf = (sku) => catalog().products.find((p) => p.sku === sku)?.id;
+assert.ok(idOf("POS-SCROLL-5"), "the created products are in the catalogue");
 
 await navigate("#/pos");
-await waitFor(() => testid("pos-grid")?.querySelectorAll('button[data-testid^="pos-product-"]').length >= 22, {
-  label: "the crowded product pane",
-});
-const grid = testid("pos-grid");
+await waitFor(() => searchBox(), { label: "the scan/search box" });
+assert.equal(searchBox().getAttribute("placeholder"), "Scan barcode or search by name or code...");
+assert.equal(searchBox().getAttribute("aria-label"), "Scan or search");
+assert.ok(testid("pos-search-empty"), "the idle hint renders instead of a catalogue");
+
+// ── the grid is gone, even with a crowded catalogue ─────────────────────────
+assert.ok(!testid("pos-grid"), "no product-card grid renders");
+assert.equal(document.querySelectorAll('[data-testid^="pos-product-"]').length, 0, "no product cards render");
+assert.equal(
+  document.querySelectorAll('[data-testid^="pos-category-chip-"]').length,
+  0,
+  "no category chips render",
+);
 const checkout = testid("pos-checkout-panel");
-const cards = [...grid.querySelectorAll('button[data-testid^="pos-product-"]')];
-const lastSeed = testid("pos-product-prd-2001");
-assert.ok(lastSeed && cards.indexOf(lastSeed) >= 18, "the target follows at least 18 products");
-assert.ok(!lastSeed.disabled, "the last seed can still be sold");
-assert.ok(checkout?.contains(testid("pos-cart")), "checkout is separate from the product scroll container");
-assert.ok(!grid.contains(checkout), "scrolling the products cannot move checkout inside their container");
-// DOM-only contract: the real browser suite below proves scrollTop/wheel, while
-// this suite catches a regression to a capped but non-scrollable checkout.
+assert.ok(checkout?.contains(testid("pos-cart")), "checkout holds the cart beside the search column");
 assert.ok(checkout.parentElement.parentElement.classList.contains("lg:h-[calc(100dvh-6.5rem)]"), "desktop register fits below the shell chrome");
 assert.ok(checkout.classList.contains("lg:max-h-full"), "checkout remains inside the bounded register row");
 assert.ok(checkout.classList.contains("lg:overflow-y-auto"), "checkout, not the page, owns its vertical overflow");
 assert.ok(checkout.classList.contains("lg:overscroll-y-contain"), "checkout scroll cannot drag the whole page");
 assert.ok(checkout.firstElementChild.classList.contains("lg:shrink-0"), "the cart never collapses under a tall payment form");
-assert.ok(grid.style.gridTemplateColumns.includes("auto-fill"), "columns follow product-pane width");
-assert.ok(grid.classList.contains("overflow-y-auto"), "the product list has native vertical scrolling");
-assert.ok(grid.classList.contains("lg:overscroll-y-contain"), "desktop grid overscroll is contained without trapping the tablet page");
-assert.ok(!grid.classList.contains("overflow-x-auto"), "there is no hidden horizontal card carousel");
-assert.ok(
-  document.querySelector('[role="group"][aria-label="Category"]')?.classList.contains("flex-wrap"),
-  "category filters wrap instead of hiding behind a horizontal scrollbar",
-);
-assert.equal(lastSeed.querySelector('[data-testid="pos-product-price"]')?.textContent.trim(), "4250.00");
-assert.equal(lastSeed.querySelector('[data-testid="pos-product-stock"]')?.textContent.trim(), "3");
-assert.equal(lastSeed.querySelector('[data-testid="pos-product-action"]')?.textContent.trim(), "Add");
+console.log("  ✓ crowded catalogue, no grid: one scan/search box beside a stable checkout");
 
-// jsdom cannot calculate the actual off-screen position or scrollTop range;
-// keyboard focus + selection proves the tail card remains reachable. The
-// Chromium counterpart below tests a real wheel scroll from above the fold.
-lastSeed.focus();
-assert.equal(document.activeElement, lastSeed, "tail card is keyboard focusable");
-clickEl(lastSeed);
-await waitFor(() => checkout.querySelector('[data-testid="cart-line-prd-2001::"]'), {
-  label: "the formerly off-screen product to appear in checkout",
-});
+// ── name search returns compact rows with price + stock ─────────────────────
+await searchFor("Handmade");
+await waitFor(() => rows().length === 1, { label: "the single matching row" });
+const setRow = testid("pos-result-prd-2001");
+assert.ok(setRow, "the jewellery set has its own compact row");
+assert.ok(setRow.textContent.includes("Handmade Jewellery Set"), "the row names the product");
+assert.ok(setRow.textContent.includes("ALYQ-2001"), "the row carries the SKU");
+assert.equal(
+  setRow.querySelector('[data-testid="pos-result-price-prd-2001"]')?.textContent.trim(),
+  "4250.00",
+  "the row carries the price",
+);
+assert.equal(
+  setRow.querySelector('[data-testid="pos-result-price-prd-2001"]')?.dir,
+  "ltr",
+  "the price stays legible",
+);
+assert.equal(
+  setRow.querySelector('[data-testid="pos-result-stock-prd-2001"]')?.textContent.trim(),
+  "3",
+  "the row carries the stock",
+);
+clickEl(setRow);
+await waitFor(() => testid("cart-line-prd-2001::"), { label: "the row click to land in the cart" });
+assert.equal(searchBox().value, "", "the box clears for the next scan");
+assert.equal(document.activeElement, searchBox(), "focus returns to the box");
+console.log("  ✓ name search → compact row (price + stock) → cart");
+
+// ── SKU search + exact barcode add the item directly ─────────────────────────
+await searchFor("POS-SCROLL-5");
+await waitFor(() => testid(`pos-result-${idOf("POS-SCROLL-5")}`), { label: "the SKU row" });
+pressEnter();
+await waitFor(() => testid(`cart-line-${idOf("POS-SCROLL-5")}::`), { label: "the exact SKU to add" });
+assert.equal(searchBox().value, "", "exact-code adds clear the box");
+await searchFor("6281000000013");
+await waitFor(() => testid("pos-result-prd-1001"), { label: "the barcode row" });
+pressEnter();
+await waitFor(() => testid("cart-line-prd-1001::"), { label: "the exact barcode to add" });
+assert.equal(
+  testid("cart-line-prd-1001::")?.querySelector('[data-testid^="cart-quantity-"]')?.textContent,
+  "1",
+  "the barcode added exactly one unit",
+);
+console.log("  ✓ SKU and exact-barcode searches add the item directly");
+
+// ── out-of-stock can neither be clicked nor scanned in ──────────────────────
+await searchFor("Pearl Necklace");
+await waitFor(() => testid("pos-result-prd-1010"), { label: "the out-of-stock row" });
+const oosRow = testid("pos-result-prd-1010");
+assert.equal(oosRow.disabled, true, "the out-of-stock row is disabled");
+clickEl(oosRow);
+await sleep(250);
+assert.ok(!testid("cart-line-prd-1010::"), "clicking a disabled row adds nothing");
+await searchFor("6281000000037");
+await waitFor(() => testid("pos-result-prd-1010"), { label: "the out-of-stock barcode row" });
+pressEnter();
+await sleep(450);
+assert.ok(!testid("cart-line-prd-1010::"), "scanning an empty shelf adds nothing");
+assert.equal(searchBox().value, "6281000000037", "a refused scan keeps the typed code");
+assert.ok((toastText() ?? "").includes("Code not found"), "the refusal is explained");
+console.log("  ✓ out-of-stock rows are disabled; scanning an empty shelf refuses with a reason");
+
+// Unsellable products never surface, whatever the query.
+await searchFor("Gift Wrapping");
+await sleep(450);
+assert.equal(rows().length, 0, "the non-tracked service is never offered");
+await searchFor("Watch");
+await sleep(450);
+assert.equal(rows().length, 0, "the inactive product is never offered");
+await searchFor("");
+console.log("  ✓ services and inactive products stay out of results");
+
+// ── the result list stays a capped dropdown, never a catalogue ──────────────
+await searchFor("a");
+await waitFor(() => rows().length === 30, { label: "the capped result list" });
+assert.ok(
+  (resultsBox().textContent ?? "").includes("+1 more"),
+  "the remainder is named instead of rendered",
+);
+assert.ok(resultsBox().classList.contains("overflow-y-auto"), "the dropdown owns its own short scroll");
+await searchFor("");
+console.log("  ✓ 31 matches render as 30 compact rows + a named remainder");
+
+// ── a long cart keeps its own scroll; checkout stays put ────────────────────
+for (let i = 11; i <= 20; i += 1) {
+  setField('[data-testid="pos-scan-search"]', `POS-SCROLL-${i}`);
+  pressEnter();
+  await sleep(120);
+}
+await waitFor(() => cartLines().length === 13, { label: "the long cart" });
 const cartRegion = checkout.firstElementChild;
 assert.ok(cartRegion.classList.contains("lg:shrink-0"), "a nonempty cart must stay tall enough to operate");
 assert.ok(cartRegion.classList.contains("lg:min-h-[22rem]"), "cart lines retain room for their own scroll list");
-assert.equal(testid("pos-checkout-panel"), checkout, "adding a product does not replace the checkout panel");
-assert.equal(testid("pos-product-prd-2001")?.querySelector("span.bg-stone-900")?.textContent.trim(), "1");
+const cartList = checkout.querySelector('[data-testid^="cart-line-"]')?.closest("ul");
+assert.ok(cartList?.classList.contains("overflow-y-auto"), "the cart line list scrolls inside the cart");
+assert.equal(testid("pos-checkout-panel"), checkout, "adding items does not replace the checkout panel");
 clickEl(testid("pos-mobile-cart-open"));
 await waitFor(() => testid("pos-mobile-cart-drawer")?.querySelector('[data-testid="pos-cart"]'), {
   label: "the tablet cart drawer",
@@ -99,11 +190,13 @@ const drawer = testid("pos-mobile-cart-drawer");
 const tabletCartWrapper = drawer.querySelector('[data-testid="pos-cart"]').parentElement;
 assert.ok(tabletCartWrapper.classList.contains("shrink-0") && tabletCartWrapper.classList.contains("min-h-[22rem]"),
   "tablet cart stays usable beside the split-payment form");
+console.log("  ✓ long cart: 13 lines with their own scroll, checkout and tablet drawer stable");
 
 // ── POS grip scrollbar: long-thumb regression ────────────────────────────
 // jsdom has no layout engine and cannot measure a rendered scrollbar thumb, so
 // the geometry is asserted against the stylesheet the browser actually applies,
-// and the DOM half below proves the class stays scoped to the POS surfaces.
+// and the DOM half below proves the class stays scoped to the POS cart and
+// checkout surfaces (there is no product grid left to scope it away from).
 // Block comments are dropped first: the Firefox gate's own comment names
 // `scrollbar-width/-color` and would otherwise read as a leaked declaration.
 const stripComments = (source) => {
@@ -194,33 +287,52 @@ assert.ok(globalScrollbar, "the global scrollbar rule still exists");
 assert.equal(px(globalScrollbar, "width"), 10, "the global scrollbar stays 10px wide");
 assert.equal(px(globalScrollbar, "height"), 10, "the global scrollbar stays 10px tall");
 
-// Scope: only the POS checkout/cart surfaces, never the product grid.
+// Scope: only the POS checkout/cart surfaces.
 assert.ok(checkout.classList.contains("pos-grip-scrollbar"), "the desktop checkout panel keeps the grip scrollbar");
 const checkoutLines = checkout.querySelector('[data-testid^="cart-line-"]')?.closest("ul");
 assert.ok(checkoutLines?.classList.contains("pos-grip-scrollbar"), "the cart line-items list keeps the grip scrollbar");
 assert.ok(drawer.classList.contains("pos-grip-scrollbar"), "the mobile/tablet cart drawer keeps the grip scrollbar");
-assert.ok(!grid.classList.contains("pos-grip-scrollbar"), "the product grid does NOT get the POS grip scrollbar");
-assert.ok(!grid.querySelector(".pos-grip-scrollbar"), "no product card gets the POS grip scrollbar");
+assert.ok(!resultsBox()?.classList.contains("pos-grip-scrollbar"), "the search dropdown keeps the default scrollbar");
 const strays = [...document.querySelectorAll(".pos-grip-scrollbar")]
   .filter((el) => el !== checkout && el !== drawer && !checkout.contains(el) && !drawer.contains(el))
   .map((el) => `${el.tagName.toLowerCase()}.${el.className}`);
 assert.deepEqual(strays, [], `the grip scrollbar stays on the POS cart/checkout surfaces only: ${strays.join(", ")}`);
 clickEl(drawer.querySelector('button[aria-label]'));
-console.log("  ✓ crowded POS grid retains the tail card, keyboard focus and Add-to-cart");
+console.log("  ✓ cart + checkout keep the long-thumb grip scrollbar, scoped to those surfaces");
 
 clickExact("العربية");
 await waitFor(() => document.documentElement.dir === "rtl", { label: "Arabic register layout" });
-const arabicCard = testid("pos-product-prd-2001");
-assert.ok(arabicCard, "the same tail product is still reachable in RTL");
-assert.equal(arabicCard.querySelector('[data-testid="pos-product-action"]')?.textContent.trim(), "إضافة");
-assert.equal(arabicCard.querySelector('[data-testid="pos-product-price"]')?.textContent.trim(), "4250.00");
-assert.equal(arabicCard.querySelector('[data-testid="pos-product-price"]')?.dir, "ltr", "decimal price stays legible in RTL");
+assert.equal(searchBox().getAttribute("placeholder"), "امسح الباركود أو ابحث بالاسم أو الكود...");
+assert.equal(searchBox().getAttribute("aria-label"), "مسح أو بحث");
+await searchFor("سوار التمرير");
+await waitFor(() => rows().length === 26, { label: "the Arabic search rows" });
+const arabicRow = testid(`pos-result-${idOf("POS-SCROLL-5")}`);
+assert.ok(arabicRow, "the same product is reachable in RTL");
+assert.equal(
+  arabicRow.querySelector(`[data-testid="pos-result-price-${idOf("POS-SCROLL-5")}"]`)?.textContent.trim(),
+  "4250.00",
+);
+assert.equal(
+  arabicRow.querySelector(`[data-testid="pos-result-price-${idOf("POS-SCROLL-5")}"]`)?.dir,
+  "ltr",
+  "decimal price stays legible in RTL",
+);
 assert.equal(testid("pos-checkout-panel"), checkout, "checkout remains mounted when switching direction");
-clickEl(arabicCard);
-await waitFor(() => testid("pos-product-prd-2001")?.querySelector("span.bg-stone-900")?.textContent.trim() === "2", {
-  label: "the RTL tail card to add a second unit",
-});
+await searchFor("POS-SCROLL-5");
+pressEnter();
+await waitFor(
+  () =>
+    testid(`cart-line-${idOf("POS-SCROLL-5")}::`)?.querySelector('[data-testid^="cart-quantity-"]')
+      ?.textContent === "2",
+  { label: "the RTL exact-code add to raise the line to two" },
+);
 assert.equal(testid("pos-checkout-panel"), checkout);
-console.log("  ✓ RTL card, stock, price and Add action remain selectable without moving checkout");
+await searchFor("");
+await waitFor(() => testid("pos-search-empty"), { label: "the Arabic idle hint" });
+assert.ok(
+  (testid("pos-search-empty").textContent ?? "").includes("امسح باركود أو اكتب الاسم أو الكود"),
+  "the idle hint is translated",
+);
+console.log("  ✓ RTL search, price, exact-code add and translated hint without moving checkout");
 
-ux.finish("POS product pane layout DOM regression");
+ux.finish("POS search/scan workspace DOM regression");

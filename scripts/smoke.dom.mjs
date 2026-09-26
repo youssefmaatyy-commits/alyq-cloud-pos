@@ -205,6 +205,19 @@ const toggleSwitch = (label) => {
   return sw;
 };
 const rows = () => document.querySelectorAll("tbody tr").length;
+// POS scan/search helpers — the register is search-first: one scan/search box
+// plus compact result rows, no browsable product-card grid.
+const posScanBox = () => document.querySelector('[data-testid="pos-scan-search"]');
+const posResultRows = () => [...document.querySelectorAll("[data-pos-result-index]")];
+/** Type into the scan/search box and pick the row whose text includes `label`. */
+const posPickRow = async (query, label) => {
+  setField('[data-testid="pos-scan-search"]', query);
+  await sleep(350);
+  const row = posResultRows().find((b) => (b.textContent ?? "").includes(label));
+  if (!row) throw new Error(`POS result row not found: ${label} (query: ${query})`);
+  row.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  await sleep(250);
+};
 
 /* ── Authentication helpers (session-guarded app) ────────────────────────────
  * The app now boots on the login screen: nothing below can run until someone
@@ -976,16 +989,12 @@ async function main() {
   // ── Phase 27 · the register knows its customer, and it knows the drawer ──
   // (a) the picker is on the register even before the first line
   await navigate("#/pos");
-  for (let i = 0; i < 12 && !bodyText().includes("ALYQ-1001"); i += 1) await sleep(300);
+  await waitFor(() => posScanBox(), { label: "the scan/search box" });
   assert.ok(document.querySelector("#customer-select"), "customer picker is available on an empty cart");
 
   // (b) a line, but NO open shift anywhere in the session: the register must
   // say exactly that, and the complete button stays locked
-  const p27Card = [...document.querySelectorAll("button")].find((b) =>
-    (b.textContent ?? "").includes("Classic Gold Ring"),
-  );
-  p27Card.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
-  await sleep(300);
+  await posPickRow("Classic", "Classic Gold Ring");
   assert.ok(
     bodyText().includes("You must open a shift before completing a sale"),
     "the register names the missing shift",
@@ -1065,21 +1074,25 @@ async function main() {
 
   await navigate("#/pos");
   assert.ok(bodyText().includes("Register"), "POS screen renders");
-  assert.ok(bodyText().includes("ALYQ-1001"), "product grid loads catalog");
-  console.log("  ✓ POS screen loads with the product grid");
+  assert.ok(posScanBox(), "scan/search box renders");
+  assert.ok(document.querySelector('[data-testid="pos-search-empty"]'), "idle hint renders, not a catalogue");
+  assert.ok(!document.querySelector('[data-testid="pos-grid"]'), "no product-card grid");
+  assert.equal(document.querySelectorAll('[data-testid^="pos-product-"]').length, 0, "no product cards");
+  console.log("  ✓ POS screen loads scan-first: one search box, no grid");
 
   // Search by name / SKU / barcode
-  setField('input[aria-label="Search"]', "Classic");
+  setField('[data-testid="pos-scan-search"]', "Classic");
   await sleep(220);
-  assert.ok(bodyText().includes("ALYQ-1002") && !bodyText().includes("ALYQ-1001"), "name search filters");
-  setField('input[aria-label="Search"]', "6281000000013");
+  assert.ok(posResultRows().some((r) => (r.textContent ?? "").includes("ALYQ-1002")), "name search finds the ring");
+  assert.ok(!posResultRows().some((r) => (r.textContent ?? "").includes("ALYQ-1001")), "name search filters");
+  setField('[data-testid="pos-scan-search"]', "6281000000013");
   await sleep(220);
-  assert.ok(bodyText().includes("ALYQ-1001"), "barcode search finds the product");
-  setField('input[aria-label="Search"]', "");
+  assert.ok(posResultRows().some((r) => (r.textContent ?? "").includes("ALYQ-1001")), "barcode search finds the product");
+  setField('[data-testid="pos-scan-search"]', "");
   await sleep(200);
 
   // Barcode scanner simulation (rapid keystrokes + Enter, focus outside inputs)
-  document.querySelector('input[aria-label="Search"]').blur();
+  document.querySelector('[data-testid="pos-scan-search"]').blur();
   await sleep(100);
   const typeScan = (code) => {
     for (const ch of code) {
@@ -1095,12 +1108,8 @@ async function main() {
   assert.ok(cartItem, "scanned barcode added the product to the cart");
   console.log("  ✓ barcode scanner adds products to the cart");
 
-  // Click-to-add another product
-  const card = [...document.querySelectorAll("button")].find((b) =>
-    (b.textContent ?? "").includes("Classic Gold Ring"),
-  );
-  card.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
-  await sleep(250);
+  // Pick another product from the search results
+  await posPickRow("Classic", "Classic Gold Ring");
   assert.ok(
     [...document.querySelectorAll("aside ul li")].some((li) =>
       (li.textContent ?? "").includes("ALYQ-1002"),
@@ -1184,11 +1193,7 @@ async function main() {
   console.log("  ✓ printable receipt with all fields");
 
   // ── Mixed Cash + InstaPay: cash 30 auto-fills InstaPay 38 (total 68) ──
-  const secondCard = [...document.querySelectorAll("button")].find((b) =>
-    (b.textContent ?? "").includes("Classic Gold Ring"),
-  );
-  secondCard.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
-  await sleep(250);
+  await posPickRow("Classic", "Classic Gold Ring");
   toggleSwitch("Split payment");
   await sleep(250);
   setField(cashInput, "30");
@@ -1214,11 +1219,7 @@ async function main() {
   console.log("  ✓ smart mixed Cash + InstaPay split (auto-balance)");
 
   // ── InstaPay-only: instapay 68 auto-fills cash 0 ──
-  const thirdCard = [...document.querySelectorAll("button")].find((b) =>
-    (b.textContent ?? "").includes("Classic Gold Ring"),
-  );
-  thirdCard.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
-  await sleep(250);
+  await posPickRow("Classic", "Classic Gold Ring");
   toggleSwitch("Split payment");
   await sleep(250);
   setField('[data-testid="instapay-input"]', "68");
@@ -1241,11 +1242,7 @@ async function main() {
   console.log("  ✓ smart InstaPay-only sale");
 
   // ── Underpayment blocks completion ──
-  const fourthCard = [...document.querySelectorAll("button")].find((b) =>
-    (b.textContent ?? "").includes("Classic Gold Ring"),
-  );
-  fourthCard.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
-  await sleep(250);
+  await posPickRow("Classic", "Classic Gold Ring");
   setField(cashInput, "10");
   await sleep(250);
   assert.ok(bodyText().includes("Remaining"), "remaining summary shown");
@@ -1356,12 +1353,12 @@ async function main() {
 
   // Out-of-stock products cannot be added to the cart
   await navigate("#/pos");
-  setField('input[aria-label="Search"]', "Pearl Necklace");
+  setField('[data-testid="pos-scan-search"]', "Pearl Necklace");
   await sleep(220);
-  const oosCard = [...document.querySelectorAll("button")].find((b) =>
+  const oosCard = posResultRows().find((b) =>
     (b.textContent ?? "").includes("Pearl Necklace"),
   );
-  assert.ok(oosCard && oosCard.disabled === true, "out-of-stock card disabled");
+  assert.ok(oosCard && oosCard.disabled === true, "out-of-stock row disabled");
   oosCard.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
   await sleep(200);
   assert.ok(
@@ -1372,17 +1369,18 @@ async function main() {
   );
   console.log("  ✓ out-of-stock products cannot be sold");
 
-  // POS responsive layout: columns follow available product-pane width, not
-  // the viewport (jsdom has no CSS geometry; Chromium checks pixels separately).
+  // POS responsive layout: the scan/search column and the checkout hold the
+  // register at every width (jsdom has no CSS geometry; Chromium checks
+  // pixels separately). There is no product grid left to be responsive.
   await navigate("#/pos");
   const posResponsive = [...document.querySelectorAll("main *")].some((el) =>
     [...el.classList].some((c) => c.startsWith("sm:") || c.startsWith("lg:")),
   );
   assert.ok(posResponsive, "POS uses responsive breakpoints");
-  assert.ok(
-    document.querySelector('[data-testid="pos-grid"]')?.style.gridTemplateColumns.includes("auto-fill"),
-    "POS card count follows the product pane, without a horizontal carousel",
-  );
+  assert.ok(posScanBox(), "the scan/search box owns the register's product column");
+  assert.ok(document.querySelector('[data-testid="pos-checkout-panel"]'), "the checkout owns the sale column");
+  assert.ok(!document.querySelector('[data-testid="pos-grid"]'), "no product-card grid renders");
+  assert.equal(document.querySelectorAll('[data-testid^="pos-product-"]').length, 0, "no product cards");
   console.log("  ✓ POS responsive layout contract");
 
   // ── Phase 7 · Customers + Returns + Refunds ──
@@ -1445,12 +1443,7 @@ async function main() {
     await sleep(200);
   }
   assert.equal(document.querySelectorAll('aside [data-testid^="cart-line-"]').length, 0, "old cart lines cleared before the linked sale");
-  const smokeCard = [...document.querySelectorAll("button")].find((b) =>
-    (b.textContent ?? "").includes("Classic Gold Ring"),
-  );
-  assert.ok(smokeCard, "product card present");
-  smokeCard.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
-  await sleep(250);
+  await posPickRow("Classic", "Classic Gold Ring");
   // buy 2 units so a later over-return attempt still has a returnable row
   const plusBtn = [...document.querySelectorAll('aside ul li button[aria-label="Increase quantity"]')][0];
   plusBtn.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
@@ -1774,10 +1767,7 @@ async function main() {
 
   // ── Cash sale: pay the exact total in cash ──
   await navigate("#/pos");
-  const posCard = () =>
-    findButton("Classic Gold Ring") ?? findButton("ALYQ-1001");
-  clickEl(posCard());
-  await sleep(300);
+  await posPickRow("Classic", "Classic Gold Ring");
   clickEl(findButton("Exact"));
   await sleep(300);
   const cashSaleCashValue = Number(document.querySelector('[data-testid="cash-input"]').value);
@@ -1793,8 +1783,7 @@ async function main() {
   // ── InstaPay sale (paid, not pending) ──
   clickEl(findButton("New sale"));
   await sleep(350);
-  clickEl(posCard());
-  await sleep(300);
+  await posPickRow("Classic", "Classic Gold Ring");
   toggleSwitch("Split payment");
   await sleep(300);
   // Same single item as the cash sale → same total; pay it entirely via InstaPay.
@@ -2542,8 +2531,8 @@ async function main() {
   assert.ok(document.querySelector('[data-testid="module-card-refunds"]'), "cashier sees refunds on the Sales home");
   assert.ok(!cashierNav.includes("#/audit"), "cashier does not see the audit log");
   await navigate("#/pos");
-  for (let i = 0; i < 12 && !bodyText().includes("ALYQ-1001"); i += 1) await sleep(300);
-  assert.ok(bodyText().includes("ALYQ-1001"), "cashier can open the register (sell capability)");
+  await waitFor(() => posScanBox(), { label: "the scan/search box" });
+  assert.ok(posScanBox(), "cashier can open the register (sell capability)");
   assert.ok(!denied(), "the register is not denied for cashiers");
   await navigate("#/audit");
   await sleep(400);
@@ -2789,7 +2778,7 @@ async function main() {
   await sleep(600);
   assert.ok(isSignedIn(), "returning from the shop keeps the employee signed in");
   assert.ok(bodyText().includes("Register"), "the register renders again after the round trip");
-  assert.ok(bodyText().includes("ALYQ-1001"), "the catalog is still loaded after the round trip");
+  assert.ok(posScanBox(), "the scan/search box is still loaded after the round trip");
   console.log("  ✓ POS → website → POS round trip, no dashboard redirect, no sign-out");
 
   /* ── the reported bug: the shell's "View website" was a dead click ─────────

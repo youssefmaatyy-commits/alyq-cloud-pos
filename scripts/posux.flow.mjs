@@ -1,22 +1,23 @@
 /**
- * Phase 46 · POS UX — speed-first register over the proven sale engine.
+ * Phase 46 · POS UX — scan/search-first register over the proven sale engine.
  *
- * Drives the REDESIGNED register surface and proves the behaviour underneath
- * did not move. The variant engine (Gold/17 = 2, Silver/17 = 2, third refused)
- * is the Phase 43/46 regression — re-proven here through the new UI so a
- * restyle can never quietly break the till.
+ * Drives the REDESIGNED register surface (one scan/search box + compact
+ * result rows, no browsable product-card grid) and proves the behaviour
+ * underneath did not move. The variant engine (Gold/17 = 2, Silver/17 = 2,
+ * third refused) is the Phase 43/46 regression — re-proven here through the
+ * new UI so a restyle can never quietly break the till.
  *
- *  1. the till opens: grid + right sale panel, ready to sell
- *  2. search finds the product (name / SKU / barcode)
- *  3. category chips narrow the grid
+ *  1. the till opens: scan/search box + right sale panel, ready to sell
+ *  2. search finds the product (name / SKU / barcode) as compact rows
+ *  3. keyboard-first: arrows move, Enter adds the highlighted row, Escape closes
  *  4. a variant product NEVER auto-adds: the picker demands an exact shelf
- *  5. Gold / 17 × 2 is accepted (its own shelf count)
+ *  5. Gold / 17 × 2 is accepted under its exact variant UUID
  *  6. the THIRD Gold / 17 is refused at the shelf
  *  7. Silver / 17 lands as a SEPARATE cart line
  *  8. a customer can be attached to the sale
  *  9. the sale completes through the existing flow (cash, change computed)
  * 10. the receipt preserves the exact variants on every line
- * 11. a shelf BARCODE scan (code + Enter) adds the exact variant
+ * 11. a shelf BARCODE scan (code + Enter) adds the exact variant, exactly once
  */
 import { createUxHarness } from "./lib/ux-harness.mjs";
 
@@ -54,6 +55,18 @@ const SILVER_SKU = "UX2-RING-SILVER-17";
 const SKU = "UX2-RING";
 
 const catalog = () => ux.readJson("alyq.demo.catalog.v1") ?? { products: [], variants: [] };
+
+// ── register helpers: the scan/search box and its compact result rows ──────
+const searchBox = () => testid("pos-scan-search");
+const resultsBox = () => testid("pos-search-results");
+const rows = () => [...document.querySelectorAll('[data-pos-result-index]')];
+const rowFor = (name) => rows().find((b) => (b.textContent ?? "").includes(name));
+const pressKey = (key) =>
+  searchBox().dispatchEvent(new dom.window.KeyboardEvent("keydown", { key, bubbles: true }));
+const searchFor = async (text) => {
+  setField('[data-testid="pos-scan-search"]', text);
+  await sleep(450);
+};
 
 await signInAs("admin");
 await waitFor(() => (catalog().products ?? []).length > 0, { label: "the demo catalogue to seed" });
@@ -146,81 +159,153 @@ clickEl([...shiftDialog.querySelectorAll("button")].find((b) => (b.textContent ?
 await waitFor(() => /SH-\d{6}/.test(bodyText()), { label: "the shift to open" });
 
 await navigate("#/pos", 700);
-await waitFor(() => testid("pos-grid"), { label: "the product grid" });
+await waitFor(() => searchBox(), { label: "the scan/search box" });
+await waitFor(() => document.activeElement === searchBox(), { label: "the box to take focus" });
+assert.equal(searchBox().getAttribute("aria-label"), "Scan or search");
+assert.equal(searchBox().getAttribute("placeholder"), "Scan barcode or search by name or code...");
+assert.ok(testid("pos-search-empty"), "the idle hint renders, not a catalogue");
+assert.ok(!resultsBox(), "no result list before the cashier types");
+assert.ok(!testid("pos-grid"), "the product-card grid is gone");
+assert.equal(
+  document.querySelectorAll('[data-testid^="pos-product-"]').length,
+  0,
+  "no product cards render",
+);
+assert.equal(
+  document.querySelectorAll('[data-testid^="pos-category-chip-"]').length,
+  0,
+  "no category chips render",
+);
 await waitFor(() => testid("cash-input"), { label: "the sale panel's cash field" });
 await waitFor(() => buttons().some((b) => (b.textContent ?? "").includes("Complete sale")), {
   label: "the complete-sale control",
 });
-console.log("  ✓ the till opens: grid + sale panel, ready to sell");
+console.log("  ✓ the till opens: scan/search box + sale panel, ready to sell");
 
 // ── 2 · search finds ────────────────────────────────────────────────────────
-const searchBox = () => document.querySelector('input[aria-label="Search"]');
-assert.ok(searchBox(), "the register search box exists");
-setField('input[aria-label="Search"]', "UX2");
-await sleep(450);
-const visibleTiles = () => buttons().filter((b) => (b.textContent ?? "").includes("UX2 Ring"));
-await waitFor(() => visibleTiles().length === 1, { label: "the search to isolate the ring" });
-console.log("  ✓ search isolates the ring tile");
+await searchFor("UX2");
+await waitFor(() => rows().length === 1, { label: "the search to isolate the ring row" });
+const ringRow = testid(`pos-result-${productId}`);
+assert.ok(ringRow, "the ring has its own compact result row");
+assert.ok(ringRow.textContent.includes("UX2 Ring"), "the row names the product");
+assert.ok(ringRow.textContent.includes("UX2-RING"), "the row carries the SKU");
+assert.ok(ringRow.textContent.includes("120.00"), "the row carries the price");
+assert.ok(ringRow.textContent.includes("Colour & size"), "the row says a variant must be chosen");
+assert.equal(ringRow.querySelector(`[data-testid="pos-result-price-${productId}"]`)?.dir, "ltr");
+console.log("  ✓ name search isolates the ring as one compact row");
 
-// ── 3 · category chips narrow the grid ──────────────────────────────────────
-setField('input[aria-label="Search"]', "");
-await sleep(350);
-const chip = (label) =>
-  buttons().find((b) => (b.getAttribute("data-testid") ?? "").startsWith("pos-category-chip-") && (b.textContent ?? "").trim() === label);
-const allChip = document.querySelector('[data-testid="pos-category-chip-all"]');
-assert.ok(allChip, "the All chip renders");
-const tileCount = () => document.querySelectorAll("#pos-grid-grid, [data-testid='pos-grid'] button").length;
-const beforeCount = tileCount();
-const chips = buttons().filter((b) => (b.getAttribute("data-testid") ?? "").startsWith("pos-category-chip-"));
-const targetChip = chips.find((b) => (b.textContent ?? "").trim() !== "All");
-assert.ok(targetChip, "a real category chip renders");
-const chipLabel = targetChip.textContent.trim();
-clickEl(targetChip);
-await sleep(400);
-assert.ok(tileCount() !== beforeCount, `${chipLabel}: grid ${beforeCount} → ${tileCount()}`);
-clickEl(chip("All") ?? allChip);
-await sleep(350);
-console.log(`  ✓ the ${chipLabel} chip narrows the grid`);
+// SKU, shelf barcode and Arabic name all resolve to the same row.
+await searchFor("UX2-RING");
+await waitFor(() => rows().length === 1, { label: "the SKU search" });
+assert.equal(testid(`pos-result-${productId}`)?.tagName, "BUTTON", "the SKU row is selectable");
+await searchFor("6220100999117");
+await waitFor(() => rows().length === 1, { label: "the shelf-barcode search" });
+assert.ok(rowFor("UX2 Ring"), "the shelf barcode surfaces the parent ring");
+await searchFor("اليوكس");
+await waitFor(() => rows().length === 1, { label: "the Arabic-name search" });
+assert.ok(rowFor("UX2 Ring"), "the Arabic name finds the ring");
+console.log("  ✓ SKU, shelf barcode and Arabic-name searches find the ring");
+
+// Misses and unsellable products: a plain message, never a catalogue.
+await searchFor("does-not-exist-zzz");
+await waitFor(() => testid("pos-search-no-results"), { label: "the no-results message" });
+assert.equal(rows().length, 0, "nothing to select on a miss");
+assert.ok(testid("pos-search-no-results").textContent.includes("No matching products"));
+await searchFor("Wrapping");
+await sleep(450);
+assert.equal(rows().length, 0, "the non-tracked service is never offered");
+assert.ok(testid("pos-search-no-results"), "the miss message shows instead");
+await searchFor("Watch");
+await sleep(450);
+assert.equal(rows().length, 0, "the inactive product is never offered");
+console.log("  ✓ misses, services and inactive products offer no row");
+
+// ── 3 · keyboard-first ──────────────────────────────────────────────────────
+// Four seed SKUs share the ALYQ-10 prefix; none is an exact code, so Enter
+// must act on the highlighted row — and only the highlighted row.
+await searchFor("ALYQ-10");
+await waitFor(() => rows().length === 4, { label: "the four matching seed rows" });
+assert.ok(!testid("pos-search-no-results"), "matches, not the miss message");
+pressKey("ArrowDown");
+await sleep(200);
+assert.equal(rows()[0].getAttribute("aria-selected"), "true", "first row highlighted");
+pressKey("ArrowDown");
+await sleep(200);
+assert.equal(rows()[0].getAttribute("aria-selected"), "false", "highlight moved on");
+assert.equal(rows()[1].getAttribute("aria-selected"), "true", "second row highlighted");
+assert.ok(rows()[1].textContent.includes("ALYQ-1002"), "the highlight sits on the Classic Gold Ring");
+pressKey("Enter");
+await waitFor(() => testid("cart-line-prd-1002::"), { label: "the highlighted row to land in the cart" });
+assert.equal(searchBox().value, "", "the box clears for the next scan");
+assert.equal(document.activeElement, searchBox(), "focus returns to the box");
+assert.ok(!resultsBox(), "the list closes after the add");
+console.log("  ✓ arrows move the highlight; Enter adds exactly that row");
+
+// Escape dismisses the list without touching the typed query.
+await searchFor("ALYQ-10");
+await waitFor(() => rows().length === 4, { label: "the list to reopen" });
+pressKey("Escape");
+await sleep(200);
+assert.ok(!resultsBox(), "Escape closes the result list");
+assert.equal(searchBox().value, "ALYQ-10", "Escape keeps the typed query");
+await searchFor("");
+await waitFor(() => testid("pos-search-empty"), { label: "the idle hint" });
+clickEl(testid("pos-clear-cart"));
+await waitFor(() => testid("pos-mobile-cart-open") === null || [...document.querySelectorAll('[data-testid^="cart-line-"]')].length === 0, {
+  label: "the cart to empty",
+});
+assert.equal([...document.querySelectorAll('[data-testid^="cart-line-"]')].length, 0);
+console.log("  ✓ Escape closes the list; the box is ready for the variant scenes");
 
 // ── 4 · the picker demands an exact shelf ───────────────────────────────────
-const tileFor = (name) => buttons().find((b) => (b.textContent ?? "").includes(name));
-await waitFor(() => tileFor("UX2 Ring"), { label: "the ring tile back on the grid" });
-// the in-cart badge is the dark rounded chip on the tile's photo; status
-// chips ("Out of stock") also render on the card, so scope to the dark one.
-const cartBadge = () =>
-  tileFor("UX2 Ring")?.querySelector("span.bg-stone-900")?.textContent ?? "0";
-assert.equal(cartBadge(), "0", "nothing pre-selected");
-clickEl(tileFor("UX2 Ring"));
+const cartLines = () => [...document.querySelectorAll('[data-testid^="cart-line-"]')];
+const goldId = catalog().variants.find((v) => v.sku === GOLD_SKU)?.id;
+const silverId = catalog().variants.find((v) => v.sku === SILVER_SKU)?.id;
+assert.ok(goldId && silverId, "both shelf UUIDs resolve from the catalogue");
+const qtyOf = (variantId) =>
+  testid(`cart-line-${productId}::${variantId}`)?.querySelector('[data-testid^="cart-quantity-"]')
+    ?.textContent ?? "0";
+
+await searchFor("UX2");
+await waitFor(() => rowFor("UX2 Ring"), { label: "the ring row" });
+assert.equal(cartLines().length, 0, "nothing pre-selected");
+clickEl(rowFor("UX2 Ring"));
 const picker = () =>
   [...document.querySelectorAll('[role="dialog"]')].find((d) => (d.textContent ?? "").includes("Choose colour and size"));
 await waitFor(() => picker(), { label: "the combination picker" });
-assert.equal(cartBadge(), "0", "the picker opened instead of adding");
+assert.equal(cartLines().length, 0, "the picker opened instead of adding");
 const sizeButton = (label) =>
   [...picker().querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") ?? "").startsWith(`${label} — `));
 assert.ok(!sizeButton("Silver / 17"), "the grid shows only the chosen colour's shelves");
 assert.ok(sizeButton("Gold / 17"), "Gold / 17 is a shelf in the grid");
 console.log("  ✓ no auto-add: the exact-shelf picker stands between tap and cart");
 
-// ── 5 · Gold / 17 × 2 accepted ──────────────────────────────────────────────
+// ── 5 · Gold / 17 × 2 accepted, under its exact UUID ────────────────────────
 clickEl(sizeButton("Gold / 17"));
 await waitFor(() => !picker(), { label: "the picker to close after the first pick" });
-await waitFor(() => cartBadge() === "1", { label: "the badge to count one" });
-clickEl(tileFor("UX2 Ring"));
+await waitFor(() => testid(`cart-line-${productId}::${goldId}`), { label: "the Gold cart line" });
+assert.equal(qtyOf(goldId), "1", "one Gold / 17 under its own UUID");
+assert.equal(searchBox().value, "", "the box clears after a picker add");
+assert.equal(document.activeElement, searchBox(), "focus returns to the box");
+await searchFor("UX2");
+await waitFor(() => rowFor("UX2 Ring"), { label: "the ring row again" });
+clickEl(rowFor("UX2 Ring"));
 await waitFor(() => picker(), { label: "the picker again" });
 clickEl(sizeButton("Gold / 17"));
-await waitFor(() => cartBadge() === "2", { label: "the badge to count two" });
-const cartLines = () => [...document.querySelectorAll('[data-testid^="cart-line-"]')];
+await waitFor(() => qtyOf(goldId) === "2", { label: "two Gold / 17 on the exact line" });
 await waitFor(() => cartLines().length === 1, { label: "one cart line" });
 assert.ok(cartLines()[0].textContent.includes("Gold / 17"), "the line names the exact shelf");
-console.log("  ✓ Gold / 17 × 2 accepted — the line names the shelf");
+console.log("  ✓ Gold / 17 × 2 accepted — the line names the shelf and carries its UUID");
 
 // ── 6 · the third Gold / 17 is refused ─────────────────────────────────────
-clickEl(tileFor("UX2 Ring"));
+await searchFor("UX2");
+await waitFor(() => rowFor("UX2 Ring"), { label: "the ring row a third time" });
+clickEl(rowFor("UX2 Ring"));
 await waitFor(() => picker(), { label: "the picker a third time" });
 clickEl(sizeButton("Gold / 17"));
 await sleep(500);
 assert.ok(picker(), "the refused pick leaves the picker open — nothing was added");
-assert.equal(cartBadge(), "2", "the THIRD Gold / 17 never reached the cart");
+assert.equal(qtyOf(goldId), "2", "the THIRD Gold / 17 never reached the cart");
 console.log("  ✓ the third Gold / 17 is refused (shelf = 2, the Phase 43 rule holds)");
 
 // ── 7 · Silver / 17, a separate line ───────────────────────────────────────
@@ -233,6 +318,7 @@ await sleep(250);
 clickEl(sizeButton("Silver / 17"));
 await waitFor(() => !picker(), { label: "the picker to close" });
 await waitFor(() => cartLines().length === 2, { label: "two cart lines" });
+assert.ok(testid(`cart-line-${productId}::${silverId}`), "Silver lands under its own UUID");
 assert.ok(cartLines().some((l) => l.textContent.includes("Gold / 17")), "line 1 stays Gold / 17");
 assert.ok(cartLines().some((l) => l.textContent.includes("Silver / 17")), "line 2 is Silver / 17 — never merged");
 console.log("  ✓ Silver / 17 is its own line — shelves never merge in the cart");
@@ -290,7 +376,9 @@ clickEl(lineFor("Silver / 17").querySelector('[data-testid^="cart-remove-"]'));
 await waitFor(() => cartLines().length === 1, { label: "remove only the Silver line" });
 assert.equal(quantityFor("Gold / 17"), "2");
 expectCustomer("removing the Silver line");
-clickEl(tileFor("UX2 Ring"));
+await searchFor("UX2");
+await waitFor(() => rowFor("UX2 Ring"), { label: "the ring row after removal" });
+clickEl(rowFor("UX2 Ring"));
 await waitFor(() => picker(), { label: "the picker after removal" });
 clickEl(colorChip("Silver"));
 await waitFor(() => sizeButton("Silver / 17"), { label: "Silver size after removal" });
@@ -325,24 +413,26 @@ assert.ok(receiptHtml.includes("Silver / 17"), "the receipt line names Silver / 
 assert.ok(receiptHtml.includes(receiptNo), "the receipt carries the sale number");
 console.log("  ✓ the printed receipt preserves both exact shelves");
 
-// ── 11 · a shelf barcode scan adds the exact variant ────────────────────────
+// ── 11 · a shelf barcode scan adds the exact variant, exactly once ──────────
 clickExact("New sale");
 await sleep(400);
-await waitFor(() => cartBadge() === "0", { label: "the fresh sale" });
+await waitFor(() => cartLines().length === 0, { label: "the fresh sale" });
 expectCustomer("opening a new, empty sale");
 const silver = catalog().variants.find((v) => v.sku === SILVER_SKU);
 assert.ok(silver?.barcode, `Silver / 17 carries a barcode (${silver?.barcode})`);
-setField('input[aria-label="Search"]', silver.barcode);
+setField('[data-testid="pos-scan-search"]', silver.barcode);
 searchBox().dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
 await sleep(600);
-assert.ok(cartBadge() === "1", "the scan added exactly one unit");
 await waitFor(() => cartLines().length === 1, { label: "one scanned line" });
-assert.ok(cartLines()[0].textContent.includes("Silver / 17"), "the scan resolved Silver / 17 exactly");
+assert.equal(quantityFor("Silver / 17"), "1", "the scan added exactly one unit — never a double");
+assert.ok(testid(`cart-line-${productId}::${silverId}`), "the scan resolved Silver / 17 to its exact UUID");
+assert.equal(searchBox().value, "", "the box clears for the next scan");
+assert.equal(document.activeElement, searchBox(), "focus stays in the box between scans");
 expectCustomer("an exact-variant barcode scan");
 clickEl(testid("pos-clear-cart"));
 await waitFor(() => cartLines().length === 0, { label: "clear items to empty the cart" });
 expectCustomer("Clear items (which must NOT clear the customer)");
-setField('input[aria-label="Search"]', silver.barcode);
+setField('[data-testid="pos-scan-search"]', silver.barcode);
 searchBox().dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
 await waitFor(() => cartLines().length === 1, { label: "scanning after clearing the cart" });
 expectCustomer("scanning after Clear items");
@@ -353,7 +443,7 @@ const explicitClear = document.querySelector('button[title="Walk-in customer (no
 assert.ok(explicitClear, "only the customer picker has the explicit customer-clear control");
 clickEl(explicitClear);
 await waitFor(() => customerName() === "", { label: "explicitly clearing the customer" });
-console.log("  ✓ shelf barcode targets Silver / 17; Clear items and last-line removal keep the customer until explicitly cleared");
+console.log("  ✓ shelf barcode targets Silver / 17 exactly once; Clear items and last-line removal keep the customer until explicitly cleared");
 
 await navigate("#/");
 await sleep(400);

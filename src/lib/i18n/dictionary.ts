@@ -380,6 +380,14 @@ export const en = {
   "nav.sales": "Sales",
   "pos.search": "Search",
   "pos.searchPlaceholder": "Search name, SKU or scan barcode…",
+  // Scan/search-first register: one prominent input replaces the browsable
+  // product-card grid. It accepts a barcode, SKU, product code or name.
+  "pos.scanSearch": "Scan or search",
+  "pos.scanSearchPlaceholder": "Scan barcode or search by name or code...",
+  "pos.scanSearchHint": "Scan a barcode or type a name, SKU or code — Enter adds an exact match",
+  "pos.scanSearchResults": "Matching products",
+  "pos.scanSearchInSale": "{{count}} in sale",
+  "pos.scanSearchMore": "+{{count}} more — refine the search to narrow it",
   // Phase 43 · variants. The register makes the cashier choose a colour and a
   // size; these are the words for that choice, and for the two states a
   // combination can be in (sold out / not offered at all).
@@ -404,7 +412,7 @@ export const en = {
   "pos.stockLimit": "Only {{count}} on this shelf",
   "pos.codeUnavailable": "Code not found or this exact item has reached its stock limit",
   "pos.emptyCart": "Cart is empty",
-  "pos.emptyCartHint": "Tap a product or scan a barcode to start a sale.",
+  "pos.emptyCartHint": "Scan a barcode or search to start a sale.",
   "pos.unit": "Unit",
   "pos.lineTotal": "Line total",
   "pos.subtotal": "Subtotal",
@@ -4700,6 +4708,12 @@ export const ar: Record<TranslationKey, string> = {
   "nav.sales": "المبيعات",
   "pos.search": "بحث",
   "pos.searchPlaceholder": "ابحث بالاسم أو رمز الصنف أو امسح الباركود…",
+  "pos.scanSearch": "مسح أو بحث",
+  "pos.scanSearchPlaceholder": "امسح الباركود أو ابحث بالاسم أو الكود...",
+  "pos.scanSearchHint": "امسح باركود أو اكتب الاسم أو الكود — زر الإدخال يضيف التطابق التام",
+  "pos.scanSearchResults": "منتجات مطابقة",
+  "pos.scanSearchInSale": "{{count}} في البيع",
+  "pos.scanSearchMore": "+{{count}} نتيجة أخرى — حدّد البحث",
   "pos.variants.title": "اختر اللون والمقاس",
   "pos.variants.choose": "اختر اللون والمقاس",
   "pos.variants.color": "اللون",
@@ -4721,7 +4735,7 @@ export const ar: Record<TranslationKey, string> = {
   "pos.stockLimit": "المتاح من هذا الصنف {{count}} فقط",
   "pos.codeUnavailable": "الباركود غير موجود أو بلغت كمية هذا الصنف حد المخزون",
   "pos.emptyCart": "السلة فارغة",
-  "pos.emptyCartHint": "اضغط على منتج أو امسح باركود لبدء عملية بيع.",
+  "pos.emptyCartHint": "امسح باركود أو ابحث لبدء عملية بيع.",
   "pos.unit": "الوحدة",
   "pos.lineTotal": "إجمالي السطر",
   "pos.subtotal": "المجموع الفرعي",
