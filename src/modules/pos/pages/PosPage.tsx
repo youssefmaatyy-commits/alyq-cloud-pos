@@ -138,8 +138,8 @@ export function PosPage() {
   return (
     // Desktop: subtract the shell's 3.5rem top bar and 3rem main padding.
     // The remaining flex height accounts for this page's header and footer;
-    // the search column is short by design (the checkout still scrolls
-    // independently when the cart is long).
+    // the search column is short by design (the cart's own line list scrolls
+    // when the sale is long — the checkout itself never scrolls).
     <div className="flex h-full flex-col lg:h-[calc(100dvh-6.5rem)] lg:min-h-[36rem] xl:min-h-[33rem]">
       <PageHeader title={t("nav.register")} subtitle={t("app.tagline")} actions={headerActions} />
 
@@ -153,13 +153,14 @@ export function PosPage() {
           <PosSearchPanel />
         </div>
 
-        {/* Desktop checkout scrolls as its own viewport-bounded column. A
-            max-height without overflow let the payment controls spill past the
-            sticky grid; when the cart was full its flex-1/min-h-0 wrapper could
-            even collapse to zero and overlap payment. Keep the cart tall enough
-            for its own line-list scroll, and never shrink it to fit payment. */}
-        <aside className="pos-grip-scrollbar hidden min-w-0 flex-col gap-4 lg:order-2 lg:rtl:order-1 lg:sticky lg:top-16 lg:flex lg:max-h-full lg:overflow-y-auto lg:overscroll-y-contain lg:self-start" data-testid="pos-checkout-panel">
-          <div className={isEmpty ? "lg:shrink-0" : "min-h-[260px] lg:h-[min(60dvh,34rem)] lg:min-h-[22rem] lg:shrink-0"}>
+        {/* Desktop checkout fills its whole 65% track and owns no scroll
+            container of its own: a second, full-height scrollbar here competed
+            with the cart's line list and visually divided the Current Sale
+            workspace. The cart wrapper keeps its bounded height so the line
+            list scrolls inside the cart, payment sits below it, and the
+            w-full/min-w-0 guards keep both panels as wide as the track. */}
+        <aside className="hidden w-full min-w-0 flex-col gap-4 lg:order-2 lg:rtl:order-1 lg:sticky lg:top-16 lg:flex lg:self-start" data-testid="pos-checkout-panel">
+          <div className={isEmpty ? "w-full lg:shrink-0" : "w-full min-h-[260px] lg:h-[min(60dvh,34rem)] lg:min-h-[22rem] lg:shrink-0"}>
             <CartPanel />
           </div>
           <PaymentPanel />

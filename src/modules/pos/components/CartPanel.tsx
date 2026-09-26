@@ -16,7 +16,7 @@ export function CartPanel() {
   const discountError = validateDiscount(discount.type, discount.value);
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-stone-200 bg-white" data-testid="pos-cart">
+    <div className="flex h-full w-full min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-stone-200 bg-white" data-testid="pos-cart">
       <div className="flex items-center justify-between gap-2 border-b border-stone-100 px-4 py-3">
         <p className="text-sm font-bold text-stone-900">{t("pos.cart")}</p>
         <div className="flex items-center gap-2">
