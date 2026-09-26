@@ -159,8 +159,8 @@ export function PosPage() {
             workspace. The cart wrapper keeps its bounded height so the line
             list scrolls inside the cart, payment sits below it, and the
             w-full/min-w-0 guards keep both panels as wide as the track. */}
-        <aside className="hidden w-full min-w-0 flex-col gap-4 lg:order-2 lg:rtl:order-1 lg:sticky lg:top-16 lg:flex lg:self-start" data-testid="pos-checkout-panel">
-          <div className={isEmpty ? "w-full lg:shrink-0" : "w-full min-h-[260px] lg:h-[min(60dvh,34rem)] lg:min-h-[22rem] lg:shrink-0"}>
+        <aside className="hidden w-full min-w-0 flex-col gap-4 lg:order-2 lg:rtl:order-1 lg:sticky lg:top-16 lg:flex lg:h-full lg:min-h-0 lg:self-start" data-testid="pos-checkout-panel">
+          <div className={isEmpty ? "w-full lg:shrink-0" : "w-full min-h-[260px] lg:min-h-0 lg:flex-1"}>
             <CartPanel />
           </div>
           <PaymentPanel />
