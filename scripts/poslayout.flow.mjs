@@ -78,19 +78,8 @@ assert.equal(
   "no category chips render",
 );
 const checkout = testid("pos-checkout-panel");
-const registerShell = checkout?.parentElement?.parentElement;
-const searchColumn = testid("pos-search-column");
 assert.ok(checkout?.contains(testid("pos-cart")), "checkout holds the cart beside the search column");
-assert.ok(registerShell?.classList.contains("lg:h-[calc(100dvh-6.5rem)]"), "desktop register fits below the shell chrome");
-assert.ok(
-  document.querySelector("main")?.classList.contains("max-w-[96rem]"),
-  "desktop POS uses the shell's wider cashier canvas instead of the admin page max-width",
-);
-assert.ok(
-  checkout.parentElement.classList.contains("lg:grid-cols-[minmax(0,1fr)_minmax(21rem,24rem)]"),
-  "desktop POS reserves a readable checkout column and gives the rest to scan/search",
-);
-assert.ok(searchColumn?.classList.contains("lg:h-full"), "the scan/search workspace fills the register height");
+assert.ok(checkout.parentElement.parentElement.classList.contains("lg:h-[calc(100dvh-6.5rem)]"), "desktop register fits below the shell chrome");
 assert.ok(checkout.classList.contains("lg:max-h-full"), "checkout remains inside the bounded register row");
 assert.ok(checkout.classList.contains("lg:overflow-y-auto"), "checkout, not the page, owns its vertical overflow");
 assert.ok(checkout.classList.contains("lg:overscroll-y-contain"), "checkout scroll cannot drag the whole page");

@@ -137,17 +137,18 @@ export function PosPage() {
 
   return (
     // Desktop: subtract the shell's 3.5rem top bar and 3rem main padding.
-    // The register receives a wider canvas from the shell, then this grid gives
-    // the scan/search workspace every remaining pixel beside checkout.
-    <div className="flex h-full flex-col lg:h-[calc(100dvh-6.5rem)] lg:min-h-[36rem] lg:w-full xl:min-h-[33rem]">
+    // The remaining flex height accounts for this page's header and footer;
+    // the search column is short by design (the checkout still scrolls
+    // independently when the cart is long).
+    <div className="flex h-full flex-col lg:h-[calc(100dvh-6.5rem)] lg:min-h-[36rem] xl:min-h-[33rem]">
       <PageHeader title={t("nav.register")} subtitle={t("app.tagline")} actions={headerActions} />
 
-      <div className="grid min-w-0 flex-1 gap-4 lg:min-h-0 lg:grid-cols-[minmax(0,1fr)_minmax(21rem,24rem)] lg:items-start xl:gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(22rem,25rem)] 2xl:grid-cols-[minmax(0,1fr)_minmax(24rem,28rem)]">
+      <div className="grid min-w-0 flex-1 gap-4 lg:min-h-0 lg:grid-cols-[minmax(0,1fr)_380px] lg:items-start">
         {/* A zero-minimum track and item stop the search column's intrinsic
-            width from pushing checkout off screen. The scan/search workspace is
-            the primary cashier area; it gets every remaining desktop pixel after
-            reserving a readable checkout column. Below lg the page scrolls
-            normally and checkout moves into the mobile sheet. */}
+            width from pushing the fixed-width checkout off screen. The search
+            column holds one input and a compact result dropdown — it never
+            scrolls a catalogue; only the cart's own line list scrolls when
+            the sale is long. Below lg the page scrolls normally. */}
         <div className="min-w-0 lg:h-full lg:min-h-0" data-testid="pos-search-column">
           <PosSearchPanel />
         </div>

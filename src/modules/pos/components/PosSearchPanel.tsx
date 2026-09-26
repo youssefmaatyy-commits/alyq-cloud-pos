@@ -141,12 +141,12 @@ export function PosSearchPanel() {
   const pickingProduct = picking ? products.find((p) => p.id === picking) ?? null : null;
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-col gap-3 lg:h-full lg:rounded-[1.75rem] lg:border lg:border-stone-200 lg:bg-white/55 lg:p-4 lg:shadow-sm xl:gap-4 xl:p-5">
+    <div className="flex min-h-0 min-w-0 flex-col gap-3">
       {/* The one scan/search input — prominent, focused on arrival. */}
-      <div className="relative min-w-0 lg:shrink-0">
+      <div className="relative min-w-0">
         <span
           aria-hidden
-          className="pointer-events-none absolute start-3 top-1/2 -translate-y-1/2 text-xl lg:start-4 lg:text-2xl"
+          className="pointer-events-none absolute start-3 top-1/2 -translate-y-1/2 text-xl"
         >
           📷
         </span>
@@ -174,7 +174,7 @@ export function PosSearchPanel() {
             if (query.trim()) setOpen(true);
           }}
           onKeyDown={onKeyDown}
-          className="h-14 min-w-0 w-full rounded-2xl border border-stone-300 bg-white py-2 pe-4 ps-12 text-base font-semibold shadow-sm outline-none transition placeholder:font-medium placeholder:text-stone-400 focus:border-stone-500 focus:ring-2 focus:ring-stone-900/10 lg:h-16 lg:rounded-[1.35rem] lg:pe-5 lg:ps-14 lg:text-lg"
+          className="h-12 min-w-0 w-full rounded-2xl border border-stone-300 bg-white py-2 pe-3 ps-11 text-[15px] font-semibold shadow-sm outline-none transition placeholder:font-medium placeholder:text-stone-400 focus:border-stone-500 focus:ring-2 focus:ring-stone-900/10"
         />
       </div>
 
@@ -186,8 +186,8 @@ export function PosSearchPanel() {
             role="listbox"
             aria-label={t("pos.scanSearchResults")}
             data-testid="pos-search-results"
-            className="min-h-0 min-w-0 overflow-y-auto rounded-2xl border border-stone-200 bg-white shadow-sm lg:rounded-[1.25rem]"
-            style={{ maxHeight: "min(32rem, calc(100dvh - 22rem))" }}
+            className="min-h-0 min-w-0 overflow-y-auto rounded-2xl border border-stone-200 bg-white shadow-sm"
+            style={{ maxHeight: "min(24rem, calc(100dvh - 24rem))" }}
           >
             <ul className="min-w-0 divide-y divide-stone-100">
               {shown.map((hit, index) => {
@@ -216,7 +216,7 @@ export function PosSearchPanel() {
                       disabled={out}
                       onClick={() => activate(product)}
                       onMouseEnter={() => setActiveIndex(index)}
-                      className={`flex w-full min-w-0 items-center gap-3 px-3 py-2.5 text-start transition focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-stone-900/20 lg:px-4 lg:py-3 ${
+                      className={`flex w-full min-w-0 items-center gap-3 px-3 py-2.5 text-start transition focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-stone-900/20 ${
                         out
                           ? "cursor-not-allowed opacity-60"
                           : selected
@@ -225,7 +225,7 @@ export function PosSearchPanel() {
                       }`}
                     >
                       <span className="min-w-0 flex-1">
-                        <span className="block min-w-0 truncate text-sm font-bold text-stone-900 lg:text-base">
+                        <span className="block min-w-0 truncate text-sm font-bold text-stone-900">
                           {pick(product.name_ar, product.name_en)}
                         </span>
                         <span className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
@@ -291,7 +291,7 @@ export function PosSearchPanel() {
         ) : (
           <div
             data-testid="pos-search-no-results"
-            className="flex min-h-24 items-center justify-center rounded-2xl border border-dashed border-stone-300 bg-white px-4 py-6 text-center text-sm font-medium text-stone-500 lg:min-h-40 lg:rounded-[1.25rem]"
+            className="flex min-h-24 items-center justify-center rounded-2xl border border-dashed border-stone-300 bg-white px-4 py-6 text-center text-sm font-medium text-stone-500"
           >
             {t("pos.noResults")}
           </div>
@@ -299,12 +299,12 @@ export function PosSearchPanel() {
       ) : (
         <div
           data-testid="pos-search-empty"
-          className="flex min-h-56 flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-stone-300 bg-white/60 px-6 py-10 text-center lg:min-h-[24rem] lg:rounded-[1.25rem] xl:min-h-[28rem]"
+          className="flex min-h-48 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-stone-300 bg-white/60 px-6 py-10 text-center"
         >
-          <span aria-hidden className="text-4xl lg:text-5xl">
+          <span aria-hidden className="text-4xl">
             📷
           </span>
-          <p className="max-w-2xl text-sm font-semibold text-stone-600 lg:text-base">{t("pos.scanSearchHint")}</p>
+          <p className="max-w-md text-sm font-semibold text-stone-600">{t("pos.scanSearchHint")}</p>
         </div>
       )}
 
