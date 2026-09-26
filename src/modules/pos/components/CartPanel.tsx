@@ -49,7 +49,7 @@ export function CartPanel() {
       className="flex h-full w-full min-w-0 flex-col rounded-2xl border border-stone-200 bg-white shadow-sm"
     >
       {/* ── Header — flex:none: sale title, customer, clear ─────────────── */}
-      <div className="shrink-0 border-b border-stone-100 px-4 pb-2.5 pt-3">
+      <div className="shrink-0 border-b border-stone-100 px-4 pb-2 pt-2.5">
         <div className="flex items-center justify-between gap-2">
           <p className="flex items-center gap-2 text-sm font-bold text-stone-900">
             {t("pos.cart")}
@@ -92,7 +92,7 @@ export function CartPanel() {
           {/* Column captions — flex:none, so they stay visible while rows scroll. */}
           <div
             aria-hidden
-            className={`hidden shrink-0 items-center gap-x-3 border-b border-stone-100 px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider text-stone-400 xl:grid ${CART_COLS}`}
+            className={`hidden shrink-0 items-center gap-x-3 border-b border-stone-100 px-4 py-1 text-[10px] font-bold uppercase tracking-wider text-stone-400 xl:grid ${CART_COLS}`}
           >
             <span>{t("pos.cols.product")}</span>
             <span className="text-end">{t("pos.cols.price")}</span>
@@ -102,10 +102,15 @@ export function CartPanel() {
             <span className="text-end">{t("common.delete")}</span>
           </div>
 
-          {/* ── Cart items — flex:1, the ONLY vertical scroll area ───────── */}
+          {/* ── Cart items — flex:1, the ONLY vertical scroll area ─────────
+              lg:min-h keeps a genuinely usable line viewport: the fixed
+              header/totals/payment sections may never squeeze it to a sliver
+              (it collapsed to ~28px with one line + split payment before).
+              On short viewports the register's 41.5rem floor — not this list
+              — gives way, so the page scrolls instead of the list starving. */}
           <ul
             aria-label={t("pos.cartItems")}
-            className="pos-grip-scrollbar min-h-0 flex-1 divide-y divide-stone-100 overflow-y-auto px-4 py-1"
+            className="pos-grip-scrollbar min-h-0 flex-1 divide-y divide-stone-100 overflow-y-auto px-4 py-1 lg:min-h-[4.5rem]"
           >
             {lines.map((line) => (
               <CartRow

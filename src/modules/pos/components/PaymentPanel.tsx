@@ -158,7 +158,7 @@ export function PaymentPanel() {
   };
 
   return (
-    <div className="w-full min-w-0 border-t border-stone-100 px-4 py-2" data-testid="pos-payment">
+    <div className="w-full min-w-0 border-t border-stone-100 px-4 py-1.5" data-testid="pos-payment">
       {split ? (
         /* Split tender: cash, InstaPay and Visa side by side in ONE row, so
            the expanded form never eats the cart's scroll area. The quick
@@ -352,7 +352,7 @@ export function PaymentPanel() {
       ) : null}
 
       <Button
-        className="mt-1.5 w-full"
+        className="mt-1 w-full"
         size="lg"
         loading={completing}
         disabled={!canComplete}

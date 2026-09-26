@@ -200,6 +200,7 @@ const cartRegion = checkout.firstElementChild;
 assert.ok(cartRegion.classList.contains("lg:flex-1") && cartRegion.classList.contains("lg:min-h-0"), "a nonempty cart is the primary flexible checkout area");
 const cartList = checkout.querySelector('[data-testid^="cart-line-"]')?.closest("ul");
 assert.ok(cartList?.classList.contains("overflow-y-auto"), "the cart line list scrolls inside the cart");
+assert.ok(cartList?.classList.contains("lg:min-h-[4.5rem]"), "the cart list keeps a usable minimum viewport — the fixed sections may never squeeze it to a sliver");
 assert.equal(testid("pos-checkout-panel"), checkout, "adding items does not replace the checkout panel");
 clickEl(testid("pos-mobile-cart-open"));
 await waitFor(() => testid("pos-mobile-cart-drawer")?.querySelector('[data-testid="pos-cart"]'), {

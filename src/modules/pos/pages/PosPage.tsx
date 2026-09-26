@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
-import { PageHeader } from "@/components/layout/AppShell";
 import { LoadingBlock, ErrorState, useToast } from "@/components/ui";
 import {
   openExternalStorefront,
@@ -94,7 +93,7 @@ export function PosPage() {
               event.preventDefault();
               openExternalStorefront(storefront.href as string);
             }}
-            className="inline-flex h-10 items-center rounded-xl bg-white px-4 text-sm font-semibold text-slate-800 ring-1 ring-slate-300 hover:bg-slate-50"
+            className="inline-flex h-8 items-center rounded-xl bg-white px-3 text-xs font-semibold text-slate-800 ring-1 ring-slate-300 hover:bg-slate-50"
           >
             {t("nav.viewStore")}
             <span aria-hidden className="ms-1.5">↗</span>
@@ -103,7 +102,7 @@ export function PosPage() {
           <Link
             to={storefront.to}
             data-testid="pos-open-website"
-            className="inline-flex h-10 items-center rounded-xl bg-white px-4 text-sm font-semibold text-slate-800 ring-1 ring-slate-300 hover:bg-slate-50"
+            className="inline-flex h-8 items-center rounded-xl bg-white px-3 text-xs font-semibold text-slate-800 ring-1 ring-slate-300 hover:bg-slate-50"
           >
             {t("nav.viewStore")}
           </Link>
@@ -139,9 +138,17 @@ export function PosPage() {
     // Desktop: subtract the shell's 3.5rem top bar and 3rem main padding. The
     // min-height floor keeps the Current Sale card's fixed sections (header +
     // totals + payment) usable on short screens — below it the page itself
-    // scrolls instead of crushing the cart list to zero.
-    <div className="flex h-full flex-col lg:h-[calc(100dvh-6.5rem)] lg:min-h-[41rem]">
-      <PageHeader title={t("nav.register")} subtitle={t("app.tagline")} actions={headerActions} />
+    // scrolls instead of crushing the cart list to zero. The floor equals the
+    // 768px-viewport height exactly (41.5rem = 100dvh − 6.5rem), so it only
+    // binds on SHORTER viewports and never adds page scroll at 768 or above.
+    <div className="flex h-full flex-col lg:h-[calc(100dvh-6.5rem)] lg:min-h-[41.5rem]">
+      {/* Compact register header: the register is viewport-bounded, so a tall
+          page header would eat the cart list's scroll budget. One row — title
+          and the storefront link — keeps ~35px for the cart viewport. */}
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 pb-2 lg:pb-3">
+        <h1 className="text-base font-black tracking-tight text-stone-900">{t("nav.register")}</h1>
+        {headerActions}
+      </div>
 
       {/* The single desktop row must be a definite track, not auto-sized:
           a content-sized row makes the checkout aside's percentage height
