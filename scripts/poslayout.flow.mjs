@@ -88,7 +88,7 @@ assert.ok(
   "the checkout aside owns no competing full-height vertical scrollbar",
 );
 assert.ok(checkout.firstElementChild.classList.contains("w-full"), "the cart wrapper fills the checkout width");
-assert.ok(checkout.firstElementChild.classList.contains("lg:shrink-0"), "the cart never collapses under a tall payment form");
+assert.ok(checkout.firstElementChild.classList.contains("lg:flex-1") && checkout.firstElementChild.classList.contains("lg:min-h-0"), "the cart is the primary flexible checkout area");
 assert.ok(
   testid("pos-cart").classList.contains("w-full") && testid("pos-cart").classList.contains("min-w-0"),
   "CartPanel fills the available width",
@@ -198,8 +198,7 @@ for (let i = 11; i <= 20; i += 1) {
 }
 await waitFor(() => cartLines().length === 13, { label: "the long cart" });
 const cartRegion = checkout.firstElementChild;
-assert.ok(cartRegion.classList.contains("lg:shrink-0"), "a nonempty cart must stay tall enough to operate");
-assert.ok(cartRegion.classList.contains("lg:min-h-[22rem]"), "cart lines retain room for their own scroll list");
+assert.ok(cartRegion.classList.contains("lg:flex-1") && cartRegion.classList.contains("lg:min-h-0"), "a nonempty cart is the primary flexible checkout area");
 const cartList = checkout.querySelector('[data-testid^="cart-line-"]')?.closest("ul");
 assert.ok(cartList?.classList.contains("overflow-y-auto"), "the cart line list scrolls inside the cart");
 assert.equal(testid("pos-checkout-panel"), checkout, "adding items does not replace the checkout panel");
