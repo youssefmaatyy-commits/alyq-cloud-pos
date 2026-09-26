@@ -200,6 +200,7 @@ const cartRegion = checkout.firstElementChild;
 assert.ok(cartRegion.classList.contains("lg:flex-1") && cartRegion.classList.contains("lg:min-h-0"), "a nonempty cart is the primary flexible checkout area");
 const cartList = checkout.querySelector('[data-testid^="cart-line-"]')?.closest("ul");
 assert.ok(cartList?.classList.contains("overflow-y-auto"), "the cart line list scrolls inside the cart");
+assert.ok(cartList?.classList.contains("lg:min-h-[4.5rem]"), "the cart list keeps a usable minimum viewport — the fixed sections may never squeeze it to a sliver");
 assert.equal(testid("pos-checkout-panel"), checkout, "adding items does not replace the checkout panel");
 clickEl(testid("pos-mobile-cart-open"));
 await waitFor(() => testid("pos-mobile-cart-drawer")?.querySelector('[data-testid="pos-cart"]'), {
@@ -274,10 +275,14 @@ assert.equal(px(lane, "height"), 14, "POS keeps the same 14px lane horizontally"
 
 // The transparent border sits inside the thumb box and trims both edges, so it
 // is subtracted twice: that remainder is the grip a till operator really drags.
+// The thumb's min-height is capped at 44px (a ~38px visible grip): the cart's
+// line list is now the checkout's ONLY scroll area, and on a 768px till its
+// lane can be shorter than the old 96px minimum — a thumb that fills its
+// whole lane cannot be dragged, which broke the thumb-drag contract.
 const border = px(thumb, "border");
 const visibleGrip = px(thumb, "min-height") - 2 * border;
-assert.ok(visibleGrip >= 80 && visibleGrip <= 100,
-  `the POS thumb stays a long, grabbable ~90px (got ${visibleGrip}px visible)`);
+assert.ok(visibleGrip >= 30 && visibleGrip <= 48,
+  `the POS thumb stays a long, grabbable ~38px (got ${visibleGrip}px visible)`);
 assert.equal(px(lane, "width") - 2 * border, 8, "the 14px lane keeps its ~8px visible grip width");
 assert.ok(thumb.includes("var(--color-stone-400)"), "the thumb keeps stone-400");
 assert.ok(thumbHover.includes("var(--color-stone-500)"), "the hovered thumb keeps stone-500");

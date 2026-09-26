@@ -83,9 +83,12 @@
      layer are intentionally left untouched. Native wheel/trackpad/touch
      scrolling is unaffected: this only restyles the scrollbar itself.
      Chromium/WebKit: 14px lane with an ~8px solid visible grip.
-     The thumb is sized for a finger, not a mouse: `min-height` is the whole
-     box and the 3px transparent border above trims 6px off it, so 96px here
-     is a ~90px visible draggable thumb on a till. */
+     The thumb keeps a tall, grabbable minimum — but never taller than the
+     cart list itself: the cart's line list is the checkout's only scroll
+     area and on a 768px-till it can be shorter than 96px, and a thumb that
+     fills its whole lane cannot be dragged at all. `min-height` is the whole
+     box and the 3px transparent border trims 6px off it, so 44px here is a
+     ~38px visible draggable thumb that still fits every real cart lane. */
   .pos-grip-scrollbar::-webkit-scrollbar {
     width: 14px;
     height: 14px;
@@ -94,7 +97,7 @@
     background-color: transparent;
   }
   .pos-grip-scrollbar::-webkit-scrollbar-thumb {
-    min-height: 96px;
+    min-height: 44px;
     background-color: var(--color-stone-400);
     border-radius: 9999px;
     border: 3px solid transparent;

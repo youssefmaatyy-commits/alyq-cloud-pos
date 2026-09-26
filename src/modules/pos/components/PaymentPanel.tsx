@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useI18n } from "@/lib/i18n/I18nProvider";
-import { Button, TextInput, ToggleSwitch, useToast } from "@/components/ui";
+import { Button, TextInput, useToast } from "@/components/ui";
 import { ApprovalRequestDialog } from "@/modules/approvals";
 import { OpenShiftModal, useShifts } from "@/modules/shifts";
 import { usePos } from "../hooks/PosProvider";
@@ -8,17 +8,22 @@ import { autoBalanceOther, round2, smartPaymentCalc } from "../services/posMath"
 import type { SalePaymentInput } from "../types";
 
 /**
- * Smart split-payment panel.
+ * Smart split-payment panel — the fixed footer of the Current Sale card.
  *
  * A sale is paid by one to three methods: Cash, InstaPay and/or Visa (card).
  * While split payment is enabled, additional methods become available and
  * entering an amount in any method automatically fills the others with the
  * remaining balance (e.g. Total 1000, Cash 500 → InstaPay 500).
- * The summary always shows Total, Paid, Remaining and Change, and the
+ * The summary always shows Paid, Change and Remaining, and the
  * "Complete sale" button is locked until nothing remains unpaid.
  *
  * Cash may overpay (change is returned); InstaPay and Visa are clamped to
  * the total. Visa is always paid (never pending).
+ *
+ * The whole section is `flex:none` inside the card: it never scrolls away and
+ * never pushes the cart's line list off screen. When split payment expands
+ * the form, the three tender boxes sit side by side in ONE row so the footer
+ * stays compact on a 768px-till.
  */
 export function PaymentPanel() {
   const { t, num } = useI18n();
@@ -153,82 +158,54 @@ export function PaymentPanel() {
   };
 
   return (
-    <div className="w-full min-w-0 rounded-2xl border border-stone-200 bg-white p-4">
-      <div className="mb-3 flex items-center justify-between">
-        <p className="text-[11px] font-bold uppercase tracking-wider text-stone-600">
-          {t("pos.payment")}
-        </p>
-        <span className="text-lg font-extrabold tabular-nums text-stone-900">
-          {num(total, 2)}
-        </span>
-      </div>
-
-      {/* Who the sale is for — chosen in the cart, shown here so it cannot
-          be missed before money moves. Walk-in stays a first-class value. */}
-      <div className="mb-3 flex items-center gap-2 rounded-lg bg-stone-50 px-2.5 py-1.5">
-        <span className="text-[11px] font-bold uppercase tracking-wider text-stone-500">
-          {t("pos.customer")}
-        </span>
-        <span className="min-w-0 flex-1 truncate text-xs font-semibold text-stone-800">
-          {selectedCustomer ? selectedCustomer.name : t("customers.guestCustomer")}
-        </span>
-        {selectedCustomer ? (
-          <span className="font-mono text-[10px] text-stone-500" dir="ltr">
-            {selectedCustomer.phone}
-          </span>
-        ) : null}
-      </div>
-
-      {/* Cash */}
-      <div className="space-y-1.5 rounded-xl border border-stone-200 p-2.5">
-        <div className="flex items-center justify-between gap-2">
-          <label
-            htmlFor="cash-input"
-            className="text-xs font-bold text-stone-700"
-          >
-            💵 {t("pos.payment.cash")}
-          </label>
-          <div className="flex items-center gap-1.5">
-            {quickAmounts.map((amount, index) => (
-              <button
-                key={`${amount}-${index}`}
-                type="button"
-                onClick={() => onCashChange(amount.toFixed(2))}
-                className="h-6 rounded-md border border-stone-200 bg-white px-1.5 text-[10px] font-bold text-stone-600 transition hover:border-[#d4bf9a] hover:bg-[#faf5ec]"
-              >
-                {index === 0 ? t("pos.exact") : num(amount, 0)}
-              </button>
-            ))}
-          </div>
-        </div>
-        <TextInput
-          id="cash-input"
-          data-testid="cash-input"
-          dir="ltr"
-          inputMode="decimal"
-          value={cash}
-          onChange={(e) => onCashChange(e.target.value)}
-          placeholder="0.00"
-          className="h-10 font-mono text-sm"
-        />
-      </div>
-
-      {/* Split toggle + InstaPay */}
-      <div className="mt-2">
-        <ToggleSwitch
-          label={t("pos.splitPayment")}
-          hint={t("pos.splitPaymentHint")}
-          checked={split}
-          onChange={toggleSplit}
-        />
-      </div>
-
+    <div className="w-full min-w-0 border-t border-stone-100 px-4 py-1.5" data-testid="pos-payment">
       {split ? (
-        <div className="mt-2 space-y-2">
-          <div className="space-y-1.5 rounded-xl border border-stone-200 p-2.5">
-            <label htmlFor="instapay-input" className="text-xs font-bold text-stone-700">
-              📱 {t("pos.payment.instapay")}
+        /* Split tender: cash, InstaPay and Visa side by side in ONE row, so
+           the expanded form never eats the cart's scroll area. The quick
+           amounts are hidden here — they fill the WHOLE total into cash,
+           which is not what a split tender means. */
+        <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-stone-200 p-1.5">
+            <label htmlFor="cash-input" className="shrink-0 text-xs font-bold text-stone-700">
+              💵 {t("pos.payment.cash")}
             </label>
+            <TextInput
+              id="cash-input"
+              data-testid="cash-input"
+              dir="ltr"
+              inputMode="decimal"
+              value={cash}
+              onChange={(e) => onCashChange(e.target.value)}
+              placeholder="0.00"
+              className="h-8 min-w-20 flex-1 font-mono text-sm"
+            />
+          </div>
+          <div className="min-w-0 space-y-0.5 rounded-xl border border-stone-200 p-1.5">
+            <div className="flex min-w-0 flex-wrap items-center justify-between gap-1.5">
+              <label htmlFor="instapay-input" className="shrink-0 text-xs font-bold text-stone-700">
+                📱 {t("pos.payment.instapay")}
+              </label>
+              <div className="flex shrink-0 overflow-hidden rounded-lg bg-stone-100 p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setInstapayStatus("paid")}
+                  className={`h-5 whitespace-nowrap rounded px-1 text-[10px] font-bold transition ${
+                    instapayStatus === "paid" ? "bg-white text-stone-900 shadow-sm" : "text-stone-500"
+                  }`}
+                >
+                  ✓ {t("pos.instapay.paid")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setInstapayStatus("pending")}
+                  className={`h-5 whitespace-nowrap rounded px-1 text-[10px] font-bold transition ${
+                    instapayStatus === "pending" ? "bg-white text-stone-900 shadow-sm" : "text-stone-500"
+                  }`}
+                >
+                  ⏳ {t("pos.instapay.pending")}
+                </button>
+              </div>
+            </div>
             <TextInput
               id="instapay-input"
               data-testid="instapay-input"
@@ -237,33 +214,11 @@ export function PaymentPanel() {
               value={instapay}
               onChange={(e) => onInstaChange(e.target.value)}
               placeholder="0.00"
-              className="h-10 font-mono text-sm"
+              className="h-8 font-mono text-sm"
             />
-            <div className="grid grid-cols-2 gap-1 rounded-lg bg-stone-100 p-0.5">
-              <button
-                type="button"
-                onClick={() => setInstapayStatus("paid")}
-                className={`h-8 rounded-md text-xs font-bold transition ${
-                  instapayStatus === "paid" ? "bg-white text-stone-900 shadow-sm" : "text-stone-500"
-                }`}
-              >
-                ✓ {t("pos.instapay.paid")}
-              </button>
-              <button
-                type="button"
-                onClick={() => setInstapayStatus("pending")}
-                className={`h-8 rounded-md text-xs font-bold transition ${
-                  instapayStatus === "pending" ? "bg-white text-stone-900 shadow-sm" : "text-stone-500"
-                }`}
-              >
-                ⏳ {t("pos.instapay.pending")}
-              </button>
-            </div>
           </div>
-
-          {/* Visa / Card */}
-          <div className="space-y-1.5 rounded-xl border border-stone-200 p-2.5">
-            <label htmlFor="visa-input" className="text-xs font-bold text-stone-700">
+          <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-stone-200 p-1.5">
+            <label htmlFor="visa-input" className="shrink-0 text-xs font-bold text-stone-700">
               💳 {t("pos.payment.visa")}
             </label>
             <TextInput
@@ -274,64 +229,121 @@ export function PaymentPanel() {
               value={visa}
               onChange={(e) => setVisa(e.target.value)}
               placeholder="0.00"
-              className="h-10 font-mono text-sm"
+              className="h-8 min-w-20 flex-1 font-mono text-sm"
             />
           </div>
         </div>
-      ) : null}
+      ) : (
+        /* Cash-only: the tender field with the quick amounts beside it. */
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-stone-200 p-2">
+          <label htmlFor="cash-input" className="shrink-0 text-xs font-bold text-stone-700">
+            💵 {t("pos.payment.cash")}
+          </label>
+          <TextInput
+            id="cash-input"
+            data-testid="cash-input"
+            dir="ltr"
+            inputMode="decimal"
+            value={cash}
+            onChange={(e) => onCashChange(e.target.value)}
+            placeholder="0.00"
+            className="h-9 min-w-24 flex-1 font-mono text-sm"
+          />
+          <div className="flex flex-wrap items-center gap-1.5">
+            {quickAmounts.map((amount, index) => (
+              <button
+                key={`${amount}-${index}`}
+                type="button"
+                onClick={() => onCashChange(amount.toFixed(2))}
+                className="h-7 rounded-md border border-stone-200 bg-white px-1.5 text-[10px] font-bold text-stone-600 transition hover:border-[#d4bf9a] hover:bg-[#faf5ec]"
+              >
+                {index === 0 ? t("pos.exact") : num(amount, 0)}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
-      {/* Live summary — always visible */}
-      <div className="mt-3 space-y-1.5 rounded-xl bg-stone-50 px-3 py-2.5 text-sm">
-        <div className="flex justify-between font-bold text-stone-900">
-          <span>{t("pos.total")}</span>
-          <span className="tabular-nums">{num(total, 2)}</span>
-        </div>
-        {/* Per-method breakdown: how much of the total is covered by each tender. */}
-        <div className="space-y-1 rounded-lg bg-white/70 px-2.5 py-1.5">
-          <div className="flex justify-between text-stone-600">
-            <span>💵 {t("pos.paidCash")}</span>
-            <span className="tabular-nums">{num(calc.cashApplied, 2)}</span>
-          </div>
-          <div className="flex justify-between text-stone-600">
-            <span>📱 {t("pos.paidInstapay")}</span>
-            <span className="tabular-nums">{num(calc.instapay, 2)}</span>
-          </div>
-          {calc.visa > 0 ? (
-            <div className="flex justify-between text-stone-600">
-              <span>💳 {t("pos.paidVisa")}</span>
-              <span className="tabular-nums">{num(calc.visa, 2)}</span>
-            </div>
-          ) : null}
-        </div>
-        <div className="flex justify-between border-t border-stone-200 pt-1.5 font-semibold text-stone-800">
-          <span>{t("pos.paid")}</span>
-          <span className="tabular-nums">{num(calc.paid, 2)}</span>
-        </div>
-        <div className="flex justify-between text-stone-600">
-          <span>{t("pos.change")}</span>
-          <span className="tabular-nums">{num(calc.change, 2)}</span>
-        </div>
-        <div
-          className={`flex justify-between font-bold ${
-            calc.remaining === 0 ? "text-emerald-700" : "text-amber-700"
+      {/* Split toggle — compact inline switch. The bordered ToggleSwitch is a
+          form-row-sized control (~48px); at the register it must not eat the
+          cart line list's scrollport. Same contract: a button[role="switch"]
+          with the label text in its closest div. */}
+      <div className="mt-1 flex items-center justify-between gap-2 rounded-xl border border-stone-200 bg-white px-2.5 py-1">
+        <span className="min-w-0 truncate text-xs font-bold text-stone-700">{t("pos.splitPayment")}</span>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={split}
+          onClick={() => toggleSplit(!split)}
+          className={`relative h-5 w-9 shrink-0 rounded-full transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-400 ${
+            split ? "bg-stone-800" : "bg-stone-300"
           }`}
         >
-          <span>{t("pos.remaining")}</span>
-          <span className="tabular-nums">{num(calc.remaining, 2)}</span>
-        </div>
+          <span
+            className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all ${
+              split ? "start-[1.125rem]" : "start-0.5"
+            }`}
+          />
+        </button>
       </div>
 
-      {calc.remaining > 0 ? (
-        <p className="mt-1.5 text-[11px] font-semibold text-amber-600">{t("pos.underpaid")}</p>
+      {/* Live summary — always visible, one compact line: who is paying and
+          the numbers that decide whether the sale can complete. */}
+      <div className="mt-1 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-xl bg-stone-50 px-3 py-1.5 text-xs font-semibold">
+        <span className="min-w-0 truncate text-stone-600">
+          <span className="font-bold text-stone-800">
+            {selectedCustomer ? selectedCustomer.name : t("customers.guestCustomer")}
+          </span>
+          {selectedCustomer?.phone ? (
+            <span className="ms-1.5 font-mono text-[10px] text-stone-500" dir="ltr">
+              {selectedCustomer.phone}
+            </span>
+          ) : null}
+        </span>
+        <span className="text-stone-600">
+          {t("pos.paid")}{" "}
+          <span className="font-bold tabular-nums text-stone-900" dir="ltr">{num(calc.paid, 2)}</span>
+        </span>
+        <span className="text-stone-600">
+          {t("pos.change")}{" "}
+          <span className="font-bold tabular-nums text-stone-900" dir="ltr">{num(calc.change, 2)}</span>
+        </span>
+        <span className={calc.remaining === 0 ? "text-emerald-700" : "text-amber-700"}>
+          {t("pos.remaining")}{" "}
+          <span className="font-bold tabular-nums" dir="ltr">{num(calc.remaining, 2)}</span>
+        </span>
+      </div>
+      {/* Per-method breakdown: how much of the total is covered by each tender. */}
+      {split && (calc.instapay > 0 || calc.visa > 0) ? (
+        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 px-1 text-[11px] text-stone-600">
+          <span>
+            💵 {t("pos.paidCash")} <span className="tabular-nums" dir="ltr">{num(calc.cashApplied, 2)}</span>
+          </span>
+          <span>
+            📱 {t("pos.paidInstapay")} <span className="tabular-nums" dir="ltr">{num(calc.instapay, 2)}</span>
+          </span>
+          {calc.visa > 0 ? (
+            <span>
+              💳 {t("pos.paidVisa")} <span className="tabular-nums" dir="ltr">{num(calc.visa, 2)}</span>
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+
+      {calc.remaining > 0 && (cashNum > 0 || (split && (instaNum > 0 || visaNum > 0))) ? (
+        <p className="mt-1 text-[11px] font-semibold text-amber-600">{t("pos.underpaid")}</p>
       ) : null}
 
       {shiftBlocked ? (
-        <div className="mt-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2.5" role="alert">
-          <p className="text-xs font-bold text-amber-900">⏱ {t("pos.shiftRequired")}</p>
+        <div
+          className="mt-1.5 flex items-center justify-between gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2"
+          role="alert"
+        >
+          <p className="min-w-0 text-xs font-bold text-amber-900">⏱ {t("pos.shiftRequired")}</p>
           <Button
             variant="secondary"
             size="sm"
-            className="mt-2 w-full"
+            className="h-8 shrink-0 px-2.5 text-xs"
             onClick={() => setShiftModalOpen(true)}
           >
             {t("pos.openShiftAction")}
@@ -340,7 +352,7 @@ export function PaymentPanel() {
       ) : null}
 
       <Button
-        className="mt-3 w-full"
+        className="mt-1 w-full"
         size="lg"
         loading={completing}
         disabled={!canComplete}
