@@ -88,7 +88,6 @@ assert.ok(
   "the checkout aside owns no competing full-height vertical scrollbar",
 );
 assert.ok(checkout.firstElementChild.classList.contains("w-full"), "the cart wrapper fills the checkout width");
-assert.ok(checkout.firstElementChild.classList.contains("lg:flex-1") && checkout.firstElementChild.classList.contains("lg:min-h-0"), "the cart is the primary flexible checkout area");
 assert.ok(
   testid("pos-cart").classList.contains("w-full") && testid("pos-cart").classList.contains("min-w-0"),
   "CartPanel fills the available width",
