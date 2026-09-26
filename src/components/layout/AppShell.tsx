@@ -176,6 +176,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // below and the banner on the Online Orders screen read the same counts.
   const online = useOnlineNotificationState();
   const location = useLocation();
+  const isRegisterRoute = location.pathname === "/pos";
   const [open, setOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(() => {
     try {
@@ -639,7 +640,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           ) : null}
         </header>
 
-        <main className="mx-auto w-full max-w-7xl px-3 py-4 sm:px-6 sm:py-6 lg:px-8">
+        <main
+          className={cn(
+            "mx-auto w-full px-3 py-4 sm:px-6 sm:py-6 lg:px-8",
+            // The register is a cashier workspace, not a document page. Give it
+            // a wider desktop canvas while keeping every other admin screen on
+            // the standard readable page width.
+            isRegisterRoute ? "max-w-[96rem]" : "max-w-7xl",
+          )}
+        >
           <RouteGuard>{children}</RouteGuard>
         </main>
       </div>
