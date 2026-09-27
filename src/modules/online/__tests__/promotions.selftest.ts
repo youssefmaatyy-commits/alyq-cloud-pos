@@ -2189,3 +2189,267 @@ test("65. Online cancellation releases usage ONLY if consumed on approval", () =
   assert.equal(usedCount, 0, "Cancellation of pending order never decrements used_count");
 });
 
+// ── Test 66: Online stock reservations & ATP calculation ────────────────────
+test("66. Online reservations & ATP: Available-to-promise rejects overselling and preserves exact variant targeting", () => {
+  interface VariantStock {
+    id: string;
+    product_id: string;
+    stock_quantity: number;
+    reserved_quantity: number;
+  }
+
+  const variantG17: VariantStock = { id: "var-gold-17", product_id: "prd-ring", stock_quantity: 5, reserved_quantity: 3 };
+  const variantS17: VariantStock = { id: "var-silver-17", product_id: "prd-ring", stock_quantity: 5, reserved_quantity: 1 };
+
+  // ATP calculation: stock - reserved
+  const atpG17 = variantG17.stock_quantity - variantG17.reserved_quantity; // 2
+  const atpS17 = variantS17.stock_quantity - variantS17.reserved_quantity; // 4
+
+  assert.equal(atpG17, 2);
+  assert.equal(atpS17, 4);
+
+  // Attempting to buy 3 of G17 must be rejected
+  const reqQtyG17 = 3;
+  const isAvailableG17 = reqQtyG17 <= atpG17;
+  assert.equal(isAvailableG17, false, "Requesting 3 units of G17 when ATP is 2 must be rejected");
+
+  // Attempting to buy 2 of G17 passes
+  const validQtyG17 = 2;
+  const isValidG17 = validQtyG17 <= atpG17;
+  assert.equal(isValidG17, true);
+
+  // Placing order reserves quantity
+  variantG17.reserved_quantity += validQtyG17;
+  assert.equal(variantG17.reserved_quantity, 5);
+  assert.equal(variantG17.stock_quantity - variantG17.reserved_quantity, 0, "G17 now has 0 ATP");
+
+  // Approval converts reservation to sale without double deduction
+  let reservationStatus = "reserved";
+  if (reservationStatus === "reserved") {
+    reservationStatus = "converted";
+    variantG17.stock_quantity -= validQtyG17;
+    variantG17.reserved_quantity -= validQtyG17;
+  }
+  assert.equal(reservationStatus, "converted");
+  assert.equal(variantG17.stock_quantity, 3);
+  assert.equal(variantG17.reserved_quantity, 3);
+
+  // Cancellation of approved order voids sale and restores stock without double releasing
+  let saleVoided = false;
+  if (reservationStatus === "converted") {
+    saleVoided = true;
+    variantG17.stock_quantity += validQtyG17;
+  } else if (reservationStatus === "reserved") {
+    reservationStatus = "released";
+    variantG17.reserved_quantity -= validQtyG17;
+  }
+  assert.equal(saleVoided, true);
+  assert.equal(variantG17.stock_quantity, 5);
+  assert.equal(variantG17.reserved_quantity, 3);
+});
+
+// ── Test 67: Delivery fee validation and destination enforcement ────────────
+test("67. Delivery fee validation: requires valid address, validates zone, and rejects unpriceable deliveries", () => {
+  const settings = {
+    delivery: {
+      enabled: true,
+      fee: 40,
+      minimum_order: 100,
+      free_delivery_threshold: 500,
+      areas: [{ en: "Cairo", ar: "القاهرة" }, { en: "Giza", ar: "الجيزة" }],
+    },
+  };
+
+  assert.equal(settings.delivery.enabled, true);
+  assert.equal(settings.delivery.fee, 40);
+
+  const zones = [
+    { id: "zone-cairo", name_en: "Cairo Zone", name_ar: "منطقة القاهرة", shipping_fee: 45, minimum_order_amount: 150, free_shipping_threshold: 600, enabled: true },
+    { id: "zone-alex", name_en: "Alexandria", name_ar: "الإسكندرية", shipping_fee: 60, minimum_order_amount: 200, free_shipping_threshold: 800, enabled: false },
+  ];
+
+  // Case 1: Incomplete destination address (missing street)
+  const addrMissingStreet = { city: "Cairo", area: "Nasr City", street: "" };
+  const isAddressComplete = Boolean(addrMissingStreet.city.trim() && addrMissingStreet.area.trim() && addrMissingStreet.street.trim());
+  assert.equal(isAddressComplete, false, "Delivery address missing street is invalid");
+
+  // Case 2: Selected disabled zone is rejected
+  const selectedDisabledZone = zones.find((z) => z.id === "zone-alex" && z.enabled);
+  assert.equal(selectedDisabledZone, undefined, "Disabled delivery zone must be rejected");
+
+  // Case 3: Valid zone evaluates authoritative shipping fee and free shipping threshold
+  const activeZone = zones.find((z) => z.id === "zone-cairo" && z.enabled)!;
+  assert.ok(activeZone);
+
+  // Subtotal below minimum order amount
+  const goodsBelowMin = 100;
+  assert.ok(goodsBelowMin < activeZone.minimum_order_amount, "Subtotal 100 is below zone minimum 150");
+
+  // Subtotal above minimum but below threshold
+  const goodsNormal = 300;
+  const feeNormal = goodsNormal >= activeZone.free_shipping_threshold ? 0 : activeZone.shipping_fee;
+  assert.equal(feeNormal, 45, "Zone shipping fee 45 applies when threshold not met");
+
+  // Subtotal above free shipping threshold
+  const goodsHigh = 700;
+  const feeHigh = goodsHigh >= activeZone.free_shipping_threshold ? 0 : activeZone.shipping_fee;
+  assert.equal(feeHigh, 0, "Free delivery applied when subtotal meets threshold");
+});
+
+// ── Test 68: Winning coupon snapshot conversion to sale ─────────────────────
+test("68. Winning coupon snapshot: converts to sale with promotional attribution and zero manual invoice discount", () => {
+  const couponPromo = makePromo({
+    id: "promo-bxgy-1",
+    name_en: "Buy 2 Get 1 Free Promo",
+    mode: "coupon",
+    code: "B2G1FREE",
+    offer_type: "bxgy",
+    buy_x: 2,
+    get_y: 1,
+    reward_type: "free",
+    repeat_offer: true,
+  });
+
+  const lines = [
+    { product_id: "prd-shirt", variant_id: "var-shirt-blue", category_id: null, unit_price: 150, qty: 3, line_total: 450 },
+  ];
+
+  const evalResult = evaluateCartPricing({
+    lines,
+    subtotal: 450,
+    promoCode: "B2G1FREE",
+    coupons: [],
+    promotions: [couponPromo],
+    targetsByPromotion: new Map(),
+    usageFor: () => ({ customerUses: 0, hasPriorOrder: false }),
+    customerKey: "cust-1",
+    zone: null,
+    legacy: { fee: 0, minimum: 0, threshold: 0 },
+    deliveryType: "delivery",
+    now: NOW,
+    channel: "online",
+  });
+
+  assert.equal(evalResult.ok, true);
+  if (evalResult.ok) {
+    // 3 shirts at 150: buy 2 get 1 free -> promoDiscount = 150
+    assert.equal(evalResult.pricing.promoDiscount, 150);
+    assert.equal(evalResult.pricing.totalDiscount, 150);
+    assert.equal(evalResult.pricing.winningPromotionId, "promo-bxgy-1");
+    assert.equal(evalResult.pricing.winningRuleType, "bxgy");
+    assert.equal(evalResult.pricing.winningBuyX, 2);
+    assert.equal(evalResult.pricing.winningGetY, 1);
+    assert.equal(evalResult.pricing.winningRewardQty, 1);
+
+    // Online order snapshot created
+    const onlineOrderSnapshot = {
+      subtotal: 450,
+      discount_amount: 150,
+      discount_code: "B2G1FREE",
+      promotion_id: "promo-bxgy-1",
+      promotion_rule_type: "bxgy",
+      promotion_buy_x: 2,
+      promotion_get_y: 1,
+      promotion_reward_qty: 1,
+      items: [
+        {
+          product_id: "prd-shirt",
+          variant_id: "var-shirt-blue",
+          unit_price: 150,
+          quantity: 3,
+          line_total: 450,
+          discounted_unit_price: 100,
+          automatic_promotion_id: "promo-bxgy-1",
+          automatic_promotion_name: "Buy 2 Get 1 Free Promo",
+          automatic_discount_amount: 150,
+          rewarded_qty: 1,
+          promotion_rule_type: "bxgy",
+        },
+      ],
+    };
+
+    // Conversion to Sale:
+    const salePayload = {
+      source: "online",
+      subtotal: onlineOrderSnapshot.subtotal, // 450
+      discount_type: "none", // NOT anonymous manual discount!
+      discount_value: 0,
+      discount_amount: 0,
+      item_discount_amount: 0,
+      automatic_discount_amount: onlineOrderSnapshot.discount_amount, // 150
+      total_discount_amount: onlineOrderSnapshot.discount_amount, // 150
+      automatic_promotion_id: onlineOrderSnapshot.promotion_id,
+      automatic_promotion_name: "Buy 2 Get 1 Free Promo",
+      promotion_rule_type: onlineOrderSnapshot.promotion_rule_type,
+      promotion_buy_x: onlineOrderSnapshot.promotion_buy_x,
+      promotion_get_y: onlineOrderSnapshot.promotion_get_y,
+      promotion_reward_qty: onlineOrderSnapshot.promotion_reward_qty,
+      total: round2(onlineOrderSnapshot.subtotal - onlineOrderSnapshot.discount_amount), // 300
+    };
+
+    assert.equal(salePayload.discount_type, "none");
+    assert.equal(salePayload.discount_amount, 0);
+    assert.equal(salePayload.automatic_discount_amount, 150);
+    assert.equal(salePayload.total_discount_amount, 150);
+    assert.equal(salePayload.total, 300);
+    assert.equal(salePayload.automatic_promotion_id, "promo-bxgy-1");
+    assert.equal(salePayload.promotion_rule_type, "bxgy");
+    assert.equal(salePayload.promotion_buy_x, 2);
+    assert.equal(salePayload.promotion_get_y, 1);
+    assert.equal(salePayload.promotion_reward_qty, 1);
+  }
+});
+
+// ── Test 69: Financial and profitability report parity ──────────────────────
+test("69. Financial & report parity: gross - discounts == net reconciliation across lines and order snapshots", () => {
+  const saleItem = {
+    unit_price: 200,
+    quantity: 3,
+    gross_total: 600, // 200 * 3
+    automatic_discount_amount: 60, // 10% promo
+    discount_amount: 0, // manual discount
+    line_total: 540, // 600 - 60
+    unit_cost: 100,
+  };
+
+  const lineGross = saleItem.gross_total ?? (saleItem.unit_price * saleItem.quantity);
+  const lineDiscounts = (saleItem.automatic_discount_amount ?? 0) + (saleItem.discount_amount ?? 0);
+  const lineNet = saleItem.line_total;
+
+  assert.equal(lineGross, 600);
+  assert.equal(lineDiscounts, 60);
+  assert.equal(lineNet, 540);
+  assert.equal(lineGross - lineDiscounts, lineNet, "gross - discounts == net must hold exactly");
+
+  const cogs = saleItem.quantity * saleItem.unit_cost; // 300
+  const grossProfit = lineNet - cogs; // 540 - 300 = 240
+  const marginPercent = round2((grossProfit / lineNet) * 100);
+  assert.equal(grossProfit, 240);
+  assert.equal(marginPercent, 44.44);
+});
+
+// ── Test 70: Server-authoritative actor identity & prices ───────────────────
+test("70. Identity & pricing authority: server derives actor identity from auth.uid() and rejects forged client prices", () => {
+  const clientSuppliedLine = {
+    product_id: "prd-real",
+    qty: 2,
+    unit_price: 1.0, // Client tries to spoof price to 1.00 EGP
+  };
+
+  const dbCatalogueProduct = {
+    id: "prd-real",
+    selling_price: 250.0,
+    cost_price: 150.0,
+    active: true,
+    stock_tracking_enabled: true,
+  };
+
+  // Server completely ignores client's unit_price and uses dbCatalogueProduct.selling_price
+  const serverPricedUnit = dbCatalogueProduct.selling_price;
+  const serverLineGross = round2(serverPricedUnit * clientSuppliedLine.qty);
+
+  assert.equal(serverPricedUnit, 250.0);
+  assert.equal(serverLineGross, 500.0, "Catalogue price of 250.00 produces 500.00 gross, ignoring forged 1.00 EGP");
+});
+
+

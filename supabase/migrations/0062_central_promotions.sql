@@ -43,6 +43,55 @@ alter table public.promotions
   add column if not exists repeat_offer boolean not null default true,
   add column if not exists min_quantity integer default null;
 
+alter table public.sales
+  add column if not exists item_discount_amount numeric(14,2) not null default 0,
+  add column if not exists total_discount_amount numeric(14,2) not null default 0,
+  add column if not exists automatic_discount_amount numeric(14,2) not null default 0,
+  add column if not exists automatic_promotion_id uuid references public.promotions(id) on delete set null,
+  add column if not exists automatic_promotion_name text,
+  add column if not exists promotion_rule_type text default null,
+  add column if not exists promotion_buy_x integer default null,
+  add column if not exists promotion_get_y integer default null,
+  add column if not exists promotion_reward_qty integer default null,
+  add column if not exists promotion_rewarded_units jsonb default '[]'::jsonb;
+
+alter table public.sale_items
+  add column if not exists automatic_discount_amount numeric(14,2) not null default 0,
+  add column if not exists automatic_promotion_id uuid references public.promotions(id) on delete set null,
+  add column if not exists automatic_promotion_name text,
+  add column if not exists rewarded_qty integer not null default 0,
+  add column if not exists promotion_rule_type text default null;
+
+alter table public.online_orders
+  add column if not exists promotion_id uuid references public.promotions(id) on delete set null,
+  add column if not exists price_snapshot jsonb default null,
+  add column if not exists automatic_promotion_id uuid references public.promotions(id) on delete set null,
+  add column if not exists automatic_promotion_name text default null,
+  add column if not exists automatic_discount_amount numeric(14,2) not null default 0,
+  add column if not exists promotion_rule_type text default null,
+  add column if not exists promotion_buy_x integer default null,
+  add column if not exists promotion_get_y integer default null,
+  add column if not exists promotion_reward_qty integer default null,
+  add column if not exists delivery_zone_id uuid references public.delivery_zones(id) on delete set null,
+  add column if not exists delivery_zone_name_en text default null,
+  add column if not exists delivery_zone_name_ar text default null,
+  add column if not exists delivery_free_shipping boolean not null default false;
+
+alter table public.online_order_items
+  add column if not exists automatic_promotion_id uuid references public.promotions(id) on delete set null,
+  add column if not exists automatic_promotion_name text default null,
+  add column if not exists automatic_discount_amount numeric(14,2) not null default 0,
+  add column if not exists rewarded_qty integer not null default 0,
+  add column if not exists promotion_rule_type text default null;
+
+alter table public.sales drop constraint if exists sales_total_matches;
+alter table public.sales add constraint sales_total_matches
+  check (total = round((subtotal - coalesce(total_discount_amount, discount_amount))::numeric, 2));
+
+alter table public.sales drop constraint if exists sales_discount_le_subtotal;
+alter table public.sales add constraint sales_discount_le_subtotal
+  check (coalesce(total_discount_amount, discount_amount) <= subtotal);
+
 alter table public.promotions drop constraint if exists promotions_mode_valid;
 alter table public.promotions add constraint promotions_mode_valid
   check (mode in ('automatic', 'coupon'));
@@ -1491,8 +1540,8 @@ begin
     v_winning_reward_qty := (p_payload->>'promotion_reward_qty')::integer;
     v_rewarded_units_json := coalesce(p_payload->'promotion_rewarded_units', '[]'::jsonb);
 
-    v_discount_amount := least(round(v_discount_value::numeric, 2), v_subtotal);
-    v_total := round((v_subtotal - v_discount_amount)::numeric, 2);
+    v_discount_amount := 0;
+    v_total := round((v_subtotal - v_actual_promo_discount_total)::numeric, 2);
   end if;
 
   -- ── approval limits, enforced here and not in the browser (Phase 24) ──────
@@ -1582,7 +1631,7 @@ begin
     v_sale_number, v_client_ref, v_sale_status::public.sale_status,
     coalesce(v_first_method, 'cash'), case when v_all_paid then 'paid' else 'pending' end::public.payment_status,
     v_subtotal, v_discount_type::public.discount_type, v_discount_value, v_discount_amount, v_item_discount_total,
-    case when v_source = 'online' then v_discount_amount else v_item_discount_total + v_actual_promo_discount_total + v_discount_amount end,
+    v_item_discount_total + v_actual_promo_discount_total + v_discount_amount,
     v_actual_promo_discount_total,
     case when v_actual_promo_discount_total > 0 or v_source = 'online' then v_winning_id else null end,
     case when v_actual_promo_discount_total > 0 or v_source = 'online' then v_winning_name else null end,
@@ -1712,11 +1761,11 @@ begin
         v_official_unit, v_qty,
         v_line_gross, v_line_net,
         v_item_discount_type::public.discount_type, v_item_discount_value, v_effective_manual_disc,
-        case when v_effective_promo_disc > 0 then v_winning_id else null end,
-        case when v_effective_promo_disc > 0 then v_winning_name else null end,
+        case when v_effective_promo_disc > 0 or v_source = 'online' then coalesce(nullif(v_line->>'automatic_promotion_id', '')::uuid, v_winning_id) else null end,
+        case when v_effective_promo_disc > 0 or v_source = 'online' then coalesce(v_line->>'automatic_promotion_name', v_winning_name) else null end,
         v_effective_promo_disc,
         v_line_applied_reward_qty,
-        case when v_effective_promo_disc > 0 then v_winning_rule_type else null end,
+        case when v_effective_promo_disc > 0 or v_source = 'online' then coalesce(v_line->>'promotion_rule_type', v_winning_rule_type) else null end,
         v_unit_cost
       );
 
@@ -1751,11 +1800,11 @@ begin
         v_product.barcode, v_official_unit, v_qty,
         v_line_gross, v_line_net,
         v_item_discount_type::public.discount_type, v_item_discount_value, v_effective_manual_disc,
-        case when v_effective_promo_disc > 0 then v_winning_id else null end,
-        case when v_effective_promo_disc > 0 then v_winning_name else null end,
+        case when v_effective_promo_disc > 0 or v_source = 'online' then coalesce(nullif(v_line->>'automatic_promotion_id', '')::uuid, v_winning_id) else null end,
+        case when v_effective_promo_disc > 0 or v_source = 'online' then coalesce(v_line->>'automatic_promotion_name', v_winning_name) else null end,
         v_effective_promo_disc,
         v_line_applied_reward_qty,
-        case when v_effective_promo_disc > 0 then v_winning_rule_type else null end,
+        case when v_effective_promo_disc > 0 or v_source = 'online' then coalesce(v_line->>'promotion_rule_type', v_winning_rule_type) else null end,
         v_unit_cost
       );
 
@@ -1794,11 +1843,13 @@ declare
   v_delivery_type  text := coalesce(p_payload->>'delivery_type', 'delivery');
   v_payment_method text := p_payload->>'payment_method';
   v_coupon_code    text := nullif(upper(regexp_replace(btrim(coalesce(p_payload->>'coupon_code', '')), '\s+', '', 'g')), '');
-  v_zone_id        uuid := nullif(p_payload->>'delivery_zone_id', '')::uuid;
+  v_zone_id_raw    text := coalesce(p_payload->>'delivery_zone_id', p_payload->'address'->>'zone_id');
+  v_zone_id        uuid := null;
   v_settings       jsonb;
   v_delivery_fee   numeric(14,2) := 0;
   v_city           text := lower(regexp_replace(btrim(coalesce(p_payload->'address'->>'city', '')), '\s+', ' ', 'g'));
   v_area           text := lower(regexp_replace(btrim(coalesce(p_payload->'address'->>'area', '')), '\s+', ' ', 'g'));
+  v_street         text := coalesce(btrim(coalesce(p_payload->'address'->>'street', p_payload->'address'->>'address_line1', '')), '');
   v_zone           public.delivery_zones%rowtype;
   v_zone_json      jsonb := null;
   v_legacy_json    jsonb;
@@ -1872,15 +1923,24 @@ begin
 
   -- 2. delivery fee preparation
   if v_delivery_type = 'delivery' then
+    if v_zone_id_raw is not null and btrim(v_zone_id_raw) <> '' then
+      begin
+        v_zone_id := v_zone_id_raw::uuid;
+      exception when invalid_text_representation then
+        raise exception 'Invalid delivery zone' using errcode = 'check_violation';
+      end;
+    else
+      v_zone_id := null;
+    end if;
+
+    if v_city = '' or v_area = '' or v_street = '' then
+      raise exception 'A delivery address is required' using errcode = 'check_violation';
+    end if;
+
     if v_zone_id is not null then
       select * into v_zone from public.delivery_zones where id = v_zone_id;
       if not found or not v_zone.enabled then
         raise exception 'Delivery zone is not available' using errcode = 'check_violation';
-      end if;
-      if v_city = ''
-         or v_area = ''
-         or coalesce(btrim(p_payload->'address'->>'street'), '') = '' then
-        raise exception 'A delivery address is required' using errcode = 'check_violation';
       end if;
       v_zone_json := jsonb_build_object(
         'id', v_zone.id::text,
@@ -1892,12 +1952,6 @@ begin
     else
       if coalesce((v_settings->'delivery'->>'enabled')::boolean, true) = false then
         raise exception 'Delivery is not available' using errcode = 'check_violation';
-      end if;
-
-      if v_city = ''
-         or v_area = ''
-         or coalesce(btrim(p_payload->'address'->>'street'), '') = '' then
-        raise exception 'A delivery address is required' using errcode = 'check_violation';
       end if;
 
       if jsonb_typeof(v_settings->'delivery'->'areas') = 'array'
@@ -2057,7 +2111,8 @@ begin
     total, payment_method, payment_status, status, notes,
     promotion_id, price_snapshot,
     automatic_promotion_id, automatic_promotion_name, automatic_discount_amount,
-    promotion_rule_type, promotion_buy_x, promotion_get_y, promotion_reward_qty
+    promotion_rule_type, promotion_buy_x, promotion_get_y, promotion_reward_qty,
+    delivery_zone_id, delivery_zone_name_en, delivery_zone_name_ar, delivery_free_shipping
   ) values (
     v_client_ref,
     v_customer_id,
@@ -2113,7 +2168,11 @@ begin
     v_winning_rule_type,
     v_winning_buy_x,
     v_winning_get_y,
-    v_winning_reward_qty
+    v_winning_reward_qty,
+    case when v_zone.id is not null then v_zone.id else null end,
+    case when v_zone.id is not null then v_zone.name_en else null end,
+    case when v_zone.id is not null then v_zone.name_ar else null end,
+    case when v_delivery_type = 'delivery' and v_delivery_fee = 0 then true else false end
   ) returning id, order_number into v_order_id, v_order_number;
 
   -- 6. Coupon customer tracking (recorded for customer limit checks; total used_count is consumed upon order approval)
@@ -2246,6 +2305,12 @@ declare
   v_reservation record;
   v_status      public.online_order_status;
   v_coupon_applied boolean := false;
+  v_winning_promo_id uuid;
+  v_winning_promo_name text;
+  v_winning_rule_type text;
+  v_winning_buy_x integer;
+  v_winning_get_y integer;
+  v_winning_reward_qty integer;
 begin
   if auth.uid() is not null then
     v_user_id := auth.uid()::text;
@@ -2342,25 +2407,59 @@ begin
     v_goods_total := round((v_order.subtotal - v_order.discount_amount)::numeric, 2);
     v_sale_discount := greatest(round(v_order.discount_amount::numeric, 2), 0);
 
+    v_winning_promo_id := coalesce(
+      v_order.promotion_id,
+      nullif(case when v_order.price_snapshot is not null then v_order.price_snapshot->>'winning_promotion_id' else null end, '')::uuid,
+      nullif(case when v_order.price_snapshot is not null then v_order.price_snapshot->>'coupon_promotion_id' else null end, '')::uuid,
+      v_order.automatic_promotion_id
+    );
+    v_winning_promo_name := coalesce(
+      case when v_order.price_snapshot is not null then v_order.price_snapshot->>'winning_promotion_name' else null end,
+      case when v_order.price_snapshot is not null then v_order.price_snapshot->>'coupon_promotion_name' else null end,
+      v_order.automatic_promotion_name
+    );
+    v_winning_rule_type := coalesce(
+      v_order.promotion_rule_type,
+      case when v_order.price_snapshot is not null then v_order.price_snapshot->>'winning_rule_type' else null end,
+      case when v_order.price_snapshot is not null then v_order.price_snapshot->>'coupon_promotion_rule_type' else null end
+    );
+    v_winning_buy_x := coalesce(
+      v_order.promotion_buy_x,
+      (case when v_order.price_snapshot is not null then v_order.price_snapshot->>'winning_buy_x' else null end)::integer,
+      (case when v_order.price_snapshot is not null then v_order.price_snapshot->>'coupon_promotion_buy_x' else null end)::integer
+    );
+    v_winning_get_y := coalesce(
+      v_order.promotion_get_y,
+      (case when v_order.price_snapshot is not null then v_order.price_snapshot->>'winning_get_y' else null end)::integer,
+      (case when v_order.price_snapshot is not null then v_order.price_snapshot->>'coupon_promotion_get_y' else null end)::integer
+    );
+    v_winning_reward_qty := coalesce(
+      v_order.promotion_reward_qty,
+      (case when v_order.price_snapshot is not null then v_order.price_snapshot->>'winning_reward_qty' else null end)::integer,
+      (case when v_order.price_snapshot is not null then v_order.price_snapshot->>'coupon_promotion_reward_qty' else null end)::integer
+    );
+
     -- Pass frozen order snapshot to pos_complete_sale with source='online'
     v_result := public.pos_complete_sale(jsonb_build_object(
       'client_ref', 'online-' || v_order.id::text,
       'source', 'online',
       'order_number', v_order.order_number,
-      'discount_type', case when v_sale_discount > 0 then 'fixed' else 'none' end,
-      'discount_value', v_sale_discount,
+      'discount_type', 'none',
+      'discount_value', 0,
       'user_id', v_user_id,
       'user_name', v_user_name,
       'customer_id', v_order.store_customer_id,
       'customer_name', v_order.customer_name,
       'customer_phone', v_order.customer_phone,
-      'automatic_promotion_id', v_order.automatic_promotion_id,
-      'automatic_promotion_name', v_order.automatic_promotion_name,
-      'automatic_discount_amount', v_order.automatic_discount_amount,
-      'promotion_rule_type', v_order.promotion_rule_type,
-      'promotion_buy_x', v_order.promotion_buy_x,
-      'promotion_get_y', v_order.promotion_get_y,
-      'promotion_reward_qty', v_order.promotion_reward_qty,
+      'automatic_promotion_id', v_winning_promo_id,
+      'automatic_promotion_name', v_winning_promo_name,
+      'automatic_discount_amount', v_sale_discount,
+      'promotion_rule_type', v_winning_rule_type,
+      'promotion_buy_x', v_winning_buy_x,
+      'promotion_get_y', v_winning_get_y,
+      'promotion_reward_qty', v_winning_reward_qty,
+      'promo_code', v_order.discount_code,
+      'coupon_code', v_order.discount_code,
       'lines', coalesce((
         select jsonb_agg(jsonb_build_object(
           'product_id', i.product_id,
@@ -2370,8 +2469,11 @@ begin
           'discounted_unit_price', i.discounted_unit_price,
           'line_total', i.line_total,
           'automatic_discount_amount', i.automatic_discount_amount,
+          'discount_amount', i.automatic_discount_amount,
           'rewarded_qty', i.rewarded_qty,
-          'promotion_rule_type', i.promotion_rule_type
+          'promotion_rule_type', coalesce(i.promotion_rule_type, v_winning_rule_type),
+          'automatic_promotion_id', coalesce(i.automatic_promotion_id, v_winning_promo_id),
+          'automatic_promotion_name', coalesce(i.automatic_promotion_name, v_winning_promo_name)
         ))
         from public.online_order_items i where i.order_id = v_order.id
       ), '[]'::jsonb),
