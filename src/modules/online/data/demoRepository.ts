@@ -2416,6 +2416,14 @@ export class DemoOnlineRepository
     if (mode === "coupon" && (!code || !/^[A-Z0-9_-]{2,30}$/.test(code))) {
       throw new OnlineError("db", "A valid coupon code is required for coupon mode", { field: "code" });
     }
+    if (mode === "coupon" && code) {
+      const dup = this.promotions.find(
+        (p) => p.id !== (existing?.id ?? draft.id) && p.mode === "coupon" && p.code && p.code.trim().toUpperCase().replace(/\s+/g, "") === code,
+      );
+      if (dup) {
+        throw new OnlineError("db", "A coupon with this code already exists", { field: "code" });
+      }
+    }
     const offerType = draft.offer_type ?? draft.rule_type ?? existing?.offer_type ?? existing?.rule_type ?? "standard";
     const next: Promotion = {
       id: existing?.id ?? newId("prm"),

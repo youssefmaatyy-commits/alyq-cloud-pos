@@ -3,6 +3,7 @@
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Unifies central promotions across POS and Storefront with:
 --   · Modes: Automatic (`automatic`) and Coupon (`coupon`)
+--   · Unique normalized coupon index for safe code deduplication
 --   · Offer Types: Standard (`standard`), Buy X Get Y (`bxgy`), Cheapest Item (`cheapest_item`)
 --   · Configurable X & Y for BXGY with Free (100%) or Percentage reward
 --   · Cheapest item in eligible cart with min quantity & free/percent/fixed reward
@@ -10,6 +11,8 @@
 --   · Scopes: Store, Category, Product, Exact Variant (relational UUID targeting)
 --   · Channel awareness ('pos', 'online', 'both')
 --   · Authoritative server-enforced best-saving non-stacking rules
+--   · Exact capped discount reconciliation across lines (sum of line discounts == total discount)
+--   · Candidate evaluation state isolation (no reward leakage across candidates)
 --   · Historical snapshots across POS sales, online orders, and return reconciliation
 -- ═══════════════════════════════════════════════════════════════════════════
 
@@ -41,6 +44,11 @@ alter table public.promotions drop constraint if exists promotions_reward_type_v
 alter table public.promotions add constraint promotions_reward_type_valid
   check (reward_type is null or reward_type in ('free', 'percent', 'fixed'));
 
+-- ── Unique normalized coupon code index ──────────────────────────────────────
+create unique index if not exists promotions_coupon_code_idx
+  on public.promotions (upper(regexp_replace(btrim(code), '\s+', '', 'g')))
+  where mode = 'coupon' and code is not null and btrim(code) <> '';
+
 -- ── Snapshot columns for sales and online orders ────────────────────────────
 alter table public.sales
   add column if not exists promotion_rule_type text,
@@ -69,6 +77,312 @@ alter table public.online_order_items
   add column if not exists rewarded_qty integer not null default 0,
   add column if not exists promotion_rule_type text;
 
+-- ── Candidate evaluation helper function ───────────────────────────────────
+create or replace function public.evaluate_promotion_candidate(
+  p_promo         public.promotions,
+  p_lines         jsonb,
+  p_subtotal      numeric
+)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v_count         integer := coalesce(jsonb_array_length(p_lines), 0);
+  v_offer_type    text := coalesce(p_promo.offer_type, p_promo.rule_type, 'standard');
+  v_discount      numeric(14,2) := 0;
+  v_raw_discount  numeric(14,2) := 0;
+  v_buy_x         integer := null;
+  v_get_y         integer := null;
+  v_reward_qty    integer := null;
+  v_min_qty       integer := null;
+  v_repeat        boolean := coalesce(p_promo.repeat_offer, true);
+  v_reward_type   text;
+  v_reward_val    numeric(14,2);
+
+  v_line_discounts numeric[];
+  v_line_rewards   integer[];
+
+  v_eligible_indices integer[] := '{}';
+  v_eligible_base    numeric(14,2) := 0;
+  v_item             record;
+  v_line             jsonb;
+  v_line_total       numeric(14,2);
+
+  v_elig_qty         integer := 0;
+  v_group_size       integer;
+  v_complete_groups  integer;
+  v_rem_reward       integer;
+  v_unit_row         record;
+  v_take_qty         integer;
+  v_unit_disc        numeric(14,2);
+  v_last_elig        integer;
+  v_rem              numeric(14,2);
+  v_share            numeric(14,2);
+  v_disc_indices     integer[] := '{}';
+  v_idx              integer;
+begin
+  v_line_discounts := array_fill(0::numeric, array[v_count]);
+  v_line_rewards := array_fill(0::integer, array[v_count]);
+
+  if p_subtotal < coalesce(p_promo.minimum_order_amount, 0) then
+    return jsonb_build_object(
+      'discount', 0,
+      'offer_type', v_offer_type,
+      'buy_x', null,
+      'get_y', null,
+      'reward_qty', null,
+      'line_discounts', to_jsonb(v_line_discounts),
+      'line_rewards', to_jsonb(v_line_rewards)
+    );
+  end if;
+
+  -- 1. Identify eligible lines
+  for v_item in
+    select value, ordinality - 1 as idx
+    from jsonb_array_elements(p_lines) with ordinality
+  loop
+    if public.promo_scope_matches(p_promo.scope, p_promo.id, v_item.value) then
+      v_eligible_indices := array_append(v_eligible_indices, v_item.idx);
+      v_eligible_base := v_eligible_base + round(coalesce((v_item.value->>'line_total')::numeric, 0), 2);
+      v_elig_qty := v_elig_qty + greatest(coalesce((v_item.value->>'qty')::numeric, 1)::integer, 1);
+    end if;
+  end loop;
+
+  if array_length(v_eligible_indices, 1) is null or array_length(v_eligible_indices, 1) = 0 then
+    -- Storewide fallback on empty cart lines with non-zero subtotal
+    if (p_promo.scope = 'store' or p_promo.scope = 'all') and p_subtotal > 0 and v_offer_type = 'standard' then
+      if p_promo.discount_type = 'percent' then
+        v_discount := round((p_subtotal * least(p_promo.value, 100) / 100)::numeric, 2);
+        if p_promo.maximum_discount_amount is not null and p_promo.maximum_discount_amount > 0 then
+          v_discount := least(v_discount, round(p_promo.maximum_discount_amount::numeric, 2));
+        end if;
+      else
+        v_discount := least(round(p_promo.value::numeric, 2), p_subtotal);
+      end if;
+      v_discount := least(greatest(v_discount, 0), p_subtotal);
+      return jsonb_build_object(
+        'discount', v_discount,
+        'offer_type', v_offer_type,
+        'buy_x', null,
+        'get_y', null,
+        'reward_qty', null,
+        'line_discounts', '[]'::jsonb,
+        'line_rewards', '[]'::jsonb
+      );
+    end if;
+
+    return jsonb_build_object(
+      'discount', 0,
+      'offer_type', v_offer_type,
+      'buy_x', null,
+      'get_y', null,
+      'reward_qty', null,
+      'line_discounts', to_jsonb(v_line_discounts),
+      'line_rewards', to_jsonb(v_line_rewards)
+    );
+  end if;
+
+  -- 2. Standard offer type
+  if v_offer_type = 'standard' then
+    if p_promo.discount_type = 'percent' then
+      v_discount := round((v_eligible_base * least(p_promo.value, 100) / 100)::numeric, 2);
+      if p_promo.maximum_discount_amount is not null and p_promo.maximum_discount_amount > 0 then
+        v_discount := least(v_discount, round(p_promo.maximum_discount_amount::numeric, 2));
+      end if;
+    else
+      v_discount := least(round(p_promo.value::numeric, 2), v_eligible_base);
+    end if;
+    v_discount := least(greatest(v_discount, 0), p_subtotal);
+
+    if v_discount > 0 and v_eligible_base > 0 then
+      v_rem := v_discount;
+      v_last_elig := v_eligible_indices[array_upper(v_eligible_indices, 1)];
+      foreach v_idx in array v_eligible_indices
+      loop
+        v_line := p_lines->v_idx;
+        v_line_total := round(coalesce((v_line->>'line_total')::numeric, 0), 2);
+        if v_idx = v_last_elig then
+          v_share := round(v_rem::numeric, 2);
+        else
+          v_share := round((v_discount * v_line_total / v_eligible_base)::numeric, 2);
+          v_rem := v_rem - v_share;
+        end if;
+        v_line_discounts[v_idx + 1] := v_share;
+      end loop;
+    end if;
+
+  -- 3. BXGY offer type
+  elsif v_offer_type = 'bxgy' then
+    v_buy_x := greatest(coalesce(p_promo.buy_x, 2), 1);
+    v_get_y := greatest(coalesce(p_promo.get_y, 1), 1);
+    v_group_size := v_buy_x + v_get_y;
+    v_complete_groups := floor(v_elig_qty / v_group_size);
+
+    if v_complete_groups > 0 then
+      if v_repeat then
+        v_reward_qty := v_complete_groups * v_get_y;
+      else
+        v_reward_qty := v_get_y;
+      end if;
+      v_reward_qty := least(v_reward_qty, v_elig_qty);
+
+      v_reward_type := coalesce(p_promo.reward_type, 'free');
+      v_reward_val := coalesce(p_promo.reward_value, case when v_reward_type = 'free' then 100 else coalesce(p_promo.value, 100) end);
+
+      v_rem_reward := v_reward_qty;
+      for v_unit_row in
+        select o.idx, o.value,
+               round(coalesce((o.value->>'unit_price')::numeric, 0), 2) as u_price,
+               greatest(coalesce((o.value->>'qty')::numeric, 1)::integer, 1) as l_qty
+        from (select value, ordinality - 1 as idx
+              from jsonb_array_elements(p_lines) with ordinality) o
+        where public.promo_scope_matches(p_promo.scope, p_promo.id, o.value)
+        order by u_price asc, o.idx asc
+      loop
+        if v_rem_reward <= 0 then exit; end if;
+        v_take_qty := least(v_rem_reward, v_unit_row.l_qty);
+        if v_reward_type = 'free' or v_reward_val >= 100 then
+          v_unit_disc := round((v_unit_row.u_price * v_take_qty)::numeric, 2);
+        elsif v_reward_type = 'percent' then
+          v_unit_disc := round((v_unit_row.u_price * least(v_reward_val, 100) / 100 * v_take_qty)::numeric, 2);
+        else
+          v_unit_disc := least(v_unit_row.u_price * v_take_qty, v_reward_val * v_take_qty);
+        end if;
+        v_unit_disc := least(v_unit_disc, round((v_unit_row.u_price * v_take_qty)::numeric, 2));
+
+        v_discount := v_discount + v_unit_disc;
+        v_line_discounts[v_unit_row.idx + 1] := v_line_discounts[v_unit_row.idx + 1] + v_unit_disc;
+        v_line_rewards[v_unit_row.idx + 1] := v_line_rewards[v_unit_row.idx + 1] + v_take_qty;
+        v_rem_reward := v_rem_reward - v_take_qty;
+      end loop;
+
+      v_raw_discount := v_discount;
+      if p_promo.maximum_discount_amount is not null and p_promo.maximum_discount_amount > 0 then
+        v_discount := least(v_discount, round(p_promo.maximum_discount_amount::numeric, 2));
+      end if;
+      v_discount := least(greatest(v_discount, 0), p_subtotal);
+
+      -- Reconcile line discounts if capped so SUM(line_discounts) == v_discount exactly
+      if v_discount < v_raw_discount and v_raw_discount > 0 then
+        v_rem := v_discount;
+        v_disc_indices := '{}';
+        foreach v_idx in array v_eligible_indices
+        loop
+          if v_line_discounts[v_idx + 1] > 0 then
+            v_disc_indices := array_append(v_disc_indices, v_idx);
+          end if;
+        end loop;
+
+        if array_length(v_disc_indices, 1) > 0 then
+          v_last_elig := v_disc_indices[array_upper(v_disc_indices, 1)];
+          foreach v_idx in array v_disc_indices
+          loop
+            if v_idx = v_last_elig then
+              v_share := round(v_rem::numeric, 2);
+            else
+              v_share := round((v_discount * v_line_discounts[v_idx + 1] / v_raw_discount)::numeric, 2);
+              v_rem := v_rem - v_share;
+            end if;
+            v_line_discounts[v_idx + 1] := v_share;
+          end loop;
+        end if;
+      end if;
+    end if;
+
+  -- 4. Cheapest item offer type
+  elsif v_offer_type = 'cheapest_item' then
+    v_min_qty := greatest(coalesce(p_promo.min_quantity, p_promo.buy_x, 3), 1);
+    v_repeat := coalesce(p_promo.repeat_offer, false);
+
+    if v_elig_qty >= v_min_qty then
+      if v_repeat then
+        v_reward_qty := floor(v_elig_qty / v_min_qty);
+      else
+        v_reward_qty := 1;
+      end if;
+      v_reward_qty := least(v_reward_qty, v_elig_qty);
+
+      v_reward_type := coalesce(p_promo.reward_type, case when p_promo.discount_type = 'fixed' then 'fixed' when p_promo.value >= 100 then 'free' else 'percent' end);
+      v_reward_val := coalesce(p_promo.reward_value, p_promo.value, 100);
+
+      v_rem_reward := v_reward_qty;
+      for v_unit_row in
+        select o.idx, o.value,
+               round(coalesce((o.value->>'unit_price')::numeric, 0), 2) as u_price,
+               greatest(coalesce((o.value->>'qty')::numeric, 1)::integer, 1) as l_qty
+        from (select value, ordinality - 1 as idx
+              from jsonb_array_elements(p_lines) with ordinality) o
+        where public.promo_scope_matches(p_promo.scope, p_promo.id, o.value)
+        order by u_price asc, o.idx asc
+      loop
+        if v_rem_reward <= 0 then exit; end if;
+        v_take_qty := least(v_rem_reward, v_unit_row.l_qty);
+        if v_reward_type = 'free' or (v_reward_type = 'percent' and v_reward_val >= 100) or (p_promo.discount_type = 'percent' and p_promo.value >= 100) then
+          v_unit_disc := round((v_unit_row.u_price * v_take_qty)::numeric, 2);
+        elsif v_reward_type = 'percent' or (v_reward_type is null and p_promo.discount_type = 'percent') then
+          v_unit_disc := round((v_unit_row.u_price * least(v_reward_val, 100) / 100 * v_take_qty)::numeric, 2);
+        else
+          v_unit_disc := least(v_unit_row.u_price * v_take_qty, v_reward_val * v_take_qty);
+        end if;
+        v_unit_disc := least(v_unit_disc, round((v_unit_row.u_price * v_take_qty)::numeric, 2));
+
+        v_discount := v_discount + v_unit_disc;
+        v_line_discounts[v_unit_row.idx + 1] := v_line_discounts[v_unit_row.idx + 1] + v_unit_disc;
+        v_line_rewards[v_unit_row.idx + 1] := v_line_rewards[v_unit_row.idx + 1] + v_take_qty;
+        v_rem_reward := v_rem_reward - v_take_qty;
+      end loop;
+
+      v_raw_discount := v_discount;
+      if p_promo.maximum_discount_amount is not null and p_promo.maximum_discount_amount > 0 then
+        v_discount := least(v_discount, round(p_promo.maximum_discount_amount::numeric, 2));
+      end if;
+      v_discount := least(greatest(v_discount, 0), p_subtotal);
+
+      -- Reconcile line discounts if capped
+      if v_discount < v_raw_discount and v_raw_discount > 0 then
+        v_rem := v_discount;
+        v_disc_indices := '{}';
+        foreach v_idx in array v_eligible_indices
+        loop
+          if v_line_discounts[v_idx + 1] > 0 then
+            v_disc_indices := array_append(v_disc_indices, v_idx);
+          end if;
+        end loop;
+
+        if array_length(v_disc_indices, 1) > 0 then
+          v_last_elig := v_disc_indices[array_upper(v_disc_indices, 1)];
+          foreach v_idx in array v_disc_indices
+          loop
+            if v_idx = v_last_elig then
+              v_share := round(v_rem::numeric, 2);
+            else
+              v_share := round((v_discount * v_line_discounts[v_idx + 1] / v_raw_discount)::numeric, 2);
+              v_rem := v_rem - v_share;
+            end if;
+            v_line_discounts[v_idx + 1] := v_share;
+          end loop;
+        end if;
+      end if;
+    end if;
+  end if;
+
+  return jsonb_build_object(
+    'discount', v_discount,
+    'offer_type', v_offer_type,
+    'buy_x', v_buy_x,
+    'get_y', v_get_y,
+    'reward_qty', v_reward_qty,
+    'line_discounts', to_jsonb(v_line_discounts),
+    'line_rewards', to_jsonb(v_line_rewards)
+  );
+end;
+$$;
+
+grant execute on function public.evaluate_promotion_candidate(public.promotions, jsonb, numeric) to authenticated, anon;
+
 -- ── evaluate_order_pricing_channel with unified promotions & coupons ───────
 create or replace function public.evaluate_order_pricing_channel(
   p_subtotal      numeric,
@@ -95,8 +409,7 @@ declare
 
   v_promo        public.promotions%rowtype;
   v_candidate    public.promotions%rowtype;
-  v_cand_offer_type text;
-  v_eligible     numeric(14,2);
+  v_eval         jsonb;
   v_cand_discount numeric(14,2);
   v_auto_discount numeric(14,2) := 0;
   v_auto_id      uuid := null;
@@ -107,10 +420,10 @@ declare
   v_auto_get_y   integer := null;
   v_auto_reward_qty integer := null;
 
-  v_cand_line_discounts numeric[];
-  v_cand_line_rewards   integer[];
   v_auto_line_discounts numeric[];
   v_auto_line_rewards   integer[];
+  v_coupon_line_discounts numeric[];
+  v_coupon_line_rewards   integer[];
 
   v_code         text := nullif(upper(regexp_replace(btrim(coalesce(p_promo_code, '')), '\s+', '', 'g')), '');
   v_coupon_promo public.promotions%rowtype;
@@ -144,23 +457,7 @@ declare
   v_rem          numeric(14,2);
   v_last_elig    integer;
   v_lines        jsonb;
-
-  -- BXGY & Cheapest unit calculation variables
-  v_buy_x        integer;
-  v_get_y        integer;
-  v_group_size   integer;
-  v_repeat       boolean;
-  v_elig_qty     integer;
-  v_complete_groups integer;
-  v_reward_qty   integer;
-  v_min_qty      integer;
-  v_reward_type  text;
-  v_reward_val   numeric(14,2);
-  v_unit_row     record;
-  v_unit_disc    numeric(14,2);
-  v_rem_reward   integer;
-  v_take_qty     integer;
-  v_line_unit_p  numeric(14,2);
+  v_idx          integer;
 begin
   for v_line in select * from jsonb_array_elements(coalesce(p_lines, '[]'::jsonb))
   loop
@@ -193,6 +490,8 @@ begin
   v_count := coalesce(jsonb_array_length(v_lines), 0);
   v_auto_line_discounts := array_fill(0::numeric, array[v_count]);
   v_auto_line_rewards := array_fill(0::integer, array[v_count]);
+  v_coupon_line_discounts := array_fill(0::numeric, array[v_count]);
+  v_coupon_line_rewards := array_fill(0::integer, array[v_count]);
 
   -- ── 1. Automatic promotions evaluation ────────────────────────────────────
   for v_candidate in
@@ -227,177 +526,9 @@ begin
       continue;
     end if;
 
-    v_cand_offer_type := coalesce(v_candidate.offer_type, v_candidate.rule_type, 'standard');
-    v_cand_discount := 0;
-    v_cand_line_discounts := array_fill(0::numeric, array[v_count]);
-    v_cand_line_rewards := array_fill(0::integer, array[v_count]);
-
-    if v_cand_offer_type = 'standard' then
-      if v_candidate.scope = 'store' then
-        v_eligible := v_subtotal;
-      else
-        v_eligible := 0;
-        for v_line in select * from jsonb_array_elements(v_lines)
-        loop
-          if public.promo_scope_matches(v_candidate.scope, v_candidate.id, v_line) then
-            v_eligible := v_eligible + round(coalesce((v_line->>'line_total')::numeric, 0), 2);
-          end if;
-        end loop;
-      end if;
-
-      if v_candidate.discount_type = 'percent' then
-        v_cand_discount := round((v_eligible * least(v_candidate.value, 100) / 100)::numeric, 2);
-        if v_candidate.maximum_discount_amount is not null then
-          v_cand_discount := least(v_cand_discount, round(v_candidate.maximum_discount_amount::numeric, 2));
-        end if;
-      else
-        v_cand_discount := least(round(v_candidate.value::numeric, 2), v_eligible);
-      end if;
-      v_cand_discount := least(greatest(v_cand_discount, 0), v_subtotal);
-
-      -- Calculate proportional line shares
-      if v_cand_discount > 0 and v_eligible > 0 then
-        v_rem := v_cand_discount;
-        select coalesce(max(o.idx), -1) into v_last_elig
-        from (select value, ordinality - 1 as idx
-              from jsonb_array_elements(v_lines) with ordinality) o
-        where public.promo_scope_matches(v_candidate.scope, v_candidate.id, o.value);
-
-        for v_item in
-          select value, ordinality - 1 as idx
-          from jsonb_array_elements(v_lines) with ordinality
-        loop
-          if public.promo_scope_matches(v_candidate.scope, v_candidate.id, v_item.value) then
-            v_line_total := round(coalesce((v_item.value->>'line_total')::numeric, 0), 2);
-            if v_item.idx = v_last_elig then
-              v_share := round(v_rem::numeric, 2);
-            else
-              v_share := round((v_cand_discount * v_line_total / v_eligible)::numeric, 2);
-              v_rem := v_rem - v_share;
-            end if;
-            v_cand_line_discounts[v_item.idx + 1] := v_share;
-          end if;
-        end loop;
-      end if;
-
-    elsif v_cand_offer_type = 'bxgy' then
-      v_buy_x := greatest(coalesce(v_candidate.buy_x, 2), 1);
-      v_get_y := greatest(coalesce(v_candidate.get_y, 1), 1);
-      v_group_size := v_buy_x + v_get_y;
-      v_repeat := coalesce(v_candidate.repeat_offer, true);
-
-      -- Count total eligible units in scope
-      v_elig_qty := 0;
-      for v_line in select * from jsonb_array_elements(v_lines)
-      loop
-        if public.promo_scope_matches(v_candidate.scope, v_candidate.id, v_line) then
-          v_elig_qty := v_elig_qty + coalesce((v_line->>'qty')::integer, 1);
-        end if;
-      end loop;
-
-      v_complete_groups := floor(v_elig_qty / v_group_size);
-      if v_complete_groups > 0 then
-        if v_repeat then
-          v_reward_qty := v_complete_groups * v_get_y;
-        else
-          v_reward_qty := v_get_y;
-        end if;
-        v_reward_qty := least(v_reward_qty, v_elig_qty);
-
-        v_reward_type := coalesce(v_candidate.reward_type, 'free');
-        v_reward_val := coalesce(v_candidate.reward_value, case when v_reward_type = 'free' then 100 else coalesce(v_candidate.value, 100) end);
-
-        -- Iterate over eligible lines sorted by unit_price ASC (cheapest unit first)
-        v_rem_reward := v_reward_qty;
-        for v_unit_row in
-          select o.idx, o.value,
-                 round(coalesce((o.value->>'unit_price')::numeric, 0), 2) as u_price,
-                 greatest(coalesce((o.value->>'qty')::numeric, 1)::integer, 1) as l_qty
-          from (select value, ordinality - 1 as idx
-                from jsonb_array_elements(v_lines) with ordinality) o
-          where public.promo_scope_matches(v_candidate.scope, v_candidate.id, o.value)
-          order by u_price asc, o.idx asc
-        loop
-          if v_rem_reward <= 0 then exit; end if;
-          v_take_qty := least(v_rem_reward, v_unit_row.l_qty);
-          if v_reward_type = 'free' or v_reward_val >= 100 then
-            v_unit_disc := round((v_unit_row.u_price * v_take_qty)::numeric, 2);
-          elsif v_reward_type = 'percent' then
-            v_unit_disc := round((v_unit_row.u_price * least(v_reward_val, 100) / 100 * v_take_qty)::numeric, 2);
-          else
-            v_unit_disc := least(v_unit_row.u_price * v_take_qty, v_reward_val * v_take_qty);
-          end if;
-          v_unit_disc := least(v_unit_disc, round((v_unit_row.u_price * v_take_qty)::numeric, 2));
-
-          v_cand_discount := v_cand_discount + v_unit_disc;
-          v_cand_line_discounts[v_unit_row.idx + 1] := v_cand_line_discounts[v_unit_row.idx + 1] + v_unit_disc;
-          v_cand_line_rewards[v_unit_row.idx + 1] := v_cand_line_rewards[v_unit_row.idx + 1] + v_take_qty;
-          v_rem_reward := v_rem_reward - v_take_qty;
-        end loop;
-
-        if v_candidate.maximum_discount_amount is not null then
-          v_cand_discount := least(v_cand_discount, round(v_candidate.maximum_discount_amount::numeric, 2));
-        end if;
-        v_cand_discount := least(greatest(v_cand_discount, 0), v_subtotal);
-      end if;
-
-    elsif v_cand_offer_type = 'cheapest_item' then
-      v_min_qty := greatest(coalesce(v_candidate.min_quantity, v_candidate.buy_x, 3), 1);
-      v_repeat := coalesce(v_candidate.repeat_offer, false);
-
-      -- Count total eligible units in scope
-      v_elig_qty := 0;
-      for v_line in select * from jsonb_array_elements(v_lines)
-      loop
-        if public.promo_scope_matches(v_candidate.scope, v_candidate.id, v_line) then
-          v_elig_qty := v_elig_qty + coalesce((v_line->>'qty')::integer, 1);
-        end if;
-      end loop;
-
-      if v_elig_qty >= v_min_qty then
-        if v_repeat then
-          v_reward_qty := floor(v_elig_qty / v_min_qty);
-        else
-          v_reward_qty := 1;
-        end if;
-        v_reward_qty := least(v_reward_qty, v_elig_qty);
-
-        v_reward_type := coalesce(v_candidate.reward_type, case when v_candidate.discount_type = 'fixed' then 'fixed' when v_candidate.value >= 100 then 'free' else 'percent' end);
-        v_reward_val := coalesce(v_candidate.reward_value, v_candidate.value, 100);
-
-        v_rem_reward := v_reward_qty;
-        for v_unit_row in
-          select o.idx, o.value,
-                 round(coalesce((o.value->>'unit_price')::numeric, 0), 2) as u_price,
-                 greatest(coalesce((o.value->>'qty')::numeric, 1)::integer, 1) as l_qty
-          from (select value, ordinality - 1 as idx
-                from jsonb_array_elements(v_lines) with ordinality) o
-          where public.promo_scope_matches(v_candidate.scope, v_candidate.id, o.value)
-          order by u_price asc, o.idx asc
-        loop
-          if v_rem_reward <= 0 then exit; end if;
-          v_take_qty := least(v_rem_reward, v_unit_row.l_qty);
-          if v_reward_type = 'free' or (v_reward_type = 'percent' and v_reward_val >= 100) or (v_candidate.discount_type = 'percent' and v_candidate.value >= 100) then
-            v_unit_disc := round((v_unit_row.u_price * v_take_qty)::numeric, 2);
-          elsif v_reward_type = 'percent' or (v_reward_type is null and v_candidate.discount_type = 'percent') then
-            v_unit_disc := round((v_unit_row.u_price * least(v_reward_val, 100) / 100 * v_take_qty)::numeric, 2);
-          else
-            v_unit_disc := least(v_unit_row.u_price * v_take_qty, v_reward_val * v_take_qty);
-          end if;
-          v_unit_disc := least(v_unit_disc, round((v_unit_row.u_price * v_take_qty)::numeric, 2));
-
-          v_cand_discount := v_cand_discount + v_unit_disc;
-          v_cand_line_discounts[v_unit_row.idx + 1] := v_cand_line_discounts[v_unit_row.idx + 1] + v_unit_disc;
-          v_cand_line_rewards[v_unit_row.idx + 1] := v_cand_line_rewards[v_unit_row.idx + 1] + v_take_qty;
-          v_rem_reward := v_rem_reward - v_take_qty;
-        end loop;
-
-        if v_candidate.maximum_discount_amount is not null then
-          v_cand_discount := least(v_cand_discount, round(v_candidate.maximum_discount_amount::numeric, 2));
-        end if;
-        v_cand_discount := least(greatest(v_cand_discount, 0), v_subtotal);
-      end if;
-    end if;
+    -- Evaluate candidate cleanly with isolated state
+    v_eval := public.evaluate_promotion_candidate(v_candidate, v_lines, v_subtotal);
+    v_cand_discount := coalesce((v_eval->>'discount')::numeric, 0);
 
     -- Non-stacking rule: best saving wins across overlapping promotions
     if v_promo.id is null or v_cand_discount > v_auto_discount then
@@ -406,19 +537,25 @@ begin
       v_auto_id := v_candidate.id;
       v_auto_name := coalesce(nullif(v_candidate.name_en, ''), v_candidate.name_ar);
       v_auto_stack := v_candidate.stackable;
-      v_auto_rule_type := v_cand_offer_type;
-      v_auto_buy_x := v_candidate.buy_x;
-      v_auto_get_y := v_candidate.get_y;
-      v_auto_reward_qty := v_reward_qty;
-      v_auto_line_discounts := v_cand_line_discounts;
-      v_auto_line_rewards := v_cand_line_rewards;
+      v_auto_rule_type := v_eval->>'offer_type';
+      v_auto_buy_x := (v_eval->>'buy_x')::integer;
+      v_auto_get_y := (v_eval->>'get_y')::integer;
+      v_auto_reward_qty := (v_eval->>'reward_qty')::integer;
+
+      select coalesce(array_agg(elem::numeric), '{}'::numeric[])
+        into v_auto_line_discounts
+        from jsonb_array_elements_text(v_eval->'line_discounts') as elem;
+
+      select coalesce(array_agg(elem::integer), '{}'::integer[])
+        into v_auto_line_rewards
+        from jsonb_array_elements_text(v_eval->'line_rewards') as elem;
     end if;
   end loop;
 
   -- ── 2. Promo Code / Coupon Mode ───────────────────────────────────────────
   if v_code is not null then
     select * into v_coupon_promo from public.promotions
-    where mode = 'coupon' and upper(btrim(code)) = v_code;
+    where mode = 'coupon' and upper(regexp_replace(btrim(code), '\s+', '', 'g')) = v_code;
 
     if found then
       v_coupon_promo_matched := true;
@@ -460,27 +597,18 @@ begin
         raise exception 'Coupon % does not apply to this cart', v_code using errcode = 'check_violation';
       end if;
 
-      if v_coupon_promo.scope = 'store' then
-        v_eligible := v_subtotal;
-      else
-        v_eligible := 0;
-        for v_line in select * from jsonb_array_elements(v_lines)
-        loop
-          if public.promo_scope_matches(v_coupon_promo.scope, v_coupon_promo.id, v_line) then
-            v_eligible := v_eligible + round(coalesce((v_line->>'line_total')::numeric, 0), 2);
-          end if;
-        end loop;
-      end if;
+      -- Evaluate coupon promo using the candidate evaluator (supports standard, bxgy, and cheapest_item)
+      v_eval := public.evaluate_promotion_candidate(v_coupon_promo, v_lines, v_subtotal);
+      v_coupon_discount := coalesce((v_eval->>'discount')::numeric, 0);
 
-      if v_coupon_promo.discount_type = 'percent' then
-        v_coupon_discount := round((v_eligible * least(v_coupon_promo.value, 100) / 100)::numeric, 2);
-        if v_coupon_promo.maximum_discount_amount is not null then
-          v_coupon_discount := least(v_coupon_discount, round(v_coupon_promo.maximum_discount_amount::numeric, 2));
-        end if;
-      else
-        v_coupon_discount := least(round(v_coupon_promo.value::numeric, 2), v_eligible);
-      end if;
-      v_coupon_discount := least(greatest(v_coupon_discount, 0), v_subtotal);
+      select coalesce(array_agg(elem::numeric), '{}'::numeric[])
+        into v_coupon_line_discounts
+        from jsonb_array_elements_text(v_eval->'line_discounts') as elem;
+
+      select coalesce(array_agg(elem::integer), '{}'::integer[])
+        into v_coupon_line_rewards
+        from jsonb_array_elements_text(v_eval->'line_rewards') as elem;
+
       v_coupon_stack := v_coupon_promo.stackable;
 
     else
@@ -580,6 +708,8 @@ begin
     else
       v_coupon_discount := 0;
       v_coupon_free_ship := false;
+      v_coupon_line_discounts := array_fill(0::numeric, array[v_count]);
+      v_coupon_line_rewards := array_fill(0::integer, array[v_count]);
       v_goods_discount := v_auto_discount;
       v_code_applied := false;
     end if;
@@ -646,32 +776,11 @@ begin
 
   if v_code_applied and v_coupon_discount > 0 then
     if v_coupon_promo_matched then
-      select coalesce(sum(round(coalesce((l.value->>'line_total')::numeric, 0), 2)), 0)
-        into v_base
-      from jsonb_array_elements(v_lines) as l(value)
-      where public.promo_scope_matches(v_coupon_promo.scope, v_coupon_promo.id, l.value);
-      select coalesce(max(o.idx), -1) into v_last_elig
-      from (select value, ordinality - 1 as idx
-            from jsonb_array_elements(v_lines) with ordinality) o
-      where public.promo_scope_matches(v_coupon_promo.scope, v_coupon_promo.id, o.value);
-      v_rem := v_coupon_discount;
       for v_item in
-        select value, ordinality - 1 as idx
+        select ordinality - 1 as idx
         from jsonb_array_elements(v_lines) with ordinality
       loop
-        if not public.promo_scope_matches(v_coupon_promo.scope, v_coupon_promo.id, v_item.value) then
-          continue;
-        end if;
-        v_line_total := round(coalesce((v_item.value->>'line_total')::numeric, 0), 2);
-        if v_item.idx = v_last_elig then
-          v_share := round(v_rem::numeric, 2);
-        elsif v_base > 0 then
-          v_share := round((v_coupon_discount * v_line_total / v_base)::numeric, 2);
-          v_rem := v_rem - v_share;
-        else
-          v_share := 0;
-        end if;
-        v_shares[v_item.idx + 1] := v_shares[v_item.idx + 1] + v_share;
+        v_shares[v_item.idx + 1] := v_shares[v_item.idx + 1] + coalesce(v_coupon_line_discounts[v_item.idx + 1], 0);
       end loop;
     else
       select coalesce(sum(round(coalesce((l.value->>'line_total')::numeric, 0), 2)), 0)
@@ -720,7 +829,7 @@ begin
       'unit_price', round(coalesce((v_item.value->>'unit_price')::numeric, 0), 2),
       'line_total', v_line_total,
       'discounted_unit_price', v_line_disc,
-      'rewarded_qty', coalesce(v_auto_line_rewards[v_item.idx + 1], 0),
+      'rewarded_qty', coalesce(v_auto_line_rewards[v_item.idx + 1], 0) + coalesce(v_coupon_line_rewards[v_item.idx + 1], 0),
       'discount_amount', v_share
     );
   end loop;
@@ -749,3 +858,5 @@ begin
   );
 end;
 $$;
+
+grant execute on function public.evaluate_order_pricing_channel to authenticated, anon;

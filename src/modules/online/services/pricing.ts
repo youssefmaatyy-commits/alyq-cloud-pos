@@ -777,10 +777,25 @@ export function evaluatePromotionAgainstLines(
         });
       }
 
+      const rawDiscount = totalDiscount;
       if (promotion.maximum_discount_amount && promotion.maximum_discount_amount > 0) {
         totalDiscount = Math.min(totalDiscount, round2(promotion.maximum_discount_amount));
       }
       totalDiscount = Math.min(Math.max(totalDiscount, 0), subtotal);
+
+      if (totalDiscount < rawDiscount && rawDiscount > 0) {
+        let remainder = totalDiscount;
+        const discIdx = eligibleIndices.filter((idx) => (lineDiscounts[idx] ?? 0) > 0);
+        discIdx.forEach((idx, k) => {
+          if (k < discIdx.length - 1) {
+            const share = round2((totalDiscount * lineDiscounts[idx]) / rawDiscount);
+            lineDiscounts[idx] = share;
+            remainder = round2(remainder - share);
+          } else {
+            lineDiscounts[idx] = round2(remainder);
+          }
+        });
+      }
     }
   } else if (offerType === "cheapest_item") {
     const minQty = Math.max(promotion.min_quantity ?? promotion.buy_x ?? 3, 1);
@@ -836,10 +851,25 @@ export function evaluatePromotionAgainstLines(
         });
       }
 
+      const rawDiscount = totalDiscount;
       if (promotion.maximum_discount_amount && promotion.maximum_discount_amount > 0) {
         totalDiscount = Math.min(totalDiscount, round2(promotion.maximum_discount_amount));
       }
       totalDiscount = Math.min(Math.max(totalDiscount, 0), subtotal);
+
+      if (totalDiscount < rawDiscount && rawDiscount > 0) {
+        let remainder = totalDiscount;
+        const discIdx = eligibleIndices.filter((idx) => (lineDiscounts[idx] ?? 0) > 0);
+        discIdx.forEach((idx, k) => {
+          if (k < discIdx.length - 1) {
+            const share = round2((totalDiscount * lineDiscounts[idx]) / rawDiscount);
+            lineDiscounts[idx] = share;
+            remainder = round2(remainder - share);
+          } else {
+            lineDiscounts[idx] = round2(remainder);
+          }
+        });
+      }
     }
   }
 
@@ -1067,6 +1097,7 @@ export function evaluateCartPricing(input: CartPricingInput): CartPricingResult 
   let promoStackable = false;
   let appliedCoupon: Coupon | null = null;
   let appliedCouponPromo: Promotion | null = null;
+  let evalCoupon: PromotionEvaluationResult | null = null;
   if (input.promoCode) {
     code = normalizeCouponCode(input.promoCode);
     if (!code) {
@@ -1111,7 +1142,7 @@ export function evaluateCartPricing(input: CartPricingInput): CartPricingResult 
       if (!promotionApplies(couponPromo, targets, lines)) {
         return { ok: false, reason: "not_applicable", message: `Coupon ${code} does not apply to this cart` };
       }
-      const evalCoupon = evaluatePromotionAgainstLines(couponPromo, targets, lines, subtotal);
+      evalCoupon = evaluatePromotionAgainstLines(couponPromo, targets, lines, subtotal);
       promoDiscount = evalCoupon ? evalCoupon.discount : 0;
       promoFreeShipping = false;
       promoStackable = Boolean(couponPromo.stackable);
@@ -1286,22 +1317,34 @@ export function evaluateCartPricing(input: CartPricingInput): CartPricingResult 
       spread(autoDiscount, autoEligible);
     }
   }
-  if (promoDiscount > 0) spread(promoDiscount, codeEligible);
+  if (promoDiscount > 0) {
+    if (appliedCouponPromo && evalCoupon && (evalCoupon.rule_type === "bxgy" || evalCoupon.rule_type === "cheapest_item")) {
+      evalCoupon.lineDiscounts.forEach((disc, i) => {
+        shares[i] = round2((shares[i] ?? 0) + disc);
+      });
+    } else {
+      spread(promoDiscount, codeEligible);
+    }
+  }
 
   const priced: EvaluatedCartLine[] = lines.map((line, index) => {
     const lineShare = Math.max(shares[index] ?? 0, 0);
     const discounted = round2(
       Math.max(line.line_total - lineShare, 0) / Math.max(line.qty, 1),
     );
-    const rewardedQty = auto?.evaluation?.lineRewardedQty?.[index] ?? 0;
-    const isCovered = (autoEligible[index] && autoDiscount > 0) || lineShare > 0 || rewardedQty > 0;
+    const autoRewarded = auto?.evaluation?.lineRewardedQty?.[index] ?? 0;
+    const couponRewarded = (appliedCouponPromo && evalCoupon) ? (evalCoupon.lineRewardedQty?.[index] ?? 0) : 0;
+    const rewardedQty = autoRewarded + couponRewarded;
+    const isCovered = (autoEligible[index] && autoDiscount > 0) || (codeEligible[index] && promoDiscount > 0) || lineShare > 0 || rewardedQty > 0;
+    const promoId = autoId ?? (promoDiscount > 0 && appliedCouponPromo ? appliedCouponPromo.id : null);
+    const promoName = autoName ?? (promoDiscount > 0 && appliedCouponPromo ? (appliedCouponPromo.name_en || appliedCouponPromo.name_ar) : null);
     return {
       ...line,
       discounted_unit_price: discounted,
       rewarded_qty: rewardedQty,
       discount_amount: lineShare,
-      promotion_id: isCovered ? autoId : null,
-      promotion_name: isCovered ? autoName : null,
+      promotion_id: isCovered ? promoId : null,
+      promotion_name: isCovered ? promoName : null,
       rewarded_units: rewardedQty,
     };
   });

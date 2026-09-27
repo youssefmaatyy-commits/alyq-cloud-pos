@@ -1793,6 +1793,18 @@ export class SupabaseOnlineRepository
       if (mode === "coupon" && (!code || !/^[A-Z0-9_-]{2,30}$/.test(code))) {
         throw new OnlineError("db", "A valid coupon code is required for coupon mode", { field: "code" });
       }
+      if (mode === "coupon" && code) {
+        const { data: dup } = await client
+          .from("promotions")
+          .select("id")
+          .eq("mode", "coupon")
+          .eq("code", code)
+          .neq("id", draft.id ?? "00000000-0000-0000-0000-000000000000")
+          .maybeSingle();
+        if (dup) {
+          throw new OnlineError("db", "A coupon with this code already exists", { field: "code" });
+        }
+      }
       const offerType = draft.offer_type ?? draft.rule_type ?? "standard";
       const payload = {
         ...(draft.id ? { id: draft.id } : {}),

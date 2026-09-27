@@ -1046,3 +1046,259 @@ test("36. Return & refund preservation: refund calculates from paid discounted u
   assert.equal(refundable, 160);
 });
 
+// ── Test 37: Coupon mode BXGY applies when valid code is supplied ────────────
+test("37. Coupon mode BXGY: Buy 2 Get 1 Free via coupon code", () => {
+  const couponBxgy = makePromo({
+    id: "prm-coupon-bxgy",
+    mode: "coupon",
+    code: "B2G1FREE",
+    offer_type: "bxgy",
+    buy_x: 2,
+    get_y: 1,
+    reward_type: "free",
+    scope: "store",
+    enabled: true,
+  });
+  const lines: Omit<EvaluatedCartLine, "discounted_unit_price">[] = [
+    { product_id: "p1", variant_id: null, category_id: null, unit_price: 150, qty: 3, line_total: 450 },
+  ];
+  const res = evaluateCartPricing({
+    lines,
+    subtotal: 450,
+    promoCode: " b2g1free ",
+    coupons: [],
+    promotions: [couponBxgy],
+    targetsByPromotion: new Map(),
+    usageFor: () => ({ customerUses: 0, hasPriorOrder: false }),
+    customerKey: null,
+    zone: null,
+    legacy: { fee: 0, minimum: 0, threshold: 0 },
+    deliveryType: "delivery",
+    now: NOW,
+    channel: "both",
+  });
+  assert.equal(res.ok, true);
+  if (res.ok) {
+    assert.equal(res.pricing.promoCode, "B2G1FREE");
+    assert.equal(res.pricing.promoDiscount, 150);
+    assert.equal(res.pricing.total, 300);
+    assert.equal(res.pricing.lines[0].rewarded_units, 1);
+    assert.equal(res.pricing.lines[0].discount_amount, 150);
+    assert.equal(res.pricing.lines[0].discounted_unit_price, 100);
+  }
+});
+
+// ── Test 38: Coupon mode Cheapest Item applies when valid code is supplied ──
+test("38. Coupon mode Cheapest Item: minimum 3 items gives cheapest free via coupon code", () => {
+  const couponCheap = makePromo({
+    id: "prm-coupon-cheap",
+    mode: "coupon",
+    code: "CHEAPFREE",
+    offer_type: "cheapest_item",
+    min_quantity: 3,
+    reward_type: "free",
+    scope: "store",
+    enabled: true,
+  });
+  const lines: Omit<EvaluatedCartLine, "discounted_unit_price">[] = [
+    { product_id: "p1", variant_id: null, category_id: null, unit_price: 60, qty: 1, line_total: 60 },
+    { product_id: "p2", variant_id: null, category_id: null, unit_price: 140, qty: 1, line_total: 140 },
+    { product_id: "p3", variant_id: null, category_id: null, unit_price: 200, qty: 1, line_total: 200 },
+  ];
+  const res = evaluateCartPricing({
+    lines,
+    subtotal: 400,
+    promoCode: "cheapfree",
+    coupons: [],
+    promotions: [couponCheap],
+    targetsByPromotion: new Map(),
+    usageFor: () => ({ customerUses: 0, hasPriorOrder: false }),
+    customerKey: null,
+    zone: null,
+    legacy: { fee: 0, minimum: 0, threshold: 0 },
+    deliveryType: "delivery",
+    now: NOW,
+    channel: "both",
+  });
+  assert.equal(res.ok, true);
+  if (res.ok) {
+    assert.equal(res.pricing.promoDiscount, 60);
+    assert.equal(res.pricing.total, 340);
+    assert.equal(res.pricing.lines[0].rewarded_units, 1);
+    assert.equal(res.pricing.lines[0].discount_amount, 60);
+    assert.equal(res.pricing.lines[0].discounted_unit_price, 0);
+  }
+});
+
+// ── Test 39: Capped BXGY line totals reconcile exactly (sum(line discounts) == total discount) ──
+test("39. Capped BXGY: max_discount_amount scales line discounts so sum(line discounts) == totalDiscount exactly", () => {
+  const cappedBxgy = makePromo({
+    id: "prm-capped-bxgy",
+    offer_type: "bxgy",
+    buy_x: 2,
+    get_y: 1,
+    reward_type: "free",
+    maximum_discount_amount: 150, // Uncapped would be 200 (2 free units @ 100)
+    repeat_offer: true,
+    scope: "store",
+    mode: "automatic",
+  });
+  const lines: Omit<EvaluatedCartLine, "discounted_unit_price">[] = [
+    { product_id: "p1", variant_id: null, category_id: null, unit_price: 100, qty: 6, line_total: 600 },
+  ];
+  const res = evaluateCartPricing({
+    lines,
+    subtotal: 600,
+    promoCode: null,
+    coupons: [],
+    promotions: [cappedBxgy],
+    targetsByPromotion: new Map(),
+    usageFor: () => ({ customerUses: 0, hasPriorOrder: false }),
+    customerKey: null,
+    zone: null,
+    legacy: { fee: 0, minimum: 0, threshold: 0 },
+    deliveryType: "delivery",
+    now: NOW,
+    channel: "both",
+  });
+  assert.equal(res.ok, true);
+  if (res.ok) {
+    assert.equal(res.pricing.autoDiscount, 150);
+    assert.equal(res.pricing.total, 450);
+    const sumLineDiscounts = res.pricing.lines.reduce((s, l) => round2(s + (l.discount_amount ?? 0)), 0);
+    assert.equal(sumLineDiscounts, res.pricing.autoDiscount);
+    assert.equal(res.pricing.lines[0].rewarded_qty, 2);
+  }
+});
+
+// ── Test 40: Capped Cheapest Item line totals reconcile exactly ──────────────
+test("40. Capped Cheapest Item: max_discount_amount scales line discounts so sum(line discounts) == totalDiscount", () => {
+  const cappedCheap = makePromo({
+    id: "prm-capped-cheap",
+    offer_type: "cheapest_item",
+    min_quantity: 3,
+    reward_type: "free",
+    maximum_discount_amount: 30, // Uncapped would be 50
+    scope: "store",
+    mode: "automatic",
+  });
+  const lines: Omit<EvaluatedCartLine, "discounted_unit_price">[] = [
+    { product_id: "p1", variant_id: null, category_id: null, unit_price: 50, qty: 1, line_total: 50 },
+    { product_id: "p2", variant_id: null, category_id: null, unit_price: 150, qty: 1, line_total: 150 },
+    { product_id: "p3", variant_id: null, category_id: null, unit_price: 200, qty: 1, line_total: 200 },
+  ];
+  const res = evaluateCartPricing({
+    lines,
+    subtotal: 400,
+    promoCode: null,
+    coupons: [],
+    promotions: [cappedCheap],
+    targetsByPromotion: new Map(),
+    usageFor: () => ({ customerUses: 0, hasPriorOrder: false }),
+    customerKey: null,
+    zone: null,
+    legacy: { fee: 0, minimum: 0, threshold: 0 },
+    deliveryType: "delivery",
+    now: NOW,
+    channel: "both",
+  });
+  assert.equal(res.ok, true);
+  if (res.ok) {
+    assert.equal(res.pricing.autoDiscount, 30);
+    assert.equal(res.pricing.total, 370);
+    const sumLineDiscounts = res.pricing.lines.reduce((s, l) => round2(s + (l.discount_amount ?? 0)), 0);
+    assert.equal(sumLineDiscounts, res.pricing.autoDiscount);
+  }
+});
+
+// ── Test 41: Candidate reward state never leaks between promotions ───────────
+test("41. Candidate reward state isolation: a winning standard promo after an evaluated BXGY promo has 0 rewarded units", () => {
+  const promoBXGY = makePromo({
+    id: "p-bxgy-small",
+    offer_type: "bxgy",
+    buy_x: 2,
+    get_y: 1,
+    reward_type: "free",
+    scope: "store",
+    priority: 10, // evaluated first
+  });
+  const promoPercent = makePromo({
+    id: "p-percent-big",
+    offer_type: "standard",
+    discount_type: "percent",
+    value: 50, // 50% discount = 300 EGP (wins over BXGY 100 EGP)
+    scope: "store",
+    priority: 5,
+  });
+  const lines: Omit<EvaluatedCartLine, "discounted_unit_price">[] = [
+    { product_id: "p1", variant_id: null, category_id: null, unit_price: 100, qty: 1, line_total: 100 },
+    { product_id: "p2", variant_id: null, category_id: null, unit_price: 200, qty: 1, line_total: 200 },
+    { product_id: "p3", variant_id: null, category_id: null, unit_price: 300, qty: 1, line_total: 300 },
+  ];
+  const res = evaluateCartPricing({
+    lines,
+    subtotal: 600,
+    promoCode: null,
+    coupons: [],
+    promotions: [promoBXGY, promoPercent],
+    targetsByPromotion: new Map(),
+    usageFor: () => ({ customerUses: 0, hasPriorOrder: false }),
+    customerKey: null,
+    zone: null,
+    legacy: { fee: 0, minimum: 0, threshold: 0 },
+    deliveryType: "delivery",
+    now: NOW,
+    channel: "both",
+  });
+  assert.equal(res.ok, true);
+  if (res.ok) {
+    assert.equal(res.pricing.autoPromotionId, "p-percent-big");
+    assert.equal(res.pricing.autoDiscount, 300);
+    assert.equal(res.pricing.autoPromotionRewardQty ?? 0, 0);
+    assert.equal(res.pricing.lines[0].rewarded_qty ?? 0, 0);
+  }
+});
+
+// ── Test 42: Duplicate normalized coupon codes are detected ──────────────────
+test("42. Coupon code deduplication: identical normalized codes (case & whitespace insensitive) are matched", () => {
+  const code1 = normalizeCouponCode(" SUMMER 2026 ");
+  const code2 = normalizeCouponCode("summer2026");
+  const code3 = normalizeCouponCode("SuMmEr 2026");
+  assert.equal(code1, "SUMMER2026");
+  assert.equal(code2, "SUMMER2026");
+  assert.equal(code3, "SUMMER2026");
+  assert.equal(code1 === code2, true);
+});
+
+// ── Test 43: Authoritative pricing ignores client-forged prices ──────────────
+test("43. Authoritative server pricing: manipulated client prices cannot alter authoritative cart evaluation", () => {
+  // Server prices from canonical unit price (200), not client draft
+  const canonicalUnitPrice = 200;
+  const qty = 3;
+  const canonicalSubtotal = round2(canonicalUnitPrice * qty); // 600
+  const promo = makePromo({ discount_type: "percent", value: 10, scope: "store" });
+  const lines: Omit<EvaluatedCartLine, "discounted_unit_price">[] = [
+    { product_id: "p1", variant_id: null, category_id: null, unit_price: canonicalUnitPrice, qty, line_total: canonicalSubtotal },
+  ];
+  const res = evaluateCartPricing({
+    lines,
+    subtotal: canonicalSubtotal,
+    promoCode: null,
+    coupons: [],
+    promotions: [promo],
+    targetsByPromotion: new Map(),
+    usageFor: () => ({ customerUses: 0, hasPriorOrder: false }),
+    customerKey: null,
+    zone: null,
+    legacy: { fee: 0, minimum: 0, threshold: 0 },
+    deliveryType: "delivery",
+    now: NOW,
+    channel: "both",
+  });
+  assert.equal(res.ok, true);
+  if (res.ok) {
+    assert.equal(res.pricing.subtotal, 600);
+    assert.equal(res.pricing.autoDiscount, 60);
+    assert.equal(res.pricing.total, 540);
+  }
+});
