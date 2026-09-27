@@ -125,11 +125,14 @@ export const ONLINE_ERROR_CODES = [
   "settings_invalid",
   /**
    * PostgREST 42501 — RLS's `with check (public.can('…'))` rejected the write
-   * itself, distinct from the client-side gate that hid the button. Before
-   * this mapping, an admin whose session or custom role had drifted out of
-   * sync with the server's own capability computation saw the bare `db`
-   * text and nothing else, indistinguishable from an actual schema defect —
-   * e.g. delivery-zone saves (0049's `delivery_zones_update_managers`).
+   * itself, distinct from the client-side gate that hid the button. Not
+   * auto-detected by `toOnlineError` (see below: the same 42501 means
+   * something different on the anonymous storefront than on an admin
+   * screen) — admin write handlers that are close enough to know which one
+   * they are construct it explicitly, e.g. `DeliveryZonesPage`'s save/delete
+   * catch blocks, for an admin whose session or custom role has drifted out
+   * of sync with the server's own capability computation (0049's
+   * `delivery_zones_update_managers`).
    */
   "forbidden",
   "db",
@@ -381,21 +384,13 @@ export function toOnlineError(error: unknown): OnlineError {
   if (/cannot be (released|converted)/i.test(message)) {
     return new OnlineError("workflow_refused", message);
   }
-  // PostgREST 42501: an RLS `with check` (or plain `using`) rejected the row —
-  // the server's own `public.can('…')` disagreed with whatever let the button
-  // render client-side (a stale session, a custom role the server no longer
-  // grants that capability to). This used to fall through to the bare `db`
-  // code, indistinguishable from a genuine schema defect; an admin who hits
-  // it needs "you're not allowed", not "the database refused the request".
-  if (
-    described.code === "42501" ||
-    /row-level security policy/i.test(message) ||
-    /permission denied for (table|function|relation)/i.test(message)
-  ) {
-    return new OnlineError("forbidden", message, {
-      detail: { server_code: described.code, server_details: described.details, server_hint: described.hint },
-    });
-  }
+  // A PostgREST 42501 is deliberately NOT reclassified here: this function is
+  // shared by the anonymous storefront (a permission gap there is the shop's
+  // own RLS/grants, not something a shopper did) and the admin screens (where
+  // it usually IS a stale session/role). `checkout.selftest.ts` pins the
+  // storefront's own case staying on the generic `db` text; `forbidden`
+  // (below) exists for callers close enough to the write to know which one
+  // they are — see `DeliveryZonesPage`'s save/delete handlers.
   // Nothing recognisable: hand the operator the server's own wording, code,
   // details and hint (the storefront itself only ever renders the friendly
   // `store.error.db` text) — never a stringified object.
@@ -406,6 +401,37 @@ export function toOnlineError(error: unknown): OnlineError {
       server_hint: described.hint,
     },
   });
+}
+
+/**
+ * `toOnlineError`, but for a caller that already knows it is an authenticated
+ * admin write — not the anonymous storefront, where a PostgREST 42501 is a
+ * misconfigured grant/policy on the shop's own side, not something naming
+ * "you don't have permission" would help a shopper act on. An admin write
+ * screen (delivery zones, promotions, website settings, …) is exactly the
+ * opposite: a 42501 there usually means the caller's session or custom role
+ * has drifted out of sync with the server's own `public.can('…')` check, and
+ * "you don't have permission — ask an admin" is the actionable answer.
+ *
+ * Kept separate from `toOnlineError` itself (rather than teaching it to
+ * recognise 42501 unconditionally) because the two callers need opposite
+ * wording for literally the same SQLSTATE — see `checkout.selftest.ts`'s
+ * "a permission refusal is reported as itself" for the storefront's case.
+ */
+export function toAdminWriteError(error: unknown): OnlineError {
+  const normalized = toOnlineError(error);
+  if (normalized.code !== "db") return normalized;
+  const described = describeThrown(error);
+  if (
+    described.code === "42501" ||
+    /row-level security policy/i.test(described.message) ||
+    /permission denied for (table|function|relation)/i.test(described.message)
+  ) {
+    return new OnlineError("forbidden", described.message, {
+      detail: { server_code: described.code, server_details: described.details, server_hint: described.hint },
+    });
+  }
+  return normalized;
 }
 
 // ── orders ──────────────────────────────────────────────────────────────────

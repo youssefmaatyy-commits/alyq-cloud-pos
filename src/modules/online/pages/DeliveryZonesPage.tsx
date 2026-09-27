@@ -31,7 +31,7 @@ import {
   useToast,
 } from "@/components/ui";
 import { getWebsiteRepository } from "../data";
-import { describeThrown, toOnlineError, type OnlineErrorCode } from "../data/repository";
+import { describeThrown, toAdminWriteError, toOnlineError, type OnlineErrorCode } from "../data/repository";
 import type { DeliveryZone } from "../types";
 import { storefrontInvalidation } from "../hooks/storefrontInvalidation";
 
@@ -82,7 +82,13 @@ export function DeliveryZonesPage() {
       toast.success(t("online.zones.saved"));
       storefrontInvalidation.notify();
     } catch (caught) {
-      const normalized = toOnlineError(caught);
+      // `toAdminWriteError` (not the shared `toOnlineError`): this screen
+      // knows it is an authenticated admin write, so a bare PostgREST 42501
+      // is upgraded from the generic "database refused the request" to
+      // "you don't have permission" — the actionable read for a session or
+      // custom role that has drifted out of sync with the server's own
+      // `manage_website` check (0049's `delivery_zones_update_managers`).
+      const normalized = toAdminWriteError(caught);
       // The admin only ever sees the friendly `online.error.<code>` text (never
       // raw SQL or a stringified object) — but when the database itself
       // rejected the write (a constraint, a stale schema, a permission gap)
@@ -112,7 +118,7 @@ export function DeliveryZonesPage() {
       storefrontInvalidation.notify();
       setConfirmDelete(null);
     } catch (caught) {
-      const normalized = toOnlineError(caught);
+      const normalized = toAdminWriteError(caught);
       const described = describeThrown(caught);
       console.error("[online.zones] delete failed", {
         code: normalized.code,

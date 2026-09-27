@@ -128,7 +128,7 @@ import {
 } from "../services/seo";
 import { fromDateTimeLocal, isWindowOpen, toDateTimeLocal } from "../services/datetime";
 import { buildOnlineOrderSheets } from "../services/onlineOrdersExport";
-import { OnlineError, toOnlineError } from "../data";
+import { OnlineError, toAdminWriteError, toOnlineError } from "../data";
 import { getDemoOnlineRepository, resetDemoOnlineRepository } from "../data/demoRepository";
 import { HOMEPAGE_SECTIONS } from "../types";
 import type {
@@ -2502,12 +2502,6 @@ test("every live checkout refusal lands on a customer-facing code (never bare db
     ["That colour and size does not belong to ALYQ-1001", "variant_mismatch"],
     ["Gold / 42 is no longer sold", "variant_mismatch"],
     ["Delivery zone is not available", "delivery_zone_unavailable"],
-    // Issue #2 (follow-up): an RLS `with check (public.can('manage_website'))`
-    // rejection (0049's delivery-zone policies, or any other admin write)
-    // used to fall through to the same bare `db` text as an actual schema
-    // defect — indistinguishable from each other and useless to an operator.
-    ['new row violates row-level security policy for table "delivery_zones"', "forbidden"],
-    ["permission denied for table delivery_zones", "forbidden"],
   ];
   for (const [text, expected] of cases) {
     const err = toOnlineError(new Error(text));
@@ -2518,18 +2512,45 @@ test("every live checkout refusal lands on a customer-facing code (never bare db
   assert.equal(minimum.detail.minimum, 1000, "the refusal carries the shop's number");
   const outside = toOnlineError(new Error("Delivery to القاهرة is not available"));
   assert.equal(outside.field, "address", "the customer is pointed at the address");
+});
+
+// Issue #2 (follow-up): an RLS `with check (public.can('manage_website'))`
+// rejection (0049's delivery-zone policies, or any other admin write) used
+// to fall through to the same bare `db` text as an actual schema defect —
+// indistinguishable from each other and useless to an operator. `toOnlineError`
+// itself must keep returning `db` for a bare 42501 (it is shared with the
+// anonymous storefront, where the same SQLSTATE means something else
+// entirely — a shop-side grant/policy gap, not something to tell a shopper
+// "you don't have permission" about); only `toAdminWriteError`, used by
+// admin write screens that already know which caller they are, upgrades it.
+test("toAdminWriteError names a 42501 write refusal for what it is, without changing the shared storefront classifier", () => {
+  const rlsError = new Error('new row violates row-level security policy for table "delivery_zones"') as Error & {
+    code: string;
+  };
+  rlsError.code = "42501";
+
+  assert.equal(toOnlineError(rlsError).code, "db",
+    "the shared classifier stays exactly as the storefront's own contract expects");
+  assert.equal(toAdminWriteError(rlsError).code, "forbidden",
+    "an admin write screen gets the actionable read instead");
 
   // Supabase hands back a `PostgrestError` PLAIN OBJECT, not an `Error`
   // instance — `code: "42501"` alone (no recognisable wording at all) must
-  // still classify as `forbidden`, the same way it would as a real thrown
-  // PostgrestError from `.upsert().select().single()`.
-  const rlsPlainObject = toOnlineError({
-    message: "new row violates row-level security policy for table \"delivery_zones\"",
+  // still classify as `forbidden` for the admin path.
+  const rlsPlainObject = toAdminWriteError({
+    message: "permission denied for table delivery_zones",
     code: "42501",
     details: null,
     hint: null,
   });
   assert.equal(rlsPlainObject.code, "forbidden", "a bare PostgREST 42501 is recognised by code alone");
+
+  // Anything `toOnlineError` already recognises by wording (a real domain
+  // refusal, not a permission gap) passes through `toAdminWriteError`
+  // completely unchanged — it only ever upgrades the generic `db` bucket.
+  const domainRefusal = toAdminWriteError(new Error("Delivery zone is not available"));
+  assert.equal(domainRefusal.code, "delivery_zone_unavailable",
+    "a recognised domain error is never reclassified as a permission refusal");
 });
 
 console.log("\nPhase 42 · the shop's own delivery rules, end to end in demo mode");
