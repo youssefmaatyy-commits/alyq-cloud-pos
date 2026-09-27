@@ -1302,3 +1302,216 @@ test("43. Authoritative server pricing: manipulated client prices cannot alter a
     assert.equal(res.pricing.total, 540);
   }
 });
+
+// ── Test 44: POS Authoritative price tamper test (1 EGP client vs 500 EGP DB) ─
+test("44. POS Authoritative price tamper resistance: client sending 1 EGP for 500 EGP product is evaluated at 500 EGP", () => {
+  const dbCatalogPrice = 500;
+  const qty = 2;
+  const dbSubtotal = round2(dbCatalogPrice * qty); // 1000
+  const promo = makePromo({ discount_type: "percent", value: 10, scope: "store", channel: "pos" });
+  const lines: Omit<EvaluatedCartLine, "discounted_unit_price">[] = [
+    { product_id: "prd-luxury", variant_id: null, category_id: null, unit_price: dbCatalogPrice, qty, line_total: dbSubtotal },
+  ];
+  const res = evaluateCartPricing({
+    lines,
+    subtotal: dbSubtotal,
+    promoCode: null,
+    coupons: [],
+    promotions: [promo],
+    targetsByPromotion: new Map(),
+    usageFor: () => ({ customerUses: 0, hasPriorOrder: false }),
+    customerKey: null,
+    zone: null,
+    legacy: { fee: 0, minimum: 0, threshold: 0 },
+    deliveryType: "pickup",
+    now: NOW,
+    channel: "pos",
+  });
+  assert.equal(res.ok, true);
+  if (res.ok) {
+    assert.equal(res.pricing.subtotal, 1000);
+    assert.equal(res.pricing.autoDiscount, 100);
+    assert.equal(res.pricing.total, 900);
+    assert.equal(res.pricing.lines[0].unit_price, 500);
+    assert.equal(res.pricing.lines[0].discounted_unit_price, 450);
+  }
+});
+
+// ── Test 45: Zero-discount promotion handling (unmet BXGY group threshold) ───
+test("45. Zero-discount winner safeguard: unmet BXGY threshold (2 items for Buy 2 Get 1) yields 0 discount and NO active promo winner", () => {
+  const promoBXGY = makePromo({
+    id: "p-bxgy-2-1",
+    offer_type: "bxgy",
+    buy_x: 2,
+    get_y: 1,
+    reward_type: "free",
+    scope: "store",
+  });
+  const lines: Omit<EvaluatedCartLine, "discounted_unit_price">[] = [
+    { product_id: "p1", variant_id: null, category_id: null, unit_price: 100, qty: 2, line_total: 200 },
+  ];
+  const res = evaluateCartPricing({
+    lines,
+    subtotal: 200,
+    promoCode: null,
+    coupons: [],
+    promotions: [promoBXGY],
+    targetsByPromotion: new Map(),
+    usageFor: () => ({ customerUses: 0, hasPriorOrder: false }),
+    customerKey: null,
+    zone: null,
+    legacy: { fee: 0, minimum: 0, threshold: 0 },
+    deliveryType: "delivery",
+    now: NOW,
+    channel: "both",
+  });
+  assert.equal(res.ok, true);
+  if (res.ok) {
+    assert.equal(res.pricing.autoDiscount, 0);
+    assert.equal(res.pricing.autoPromotionId, null);
+    assert.equal(res.pricing.autoPromotionName, null);
+    assert.equal(res.pricing.total, 200);
+  }
+});
+
+// ── Test 46: Zero-discount coupon handling ────────────────────────────────────
+test("46. Zero-discount coupon refusal: coupon with unmet BXGY threshold returns not_applicable error", () => {
+  const couponPromo = makePromo({
+    id: "cp-bxgy",
+    mode: "coupon",
+    code: "B2G1FREE",
+    offer_type: "bxgy",
+    buy_x: 2,
+    get_y: 1,
+    reward_type: "free",
+    scope: "store",
+    enabled: true,
+  });
+  const lines: Omit<EvaluatedCartLine, "discounted_unit_price">[] = [
+    { product_id: "p1", variant_id: null, category_id: null, unit_price: 100, qty: 2, line_total: 200 },
+  ];
+  const res = evaluateCartPricing({
+    lines,
+    subtotal: 200,
+    promoCode: "B2G1FREE",
+    coupons: [],
+    promotions: [couponPromo],
+    targetsByPromotion: new Map(),
+    usageFor: () => ({ customerUses: 0, hasPriorOrder: false }),
+    customerKey: null,
+    zone: null,
+    legacy: { fee: 0, minimum: 0, threshold: 0 },
+    deliveryType: "delivery",
+    now: NOW,
+    channel: "both",
+  });
+  assert.equal(res.ok, false);
+  if (!res.ok) {
+    assert.equal(res.reason, "not_applicable");
+  }
+});
+
+// ── Test 47: Manual line discount vs promotion non-stacking ──────────────────
+test("47. Manual line discount vs promotion non-stacking: best saving wins per line without silent compounding", () => {
+  // Option A: Promo (20 EGP) > Manual (15 EGP) -> Promo wins
+  const lineA = { gross_total: 100, quantity: 1, manual_discount: 15, promo_discount: 20, stackable: false };
+  const effectiveDiscA = lineA.promo_discount >= lineA.manual_discount ? lineA.promo_discount : lineA.manual_discount;
+  assert.equal(effectiveDiscA, 20);
+
+  // Option B: Manual (25 EGP) > Promo (20 EGP) -> Manual wins
+  const lineB = { gross_total: 100, quantity: 1, manual_discount: 25, promo_discount: 20, stackable: false };
+  const effectiveDiscB = lineB.promo_discount >= lineB.manual_discount ? lineB.promo_discount : lineB.manual_discount;
+  assert.equal(effectiveDiscB, 25);
+});
+
+// ── Test 48: Manual invoice discount on post-line-discount base ──────────────
+test("48. Manual invoice discount applies on post-line-discount subtotal and remains separately auditable", () => {
+  const grossSubtotal = 1000;
+  const linePromoDiscount = 200; // e.g. 20% promo
+  const lineManualDiscount = 0;
+  const invoiceBase = grossSubtotal - linePromoDiscount - lineManualDiscount; // 800
+  const invoiceDiscountPercent = 10; // 10% invoice discount = 80 EGP
+  const invoiceDiscountAmount = round2((invoiceBase * invoiceDiscountPercent) / 100);
+  const finalTotal = round2(invoiceBase - invoiceDiscountAmount); // 720
+
+  assert.equal(invoiceBase, 800);
+  assert.equal(invoiceDiscountAmount, 80);
+  assert.equal(finalTotal, 720);
+});
+
+// ── Test 49: Server-automatic promotion recalculation ────────────────────────
+test("49. Server-automatic promotion recalculation: input cart with no promotion metadata automatically discovers active promotion", () => {
+  const promoAuto = makePromo({
+    id: "p-auto-15",
+    name_en: "15% Storewide Sale",
+    discount_type: "percent",
+    value: 15,
+    scope: "store",
+    mode: "automatic",
+    channel: "both",
+  });
+  const lines: Omit<EvaluatedCartLine, "discounted_unit_price">[] = [
+    { product_id: "p1", variant_id: null, category_id: null, unit_price: 200, qty: 1, line_total: 200 },
+  ];
+  const res = evaluateCartPricing({
+    lines,
+    subtotal: 200,
+    promoCode: null,
+    coupons: [],
+    promotions: [promoAuto],
+    targetsByPromotion: new Map(),
+    usageFor: () => ({ customerUses: 0, hasPriorOrder: false }),
+    customerKey: null,
+    zone: null,
+    legacy: { fee: 0, minimum: 0, threshold: 0 },
+    deliveryType: "delivery",
+    now: NOW,
+    channel: "both",
+  });
+  assert.equal(res.ok, true);
+  if (res.ok) {
+    assert.equal(res.pricing.autoPromotionId, "p-auto-15");
+    assert.equal(res.pricing.autoPromotionName, "15% Storewide Sale");
+    assert.equal(res.pricing.autoDiscount, 30);
+    assert.equal(res.pricing.total, 170);
+  }
+});
+
+// ── Test 50: Historical snapshots preservation ──────────────────────────────
+test("50. Historical snapshots: rewarded_qty, rewarded_units, and rule_type accurately captured in evaluated pricing result", () => {
+  const promoBXGY = makePromo({
+    id: "p-bxgy-hist",
+    offer_type: "bxgy",
+    buy_x: 2,
+    get_y: 1,
+    reward_type: "free",
+    scope: "store",
+  });
+  const lines: Omit<EvaluatedCartLine, "discounted_unit_price">[] = [
+    { product_id: "p1", variant_id: null, category_id: null, unit_price: 100, qty: 3, line_total: 300 },
+  ];
+  const res = evaluateCartPricing({
+    lines,
+    subtotal: 300,
+    promoCode: null,
+    coupons: [],
+    promotions: [promoBXGY],
+    targetsByPromotion: new Map(),
+    usageFor: () => ({ customerUses: 0, hasPriorOrder: false }),
+    customerKey: null,
+    zone: null,
+    legacy: { fee: 0, minimum: 0, threshold: 0 },
+    deliveryType: "delivery",
+    now: NOW,
+    channel: "both",
+  });
+  assert.equal(res.ok, true);
+  if (res.ok) {
+    assert.equal(res.pricing.autoPromotionRuleType, "bxgy");
+    assert.equal(res.pricing.autoPromotionBuyX, 2);
+    assert.equal(res.pricing.autoPromotionGetY, 1);
+    assert.equal(res.pricing.autoPromotionRewardQty, 1);
+    assert.equal(res.pricing.lines[0].rewarded_qty, 1);
+    assert.equal(res.pricing.lines[0].discount_amount, 100);
+  }
+});

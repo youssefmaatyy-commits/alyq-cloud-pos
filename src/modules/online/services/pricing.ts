@@ -1144,6 +1144,9 @@ export function evaluateCartPricing(input: CartPricingInput): CartPricingResult 
       }
       evalCoupon = evaluatePromotionAgainstLines(couponPromo, targets, lines, subtotal);
       promoDiscount = evalCoupon ? evalCoupon.discount : 0;
+      if (promoDiscount <= 0) {
+        return { ok: false, reason: "not_applicable", message: `Coupon ${code} does not apply to this cart` };
+      }
       promoFreeShipping = false;
       promoStackable = Boolean(couponPromo.stackable);
       appliedCouponPromo = couponPromo;

@@ -14,7 +14,7 @@ import { getWebsiteRepository } from "@/modules/online/data";
 import { selectAutomaticPromotion } from "@/modules/online/services/pricing";
 import { getDemoShiftRepository } from "@/modules/shifts/data/demoRepository";
 import { safeStorage } from "@/modules/products/data/demoSeed";
-import { cartTotals, lineTotals, round2, validateDiscount } from "../services/posMath";
+import { round2, validateDiscount } from "../services/posMath";
 import type { SaleListQuery, SalesRepository } from "./repository";
 
 const SALES_KEY = "alyq.demo.sales.v1";
@@ -265,38 +265,66 @@ export class DemoSalesRepository implements SalesRepository {
           rewardedQty = autoPromoResult.evaluation?.lineRewardedQty?.[idx] ?? 0;
           item.automatic_promotion_id = autoPromoResult.promotion.id;
           item.automatic_promotion_name = autoPromoResult.promotion.name_en || autoPromoResult.promotion.name_ar;
-          item.automatic_discount_amount = lineDisc;
           item.rewarded_qty = rewardedQty;
           item.promotion_rule_type = autoPromoResult.promotion.offer_type ?? autoPromoResult.promotion.rule_type ?? "standard";
         }
-        item.unit_price = round2(Math.max((item.gross_total ?? 0) - lineDisc, 0) / item.quantity);
+
         const itemDiscount = {
           type: item.discount_type ?? "none",
           value: Number(item.discount_value ?? 0),
         } as const;
-        const calculated = lineTotals({
-          unit_price: item.unit_price,
-          qty: item.quantity,
-          base_price: official,
-          item_discount: itemDiscount,
-        });
-        item.line_total = calculated.net;
-        item.discount_amount = calculated.manualDiscount;
+
+        const manualDiscountAmount = itemDiscount.type === "percent"
+          ? round2(((item.gross_total ?? 0) * itemDiscount.value) / 100)
+          : itemDiscount.type === "fixed"
+          ? Math.min(item.gross_total ?? 0, itemDiscount.value)
+          : 0;
+
+        let effectivePromoDisc = 0;
+        let effectiveManualDisc = 0;
+        if (autoPromoResult && autoPromoResult.promotion.stackable) {
+          effectivePromoDisc = lineDisc;
+          effectiveManualDisc = Math.min((item.gross_total ?? 0) - effectivePromoDisc, manualDiscountAmount);
+        } else {
+          if (lineDisc >= manualDiscountAmount) {
+            effectivePromoDisc = lineDisc;
+            effectiveManualDisc = 0;
+            item.discount_type = "none";
+            item.discount_value = 0;
+          } else {
+            effectivePromoDisc = 0;
+            effectiveManualDisc = manualDiscountAmount;
+            item.rewarded_qty = 0;
+          }
+        }
+
+        item.unit_price = official;
+        item.automatic_discount_amount = effectivePromoDisc;
+        item.discount_amount = effectiveManualDisc;
+        item.line_total = round2((item.gross_total ?? 0) - effectivePromoDisc - effectiveManualDisc);
       }
 
       // ── authoritative totals: recomputed from catalog prices ──
       if (validateDiscount(input.discount_type, input.discount_value)) {
         throw new AppError("VALIDATION", "Invalid discount", "discount");
       }
-      const totals = cartTotals(
-        items.map((i) => ({
-          unit_price: i.unit_price,
-          qty: i.quantity,
-          base_price: (i.gross_total ?? (i.unit_price * i.quantity)) / (i.quantity || 1),
-          item_discount: { type: i.discount_type ?? "none", value: i.discount_value ?? 0 },
-        })),
-        { type: input.discount_type, value: input.discount_value },
-      );
+      const grossSubtotal = round2(items.reduce((s, i) => s + (i.gross_total ?? 0), 0));
+      const autoDiscountTotal = round2(items.reduce((s, i) => s + (i.automatic_discount_amount ?? 0), 0));
+      const itemDiscountTotal = round2(items.reduce((s, i) => s + (i.discount_amount ?? 0), 0));
+      const invoiceBase = Math.max(0, round2(grossSubtotal - autoDiscountTotal - itemDiscountTotal));
+      const invoiceDiscount = input.discount_type === "percent"
+        ? round2((invoiceBase * (input.discount_value ?? 0)) / 100)
+        : input.discount_type === "fixed"
+        ? Math.min(invoiceBase, round2(input.discount_value ?? 0))
+        : 0;
+      const finalTotal = Math.max(0, round2(invoiceBase - invoiceDiscount));
+      const totals = {
+        subtotal: grossSubtotal,
+        itemDiscountAmount: itemDiscountTotal,
+        invoiceDiscountAmount: invoiceDiscount,
+        discountAmount: round2(itemDiscountTotal + invoiceDiscount),
+        total: finalTotal,
+      };
 
       // ── payment rules (split payment: one or more payments) ──
       const now = nowIso();
