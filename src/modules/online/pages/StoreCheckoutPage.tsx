@@ -730,6 +730,12 @@ export function StoreCheckoutPage() {
                 const problem = problemsByLine.get(
                   `${entry.product.id}::${entry.variant?.id ?? ""}`,
                 );
+                const linePreview = shown?.lines.find(
+                  (candidate) =>
+                    candidate.product_id === entry.product.id &&
+                    (candidate.variant_id ?? null) === (entry.variant?.id ?? null),
+                );
+                const lineTotal = linePreview ? linePreview.line_total : entry.lineTotal;
                 return (
                   <li
                     key={`${entry.product.id}::${entry.variant?.id ?? ""}`}
@@ -744,6 +750,18 @@ export function StoreCheckoutPage() {
                           {entry.variantLabel}
                         </span>
                       ) : null}
+                      {linePreview?.promotion_name ? (
+                        <span className="mt-0.5 flex flex-wrap items-center gap-1 font-semibold text-emerald-700">
+                          <span className="rounded bg-emerald-50 px-1 py-0.2 text-[10px] border border-emerald-200">
+                            🏷️ {linePreview.promotion_name}
+                          </span>
+                          {linePreview.rewarded_units && linePreview.rewarded_units > 0 ? (
+                            <span className="rounded bg-emerald-100 px-1 py-0.2 text-[10px] text-emerald-900 border border-emerald-300">
+                              🎁 {t("online.promos.rewardedUnit")} ({linePreview.rewarded_units})
+                            </span>
+                          ) : null}
+                        </span>
+                      ) : null}
                       <span className="text-[var(--store-text-secondary)]">
                         {t("store.checkout.quantityTimes", { count: entry.quantity })}
                       </span>
@@ -753,7 +771,7 @@ export function StoreCheckoutPage() {
                         </span>
                       ) : null}
                     </span>
-                    <Money value={entry.lineTotal} className="shrink-0 font-black text-[var(--store-text-primary)]" />
+                    <Money value={lineTotal} className="shrink-0 font-black text-[var(--store-text-primary)]" />
                   </li>
                 );
               })}

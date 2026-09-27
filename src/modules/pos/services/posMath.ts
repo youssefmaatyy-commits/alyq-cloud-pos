@@ -31,38 +31,56 @@ export function cartSubtotal(lines: Pick<CartLine, "unit_price" | "qty">[]): num
 
 export interface LineTotals {
   gross: number;
+  promoDiscount: number;
+  manualDiscount: number;
   discount: number;
   net: number;
 }
 
-export function lineTotals(line: Pick<CartLine, "unit_price" | "qty"> & { item_discount?: CartDiscount }): LineTotals {
-  const gross = lineTotal(line.unit_price, line.qty);
+export function lineTotals(
+  line: Pick<CartLine, "unit_price" | "qty"> & { base_price?: number; item_discount?: CartDiscount },
+): LineTotals {
+  const basePrice = typeof line.base_price === "number" && line.base_price > 0 ? line.base_price : line.unit_price;
+  const gross = lineTotal(basePrice, line.qty);
+  const promoSubtotal = lineTotal(line.unit_price, line.qty);
+  const promoDiscount = Math.max(0, round2(gross - promoSubtotal));
   const itemDiscount = line.item_discount ?? { type: "none", value: 0 };
-  const discount = discountAmount(gross, itemDiscount.type, itemDiscount.value);
-  return { gross, discount, net: Math.max(0, round2(gross - discount)) };
+  const manualDiscount = discountAmount(promoSubtotal, itemDiscount.type, itemDiscount.value);
+  const discount = round2(promoDiscount + manualDiscount);
+  const net = Math.max(0, round2(promoSubtotal - manualDiscount));
+  return { gross, promoDiscount, manualDiscount, discount, net };
 }
 
 export interface CartTotals {
-  /** Gross/list-price subtotal, before any manual discounts. */
+  /** Gross/list-price subtotal, before any promotional or manual discounts. */
   subtotal: number;
+  /** Total discount from active promotions across all lines. */
+  promoDiscountAmount: number;
+  /** Total manual item-level discounts across all lines. */
   itemDiscountAmount: number;
+  /** Total manual invoice-level discount. */
   invoiceDiscountAmount: number;
-  /** Backward-compatible alias for total manual discount. */
+  /** Backward-compatible alias for total discount (promos + manual item + manual invoice). */
   discountAmount: number;
   total: number;
 }
 
-export function cartTotals(lines: (Pick<CartLine, "unit_price" | "qty"> & { item_discount?: CartDiscount })[], invoiceDiscount: CartDiscount): CartTotals {
+export function cartTotals(
+  lines: (Pick<CartLine, "unit_price" | "qty"> & { base_price?: number; item_discount?: CartDiscount })[],
+  invoiceDiscount: CartDiscount,
+): CartTotals {
   const subtotal = round2(lines.reduce((sum, line) => sum + lineTotals(line).gross, 0));
-  const itemDiscountAmount = round2(lines.reduce((sum, line) => sum + lineTotals(line).discount, 0));
-  const afterItems = Math.max(0, round2(subtotal - itemDiscountAmount));
+  const promoDiscountAmount = round2(lines.reduce((sum, line) => sum + lineTotals(line).promoDiscount, 0));
+  const itemDiscountAmount = round2(lines.reduce((sum, line) => sum + lineTotals(line).manualDiscount, 0));
+  const afterItems = Math.max(0, round2(subtotal - promoDiscountAmount - itemDiscountAmount));
   const invoiceDiscountAmount = discountAmount(afterItems, invoiceDiscount.type, invoiceDiscount.value);
   const total = Math.max(0, round2(afterItems - invoiceDiscountAmount));
   return {
     subtotal,
+    promoDiscountAmount,
     itemDiscountAmount,
     invoiceDiscountAmount,
-    discountAmount: round2(itemDiscountAmount + invoiceDiscountAmount),
+    discountAmount: round2(promoDiscountAmount + itemDiscountAmount + invoiceDiscountAmount),
     total,
   };
 }

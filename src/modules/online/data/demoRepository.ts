@@ -1304,34 +1304,8 @@ export class DemoOnlineRepository
         });
       }
 
-      // A code that actually lowered the order (or waived its shipping)
-      // consumes one use — and one history row keyed to this order. A code
-      // that lost the stacking contest consumes nothing. Cancelling gives the
-      // count back; the history row stays and is excluded by filter.
-      if (
-        pricing.promoCode &&
-        (pricing.promoDiscount > 0 || pricing.promoFreeShipping)
-      ) {
-        const used = this.coupons.find((candidate) => candidate.code === pricing.promoCode);
-        if (used) {
-          this.coupons = this.coupons.map((candidate) =>
-            candidate.id === used.id
-              ? { ...candidate, used_count: candidate.used_count + 1, updated_at: at }
-              : candidate,
-          );
-          write(KEYS.coupons, this.coupons);
-        }
-        if (used && customerKey) {
-          this.promoUsages.push({
-            id: newId("pus"),
-            coupon_id: used.id,
-            order_id: orderId,
-            customer_key: customerKey,
-            used_at: at,
-          });
-          write(KEYS.promoUsages, this.promoUsages);
-        }
-      }
+      // 6. Coupon & promo tracking: Pending orders do NOT consume usage_limit.
+      // Usage is consumed atomically upon order approval/confirmation (in resolveOrder).
 
       this.orders.push(order);
       this.persistOrders();
@@ -1565,6 +1539,55 @@ export class DemoOnlineRepository
               : reservation,
           );
 
+          // Atomic consumption of coupon & promo usage upon approval
+          if (order.discount_code) {
+            const normalized = normalizeCouponCode(order.discount_code);
+            const usedPromo = this.promotions.find(
+              (p) => p.mode === "coupon" && p.code && normalizeCouponCode(p.code) === normalized,
+            );
+            if (usedPromo) {
+              if (usedPromo.usage_limit != null && (usedPromo.used_count ?? 0) >= usedPromo.usage_limit) {
+                throw new Error(`Coupon ${order.discount_code} has reached its usage limit`);
+              }
+              this.promotions = this.promotions.map((p) =>
+                p.id === usedPromo.id
+                  ? { ...p, used_count: (p.used_count ?? 0) + 1, updated_at: at }
+                  : p,
+              );
+              write(KEYS.promotions, this.promotions);
+            }
+            const used = this.coupons.find((candidate) => candidate.code === order.discount_code);
+            if (used) {
+              if (used.usage_limit != null && used.used_count >= used.usage_limit) {
+                throw new Error(`Coupon ${order.discount_code} has reached its usage limit`);
+              }
+              this.coupons = this.coupons.map((candidate) =>
+                candidate.id === used.id
+                  ? { ...candidate, used_count: candidate.used_count + 1, updated_at: at }
+                  : candidate,
+              );
+              write(KEYS.coupons, this.coupons);
+              if (order.customer_phone) {
+                this.promoUsages.push({
+                  id: newId("pus"),
+                  coupon_id: used.id,
+                  order_id: order.id,
+                  customer_key: order.customer_phone,
+                  used_at: at,
+                });
+                write(KEYS.promoUsages, this.promoUsages);
+              }
+            }
+          }
+          if (order.promotion_id) {
+            this.promotions = this.promotions.map((p) =>
+              p.id === order.promotion_id
+                ? { ...p, used_count: (p.used_count ?? 0) + 1, updated_at: at }
+                : p,
+            );
+            write(KEYS.promotions, this.promotions);
+          }
+
           next = {
             ...next,
             status: "approved",
@@ -1595,7 +1618,16 @@ export class DemoOnlineRepository
             });
           }
 
-          if (order.discount_code) {
+          // Safe coupon & promotion lifecycle: release consumed count ONLY if order was approved
+          if ((order.status === "approved" || order.sale_id) && order.discount_code) {
+            const normalized = normalizeCouponCode(order.discount_code);
+            this.promotions = this.promotions.map((p) =>
+              p.mode === "coupon" && p.code && normalizeCouponCode(p.code) === normalized
+                ? { ...p, used_count: Math.max((p.used_count ?? 0) - 1, 0), updated_at: at }
+                : p,
+            );
+            write(KEYS.promotions, this.promotions);
+
             this.coupons = this.coupons.map((coupon) =>
               coupon.code === order.discount_code
                 ? {
@@ -1606,6 +1638,18 @@ export class DemoOnlineRepository
                 : coupon,
             );
             write(KEYS.coupons, this.coupons);
+
+            this.promoUsages = this.promoUsages.filter((u) => u.order_id !== order.id);
+            write(KEYS.promoUsages, this.promoUsages);
+          }
+
+          if ((order.status === "approved" || order.sale_id) && order.promotion_id) {
+            this.promotions = this.promotions.map((p) =>
+              p.id === order.promotion_id
+                ? { ...p, used_count: Math.max((p.used_count ?? 0) - 1, 0), updated_at: at }
+                : p,
+            );
+            write(KEYS.promotions, this.promotions);
           }
 
           next = {
@@ -2190,13 +2234,22 @@ export class DemoOnlineRepository
       };
     });
     const subtotal = round2(priced.reduce((sum, line) => sum + line.line_total, 0));
-    const zone = input.deliveryZoneId
-      ? (this.deliveryZones.find((candidate) => candidate.id === input.deliveryZoneId) ?? null)
-      : null;
-    if (input.deliveryZoneId && !zone) {
-      throw new OnlineError("delivery_unavailable", "Delivery zone is not available", {
-        field: "delivery_type",
-      });
+    const enabledZones = this.deliveryZones.filter((candidate) => candidate.enabled);
+    let zone: DeliveryZone | null = null;
+    if (input.deliveryType === "delivery") {
+      if (enabledZones.length > 0) {
+        if (!input.deliveryZoneId) {
+          throw new OnlineError("delivery_unavailable", "Please select a delivery zone", {
+            field: "delivery_type",
+          });
+        }
+        zone = enabledZones.find((candidate) => candidate.id === input.deliveryZoneId) ?? null;
+        if (!zone) {
+          throw new OnlineError("delivery_unavailable", "Delivery zone is not available", {
+            field: "delivery_type",
+          });
+        }
+      }
     }
     const settings = resolveSettings(this.settingsDoc.settings).delivery;
     const evaluated = evaluateCartPricing({
@@ -2244,6 +2297,9 @@ export class DemoOnlineRepository
         unit_price: line.unit_price,
         line_total: line.line_total,
         discounted_unit_price: line.discounted_unit_price,
+        promotion_id: line.promotion_id ?? null,
+        promotion_name: line.promotion_name ?? null,
+        rewarded_units: line.rewarded_units ?? 0,
       })),
     });
   }
@@ -2405,14 +2461,35 @@ export class DemoOnlineRepository
       });
     }
     const wasEnabled = existing?.enabled ?? false;
+    const mode = draft.mode ?? existing?.mode ?? "automatic";
+    const code =
+      mode === "coupon"
+        ? (draft.code ? draft.code.trim().toUpperCase().replace(/\s+/g, "") : (existing?.code ?? null))
+        : null;
+    if (mode === "coupon" && (!code || !/^[A-Z0-9_-]{2,30}$/.test(code))) {
+      throw new OnlineError("db", "A valid coupon code is required for coupon mode", { field: "code" });
+    }
+    if (mode === "coupon" && code) {
+      const dup = this.promotions.find(
+        (p) => p.id !== (existing?.id ?? draft.id) && p.mode === "coupon" && p.code && p.code.trim().toUpperCase().replace(/\s+/g, "") === code,
+      );
+      if (dup) {
+        throw new OnlineError("db", "A coupon with this code already exists", { field: "code" });
+      }
+    }
+    const offerType = draft.offer_type ?? draft.rule_type ?? existing?.offer_type ?? existing?.rule_type ?? "standard";
     const next: Promotion = {
       id: existing?.id ?? newId("prm"),
       enabled: draft.enabled ?? existing?.enabled ?? true,
+      mode,
+      code,
       channel: draft.channel ?? existing?.channel ?? "both",
       name_en: draft.name_en ?? existing?.name_en ?? "",
       name_ar: draft.name_ar ?? existing?.name_ar ?? "",
       description_en: draft.description_en ?? existing?.description_en ?? null,
       description_ar: draft.description_ar ?? existing?.description_ar ?? null,
+      offer_type: offerType,
+      rule_type: offerType,
       discount_type: draft.discount_type ?? existing?.discount_type ?? "percent",
       value: Math.max(draft.value ?? existing?.value ?? 0, 0),
       scope,
@@ -2422,13 +2499,26 @@ export class DemoOnlineRepository
       ends_at: endsAt,
       priority: draft.priority ?? existing?.priority ?? 0,
       stackable: draft.stackable ?? existing?.stackable ?? false,
+      buy_x: draft.buy_x ?? existing?.buy_x ?? null,
+      get_y: draft.get_y ?? existing?.get_y ?? null,
+      reward_type: draft.reward_type ?? existing?.reward_type ?? "free",
+      reward_value: draft.reward_value ?? existing?.reward_value ?? null,
+      repeat_offer: draft.repeat_offer ?? existing?.repeat_offer ?? true,
+      min_quantity: draft.min_quantity ?? existing?.min_quantity ?? null,
       created_at: existing?.created_at ?? at,
       updated_at: at,
     };
     if (!next.name_en.trim() || !next.name_ar.trim()) {
       throw new OnlineError("db", "A promotion needs names in both languages", { field: "name_en" });
     }
-    if (next.value <= 0) throw new OnlineError("db", "A promotion needs a value", { field: "value" });
+    if (offerType === "standard") {
+      if (next.discount_type === "percent" && (next.value <= 0 || next.value > 100)) {
+        throw new OnlineError("db", "Percentage discount must be between 0 and 100", { field: "value" });
+      }
+      if (next.discount_type === "fixed" && next.value <= 0) {
+        throw new OnlineError("db", "A promotion needs a positive value", { field: "value" });
+      }
+    }
     this.promotions = existing
       ? this.promotions.map((promotion) => (promotion.id === next.id ? next : promotion))
       : [...this.promotions, next];

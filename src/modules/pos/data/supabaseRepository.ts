@@ -208,6 +208,8 @@ export class SupabaseSalesRepository implements SalesRepository {
           lines: input.lines,
           discount_type: input.discount_type,
           discount_value: input.discount_value,
+          coupon_code: input.coupon_code ?? input.promo_code ?? null,
+          promo_code: input.promo_code ?? input.coupon_code ?? null,
           payments: input.payments,
           customer_id: input.customer_id ?? null,
           customer_name: input.customer_name ?? null,

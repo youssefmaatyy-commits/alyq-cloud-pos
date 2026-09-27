@@ -134,6 +134,14 @@ export function CartPanel() {
             <span>{t("pos.subtotal")}</span>
             <span className="tabular-nums" dir="ltr">{num(totals.subtotal, 2)}</span>
           </div>
+          {totals.promoDiscountAmount > 0 && (
+            <div className="mt-0.5 flex items-center justify-between text-emerald-700">
+              <span className="flex items-center gap-1 font-medium">
+                <span className="text-xs">🏷️</span> {t("online.promos.title")}
+              </span>
+              <span className="tabular-nums" dir="ltr">−{num(totals.promoDiscountAmount, 2)}</span>
+            </div>
+          )}
           {totals.itemDiscountAmount > 0 && (
             <div className="mt-0.5 flex items-center justify-between text-stone-600">
               <span>{t("pos.itemDiscountsTotal")}</span>
@@ -244,6 +252,16 @@ function CartRow({
               )}
             </p>
           )}
+      {line.automatic_promotion_name && (
+        <p className="mt-0.5 inline-flex items-center gap-1 rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">
+          🏷️ {line.automatic_promotion_name}
+        </p>
+      )}
+      {(line.rewarded_qty ?? 0) > 0 && (
+        <p className="mt-0.5 inline-flex items-center gap-1 rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">
+          🎁 {t("online.promos.rewardedUnit")} ({line.rewarded_qty})
+        </p>
+      )}
           <span className="mt-0.5 block truncate font-mono text-[11px] text-stone-500" dir="ltr">{line.sku}</span>
           {line.qty >= line.max_qty && (
             <p className="mt-0.5 text-[11px] font-semibold text-amber-700">
@@ -257,13 +275,13 @@ function CartRow({
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 xl:contents">
         {/* السعر — original crossed out when discounted, effective price clear */}
         <div
-          className={`tabular-nums xl:text-end ${hasItemDiscount ? "flex items-baseline gap-1.5 xl:flex-col xl:items-end xl:gap-0" : ""}`}
+          className={`tabular-nums xl:text-end ${hasItemDiscount || amounts.promoDiscount > 0 ? "flex items-baseline gap-1.5 xl:flex-col xl:items-end xl:gap-0" : ""}`}
           dir="ltr"
         >
-          {hasItemDiscount ? (
+          {amounts.discount > 0 ? (
             <>
               <span className="text-[11px] font-medium text-stone-400 line-through">
-                {num(line.unit_price, 2)}
+                {num(amounts.gross / (line.qty || 1), 2)}
               </span>
               <span
                 className="text-sm font-bold text-stone-900"

@@ -90,6 +90,14 @@ export function StoreCartPage() {
                 candidate.product_id === entry.product.id &&
                 (candidate.variant_id ?? null) === (entry.variant?.id ?? null),
             );
+            const linePreview = preview?.lines.find(
+              (candidate) =>
+                candidate.product_id === entry.product.id &&
+                (candidate.variant_id ?? null) === (entry.variant?.id ?? null),
+            );
+            const lineEffectiveTotal = linePreview ? linePreview.line_total : entry.lineTotal;
+            const lineOriginalTotal = linePreview ? linePreview.unit_price * entry.quantity : entry.listPrice * entry.quantity;
+            const hasLineDiscount = lineEffectiveTotal < lineOriginalTotal;
             return (
               <article
                 key={lineKey}
@@ -133,6 +141,19 @@ export function StoreCartPage() {
                     </p>
                   ) : null}
 
+                  {linePreview?.promotion_name ? (
+                    <p className="flex flex-wrap items-center gap-1.5 text-[11px] font-bold text-emerald-700">
+                      <span className="inline-flex items-center gap-1 rounded bg-emerald-50 px-1.5 py-0.5 border border-emerald-200">
+                        🏷️ {linePreview.promotion_name}
+                      </span>
+                      {linePreview.rewarded_units && linePreview.rewarded_units > 0 ? (
+                        <span className="inline-flex items-center gap-1 rounded bg-emerald-100 px-1.5 py-0.5 text-emerald-900 border border-emerald-300">
+                          🎁 {t("online.promos.rewardedUnit")} ({linePreview.rewarded_units})
+                        </span>
+                      ) : null}
+                    </p>
+                  ) : null}
+
                   <p className="text-[11px] font-semibold text-[var(--store-text-secondary)]">
                     {entry.variant?.sku ?? entry.product.sku}
                     {entry.content?.brand_en || entry.content?.brand_ar
@@ -165,9 +186,9 @@ export function StoreCartPage() {
                     </div>
 
                     <p className="flex items-baseline gap-2">
-                      <Money value={entry.lineTotal} className="text-sm font-black text-[var(--store-text-primary)]" />
-                      {entry.price < entry.listPrice ? (
-                        <Money value={entry.listPrice * entry.quantity} strike className="text-xs" />
+                      <Money value={lineEffectiveTotal} className="text-sm font-black text-[var(--store-text-primary)]" />
+                      {hasLineDiscount ? (
+                        <Money value={lineOriginalTotal} strike className="text-xs" />
                       ) : null}
                     </p>
                   </div>

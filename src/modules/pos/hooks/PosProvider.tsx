@@ -28,7 +28,7 @@ import { SALES_ROW_CAP, getSalesRepository, type SalesRepository } from "../data
 // never looked at it.
 import { completeSale as completeSaleGuarded } from "../services/saleService";
 import { isApprovalRequired, type ApprovalRequirement } from "@/modules/approvals";
-import { cartTotals, validateDiscount, type CartTotals as Totals } from "../services/posMath";
+import { cartTotals, round2, validateDiscount, type CartTotals as Totals } from "../services/posMath";
 import { addCartLine, changeCartQuantity, discountCartLine, removeCartLine } from "../services/cartOperations";
 import {
   type CartDiscount,
@@ -40,7 +40,7 @@ import {
 import type { Customer } from "@/modules/customers/types";
 import { EMPTY_DISCOUNT, newClientRef } from "../types";
 import { getWebsiteRepository } from "@/modules/online/data";
-import { promotionUnitPrice } from "@/modules/online/services/pricing";
+import { selectAutomaticPromotion, type PromotionCartLine } from "@/modules/online/services/pricing";
 import type { Promotion, PromotionTarget } from "@/modules/online/types";
 
 export interface PosContextValue {
@@ -140,11 +140,6 @@ export function PosProvider({ children }: { children: ReactNode }) {
   // the same event batch. All cart mutations go through this ref; customer is
   // separate sale state and is never coupled to a cart-line transition.
   const linesRef = useRef<CartLine[]>([]);
-  const updateLines = useCallback((change: (current: CartLine[]) => CartLine[]) => {
-    const next = change(linesRef.current);
-    linesRef.current = next;
-    setLines(next);
-  }, []);
   const [discount, setDiscountValue] = useState<CartDiscount>(EMPTY_DISCOUNT);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [completing, setCompleting] = useState(false);
@@ -270,6 +265,85 @@ export function PosProvider({ children }: { children: ReactNode }) {
     return map;
   }, [promotionTargets]);
 
+  const recalculatePosLines = useCallback(
+    (currentLines: CartLine[]): CartLine[] => {
+      if (currentLines.length === 0) return [];
+      const subtotal = round2(
+        currentLines.reduce((sum, l) => sum + (l.base_price ?? l.unit_price) * l.qty, 0),
+      );
+      const pricingLines: PromotionCartLine[] = currentLines.map((l) => {
+        const prod = products.find((p) => p.id === l.product_id);
+        const base = l.base_price ?? l.unit_price;
+        return {
+          product_id: l.product_id,
+          category_id: prod?.category_id ?? null,
+          variant_id: l.variant_id,
+          qty: l.qty,
+          unit_price: base,
+          line_total: round2(base * l.qty),
+        };
+      });
+
+      const auto = selectAutomaticPromotion(
+        promotions,
+        posPromotionTargets,
+        pricingLines,
+        subtotal,
+        new Date(),
+        "pos",
+      );
+
+      return currentLines.map((l, index) => {
+        const base = l.base_price ?? l.unit_price;
+        const lineTotalGross = round2(base * l.qty);
+        if (auto && auto.discount > 0) {
+          const lineDisc = auto.evaluation
+            ? (auto.evaluation.lineDiscounts[index] ?? 0)
+            : round2((auto.discount * lineTotalGross) / subtotal);
+          const rewardedQty = auto.evaluation?.lineRewardedQty?.[index] ?? 0;
+          const discountedUnit = round2(Math.max(lineTotalGross - lineDisc, 0) / Math.max(l.qty, 1));
+          return {
+            ...l,
+            base_price: base,
+            unit_price: discountedUnit,
+            automatic_promotion_id: auto.promotion.id,
+            automatic_promotion_name: auto.promotion.name_en || auto.promotion.name_ar,
+            automatic_discount_amount: lineDisc,
+            rewarded_qty: rewardedQty,
+            promotion_rule_type: auto.promotion.offer_type ?? auto.promotion.rule_type ?? "standard",
+          };
+        }
+        return {
+          ...l,
+          base_price: base,
+          unit_price: base,
+          automatic_promotion_id: null,
+          automatic_promotion_name: null,
+          automatic_discount_amount: 0,
+          rewarded_qty: 0,
+          promotion_rule_type: null,
+        };
+      });
+    },
+    [products, promotions, posPromotionTargets],
+  );
+
+  const updateLines = useCallback(
+    (change: (current: CartLine[]) => CartLine[]) => {
+      const rawNext = change(linesRef.current);
+      const next = recalculatePosLines(rawNext);
+      linesRef.current = next;
+      setLines(next);
+    },
+    [recalculatePosLines],
+  );
+
+  useEffect(() => {
+    if (linesRef.current.length > 0) {
+      updateLines((prev) => [...prev]);
+    }
+  }, [promotions, posPromotionTargets, updateLines]);
+
   const addLine = useCallback(
     (product: Product, choice: ProductVariant | null = null) => {
       const current = products.find((entry) => entry.id === product.id);
@@ -289,16 +363,6 @@ export function PosProvider({ children }: { children: ReactNode }) {
       if (maxQty <= 0) return false;
 
       const officialUnit = variant ? variantPrice(variant, current) : current.selling_price;
-      const effective = promotionUnitPrice(
-        current.id,
-        variant?.id ?? null,
-        current.category_id ?? null,
-        officialUnit,
-        promotions,
-        posPromotionTargets,
-        new Date(),
-        "pos",
-      );
       const line: CartLine = {
         product_id: current.id,
         variant_id: variant?.id ?? null,
@@ -311,7 +375,11 @@ export function PosProvider({ children }: { children: ReactNode }) {
         name_ar: current.name_ar,
         name_en: current.name_en,
         barcode: variant?.barcode ?? current.barcode,
-        unit_price: effective.unit,
+        base_price: round2(officialUnit),
+        unit_price: round2(officialUnit),
+        automatic_promotion_id: null,
+        automatic_promotion_name: null,
+        automatic_discount_amount: 0,
         max_qty: maxQty,
         qty: 1,
         image_url: variant?.image_url ?? current.image_url,
@@ -323,7 +391,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       updateLines(() => result.lines);
       return true;
     },
-    [products, variants, promotions, posPromotionTargets, updateLines],
+    [products, variants, updateLines],
   );
 
   /**

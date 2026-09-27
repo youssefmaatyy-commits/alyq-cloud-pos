@@ -70,6 +70,8 @@ export interface SaleItem {
   automatic_promotion_id?: string | null;
   automatic_promotion_name?: string | null;
   automatic_discount_amount?: number;
+  rewarded_qty?: number;
+  promotion_rule_type?: string | null;
   /**
    * Cost per unit frozen at sale time (Phase 53). Null on rows written before
    * the snapshot existed — unknown, never treated as free.
@@ -124,6 +126,11 @@ export interface Sale {
   automatic_discount_amount?: number;
   automatic_promotion_id?: string | null;
   automatic_promotion_name?: string | null;
+  promotion_rule_type?: string | null;
+  promotion_buy_x?: number | null;
+  promotion_get_y?: number | null;
+  promotion_reward_qty?: number | null;
+  promotion_rewarded_units?: any;
   total: number;
   user_id: string;
   user_name: string;
@@ -174,6 +181,8 @@ export interface CompleteSaleInput {
   }[];
   discount_type: DiscountType;
   discount_value: number;
+  coupon_code?: string | null;
+  promo_code?: string | null;
   /** One or more payments whose amounts sum exactly to the sale total. */
   payments: SalePaymentInput[];
   customer_id?: string | null;
@@ -220,7 +229,16 @@ export interface CartLine {
   name_ar: string;
   name_en: string;
   barcode: string | null;
+  /** List / catalogue price before promotion. */
+  base_price?: number;
+  /** Price after central automatic promotion (or catalogue price if none). */
   unit_price: number;
+  automatic_promotion_id?: string | null;
+  automatic_promotion_name?: string | null;
+  automatic_discount_amount?: number;
+  rewarded_qty?: number;
+  promotion_rule_type?: string | null;
+  promotion_label?: string | null;
   /** Maximum sellable quantity right now — the VARIANT's shelf when there is one. */
   max_qty: number;
   qty: number;

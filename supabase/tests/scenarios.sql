@@ -80,21 +80,21 @@ $$;
  * and are no-ops when the wanted state already holds, so a scenario may call
  * ensure_open_shift() without caring what the previous scenario left behind.
  */
-create or replace function pg_temp.ensure_open_shift()
+create or replace function pg_temp.ensure_open_shift(p_user_id text default null)
 returns uuid
 language plpgsql
 as $$
 declare
   v_shift_id uuid;
+  v_uid text := coalesce(p_user_id, nullif(auth.uid()::text, ''), '00000000-0000-4000-8000-0000000000c1');
+  v_name text := coalesce((select name from public.profiles where id = v_uid::uuid), 'Karim Cashier');
 begin
-  select id into v_shift_id from public.shifts where status = 'open';
+  select id into v_shift_id from public.shifts where status = 'open' and opened_by = v_uid;
   if found then
     return v_shift_id;
   end if;
-  perform set_config('role', 'authenticated', true);
-  perform set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-0000000000c1', true);
   insert into public.shifts (branch, register, opening_cash, opened_by, opened_by_name)
-  values ('Main', 'Till 1', 1000, '00000000-0000-4000-8000-0000000000c1', 'Karim Cashier')
+  values ('Main', 'Till 1', 1000, v_uid, v_name)
   returning id into v_shift_id;
   return v_shift_id;
 end;
@@ -1126,6 +1126,10 @@ begin
              'cod_enabled', true, 'instapay_enabled', true))
    where id = 1;
 
+  create temp table pg_temp.saved_delivery_zones as
+    select id, enabled from public.delivery_zones;
+  update public.delivery_zones set enabled = false;
+
   insert into public.coupons (code, discount_type, value, min_subtotal, active, starts_at, ends_at)
   values
     ('SCN-CHK10',   'percent', 10, 0, true,  null,                        null),
@@ -1310,9 +1314,9 @@ begin
   if v_facts->>'discount_code' <> 'SCN-CHK10' then
     raise exception 'the order did not record the code it was priced with (%)', v_facts->>'discount_code';
   end if;
-  if pg_temp.scn_coupon_used('SCN-CHK10') <> v_used + 1 then
-    raise exception 'the coupon usage counter moved by % instead of 1',
-      pg_temp.scn_coupon_used('SCN-CHK10') - v_used;
+  if pg_temp.scn_coupon_used('SCN-CHK10') <> v_used then
+    raise exception 'the coupon usage counter moved at pending checkout (% instead of %)',
+      pg_temp.scn_coupon_used('SCN-CHK10'), v_used;
   end if;
 
   -- K. every accepted order carries its lines and its hold, and only its own
@@ -1639,6 +1643,11 @@ begin
   -- ── step back out, which only the owner can do ────────────────────────────
   perform set_config('role', v_owner, true);
   update public.website_settings set settings = v_settings where id = 1;
+  update public.delivery_zones z
+     set enabled = s.enabled
+    from pg_temp.saved_delivery_zones s
+   where z.id = s.id;
+  drop table if exists pg_temp.saved_delivery_zones;
 
   raise notice 'storefront checkout — pickup/delivery × COD/InstaPay accepted and priced from the catalogue; the shop''s own delivery rules hold (city+area+street required, unserved places refused, minimum gates delivery only, free delivery at the threshold measured after the coupon, payload fee ignored); stock held not sold; refusals (stock, quantity, inactive, website-hidden, untracked, coupon, address, outside area, below minimum, delivery off) write zero rows; a replayed key writes no second order; and the guest reads the order back by number and phone while the tables stay staff-only';
 end
@@ -5392,7 +5401,8 @@ begin
   insert into public.customers (id, name, phone) values (v_cust, 'Déjà Customer', '01000000001')
   on conflict (id) do nothing;
 
-  perform pg_temp.ensure_open_shift();
+  perform pg_temp.become(v_admin, 'authenticated');
+  perform pg_temp.ensure_open_shift(v_admin::text);
   v_sale := public.pos_complete_sale(jsonb_build_object(
     'client_ref', 'scn-dz-sale-1',
     'user_id',    v_admin::text,
@@ -5599,10 +5609,8 @@ begin
   -- the operational clear zeroed the shelves; restock the plain product so a
   -- fresh till sale can exist (a plain product's stock is directly writable)
   update public.products set stock_quantity = 5 where id = v_plain;
-  perform pg_temp.ensure_open_shift();
-  -- the shift helper stamps the cashier's claim; put the admin back before
-  -- anything below calls a guarded RPC
   perform pg_temp.become(v_admin, 'authenticated');
+  perform pg_temp.ensure_open_shift(v_admin::text);
   perform public.pos_complete_sale(jsonb_build_object(
     'client_ref', 'scn-dz-sale-2',
     'user_id',    v_admin::text,
@@ -6035,13 +6043,18 @@ begin
     'coupon_code', 'SCN-NOPE',
     'payment_method', 'cod'), 'is not valid');
 
-  -- 7. a usage limit of one: the second checkout is refused.
+  -- 7. a usage limit of one: when approved, the second checkout is refused.
   v_result := public.place_online_order(jsonb_build_object(
     'client_ref', 'scn-p50-c7a', 'customer_name', 'C', 'customer_phone', '0520000005',
     'delivery_type', 'pickup', 'address', '{}'::jsonb,
     'lines', jsonb_build_array(jsonb_build_object('product_id', v_goods::text, 'qty', 10)),
     'coupon_code', 'SCN-P50-ONE',
     'payment_method', 'cod'));
+  perform pg_temp.become(v_admin, 'authenticated');
+  perform public.resolve_online_order(jsonb_build_object(
+    'order_id', (v_result->>'order_id')::text, 'action', 'approve',
+    'user_id', v_admin::text, 'user_name', 'Amina Admin'));
+  perform pg_temp.become(null, 'anon');
   perform pg_temp.scn_expect_refusal(jsonb_build_object(
     'client_ref', 'scn-p50-c7b', 'customer_name', 'C', 'customer_phone', '0520000006',
     'delivery_type', 'pickup', 'address', '{}'::jsonb,

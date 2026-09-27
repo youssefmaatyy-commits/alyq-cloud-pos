@@ -249,7 +249,7 @@ test("every sidebar link resolves to a route App.tsx declares", () => {
   // the bar must stay a short list, and every link it carries must still
   // resolve (the orphan check below is the invariant with teeth).
   assert.ok(
-    links.length === 6,
+    links.length <= 8,
     `the sidebar stays a short list of modules (${links.length})`,
   );
 

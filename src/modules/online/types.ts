@@ -494,23 +494,43 @@ export interface DeliveryZone {
 // ── automatic promotions ───────────────────────────────────────────────────
 
 export type PromotionScope = "store" | "category" | "product" | "variant";
-export type PromotionChannel = "online" | "pos" | "both";
+export type PromotionChannel = "online" | "pos" | "both" | "storefront";
+export type PromotionMode = "automatic" | "coupon";
+export type PromotionStatus = "active" | "scheduled" | "paused" | "expired";
+export type PromotionOfferType = "standard" | "bxgy" | "buy_x_get_y" | "cheapest_item";
+export type PromotionRewardType = "free" | "percent" | "fixed";
+
+export interface PromotionCartLine {
+  product_id: string;
+  category_id: string | null;
+  variant_id: string | null;
+  line_total: number;
+  qty?: number;
+  unit_price?: number;
+}
 
 /**
- * An automatic (codeless) discount: the storewide sale, a category offer, a
- * product or variant offer. The best applicable one is chosen per order by
- * priority then size; it combines with a promo code only when both are
- * stackable, otherwise the larger discount wins alone.
+ * An automatic (codeless) discount or coupon promotion: the storewide sale, a
+ * category offer, a product or variant offer. The best applicable one is
+ * chosen per order by priority then size; it combines with a promo code only
+ * when both are stackable, otherwise the larger discount wins alone.
  */
 export interface Promotion {
   id: string;
   enabled: boolean;
+  /** Explicit promotion mode: automatic (codeless) or coupon (requires code). */
+  mode?: PromotionMode;
+  /** Coupon code when mode === 'coupon'. */
+  code?: string | null;
   /** Explicit sales channel; old rows default to both. */
   channel?: PromotionChannel;
   name_en: string;
   name_ar: string;
   description_en: string | null;
   description_ar: string | null;
+  /** Offer / rule type: standard (percentage/fixed), bxgy (Buy X Get Y), cheapest_item. */
+  offer_type?: PromotionOfferType;
+  rule_type?: PromotionOfferType;
   discount_type: "percent" | "fixed";
   value: number;
   scope: PromotionScope;
@@ -519,11 +539,44 @@ export interface Promotion {
   maximum_discount_amount: number | null;
   starts_at: string | null;
   ends_at: string | null;
+  /** Backward-compatible property aliases. */
+  start_date?: string | null;
+  end_date?: string | null;
+  type?: "percent" | "fixed" | "percentage" | "fixed_amount";
+  max_discount_amount?: number | null;
   /** Higher wins when several apply; ties break toward the larger discount. */
   priority: number;
   stackable: boolean;
+
+  /** Buy X Get Y & Cheapest item configurations */
+  buy_x?: number | null;
+  get_y?: number | null;
+  reward_type?: PromotionRewardType | null;
+  reward_value?: number | null;
+  repeat_offer?: boolean;
+  min_quantity?: number | null;
+  usage_limit?: number | null;
+  used_count?: number;
+
   created_at: string;
   updated_at: string;
+}
+
+/** Status computed from enabled state and scheduling dates against a clock. */
+export function getPromotionStatus(promotion: Promotion, now: Date = new Date()): PromotionStatus {
+  if (!promotion.enabled) return "paused";
+  const at = now.getTime();
+  const start = promotion.starts_at || (promotion as { start_date?: string }).start_date;
+  if (start) {
+    const startTime = Date.parse(start);
+    if (Number.isFinite(startTime) && at < startTime) return "scheduled";
+  }
+  const end = promotion.ends_at || (promotion as { end_date?: string }).end_date;
+  if (end) {
+    const endTime = Date.parse(end);
+    if (Number.isFinite(endTime) && at > endTime) return "expired";
+  }
+  return "active";
 }
 
 export type PromotionTargetKind = "category" | "product" | "variant";
@@ -558,6 +611,11 @@ export interface PriceSnapshot {
   promo_code: string | null;
   promotion_id: string | null;
   promotion_name: string | null;
+  rule_type?: PromotionOfferType | string | null;
+  buy_x?: number | null;
+  get_y?: number | null;
+  reward_qty?: number | null;
+  rewarded_units?: { line_index: number; product_id: string; variant_id: string | null; unit_price: number; discount: number }[] | null;
   auto_discount: number;
   promo_discount: number;
   promo_free_shipping: boolean;

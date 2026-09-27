@@ -29,6 +29,7 @@ import type {
   ProductContent,
   Promotion,
   PromotionChannel,
+  PromotionOfferType,
 } from "../types";
 
 /** Money is Egyptian pounds, rounded to piastres. */
@@ -339,7 +340,8 @@ export function checkCoupon(
 }
 
 /** Normalise what the customer typed: stored codes are uppercase and trimmed. */
-export function normalizeCouponCode(raw: string): string {
+export function normalizeCouponCode(raw: string | null | undefined): string {
+  if (!raw) return "";
   return raw.trim().toUpperCase().replace(/\s+/g, "");
 }
 
@@ -563,12 +565,14 @@ export function customerKeyFor(
 export function isPromotionLive(promotion: Promotion, now: Date = new Date()): boolean {
   if (!promotion.enabled) return false;
   const at = now.getTime();
-  if (promotion.starts_at) {
-    const start = Date.parse(promotion.starts_at);
+  const startStr = promotion.start_date || promotion.starts_at;
+  if (startStr) {
+    const start = Date.parse(startStr);
     if (Number.isFinite(start) && at < start) return false;
   }
-  if (promotion.ends_at) {
-    const end = Date.parse(promotion.ends_at);
+  const endStr = promotion.end_date || promotion.ends_at;
+  if (endStr) {
+    const end = Date.parse(endStr);
     if (Number.isFinite(end) && at > end) return false;
   }
   return true;
@@ -579,6 +583,20 @@ export interface PromotionCartLine {
   category_id: string | null;
   variant_id: string | null;
   line_total: number;
+  qty?: number;
+  unit_price?: number;
+}
+
+export interface PromotionEvaluationResult {
+  promotion: Promotion;
+  discount: number;
+  rule_type: PromotionOfferType;
+  buy_x?: number | null;
+  get_y?: number | null;
+  reward_qty?: number;
+  rewardedUnits: { line_index: number; product_id: string; variant_id: string | null; unit_price: number; discount: number }[];
+  lineDiscounts: number[];
+  lineRewardedQty: number[];
 }
 
 /** Does a scoped offer touch this cart? Store scope always does. */
@@ -602,9 +620,276 @@ export function promotionApplies(
 }
 
 /**
- * What an offer takes off: a percentage of its eligible base (the whole goods
- * total for store scope, the matching lines otherwise), capped by its maximum
- * and never more than the goods total itself.
+ * Evaluates a candidate promotion against a set of cart lines, computing the total
+ * discount and line-level allocations according to its offer type (Standard, Buy X Get Y, Cheapest Item).
+ */
+export function evaluatePromotionAgainstLines(
+  promotion: Promotion,
+  targetIds: ReadonlySet<string>,
+  lines: readonly PromotionCartLine[],
+  subtotal: number,
+): PromotionEvaluationResult | null {
+  const minSubtotal = promotion.minimum_order_amount ?? 0;
+  if (subtotal < minSubtotal) return null;
+
+  if (lines.length === 0) {
+    if (promotion.scope !== "store" || subtotal <= 0) return null;
+    const isPercent =
+      promotion.discount_type === "percent" ||
+      promotion.type === "percent" ||
+      promotion.type === "percentage";
+    let disc = 0;
+    if (isPercent) {
+      const percent = Math.min(Math.max(promotion.value, 0), 100);
+      disc = round2((subtotal * percent) / 100);
+      const maxDiscount = promotion.maximum_discount_amount ?? promotion.max_discount_amount;
+      if (maxDiscount != null && maxDiscount > 0) {
+        disc = Math.min(disc, round2(maxDiscount));
+      }
+    } else {
+      disc = round2(Math.min(promotion.value, subtotal));
+    }
+    disc = Math.min(Math.max(disc, 0), subtotal);
+    if (disc <= 0) return null;
+    return {
+      promotion,
+      discount: disc,
+      rule_type: "standard",
+      rewardedUnits: [],
+      lineDiscounts: [],
+      lineRewardedQty: [],
+    };
+  }
+
+  // 1. Identify eligible lines inside the promotion's eligible scope
+  const eligibleIndices: number[] = [];
+  lines.forEach((line, index) => {
+    let hit = false;
+    if (promotion.scope === "store") {
+      hit = true;
+    } else if (promotion.scope === "category") {
+      hit = line.category_id !== null && targetIds.has(`category:${line.category_id}`);
+    } else if (promotion.scope === "product") {
+      hit = targetIds.has(`product:${line.product_id}`);
+    } else if (promotion.scope === "variant") {
+      hit = line.variant_id !== null && targetIds.has(`variant:${line.variant_id}`);
+    }
+    if (hit) eligibleIndices.push(index);
+  });
+
+  if (eligibleIndices.length === 0) return null;
+
+  const offerType: PromotionOfferType = promotion.offer_type ?? promotion.rule_type ?? "standard";
+  const lineDiscounts = new Array<number>(lines.length).fill(0);
+  const lineRewardedQty = new Array<number>(lines.length).fill(0);
+  const rewardedUnits: { line_index: number; product_id: string; variant_id: string | null; unit_price: number; discount: number }[] = [];
+
+  let totalDiscount = 0;
+  let buy_x: number | null = null;
+  let get_y: number | null = null;
+  let reward_qty = 0;
+
+  if (offerType === "standard") {
+    const eligibleBase = round2(eligibleIndices.reduce((sum, idx) => sum + lines[idx].line_total, 0));
+    const isPercent =
+      promotion.discount_type === "percent" ||
+      promotion.type === "percent" ||
+      promotion.type === "percentage";
+    if (isPercent) {
+      const percent = Math.min(Math.max(promotion.value, 0), 100);
+      totalDiscount = round2((eligibleBase * percent) / 100);
+      const maxDiscount = promotion.maximum_discount_amount ?? promotion.max_discount_amount;
+      if (maxDiscount != null && maxDiscount > 0) {
+        totalDiscount = Math.min(totalDiscount, round2(maxDiscount));
+      }
+    } else {
+      totalDiscount = round2(Math.min(promotion.value, eligibleBase));
+    }
+    totalDiscount = Math.min(Math.max(totalDiscount, 0), subtotal);
+
+    if (totalDiscount > 0 && eligibleBase > 0) {
+      let remainder = totalDiscount;
+      eligibleIndices.forEach((idx, k) => {
+        if (k < eligibleIndices.length - 1) {
+          const share = round2((totalDiscount * lines[idx].line_total) / eligibleBase);
+          lineDiscounts[idx] = share;
+          remainder = round2(remainder - share);
+        } else {
+          lineDiscounts[idx] = round2(remainder);
+        }
+      });
+    }
+  } else if (offerType === "bxgy") {
+    buy_x = Math.max(promotion.buy_x ?? 2, 1);
+    get_y = Math.max(promotion.get_y ?? 1, 1);
+    const repeat = promotion.repeat_offer !== false;
+    const groupSize = buy_x + get_y;
+
+    // Expand eligible units
+    const units: { line_index: number; product_id: string; variant_id: string | null; unit_price: number }[] = [];
+    for (const idx of eligibleIndices) {
+      const line = lines[idx];
+      const qty = Math.max(line.qty ?? 1, 1);
+      const unitPrice = line.unit_price ?? (line.line_total / qty);
+      for (let u = 0; u < qty; u++) {
+        units.push({
+          line_index: idx,
+          product_id: line.product_id,
+          variant_id: line.variant_id,
+          unit_price: round2(unitPrice),
+        });
+      }
+    }
+
+    const totalEligibleQty = units.length;
+    const completeGroups = Math.floor(totalEligibleQty / groupSize);
+
+    if (completeGroups > 0) {
+      reward_qty = repeat ? completeGroups * get_y : get_y;
+      reward_qty = Math.min(reward_qty, totalEligibleQty);
+
+      // Sort units by unit_price ASC (cheapest eligible item first)
+      units.sort((a, b) => a.unit_price - b.unit_price);
+      const chosen = units.slice(0, reward_qty);
+
+      const rewardType = promotion.reward_type ?? "free";
+      const rewardVal = promotion.reward_value ?? (rewardType === "free" ? 100 : promotion.value ?? 100);
+
+      for (const unit of chosen) {
+        let uDisc = 0;
+        if (rewardType === "free" || rewardVal >= 100) {
+          uDisc = unit.unit_price;
+        } else if (rewardType === "percent") {
+          uDisc = round2((unit.unit_price * Math.min(rewardVal, 100)) / 100);
+        } else {
+          uDisc = Math.min(unit.unit_price, rewardVal);
+        }
+        uDisc = Math.min(uDisc, unit.unit_price);
+        totalDiscount = round2(totalDiscount + uDisc);
+        lineDiscounts[unit.line_index] = round2(lineDiscounts[unit.line_index] + uDisc);
+        lineRewardedQty[unit.line_index] += 1;
+        rewardedUnits.push({
+          line_index: unit.line_index,
+          product_id: unit.product_id,
+          variant_id: unit.variant_id,
+          unit_price: unit.unit_price,
+          discount: uDisc,
+        });
+      }
+
+      const rawDiscount = totalDiscount;
+      if (promotion.maximum_discount_amount && promotion.maximum_discount_amount > 0) {
+        totalDiscount = Math.min(totalDiscount, round2(promotion.maximum_discount_amount));
+      }
+      totalDiscount = Math.min(Math.max(totalDiscount, 0), subtotal);
+
+      if (totalDiscount < rawDiscount && rawDiscount > 0) {
+        let remainder = totalDiscount;
+        const discIdx = eligibleIndices.filter((idx) => (lineDiscounts[idx] ?? 0) > 0);
+        discIdx.forEach((idx, k) => {
+          if (k < discIdx.length - 1) {
+            const share = round2((totalDiscount * lineDiscounts[idx]) / rawDiscount);
+            lineDiscounts[idx] = share;
+            remainder = round2(remainder - share);
+          } else {
+            lineDiscounts[idx] = round2(remainder);
+          }
+        });
+      }
+    }
+  } else if (offerType === "cheapest_item") {
+    const minQty = Math.max(promotion.min_quantity ?? promotion.buy_x ?? 3, 1);
+    const repeat = promotion.repeat_offer === true;
+
+    // Expand eligible units
+    const units: { line_index: number; product_id: string; variant_id: string | null; unit_price: number }[] = [];
+    for (const idx of eligibleIndices) {
+      const line = lines[idx];
+      const qty = Math.max(line.qty ?? 1, 1);
+      const unitPrice = line.unit_price ?? (line.line_total / qty);
+      for (let u = 0; u < qty; u++) {
+        units.push({
+          line_index: idx,
+          product_id: line.product_id,
+          variant_id: line.variant_id,
+          unit_price: round2(unitPrice),
+        });
+      }
+    }
+
+    const totalEligibleQty = units.length;
+    if (totalEligibleQty >= minQty) {
+      reward_qty = repeat ? Math.floor(totalEligibleQty / minQty) : 1;
+      reward_qty = Math.min(reward_qty, totalEligibleQty);
+
+      // Sort units by unit_price ASC (cheapest first)
+      units.sort((a, b) => a.unit_price - b.unit_price);
+      const chosen = units.slice(0, reward_qty);
+
+      const rewardType = promotion.reward_type ?? (promotion.discount_type === "fixed" ? "fixed" : promotion.value >= 100 ? "free" : "percent");
+      const rewardVal = promotion.reward_value ?? promotion.value ?? 100;
+
+      for (const unit of chosen) {
+        let uDisc = 0;
+        if (rewardType === "free" || (rewardType === "percent" && rewardVal >= 100) || (promotion.discount_type === "percent" && promotion.value >= 100)) {
+          uDisc = unit.unit_price;
+        } else if (rewardType === "percent" || (rewardType === null && promotion.discount_type === "percent")) {
+          uDisc = round2((unit.unit_price * Math.min(rewardVal, 100)) / 100);
+        } else {
+          uDisc = Math.min(unit.unit_price, rewardVal);
+        }
+        uDisc = Math.min(uDisc, unit.unit_price);
+        totalDiscount = round2(totalDiscount + uDisc);
+        lineDiscounts[unit.line_index] = round2(lineDiscounts[unit.line_index] + uDisc);
+        lineRewardedQty[unit.line_index] += 1;
+        rewardedUnits.push({
+          line_index: unit.line_index,
+          product_id: unit.product_id,
+          variant_id: unit.variant_id,
+          unit_price: unit.unit_price,
+          discount: uDisc,
+        });
+      }
+
+      const rawDiscount = totalDiscount;
+      if (promotion.maximum_discount_amount && promotion.maximum_discount_amount > 0) {
+        totalDiscount = Math.min(totalDiscount, round2(promotion.maximum_discount_amount));
+      }
+      totalDiscount = Math.min(Math.max(totalDiscount, 0), subtotal);
+
+      if (totalDiscount < rawDiscount && rawDiscount > 0) {
+        let remainder = totalDiscount;
+        const discIdx = eligibleIndices.filter((idx) => (lineDiscounts[idx] ?? 0) > 0);
+        discIdx.forEach((idx, k) => {
+          if (k < discIdx.length - 1) {
+            const share = round2((totalDiscount * lineDiscounts[idx]) / rawDiscount);
+            lineDiscounts[idx] = share;
+            remainder = round2(remainder - share);
+          } else {
+            lineDiscounts[idx] = round2(remainder);
+          }
+        });
+      }
+    }
+  }
+
+  if (totalDiscount <= 0) return null;
+
+  return {
+    promotion,
+    discount: totalDiscount,
+    rule_type: offerType,
+    buy_x,
+    get_y,
+    reward_qty,
+    rewardedUnits,
+    lineDiscounts,
+    lineRewardedQty,
+  };
+}
+
+/**
+ * Backward-compatible helper for single-value discount calculation.
  */
 export function promotionDiscount(
   promotion: Promotion,
@@ -612,34 +897,14 @@ export function promotionDiscount(
   lines: readonly PromotionCartLine[],
   subtotal: number,
 ): number {
-  let eligible = subtotal;
-  if (promotion.scope !== "store") {
-    eligible = round2(
-      lines.reduce((sum, line) => {
-        const hit =
-          (promotion.scope === "category" &&
-            line.category_id !== null &&
-            targetIds.has(`category:${line.category_id}`)) ||
-          (promotion.scope === "product" && targetIds.has(`product:${line.product_id}`)) ||
-          (promotion.scope === "variant" &&
-            line.variant_id !== null &&
-            targetIds.has(`variant:${line.variant_id}`));
-        return hit ? sum + line.line_total : sum;
-      }, 0),
-    );
-  }
-  let discount: number;
-  if (promotion.discount_type === "percent") {
-    const percent = Math.min(Math.max(promotion.value, 0), 100);
-    discount = round2((eligible * percent) / 100);
-    if (promotion.maximum_discount_amount !== null) {
-      discount = Math.min(discount, round2(promotion.maximum_discount_amount));
-    }
-  } else {
-    discount = round2(promotion.value);
-    discount = Math.min(discount, round2(eligible));
-  }
-  return Math.min(Math.max(discount, 0), round2(subtotal));
+  const result = evaluatePromotionAgainstLines(promotion, targetIds, lines, subtotal);
+  return result ? result.discount : 0;
+}
+
+export interface AutomaticPromotionSelection {
+  promotion: Promotion;
+  discount: number;
+  evaluation?: PromotionEvaluationResult;
 }
 
 /**
@@ -654,20 +919,34 @@ export function selectAutomaticPromotion(
   subtotal: number,
   now: Date = new Date(),
   channel: PromotionChannel = "online",
-): { promotion: Promotion; discount: number } | null {
+): AutomaticPromotionSelection | null {
   const ordered = [...promotions].sort((a, b) => {
-    if (b.priority !== a.priority) return b.priority - a.priority;
-    return a.created_at.localeCompare(b.created_at);
+    const pA = a.priority ?? 0;
+    const pB = b.priority ?? 0;
+    if (pB !== pA) return pB - pA;
+    return (a.created_at ?? "").localeCompare(b.created_at ?? "");
   });
-  let best: { promotion: Promotion; discount: number } | null = null;
+  let best: AutomaticPromotionSelection | null = null;
   for (const promotion of ordered) {
+    if (promotion.mode === "coupon") continue;
     if (!isPromotionLive(promotion, now)) continue;
-    if (promotion.channel && promotion.channel !== "both" && promotion.channel !== channel) continue;
-    if (subtotal < promotion.minimum_order_amount) continue;
+    if (
+      promotion.channel &&
+      promotion.channel !== "both" &&
+      promotion.channel !== channel &&
+      !(channel === "both")
+    ) {
+      continue;
+    }
+    const minSubtotal = promotion.minimum_order_amount ?? 0;
+    if (subtotal < minSubtotal) continue;
     const targetIds = targetsByPromotion.get(promotion.id) ?? new Set<string>();
     if (!promotionApplies(promotion, targetIds, lines)) continue;
-    const discount = promotionDiscount(promotion, targetIds, lines, subtotal);
-    if (!best || discount > best.discount) best = { promotion, discount };
+    const evalResult = evaluatePromotionAgainstLines(promotion, targetIds, lines, subtotal);
+    if (!evalResult || evalResult.discount <= 0) continue;
+    if (!best || evalResult.discount > best.discount) {
+      best = { promotion, discount: evalResult.discount, evaluation: evalResult };
+    }
   }
   return best;
 }
@@ -710,9 +989,18 @@ export function checkPromoCode(
 }
 
 export interface EvaluatedCartLine extends PromotionCartLine {
+  product_id: string;
+  category_id: string | null;
+  variant_id: string | null;
+  line_total: number;
   qty: number;
   unit_price: number;
   discounted_unit_price: number;
+  rewarded_qty?: number;
+  discount_amount?: number;
+  promotion_id?: string | null;
+  promotion_name?: string | null;
+  rewarded_units?: number;
 }
 
 export interface CartPricingInput {
@@ -739,9 +1027,27 @@ export interface EvaluatedCart {
   autoDiscount: number;
   autoPromotionId: string | null;
   autoPromotionName: string | null;
+  autoPromotionRuleType?: PromotionOfferType | null;
+  autoPromotionBuyX?: number | null;
+  autoPromotionGetY?: number | null;
+  autoPromotionRewardQty?: number | null;
+  autoPromotionRewardedUnits?: { line_index: number; product_id: string; variant_id: string | null; unit_price: number; discount: number }[] | null;
   promoCode: string | null;
   promoDiscount: number;
   promoFreeShipping: boolean;
+  couponPromotionId?: string | null;
+  couponPromotionName?: string | null;
+  couponPromotionRuleType?: PromotionOfferType | null;
+  couponPromotionBuyX?: number | null;
+  couponPromotionGetY?: number | null;
+  couponPromotionRewardQty?: number | null;
+  couponPromotionRewardedUnits?: { line_index: number; product_id: string; variant_id: string | null; unit_price: number; discount: number }[] | null;
+  winningPromotionId?: string | null;
+  winningPromotionName?: string | null;
+  winningRuleType?: PromotionOfferType | null;
+  winningBuyX?: number | null;
+  winningGetY?: number | null;
+  winningRewardQty?: number | null;
   grossShippingFee: number;
   shippingDiscount: number;
   shippingSource: string;
@@ -764,66 +1070,140 @@ export type CartPricingResult =
  */
 export function evaluateCartPricing(input: CartPricingInput): CartPricingResult {
   const now = input.now ?? new Date();
-  const subtotal = round2(Math.max(input.subtotal, 0));
-  const lines = input.lines.map((line) => ({ ...line }));
+  const lines = (input.lines ?? []).map((line) => {
+    const qty = (line as { qty?: number }).qty ?? 1;
+    const unit_price =
+      (line as { unit_price?: number }).unit_price ??
+      (qty > 0 && line.line_total != null ? line.line_total / qty : 0);
+    const line_total = line.line_total ?? round2(unit_price * qty);
+    return {
+      ...line,
+      qty,
+      unit_price,
+      line_total,
+    };
+  });
+  const subtotal = round2(
+    Math.max(
+      input.subtotal != null && Number.isFinite(input.subtotal)
+        ? input.subtotal
+        : lines.reduce((sum, line) => sum + line.line_total, 0),
+      0,
+    ),
+  );
 
   const auto =
-    input.deliveryType === "pickup" || input.deliveryType === "delivery"
-      ? selectAutomaticPromotion(
-          input.promotions,
-          input.targetsByPromotion,
+    input.deliveryType !== "pickup" && input.deliveryType !== "delivery" && input.deliveryType !== undefined
+      ? null
+      : selectAutomaticPromotion(
+          input.promotions ?? [],
+          input.targetsByPromotion ?? new Map(),
           lines,
           subtotal,
           now,
           input.channel ?? "online",
-        )
-      : null;
+        );
 
   let code: string | null = null;
   let promoDiscount = 0;
   let promoFreeShipping = false;
   let promoStackable = false;
   let appliedCoupon: Coupon | null = null;
+  let appliedCouponPromo: Promotion | null = null;
+  let evalCoupon: PromotionEvaluationResult | null = null;
   if (input.promoCode) {
     code = normalizeCouponCode(input.promoCode);
     if (!code) {
       return { ok: false, reason: "not_found", message: `Coupon ${input.promoCode} is not valid` };
     }
-    const coupon = input.coupons.find((candidate) => candidate.code === code) ?? null;
-    const usage = input.usageFor(coupon?.id ?? "");
-    const check = checkPromoCode(
-      coupon,
-      {
-        subtotal,
-        lines: lines.map((line) => ({
-          product_id: line.product_id,
-          category_id: line.category_id,
-          line_total: line.line_total,
-        })),
-        now,
-      },
-      {
-        customerUses: coupon ? usage.customerUses : 0,
-        hasPriorOrder: usage.hasPriorOrder,
-      },
+    const couponPromo = (input.promotions ?? []).find(
+      (candidate) =>
+        candidate.mode === "coupon" &&
+        candidate.code &&
+        normalizeCouponCode(candidate.code) === code,
     );
-    if (!check.ok) {
-      const messages: Record<CouponRejection, string> = {
-        not_found: `Coupon ${code} is not valid`,
-        inactive: `Coupon ${code} is not valid`,
-        not_started: `Coupon ${code} is not active yet`,
-        expired: `Coupon ${code} has expired`,
-        exhausted: `Coupon ${code} has been fully used`,
-        min_subtotal: `Coupon ${code} needs a subtotal of at least ${coupon?.min_subtotal ?? 0}`,
-        not_applicable: `Coupon ${code} does not apply to this cart`,
-        limit_reached: `Coupon ${code} has reached its usage limit`,
-      };
-      return { ok: false, reason: check.reason, message: messages[check.reason] };
+    if (couponPromo) {
+      if (!couponPromo.enabled) {
+        return { ok: false, reason: "inactive", message: `Coupon ${code} is not valid` };
+      }
+      const channel = input.channel ?? "online";
+      if (
+        couponPromo.channel &&
+        couponPromo.channel !== "both" &&
+        couponPromo.channel !== channel &&
+        !(channel === "both")
+      ) {
+        return { ok: false, reason: "not_applicable", message: `Coupon ${code} does not apply to this channel` };
+      }
+      const startStr = couponPromo.start_date || couponPromo.starts_at;
+      if (startStr && Date.parse(startStr) > now.getTime()) {
+        return { ok: false, reason: "not_started", message: `Coupon ${code} is not active yet` };
+      }
+      const endStr = couponPromo.end_date || couponPromo.ends_at;
+      if (endStr && Date.parse(endStr) < now.getTime()) {
+        return { ok: false, reason: "expired", message: `Coupon ${code} has expired` };
+      }
+      if (
+        couponPromo.usage_limit !== null &&
+        couponPromo.usage_limit !== undefined &&
+        (couponPromo.used_count ?? 0) >= couponPromo.usage_limit
+      ) {
+        return { ok: false, reason: "exhausted", message: `Coupon ${code} has been fully used` };
+      }
+      const minSub = couponPromo.minimum_order_amount ?? 0;
+      if (subtotal < minSub) {
+        return {
+          ok: false,
+          reason: "min_subtotal",
+          message: `Coupon ${code} needs a subtotal of at least ${minSub}`,
+        };
+      }
+      const targets = input.targetsByPromotion?.get(couponPromo.id) ?? new Set<string>();
+      if (!promotionApplies(couponPromo, targets, lines)) {
+        return { ok: false, reason: "not_applicable", message: `Coupon ${code} does not apply to this cart` };
+      }
+      evalCoupon = evaluatePromotionAgainstLines(couponPromo, targets, lines, subtotal);
+      promoDiscount = evalCoupon ? evalCoupon.discount : 0;
+      if (promoDiscount <= 0) {
+        return { ok: false, reason: "not_applicable", message: `Coupon ${code} does not apply to this cart` };
+      }
+      promoFreeShipping = false;
+      promoStackable = Boolean(couponPromo.stackable);
+      appliedCouponPromo = couponPromo;
+    } else {
+      const coupon = (input.coupons ?? []).find((candidate) => candidate.code === code) ?? null;
+      const usage = input.usageFor ? input.usageFor(coupon?.id ?? "") : { customerUses: 0, hasPriorOrder: false };
+      const check = checkPromoCode(
+        coupon,
+        {
+          subtotal,
+          lines: lines.map((line) => ({
+            product_id: line.product_id,
+            category_id: line.category_id,
+            line_total: line.line_total,
+          })),
+          now,
+        },
+        usage,
+      );
+      if (!check.ok) {
+        const messages: Record<CouponRejection, string> = {
+          not_found: `Coupon ${code} is not valid`,
+          inactive: `Coupon ${code} is not valid`,
+          not_started: `Coupon ${code} is not active yet`,
+          expired: `Coupon ${code} has expired`,
+          exhausted: `Coupon ${code} has been fully used`,
+          min_subtotal: `Coupon ${code} needs a subtotal of at least ${coupon?.min_subtotal ?? 0}`,
+          not_applicable: `Coupon ${code} does not apply to this cart`,
+          limit_reached: `Coupon ${code} has reached its usage limit`,
+        };
+        return { ok: false, reason: check.reason, message: messages[check.reason] };
+      }
+      promoDiscount = check.discount;
+      promoFreeShipping = check.freeShipping;
+      promoStackable = check.coupon.stackable;
+      appliedCoupon = check.coupon;
     }
-    promoDiscount = check.discount;
-    promoFreeShipping = check.freeShipping;
-    promoStackable = check.coupon.stackable;
-    appliedCoupon = check.coupon;
   }
 
   // Stacking: both only when both agree, else the larger alone (the code wins
@@ -831,6 +1211,12 @@ export function evaluateCartPricing(input: CartPricingInput): CartPricingResult 
   let autoDiscount = auto?.discount ?? 0;
   let autoId = auto?.promotion.id ?? null;
   let autoName: string | null = auto ? (auto.promotion.name_en || auto.promotion.name_ar || null) : null;
+  let autoRuleType = auto?.evaluation?.rule_type ?? (auto ? (auto.promotion.offer_type ?? auto.promotion.rule_type ?? "standard") : null);
+  let autoBuyX = auto?.evaluation?.buy_x ?? auto?.promotion.buy_x ?? null;
+  let autoGetY = auto?.evaluation?.get_y ?? auto?.promotion.get_y ?? null;
+  let autoRewardQty = auto?.evaluation?.reward_qty ?? null;
+  let autoRewardedUnits = auto?.evaluation?.rewardedUnits ?? null;
+
   if (code && auto) {
     if (auto.promotion.stackable && promoStackable) {
       // both apply
@@ -838,6 +1224,11 @@ export function evaluateCartPricing(input: CartPricingInput): CartPricingResult 
       autoDiscount = 0;
       autoId = null;
       autoName = null;
+      autoRuleType = null;
+      autoBuyX = null;
+      autoGetY = null;
+      autoRewardQty = null;
+      autoRewardedUnits = null;
     } else {
       promoDiscount = 0;
       promoFreeShipping = false;
@@ -901,11 +1292,10 @@ export function evaluateCartPricing(input: CartPricingInput): CartPricingResult 
   const total = round2(subtotal - goodsDiscount + grossFee);
 
   // Scoped allocation, mirroring the server: each discount spreads over ITS
-  // eligible lines (a category offer never touches an out-of-scope line),
-  // proportionally with the last eligible line taking the remainder, so both
-  // shares sum exactly. The line's total share is what its units cost.
+  // eligible lines (a category offer never touches an out-of-scope line).
   const couponTargets = code ? (appliedCoupon?.target_ids ?? []) : [];
   const couponScope = appliedCoupon?.applies_to ?? "all";
+  const couponPromoTargets = appliedCouponPromo ? (input.targetsByPromotion.get(appliedCouponPromo.id) ?? new Set<string>()) : new Set<string>();
   const autoTargets = autoId && auto ? (input.targetsByPromotion.get(autoId) ?? new Set<string>()) : new Set<string>();
   const autoEligible = lines.map(
     (line) =>
@@ -916,6 +1306,9 @@ export function evaluateCartPricing(input: CartPricingInput): CartPricingResult 
   );
   const codeEligible = lines.map((line) => {
     if (!code || promoDiscount <= 0) return false;
+    if (appliedCouponPromo) {
+      return promotionApplies(appliedCouponPromo, couponPromoTargets, [line]);
+    }
     if (couponScope === "all") return true;
     if (couponScope === "products") return couponTargets.includes(line.product_id);
     return line.category_id !== null && couponTargets.includes(line.category_id);
@@ -937,14 +1330,54 @@ export function evaluateCartPricing(input: CartPricingInput): CartPricingResult 
       }
     });
   };
-  if (autoDiscount > 0) spread(autoDiscount, autoEligible);
-  if (promoDiscount > 0) spread(promoDiscount, codeEligible);
-  const priced = lines.map((line, index) => {
+
+  if (autoDiscount > 0) {
+    if (auto?.evaluation && (auto.evaluation.rule_type === "bxgy" || auto.evaluation.rule_type === "cheapest_item")) {
+      auto.evaluation.lineDiscounts.forEach((disc, i) => {
+        shares[i] = round2((shares[i] ?? 0) + disc);
+      });
+    } else {
+      spread(autoDiscount, autoEligible);
+    }
+  }
+  if (promoDiscount > 0) {
+    if (appliedCouponPromo && evalCoupon && (evalCoupon.rule_type === "bxgy" || evalCoupon.rule_type === "cheapest_item")) {
+      evalCoupon.lineDiscounts.forEach((disc, i) => {
+        shares[i] = round2((shares[i] ?? 0) + disc);
+      });
+    } else {
+      spread(promoDiscount, codeEligible);
+    }
+  }
+
+  const priced: EvaluatedCartLine[] = lines.map((line, index) => {
+    const lineShare = Math.max(shares[index] ?? 0, 0);
     const discounted = round2(
-      Math.max(line.line_total - Math.max(shares[index] ?? 0, 0), 0) / Math.max(line.qty, 1),
+      Math.max(line.line_total - lineShare, 0) / Math.max(line.qty, 1),
     );
-    return { ...line, discounted_unit_price: discounted };
+    const autoRewarded = auto?.evaluation?.lineRewardedQty?.[index] ?? 0;
+    const couponRewarded = (appliedCouponPromo && evalCoupon) ? (evalCoupon.lineRewardedQty?.[index] ?? 0) : 0;
+    const rewardedQty = autoRewarded + couponRewarded;
+    const isCovered = (autoEligible[index] && autoDiscount > 0) || (codeEligible[index] && promoDiscount > 0) || lineShare > 0 || rewardedQty > 0;
+    const promoId = autoId ?? (promoDiscount > 0 && appliedCouponPromo ? appliedCouponPromo.id : null);
+    const promoName = autoName ?? (promoDiscount > 0 && appliedCouponPromo ? (appliedCouponPromo.name_en || appliedCouponPromo.name_ar) : null);
+    return {
+      ...line,
+      discounted_unit_price: discounted,
+      rewarded_qty: rewardedQty,
+      discount_amount: lineShare,
+      promotion_id: isCovered ? promoId : null,
+      promotion_name: isCovered ? promoName : null,
+      rewarded_units: rewardedQty,
+    };
   });
+
+  const winningPromoId = autoId ?? (promoDiscount > 0 && appliedCouponPromo ? appliedCouponPromo.id : null);
+  const winningPromoName = autoName ?? (promoDiscount > 0 && appliedCouponPromo ? (appliedCouponPromo.name_en || appliedCouponPromo.name_ar) : null);
+  const winningRuleType = autoRuleType ?? (promoDiscount > 0 && appliedCouponPromo && evalCoupon ? evalCoupon.rule_type : null);
+  const winningBuyX = autoBuyX ?? (promoDiscount > 0 && appliedCouponPromo && evalCoupon ? evalCoupon.buy_x ?? null : null);
+  const winningGetY = autoGetY ?? (promoDiscount > 0 && appliedCouponPromo && evalCoupon ? evalCoupon.get_y ?? null : null);
+  const winningRewardQty = autoRewardQty ?? (promoDiscount > 0 && appliedCouponPromo && evalCoupon ? evalCoupon.reward_qty ?? null : null);
 
   return {
     ok: true,
@@ -953,9 +1386,27 @@ export function evaluateCartPricing(input: CartPricingInput): CartPricingResult 
       autoDiscount: round2(autoDiscount),
       autoPromotionId: autoId,
       autoPromotionName: autoName,
+      autoPromotionRuleType: autoRuleType,
+      autoPromotionBuyX: autoBuyX,
+      autoPromotionGetY: autoGetY,
+      autoPromotionRewardQty: autoRewardQty,
+      autoPromotionRewardedUnits: autoRewardedUnits,
       promoCode: code,
       promoDiscount: round2(promoDiscount),
       promoFreeShipping,
+      couponPromotionId: appliedCouponPromo ? appliedCouponPromo.id : null,
+      couponPromotionName: appliedCouponPromo ? (appliedCouponPromo.name_en || appliedCouponPromo.name_ar) : null,
+      couponPromotionRuleType: appliedCouponPromo && evalCoupon ? evalCoupon.rule_type : null,
+      couponPromotionBuyX: appliedCouponPromo && evalCoupon ? evalCoupon.buy_x ?? null : null,
+      couponPromotionGetY: appliedCouponPromo && evalCoupon ? evalCoupon.get_y ?? null : null,
+      couponPromotionRewardQty: appliedCouponPromo && evalCoupon ? evalCoupon.reward_qty ?? null : null,
+      couponPromotionRewardedUnits: appliedCouponPromo && evalCoupon ? evalCoupon.rewardedUnits : [],
+      winningPromotionId: winningPromoId,
+      winningPromotionName: winningPromoName,
+      winningRuleType: winningRuleType,
+      winningBuyX: winningBuyX,
+      winningGetY: winningGetY,
+      winningRewardQty: winningRewardQty,
       grossShippingFee: round2(grossFee + shipDiscount),
       shippingDiscount: round2(shipDiscount),
       shippingSource: shipSource,
@@ -984,30 +1435,115 @@ export function promotionUnitPrice(
   targetsByPromotion: ReadonlyMap<string, ReadonlySet<string>>,
   now: Date = new Date(),
   channel: PromotionChannel = "online",
-): { unit: number; promotionId: string | null } {
+  couponCode?: string | null,
+): {
+  unit: number;
+  promotionId: string | null;
+  promotionName?: string | null;
+  discountAmount?: number;
+  percentOff?: number | null;
+  offerType?: PromotionOfferType | null;
+  buy_x?: number | null;
+  get_y?: number | null;
+} {
   const line: PromotionCartLine = {
     product_id: productId,
     category_id: categoryId,
     variant_id: variantId,
     line_total: unitPrice,
+    qty: 1,
+    unit_price: unitPrice,
   };
-  let best: { unit: number; promotionId: string } | null = null;
+  let best: {
+    unit: number;
+    promotionId: string;
+    promotionName: string;
+    discountAmount: number;
+    percentOff: number | null;
+    offerType?: PromotionOfferType | null;
+    buy_x?: number | null;
+    get_y?: number | null;
+  } | null = null;
   const ordered = [...promotions].sort((a, b) => {
-    if (b.priority !== a.priority) return b.priority - a.priority;
-    return a.created_at.localeCompare(b.created_at);
+    const pA = a.priority ?? 0;
+    const pB = b.priority ?? 0;
+    if (pB !== pA) return pB - pA;
+    return (a.created_at ?? "").localeCompare(b.created_at ?? "");
   });
+  const normalizedCode = normalizeCouponCode(couponCode);
   for (const promotion of ordered) {
+    if (promotion.mode === "coupon") {
+      if (!normalizedCode || normalizeCouponCode(promotion.code) !== normalizedCode) {
+        continue;
+      }
+    }
     // Display-only offers: no minimum its cart cannot prove, live, in scope.
-    if (promotion.minimum_order_amount > 0) continue;
+    if (promotion.minimum_order_amount && promotion.minimum_order_amount > 0) continue;
     if (!isPromotionLive(promotion, now)) continue;
-    if (promotion.channel && promotion.channel !== "both" && promotion.channel !== channel) continue;
+    if (
+      promotion.channel &&
+      promotion.channel !== "both" &&
+      promotion.channel !== channel &&
+      !(channel === "both")
+    ) {
+      continue;
+    }
     const targetIds = targetsByPromotion.get(promotion.id) ?? new Set<string>();
     if (!promotionApplies(promotion, targetIds, [line])) continue;
+
+    const offerType: PromotionOfferType = promotion.offer_type ?? promotion.rule_type ?? "standard";
+    const name = promotion.name_en || promotion.name_ar || "";
+
+    if (offerType === "bxgy" || offerType === "cheapest_item") {
+      // For multi-item offers, single card unit price is not discounted, but the offer info is made available for badge display
+      if (!best) {
+        best = {
+          unit: round2(unitPrice),
+          promotionId: promotion.id,
+          promotionName: name,
+          discountAmount: 0,
+          percentOff: null,
+          offerType,
+          buy_x: promotion.buy_x,
+          get_y: promotion.get_y,
+        };
+      }
+      continue;
+    }
+
     const discount = promotionDiscount(promotion, targetIds, [line], unitPrice);
     const unit = round2(Math.max(unitPrice - discount, 0));
-    if (!best || unit < best.unit) best = { unit, promotionId: promotion.id };
+    const saving = round2(unitPrice - unit);
+    if (!best || unit < best.unit) {
+      const isPercent =
+        promotion.type === "percentage" ||
+        promotion.type === "percent" ||
+        promotion.discount_type === "percent";
+      const percentOff = isPercent
+        ? Math.round(promotion.value)
+        : unitPrice > 0
+          ? Math.round((saving / unitPrice) * 100)
+          : null;
+      best = {
+        unit,
+        promotionId: promotion.id,
+        promotionName: name,
+        discountAmount: saving,
+        percentOff,
+        offerType: "standard",
+      };
+    }
   }
-  return best ?? { unit: round2(unitPrice), promotionId: null };
+  return (
+    best ?? {
+      unit: round2(unitPrice),
+      promotionId: null,
+      promotionName: null,
+      discountAmount: 0,
+      percentOff: null,
+      offerType: null,
+    }
+  );
 }
 
 // ── brands ──────────────────────────────────────────────────────────────────

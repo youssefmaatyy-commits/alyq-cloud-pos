@@ -799,25 +799,18 @@ test("customer keys normalize like the server", () => {
 test("display prices show real current offers, never promises", () => {
   const targets = new Map([["prm-ring", new Set(["category:cat-rings"])]]);
   const ring20 = makePromotion({ id: "prm-ring", value: 20, scope: "category" });
-  assert.deepEqual(
-    promotionUnitPrice("prd-1", null, "cat-rings", 200, [ring20], targets, NOW),
-    { unit: 160, promotionId: "prm-ring" },
-  );
-  assert.deepEqual(
-    promotionUnitPrice("prd-2", null, "cat-neck", 100, [ring20], targets, NOW),
-    { unit: 100, promotionId: null },
-    "out of scope shows list",
-  );
-  assert.deepEqual(
-    promotionUnitPrice("prd-1", null, "cat-rings", 200, [makePromotion({ minimum_order_amount: 500 })], new Map(), NOW),
-    { unit: 200, promotionId: null },
-    "a cart-level minimum is not a display promise",
-  );
-  assert.deepEqual(
-    promotionUnitPrice("prd-1", null, "cat-rings", 200, [makePromotion({ enabled: false })], new Map(), NOW),
-    { unit: 200, promotionId: null },
-    "a disabled offer shows nothing",
-  );
+  const res1 = promotionUnitPrice("prd-1", null, "cat-rings", 200, [ring20], targets, NOW);
+  assert.equal(res1.unit, 160);
+  assert.equal(res1.promotionId, "prm-ring");
+  const res2 = promotionUnitPrice("prd-2", null, "cat-neck", 100, [ring20], targets, NOW);
+  assert.equal(res2.unit, 100);
+  assert.equal(res2.promotionId, null);
+  const res3 = promotionUnitPrice("prd-1", null, "cat-rings", 200, [makePromotion({ minimum_order_amount: 500 })], new Map(), NOW);
+  assert.equal(res3.unit, 200);
+  assert.equal(res3.promotionId, null);
+  const res4 = promotionUnitPrice("prd-1", null, "cat-rings", 200, [makePromotion({ enabled: false })], new Map(), NOW);
+  assert.equal(res4.unit, 200);
+  assert.equal(res4.promotionId, null);
 });
 
 // ── delivery fees ───────────────────────────────────────────────────────────
@@ -2377,12 +2370,16 @@ test("a coupon's use is counted when an order is placed and given back when it i
   assert.ok(placed.order.discount_amount > 0);
   assert.equal(placed.order.total, round2(placed.order.subtotal - placed.order.discount_amount + placed.order.delivery_fee));
 
-  const used = (await repository.listCoupons()).find((coupon) => coupon.code === "E2E10");
-  assert.equal(used?.used_count, 1);
+  const pendingUsed = (await repository.listCoupons()).find((coupon) => coupon.code === "E2E10");
+  assert.equal(pendingUsed?.used_count, 0, "pending order does not consume coupon until approval");
 
-  await repository.resolveOrder(placed.order.id, { action: "cancel", reason: "Out of stock", ...STAFF });
+  await repository.resolveOrder(placed.order.id, { action: "approve", ...STAFF });
+  const approvedUsed = (await repository.listCoupons()).find((coupon) => coupon.code === "E2E10");
+  assert.equal(approvedUsed?.used_count, 1, "approved order atomically consumes coupon usage");
+
+  await repository.resolveOrder(placed.order.id, { action: "cancel", reason: "Customer request", ...STAFF });
   const given = (await repository.listCoupons()).find((coupon) => coupon.code === "E2E10");
-  assert.equal(given?.used_count, 0, "a cancelled order gives the coupon back");
+  assert.equal(given?.used_count, 0, "a cancelled approved order gives the coupon back");
 
   await assert.rejects(
     repository.placeOrder({

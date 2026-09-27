@@ -33,6 +33,8 @@ import type {
   ProductSpec,
   PromoCodeUsage,
   Promotion,
+  PromotionOfferType,
+  PromotionRewardType,
   PromotionTarget,
   PromotionTargetDraft,
   ResolveOrderInput,
@@ -256,11 +258,15 @@ interface DeliveryZoneRow {
 interface PromotionRow {
   id: string;
   enabled: boolean;
+  mode?: string | null;
+  code?: string | null;
   channel?: string | null;
   name_en: string;
   name_ar: string;
   description_en: string | null;
   description_ar: string | null;
+  offer_type?: string | null;
+  rule_type?: string | null;
   discount_type: string;
   value: Numeric;
   scope: string;
@@ -270,6 +276,12 @@ interface PromotionRow {
   ends_at: string | null;
   priority: number;
   stackable: boolean;
+  buy_x?: number | null;
+  get_y?: number | null;
+  reward_type?: string | null;
+  reward_value?: Numeric;
+  repeat_offer?: boolean | null;
+  min_quantity?: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -590,14 +602,19 @@ function mapPromotion(row: PromotionRow): Promotion {
     row.scope === "category" || row.scope === "product" || row.scope === "variant"
       ? row.scope
       : "store";
+  const offerType = (row.offer_type ?? row.rule_type ?? "standard") as PromotionOfferType;
   return {
     id: row.id,
     enabled: row.enabled,
+    mode: row.mode === "coupon" ? "coupon" : "automatic",
+    code: row.code ?? null,
     channel: row.channel === "online" || row.channel === "pos" ? row.channel : "both",
     name_en: row.name_en,
     name_ar: row.name_ar,
     description_en: row.description_en ?? null,
     description_ar: row.description_ar ?? null,
+    offer_type: offerType,
+    rule_type: offerType,
     discount_type: row.discount_type === "fixed" ? "fixed" : "percent",
     value: toNumber(row.value),
     scope,
@@ -610,6 +627,13 @@ function mapPromotion(row: PromotionRow): Promotion {
     ends_at: row.ends_at ?? null,
     priority: row.priority ?? 0,
     stackable: row.stackable ?? false,
+    buy_x: row.buy_x ?? null,
+    get_y: row.get_y ?? null,
+    reward_type: (row.reward_type ?? "free") as PromotionRewardType,
+    reward_value:
+      row.reward_value === null || row.reward_value === undefined ? null : toNumber(row.reward_value),
+    repeat_offer: row.repeat_offer !== false,
+    min_quantity: row.min_quantity ?? null,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -1759,14 +1783,41 @@ export class SupabaseOnlineRepository
           field: "scope",
         });
       }
+      const mode = draft.mode ?? "automatic";
+      const code =
+        mode === "coupon"
+          ? draft.code
+            ? draft.code.trim().toUpperCase().replace(/\s+/g, "")
+            : null
+          : null;
+      if (mode === "coupon" && (!code || !/^[A-Z0-9_-]{2,30}$/.test(code))) {
+        throw new OnlineError("db", "A valid coupon code is required for coupon mode", { field: "code" });
+      }
+      if (mode === "coupon" && code) {
+        const { data: dup } = await client
+          .from("promotions")
+          .select("id")
+          .eq("mode", "coupon")
+          .eq("code", code)
+          .neq("id", draft.id ?? "00000000-0000-0000-0000-000000000000")
+          .maybeSingle();
+        if (dup) {
+          throw new OnlineError("db", "A coupon with this code already exists", { field: "code" });
+        }
+      }
+      const offerType = draft.offer_type ?? draft.rule_type ?? "standard";
       const payload = {
         ...(draft.id ? { id: draft.id } : {}),
         enabled: draft.enabled ?? true,
+        mode,
+        code,
         channel: draft.channel ?? "both",
         name_en: draft.name_en ?? "",
         name_ar: draft.name_ar ?? "",
         description_en: draft.description_en ?? null,
         description_ar: draft.description_ar ?? null,
+        offer_type: offerType,
+        rule_type: offerType,
         discount_type: draft.discount_type ?? "percent",
         value: Math.max(draft.value ?? 0, 0),
         scope,
@@ -1776,6 +1827,12 @@ export class SupabaseOnlineRepository
         ends_at: draft.ends_at ?? null,
         priority: draft.priority ?? 0,
         stackable: draft.stackable ?? false,
+        buy_x: draft.buy_x ?? null,
+        get_y: draft.get_y ?? null,
+        reward_type: draft.reward_type ?? "free",
+        reward_value: draft.reward_value ?? null,
+        repeat_offer: draft.repeat_offer !== false,
+        min_quantity: draft.min_quantity ?? null,
         updated_at: new Date().toISOString(),
       };
       const { data, error } = await client.from("promotions").upsert(payload).select().single();
