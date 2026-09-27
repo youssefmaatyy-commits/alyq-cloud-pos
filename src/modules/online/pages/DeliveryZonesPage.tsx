@@ -31,7 +31,7 @@ import {
   useToast,
 } from "@/components/ui";
 import { getWebsiteRepository } from "../data";
-import { toOnlineError, type OnlineErrorCode } from "../data/repository";
+import { describeThrown, toOnlineError, type OnlineErrorCode } from "../data/repository";
 import type { DeliveryZone } from "../types";
 import { storefrontInvalidation } from "../hooks/storefrontInvalidation";
 
@@ -82,7 +82,21 @@ export function DeliveryZonesPage() {
       toast.success(t("online.zones.saved"));
       storefrontInvalidation.notify();
     } catch (caught) {
-      toast.error(t(`online.error.${toOnlineError(caught).code}`));
+      const normalized = toOnlineError(caught);
+      // The admin only ever sees the friendly `online.error.<code>` text (never
+      // raw SQL or a stringified object) — but when the database itself
+      // rejected the write (a constraint, a stale schema, a permission gap)
+      // the actual SQLSTATE/message/hint is what an operator needs to tell a
+      // real defect from a stale cache. Same pattern as the storefront's own
+      // order-placement failure log.
+      const described = describeThrown(caught);
+      console.error("[online.zones] save failed", {
+        code: normalized.code,
+        message: described.message,
+        details: described.details ?? normalized.detail,
+        hint: described.hint,
+      });
+      toast.error(t(`online.error.${normalized.code}`));
     } finally {
       setBusy(false);
     }
@@ -98,7 +112,15 @@ export function DeliveryZonesPage() {
       storefrontInvalidation.notify();
       setConfirmDelete(null);
     } catch (caught) {
-      toast.error(t(`online.error.${toOnlineError(caught).code}`));
+      const normalized = toOnlineError(caught);
+      const described = describeThrown(caught);
+      console.error("[online.zones] delete failed", {
+        code: normalized.code,
+        message: described.message,
+        details: described.details ?? normalized.detail,
+        hint: described.hint,
+      });
+      toast.error(t(`online.error.${normalized.code}`));
     } finally {
       setBusy(false);
     }
