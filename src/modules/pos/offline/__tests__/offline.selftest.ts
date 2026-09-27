@@ -10,7 +10,7 @@
  *   node scripts/test.logic.mjs offline
  */
 import assert from "node:assert/strict";
-import { AppError } from "@/modules/products/data/repository";
+import { AppError, readableErrorMessage, toAppError } from "@/modules/products/data/repository";
 import type { Product } from "@/modules/products/types";
 import type { ProductVariant } from "@/modules/products/variants";
 import type { CompleteSaleInput, Sale } from "../../types";
@@ -222,6 +222,17 @@ test("a cash sale completed offline is queued with a stable client_ref and appea
   assert.equal(summary.errorCount, 0);
 });
 
+test("the multi-store receipt/lines/outbox write is atomic when structured clone rejects a value", async () => {
+  freshEnv();
+  const db = getOfflineDb();
+  await assert.rejects(() => db.putBatch([
+    { store: "offline_sales", value: { id: "must-not-partially-write", total: 500 } },
+    { store: "sync_outbox", value: { client_ref: "must-not-partially-write", uncloneable: () => true } },
+  ]), /clone|could not be cloned/i);
+  assert.equal(await db.get("offline_sales", "must-not-partially-write"), undefined);
+  assert.equal(await db.get("sync_outbox", "must-not-partially-write"), undefined);
+});
+
 test("an offline sale survives being re-read from the store (simulated refresh)", async () => {
   freshEnv();
   const record = await enqueueOne("cr-refresh-1");
@@ -396,7 +407,22 @@ test("processOutbox with nothing queued does not call the network at all", async
   assert.equal(calls, 0);
 });
 
-// ── connectivity ─────────────────────────────────────────────────────────────
+// ── real Supabase offline error shape + connectivity ─────────────────────────
+
+test("a structured Supabase fetch failure remains readable and enters the NETWORK offline branch", () => {
+  const actualSupabaseShape = {
+    message: "TypeError: Failed to fetch",
+    details: "TypeError: Failed to fetch",
+    hint: "",
+    code: "",
+  };
+  assert.equal(String(actualSupabaseShape), "[object Object]", "proves the old String(error) failure mode");
+  assert.equal(readableErrorMessage(actualSupabaseShape), "TypeError: Failed to fetch");
+  const normalized = toAppError(actualSupabaseShape);
+  assert.equal(normalized.name, "AppError");
+  assert.equal(normalized.code, "NETWORK");
+  assert.equal(normalized.message, "TypeError: Failed to fetch");
+});
 
 test("connectivity flips on a real network result, independent of any polling", () => {
   resetConnectivityForTests("online");

@@ -11,6 +11,7 @@ import { pathAdmits } from "@/lib/permissions/routes";
 import { useOnlineNotificationState } from "@/modules/online/hooks/OnlineNotificationsProvider";
 import { useOptionalApprovals } from "@/modules/approvals";
 import { normalizeText } from "@/modules/products/services/productQuery";
+import { usePos } from "@/modules/pos/hooks/PosProvider";
 import { brandDisplayName, useBrand } from "@/lib/branding/brand";
 import { RouteGuard } from "./RouteGuard";
 import { cn } from "@/utils/cn";
@@ -148,6 +149,11 @@ function NavItem({
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { t, lang, toggleLang } = useI18n();
   const { mode, products } = useCatalog();
+  // `mode` says which backend is configured; it does not say that backend is
+  // reachable right now. The POS provider owns the real network signal, so the
+  // global shell must use it instead of claiming "Connected" during Offline Mode.
+  const { connectivity } = usePos();
+  const liveOffline = mode === "supabase" && connectivity === "offline";
   // Sidebar visibility follows the signed-in role: an entry is shown only when
   // the same capability table the route guard reads allows the screen.
   const { user } = useInventory();
@@ -431,13 +437,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <span
               className={cn(
                 "h-2 w-2 rounded-full",
-                mode === "supabase" ? "bg-emerald-400" : "bg-amber-400",
+                mode === "supabase" && !liveOffline ? "bg-emerald-400" : "bg-amber-400",
               )}
             />
-            {mode === "supabase" ? t("mode.live") : t("mode.demo")}
+            {liveOffline ? t("pos.offline.offline") : mode === "supabase" ? t("mode.live") : t("mode.demo")}
           </p>
           <p className="mt-1 text-[11px] font-medium leading-relaxed text-stone-400">
-            {mode === "supabase" ? t("mode.liveHint") : t("mode.demoHint")}
+            {liveOffline ? t("pos.offline.offlineHint") : mode === "supabase" ? t("mode.liveHint") : t("mode.demoHint")}
           </p>
         </div>
       ) : null}
@@ -628,8 +634,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <GlobeIcon />
             {lang === "ar" ? "English" : "العربية"}
           </button>
-          <span className="hidden items-center gap-1 rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs font-semibold text-stone-700 sm:inline-flex">
-            {mode === "supabase" ? t("mode.live") : t("mode.demo")}
+          <span
+            data-testid="app-connectivity-status"
+            className={cn(
+              "hidden items-center gap-1 rounded-xl border bg-white px-3 py-2 text-xs font-semibold sm:inline-flex",
+              liveOffline ? "border-amber-300 text-amber-800" : "border-stone-200 text-stone-700",
+            )}
+          >
+            {liveOffline ? t("pos.offline.offline") : mode === "supabase" ? t("mode.live") : t("mode.demo")}
             <ChevronIcon className="h-3 w-3 -rotate-90 text-stone-300" />
           </span>
           {endReason === "expired" ? (

@@ -101,17 +101,56 @@ export class AppError extends Error {
   }
 }
 
+function scalarErrorText(value: unknown): string | null {
+  if (typeof value === "string") return value.trim() || null;
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    return String(value);
+  }
+  return null;
+}
+
+/**
+ * Turn any throwable into text suitable for a cashier-facing error.
+ *
+ * Supabase/PostgREST network failures are plain objects, not `Error` instances:
+ * `{ message: "TypeError: Failed to fetch", details, hint, code: "" }`.
+ * `String(error)` turns that useful object into the useless "[object Object]",
+ * which previously both hid the real failure and prevented `toAppError` from
+ * classifying it as NETWORK (so the POS never reached its offline queue).
+ */
+export function readableErrorMessage(error: unknown, fallback = "Unknown error"): string {
+  if (error instanceof Error) return error.message.trim() || error.name || fallback;
+  const direct = scalarErrorText(error);
+  if (direct && direct !== "[object Object]") return direct;
+  if (error && typeof error === "object") {
+    const value = error as Record<string, unknown>;
+    for (const candidate of [value.message, value.error_description, value.error, value.details, value.hint]) {
+      const text = scalarErrorText(candidate);
+      if (text && text !== "[object Object]") return text;
+      if (candidate && typeof candidate === "object" && candidate !== error) {
+        const nested = readableErrorMessage(candidate, "");
+        if (nested) return nested;
+      }
+    }
+  }
+  return fallback;
+}
+
 /** Map any thrown value into an AppError. */
 export function toAppError(error: unknown): AppError {
   if (error instanceof AppError) return error;
-  const message = error instanceof Error ? error.message : String(error);
+  const message = readableErrorMessage(error);
+  const structured = error && typeof error === "object" ? error as Record<string, unknown> : null;
+  const details = scalarErrorText(structured?.details);
+  const sourceCode = scalarErrorText(structured?.code) ?? undefined;
+  const diagnostic = `${message}\n${details ?? ""}`;
   if (message === "SUPABASE_NOT_CONFIGURED") {
     return new AppError("NOT_CONFIGURED", message);
   }
-  if (/fetch|network|Failed to fetch/i.test(message)) {
-    return new AppError("NETWORK", message);
+  if (/fetch|network|Failed to fetch|load failed|network request failed/i.test(diagnostic)) {
+    return new AppError("NETWORK", message, undefined, sourceCode);
   }
-  return new AppError("DB", message);
+  return new AppError("DB", message, undefined, sourceCode);
 }
 
 /**

@@ -116,9 +116,15 @@ export async function enqueueOfflineSale(
     last_error_kind: null,
   };
 
-  await db.put("offline_sales", record);
-  await db.putMany("offline_sale_lines", saleLines);
-  await db.put("sync_outbox", outboxEntry);
+  // The receipt, its exact-variant lines and its outbox pointer are one unit of
+  // work. A browser close/quota/clone failure may commit all three stores or
+  // none of them — never a sale with no lines, or a sale the sync engine cannot
+  // find. All values above are structured-clone-safe primitives/plain objects.
+  await db.putBatch([
+    { store: "offline_sales", value: record },
+    ...saleLines.map((value) => ({ store: "offline_sale_lines" as const, value })),
+    { store: "sync_outbox", value: outboxEntry },
+  ]);
   return record;
 }
 

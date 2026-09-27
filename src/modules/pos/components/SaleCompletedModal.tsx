@@ -106,7 +106,7 @@ export function SaleCompletedModal() {
               className="mt-1 inline-flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-0.5 text-[11px] font-bold text-amber-800 ring-1 ring-inset ring-amber-200"
               data-testid="pos-sale-offline-badge"
             >
-              ⏳ {t("pos.offline.pendingSyncBadge")}
+              ⏳ {t("pos.offline.savedPendingConfirmation")}
             </p>
           ) : null}
           <p className="mt-1 text-2xl font-extrabold tabular-nums text-stone-900">

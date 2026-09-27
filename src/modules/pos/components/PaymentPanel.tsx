@@ -6,6 +6,7 @@ import { OpenShiftModal, useShifts } from "@/modules/shifts";
 import { usePos } from "../hooks/PosProvider";
 import { autoBalanceOther, round2, smartPaymentCalc } from "../services/posMath";
 import type { SalePaymentInput } from "../types";
+import { readableErrorMessage } from "@/modules/products/data/repository";
 
 /**
  * Smart split-payment panel — the fixed footer of the Current Sale card.
@@ -170,7 +171,13 @@ export function PaymentPanel() {
         void refreshShifts();
         return;
       }
-      const message = err instanceof Error ? err.message : String(err);
+      const message = readableErrorMessage(err, t("common.error"));
+      console.error("[pos-complete-sale] failed", {
+        name: err instanceof Error ? err.name : typeof err === "object" && err ? err.constructor?.name : typeof err,
+        message,
+        code: (err as { code?: unknown } | null)?.code ?? null,
+        error: err,
+      });
       setFailure(message);
       toast.error(message);
     }

@@ -37,11 +37,18 @@ const STORE_KEY_PATH: Record<OfflineStoreName, string> = {
   sync_metadata: "key",
 };
 
+export interface OfflineWrite {
+  store: OfflineStoreName;
+  value: unknown;
+}
+
 export interface OfflineDb {
   get<T>(store: OfflineStoreName, key: string): Promise<T | undefined>;
   getAll<T>(store: OfflineStoreName): Promise<T[]>;
   put<T>(store: OfflineStoreName, value: T): Promise<void>;
   putMany<T>(store: OfflineStoreName, values: T[]): Promise<void>;
+  /** Commit related records across several stores as one all-or-nothing transaction. */
+  putBatch(writes: readonly OfflineWrite[]): Promise<void>;
   delete(store: OfflineStoreName, key: string): Promise<void>;
   clear(store: OfflineStoreName): Promise<void>;
 }
@@ -93,13 +100,29 @@ class IndexedDbBackend implements OfflineDb {
   }
 
   async putMany<T>(store: OfflineStoreName, values: T[]): Promise<void> {
+    await this.putBatch(values.map((value) => ({ store, value })));
+  }
+
+  async putBatch(writes: readonly OfflineWrite[]): Promise<void> {
+    if (writes.length === 0) return;
     const db = await this.open();
+    const stores = [...new Set(writes.map((write) => write.store))];
     await new Promise<void>((resolve, reject) => {
-      const transaction = db.transaction(store, "readwrite");
-      const os = transaction.objectStore(store);
-      for (const value of values) os.put(value);
+      const transaction = db.transaction(stores, "readwrite");
+      // Waiting for transaction.oncomplete (not merely the last request's
+      // success event) is what proves every row is durably committed.
       transaction.oncomplete = () => resolve();
-      transaction.onerror = () => reject(transaction.error ?? new Error("IndexedDB bulk write failed"));
+      transaction.onerror = () => reject(transaction.error ?? new Error("IndexedDB transaction failed"));
+      transaction.onabort = () => reject(transaction.error ?? new Error("IndexedDB transaction aborted"));
+      try {
+        for (const write of writes) transaction.objectStore(write.store).put(write.value);
+      } catch (error) {
+        // `put()` can throw synchronously (most importantly DataCloneError).
+        // Explicitly abort so an earlier request in this same batch cannot
+        // commit after the returned promise has already rejected.
+        transaction.abort();
+        reject(error);
+      }
     });
   }
 
@@ -148,8 +171,18 @@ class MemoryBackend implements OfflineDb {
   }
 
   async putMany<T>(store: OfflineStoreName, values: T[]): Promise<void> {
-    const map = this.storeFor(store);
-    for (const value of values) map.set(this.keyOf(store, value), value);
+    await this.putBatch(values.map((value) => ({ store, value })));
+  }
+
+  async putBatch(writes: readonly OfflineWrite[]): Promise<void> {
+    // Clone every value before mutating any map. Besides matching IndexedDB's
+    // structured-clone boundary, this makes the memory backend all-or-nothing
+    // when a future payload accidentally contains an uncloneable value.
+    const prepared = writes.map((write) => {
+      const value = typeof structuredClone === "function" ? structuredClone(write.value) : write.value;
+      return { store: write.store, key: this.keyOf(write.store, value), value };
+    });
+    for (const write of prepared) this.storeFor(write.store).set(write.key, write.value);
   }
 
   async delete(store: OfflineStoreName, key: string): Promise<void> {
