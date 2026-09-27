@@ -87,7 +87,16 @@
   .store-v2 .v2-wordmark-secondary, .store-v2 .v2-wordmark-divider { display: none; }
   .store-v2 .v2-wordmark-primary { max-width: 46vw; }
 }
-.store-v2 .v2-logo img { display: block; width: auto; height: var(--v2-mobile-logo-height); max-width: min(48vw, 190px); object-fit: contain; }
+/* Issue C (3rd follow-up round): the box a configured logo image renders in.
+   `width: auto` + a fixed `height` already preserves the intrinsic aspect
+   ratio without stretching; `object-fit: contain` only matters once the
+   max-width below actually binds (a wide banner-shaped logo), where it
+   letterboxes instead of distorting. max-width was widened from 190px to
+   230px so the larger default height above (52px desktop) isn't immediately
+   clipped back down for an ordinary wordmark-shaped logo — still far short
+   of the 62vw the text wordmark itself is allowed, so navigation never loses
+   room either side. */
+.store-v2 .v2-logo img { display: block; width: auto; height: var(--v2-mobile-logo-height); max-width: min(48vw, 230px); object-fit: contain; }
 @media (min-width: 768px) {
   .store-v2 .v2-logo img { height: var(--v2-logo-height); }
   .store-v2 .v2-logo img.v2-mobile-only { display: none; }

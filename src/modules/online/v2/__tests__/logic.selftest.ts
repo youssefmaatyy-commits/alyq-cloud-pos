@@ -209,6 +209,35 @@ test("V2 save/read allowlist rejects forged CSS, images, enums, columns and unkn
     "https://shop.example/brand/hero-editorial-mobile.jpg", "the existing Supabase media boundary includes V2 mobile logos");
 });
 
+// Issue C (3rd follow-up round): manual preview confirmed the configured logo
+// image DOES render (so the loading/path logic from the prior round is
+// correct) but appears as "a very small square in the center of the dark
+// header" whenever the admin configures a logo image without also touching
+// the separate logo-size sliders. This pins the fix — an admin who only
+// uploads a logo, and never opens the size sliders, still gets a clearly
+// visible size — and that the fix does NOT grow the header row itself
+// (`.v2-header-inner` in storefront-v2.css floors at 74px desktop / 64px
+// mobile using exactly `logo-height + 18`), which is a hard constraint the
+// task called out ("do not enlarge the entire header excessively").
+test("a configured logo with no size chosen renders clearly visible, not a tiny square, and never grows the header", () => {
+  const settings = structuredClone(DEFAULT_WEBSITE_SETTINGS);
+  settings.images.logo_url = "https://project-ref.supabase.co/storage/v1/object/public/product-images/website/logo.png";
+  const vars = (settings2: typeof settings, overrides?: Partial<typeof settings.storefront_v2>) =>
+    adaptV2Appearance(overrides ? { ...settings2, storefront_v2: { ...settings2.storefront_v2, ...overrides } } : settings2)
+      .variables as Record<string, string>;
+  const appearance = vars(settings);
+  const desktopHeight = Number(String(appearance["--v2-logo-height"]).replace("px", ""));
+  const mobileHeight = Number(String(appearance["--v2-mobile-logo-height"]).replace("px", ""));
+  assert.ok(desktopHeight >= 48, "the default desktop logo height is a real, visible size, not a tiny badge");
+  assert.ok(mobileHeight >= 36, "the default mobile logo height is a real, visible size, not a tiny badge");
+  assert.ok(desktopHeight + 18 <= 74, "the default fits inside the header's existing 74px floor — no header growth");
+  assert.ok(mobileHeight + 18 <= 64, "the default fits inside the header's existing 64px floor — no header growth");
+  // An admin who DOES use the sliders keeps full control, unchanged.
+  const chosen = vars(settings, { logo_height: 30, mobile_logo_height: 24 });
+  assert.equal(chosen["--v2-logo-height"], "30px");
+  assert.equal(chosen["--v2-mobile-logo-height"], "24px");
+});
+
 test("V2 overrides leave legacy theme alone and use accessible text for extreme palettes", () => {
   const raw = structuredClone(DEFAULT_WEBSITE_SETTINGS);
   raw.storefront_v2 = { ...raw.storefront_v2, mobile_logo_url: "/brand/hero-editorial.jpg",

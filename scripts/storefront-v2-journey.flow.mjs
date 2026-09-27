@@ -298,6 +298,36 @@ check("the scroll pane cannot be starved by grid/flex auto-sizing, scrolls by to
   /min-height:\s*0\b/.test(zoneScrollRule) &&
   /touch-action:\s*pan-y\b/.test(zoneScrollRule) &&
   /overflow-x:\s*hidden\b/.test(zoneScrollRule));
+
+// Issue B (2nd follow-up): the manual retest reported only 3 zones and NO
+// scrollbar — which is correct behaviour, not a bug, when 3 rows fit inside
+// the pane. jsdom never runs real CSS layout, so it cannot report a genuine
+// `scrollHeight`/`clientHeight` (both always read 0 here) — no in-sandbox
+// Chromium is reachable to measure real pixels (see
+// scripts/rendered-v2-zone-scroll.flow.mjs for that, written but unexecuted).
+// What CAN be proven here, from the exact numbers in the shipped CSS (not
+// assumed/hardcoded), is that a 12-zone shop is MATHEMATICALLY GUARANTEED to
+// overflow the pane at any viewport, while a 3-zone shop is guaranteed to
+// fit — i.e. the pane's max-height really is doing its job, not merely
+// present as an unused declaration.
+const zoneRowRule = /\.store-v2 \.v2-zone \{([^}]*)\}/.exec(css)?.[1] ?? "";
+const rowMinHeight = Number(/min-height:\s*(\d+)px/.exec(zoneRowRule)?.[1] ?? NaN);
+const rowGap = Number(/\.v2-zone-scroll[^{]*\{[^}]*\bgap:\s*(\d+)px/.exec(css)?.[1] ?? NaN);
+// `min(46vh, 340px)`: 340px is the hard ceiling this pane can EVER reach on
+// any viewport, however tall — so if N rows exceed 340px on the row-height
+// floor alone (before real text wrapping, which only adds height), the pane
+// overflows and must scroll everywhere, full stop.
+const paneCeilingPx = Number(/max-height:\s*min\(\s*46vh\s*,\s*(\d+)px\s*\)/.exec(zoneScrollRule)?.[1] ?? NaN);
+// The narrowest phone this storefront supports realistically still clears
+// ~640px of viewport height even with browser chrome; the mobile override
+// is 42vh, so this is the smallest the pane can ever be in practice.
+const smallestRealisticPaneFloorPx = 0.42 * 640;
+const contentHeight = (rows) => rows * rowMinHeight + (rows - 1) * rowGap;
+check("12 real zone rows mathematically must overflow the pane's own hard ceiling at any viewport size",
+  Number.isFinite(rowMinHeight) && Number.isFinite(rowGap) && Number.isFinite(paneCeilingPx) &&
+  contentHeight(12) > paneCeilingPx);
+check("3 real zone rows mathematically fit even the smallest realistic pane height — no scrollbar is correct, not a bug",
+  contentHeight(3) <= smallestRealisticPaneFloorPx);
 clickEl(testid("v2-place-order"));
 await waitFor(() => orders().length === 3 && Boolean(testid("v2-order-number")) &&
   Boolean(testid("v2-order-details")), { label: "settled delivery/COD receipt" });
