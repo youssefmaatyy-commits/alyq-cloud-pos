@@ -30,11 +30,7 @@ import { getCurrentUser } from "@/modules/inventory/permissions";
 export function SalesHistoryPage() {
   const { t, pick, date, num } = useI18n();
   const toast = useToast();
-  // `visibleSales` = server-fetched `sales` with any still-queued/failed
-  // offline sales prepended (offline/outbox.ts) — a sale rung up while
-  // disconnected shows up here, marked "Pending Sync", before the server has
-  // ever seen it, and drops off this extra list the moment it syncs.
-  const { visibleSales: sales, salesLoading, error, refreshSales } = usePos();
+  const { sales, salesLoading, error, refreshSales } = usePos();
   const allowConfirm = canConfirmPayment();
 
   const [search, setSearch] = useState("");
@@ -103,13 +99,7 @@ export function SalesHistoryPage() {
     });
   }, [sales, search, status, method, todayOnly]);
 
-  const statusBadge = (status: string, offlineSyncStatus?: "pending" | "syncing" | "synced" | "error") => {
-    // A sale still in the local offline queue: say so before the ordinary
-    // completed/pending/voided status, since "completed" alone would wrongly
-    // read as "already on the server".
-    if (offlineSyncStatus === "error") return <Badge tone="danger">{t("pos.offline.syncErrorBadge")}</Badge>;
-    if (offlineSyncStatus === "pending" || offlineSyncStatus === "syncing")
-      return <Badge tone="warning">{t("pos.offline.pendingSyncBadge")}</Badge>;
+  const statusBadge = (status: string) => {
     if (status === "completed") return <Badge tone="success">{t("pos.status.completed")}</Badge>;
     if (status === "pending") return <Badge tone="warning">{t("pos.status.pending")}</Badge>;
     return <Badge tone="danger">{t("pos.status.voided")}</Badge>;
@@ -119,8 +109,6 @@ export function SalesHistoryPage() {
   const canConfirmSale = (sale: (typeof sales)[number]) =>
     allowConfirm &&
     sale.status !== "voided" &&
-    sale.offline_sync_status !== "pending" &&
-    sale.offline_sync_status !== "error" &&
     sale.payments.some((p) => p.method === "instapay" && p.status === "pending");
 
   // Compact method summary: "Cash", "InstaPay" or "Cash + InstaPay".
@@ -276,7 +264,7 @@ export function SalesHistoryPage() {
                       {methodsLabel(sale)}
                     </td>
                     <td className="px-3 py-3 text-xs text-slate-600">{sale.user_name}</td>
-                    <td className="px-3 py-3">{statusBadge(sale.status, sale.offline_sync_status)}</td>
+                    <td className="px-3 py-3">{statusBadge(sale.status)}</td>
                     <td className="px-3 py-3 text-end">{confirmButton(sale)}</td>
                   </tr>
                 ))}
@@ -296,7 +284,7 @@ export function SalesHistoryPage() {
                     <p className="font-mono text-sm font-bold text-indigo-700">{sale.sale_number}</p>
                     <p className="text-[11px] text-slate-500" dir="ltr">{date(sale.created_at)}</p>
                   </div>
-                  {statusBadge(sale.status, sale.offline_sync_status)}
+                  {statusBadge(sale.status)}
                 </div>
                 <div className="mt-2 flex items-center justify-between gap-2 text-xs">
                   <span className="font-semibold text-slate-700">
