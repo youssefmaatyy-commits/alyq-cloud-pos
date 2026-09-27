@@ -328,6 +328,24 @@ check("12 real zone rows mathematically must overflow the pane's own hard ceilin
   contentHeight(12) > paneCeilingPx);
 check("3 real zone rows mathematically fit even the smallest realistic pane height — no scrollbar is correct, not a bug",
   contentHeight(3) <= smallestRealisticPaneFloorPx);
+
+// Issue #1 (3rd follow-up round) raised a theory that the fieldset's own
+// `display: grid` could let CSS Grid's default `align-items: stretch` pull
+// `.v2-zone-scroll` taller than its own `max-height` (grid row tracks
+// auto-size from content, not from a row item's own max-height). The 5th
+// follow-up round tested that theory directly against real Chromium
+// (scripts/rendered-v2-zone-scroll.flow.mjs) with a 12-row fixture: the
+// pane's `clientHeight` stayed correctly clamped at its CSS ceiling with the
+// fieldset left exactly as `display: grid` — the stretch never actually
+// happened in practice, so the grid layout was not a real defect and the
+// fieldset's `display` is intentionally left untouched. What still matters,
+// and is genuinely load-bearing, is that `.v2-zone-scroll` itself owns its
+// own bounded height regardless of what its parent's layout mode is — that
+// contract is asserted directly above/below by parsing its own CSS rule.
+const zoneListRule = /:is\(\.v2-zone-list, \.v2-address-list\)\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
+check("the zone/address fieldset lays out its rows (grid or flex) without ever declaring overflow itself — .v2-zone-scroll is the sole scroll owner",
+  !/overflow(-y)?:\s*(auto|scroll)\b/.test(zoneListRule));
+
 clickEl(testid("v2-place-order"));
 await waitFor(() => orders().length === 3 && Boolean(testid("v2-order-number")) &&
   Boolean(testid("v2-order-details")), { label: "settled delivery/COD receipt" });
