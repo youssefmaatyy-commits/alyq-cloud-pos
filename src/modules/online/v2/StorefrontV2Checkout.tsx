@@ -10,14 +10,84 @@ import { useStorefront } from "../hooks/StorefrontProvider";
 import { deliveryAreasOf } from "../services/pricing";
 import { externalHref, safeImageField } from "../services/settingsDefaults";
 import { applyDocumentMeta, clearDocumentMeta } from "../services/seo";
-import type { CustomerAddress } from "../types";
+import type { CustomerAddress, DeliveryZone } from "../types";
 import { rememberV2Receipt, v2CheckoutIssues } from "./journeyModel";
 import { V2CartTotals, V2Coupon, V2Panel } from "./JourneyParts";
-import { V2Image } from "./Primitives";
+import { V2Icon, V2Image } from "./Primitives";
 
 const blankAddress = (): CustomerAddress => ({ id: "", label: "", full_name: "", phone: "",
   city: "", area: "", street: "", building: "", floor: "", apartment: "", notes: "", is_default: false });
 const fields = ["city", "area", "street", "building", "floor", "apartment"] as const;
+
+/** Issue #1 (8th follow-up round): the delivery-zone/governorate picker is a
+ * closed-by-default dropdown, not an always-visible card list — a shop with
+ * many zones no longer pushes the whole checkout page down just to show its
+ * options. Popup positioning is `position: absolute` (see .v2-zone-select in
+ * storefront-v2.css), so opening it never changes document flow/height;
+ * only the popup's own bounded pane scrolls. Pricing/eligibility logic is
+ * completely untouched — this only replaces how the SAME zones/fee/ETA data
+ * already computed by the cart provider is presented. */
+function V2ZoneSelect({ zones, value, onChange, invalid }: {
+  zones: DeliveryZone[]; value: string | null; onChange: (id: string) => void; invalid: boolean;
+}) {
+  const { t, pick, money } = useI18n();
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const selected = zones.find((zone) => zone.id === value) ?? null;
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { setOpen(false); rootRef.current?.querySelector("button")?.focus(); }
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  const zoneMeta = (zone: DeliveryZone) => {
+    const parts = [zone.shipping_fee ? t("store.checkout.zoneFee", { amount: money(zone.shipping_fee) }) : t("store.checkout.free")];
+    if (zone.minimum_order_amount) parts.push(t("store.checkout.zoneMinimum", { amount: money(zone.minimum_order_amount) }));
+    const eta = zone.show_estimated_delivery !== false ? pick(zone.estimated_delivery_text_ar, zone.estimated_delivery_text_en) : "";
+    if (eta) parts.push(eta);
+    return parts.join(" · ");
+  };
+
+  return <div className="v2-zone-select" ref={rootRef}>
+    <span className="v2-zone-select-label" id="v2-zone-select-label">{t("store.checkout.chooseZone")}</span>
+    <button type="button" className="v2-zone-select-trigger" data-testid="v2-zone-select-trigger"
+      aria-haspopup="listbox" aria-expanded={open} aria-labelledby="v2-zone-select-label v2-zone-select-value"
+      aria-invalid={invalid} onClick={() => setOpen((current) => !current)}>
+      <span className="v2-zone-select-value" id="v2-zone-select-value" data-testid="v2-zone-select-value">
+        {selected ? pick(selected.name_ar, selected.name_en) : t("store.checkout.zonePlaceholder")}
+      </span>
+      <V2Icon name="chevronDown" />
+    </button>
+    {open ? <ul className="v2-zone-select-popup" role="listbox" aria-labelledby="v2-zone-select-label"
+      data-testid="v2-zone-select-popup">
+      {zones.map((zone) => {
+        const isSelected = zone.id === value;
+        return <li key={zone.id} role="presentation">
+          <button type="button" role="option" aria-selected={isSelected} className="v2-zone-option"
+            data-selected={isSelected} data-testid={`v2-zone-option-${zone.key}`}
+            onClick={() => { onChange(zone.id); setOpen(false); }}>
+            <span className="v2-zone-option-text">
+              <strong>{pick(zone.name_ar, zone.name_en)}</strong>
+              <small>{zoneMeta(zone)}</small>
+            </span>
+            {isSelected ? <V2Icon name="check" /> : null}
+          </button>
+        </li>;
+      })}
+    </ul> : null}
+  </div>;
+}
 
 export function StorefrontV2Checkout() {
   const { t, pick, money } = useI18n();
@@ -150,24 +220,12 @@ export function StorefrontV2Checkout() {
               onClick={() => setDeliveryType("pickup")}>{t("store.checkout.pickup")}</button> : null}
           </div>
           {deliveryType === "delivery" && settings.delivery.enabled ? <>
-            {zones.length ? <fieldset className="v2-zone-list"><legend>{t("store.checkout.chooseZone")}</legend>
-              {/* Issue #7: the legend and the validation error stay outside the
-                  scrollport so they're never scrolled out of view — only the
-                  zone rows themselves get a bounded, scrollable pane. */}
-              <div className="v2-zone-scroll">
-                {zones.map((zone) => <label key={zone.id} className="v2-zone" data-selected={zone.id === deliveryZoneId}>
-                  <input type="radio" name="v2-zone" checked={zone.id === deliveryZoneId}
-                    onChange={() => setDeliveryZoneId(zone.id)} />
-                  <span><strong>{pick(zone.name_ar, zone.name_en)}</strong>
-                    <small>{zone.shipping_fee ? t("store.checkout.zoneFee", { amount: money(zone.shipping_fee) }) : t("store.checkout.free")}
-                      {zone.minimum_order_amount ? ` · ${t("store.checkout.zoneMinimum", { amount: money(zone.minimum_order_amount) })}` : ""}
-                      {zone.show_estimated_delivery !== false &&
-                        pick(zone.estimated_delivery_text_ar, zone.estimated_delivery_text_en) ?
-                        ` · ${pick(zone.estimated_delivery_text_ar, zone.estimated_delivery_text_en)}` : ""}</small></span>
-                </label>)}
-              </div>
+            {zones.length ? <>
+              <V2ZoneSelect zones={zones} value={deliveryZoneId} onChange={setDeliveryZoneId}
+                invalid={showErrors && issues.zone} />
               {showErrors && issues.zone ? <p role="alert" className="v2-field-error">{t("store.checkout.zoneRequired")}</p> : null}
-            </fieldset> : null}
+            </> : null}
+
             {places.length ? <datalist id="v2-delivery-places">{places.map((place, index) =>
               <option key={`${place.en}-${index}`} value={pick(place.ar, place.en)} />)}</datalist> : null}
             {addresses.length ? <fieldset className="v2-address-list"><legend>{t("store.account.tabAddresses")}</legend>

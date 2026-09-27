@@ -237,12 +237,29 @@ clickEl(button(testid("v2-checkout").querySelector(".v2-choice-grid"), "Delivery
 await sleep(90);
 clickEl(button(testid("v2-checkout"), "Cash on delivery"));
 await sleep(50);
-const cairo = [...document.querySelectorAll('.v2-zone-list .v2-zone')].find((row) => row.textContent.includes("Cairo"));
-assert.ok(cairo, "published delivery zone exists");
+// Issue #1 (8th follow-up round): the zone picker is now a closed-by-default
+// dropdown, not an always-visible card list — opening/reading/selecting a
+// zone goes through the trigger button and its popup listbox instead of a
+// radio-per-row fieldset.
+const zoneTrigger = testid("v2-zone-select-trigger");
+assert.ok(zoneTrigger, "zone dropdown trigger exists");
+check("zone dropdown starts closed and shows the placeholder, not an always-visible list",
+  zoneTrigger.getAttribute("aria-expanded") === "false" && !testid("v2-zone-select-popup"));
+clickEl(zoneTrigger);
+await sleep(30);
+const zonePopup = testid("v2-zone-select-popup");
+assert.ok(zonePopup, "zone dropdown popup opens on click");
+check("opening the dropdown flips aria-expanded and renders a listbox popup", zoneTrigger.getAttribute("aria-expanded") === "true" &&
+  zonePopup.getAttribute("role") === "listbox");
+const cairo = [...zonePopup.querySelectorAll('[role="option"]')].find((row) => row.textContent.includes("Cairo"));
+assert.ok(cairo, "published delivery zone exists in the dropdown popup");
 // The final user change is the zone, after payment/fulfilment have settled.
 // Checkout must read that live zone instead of a stale callback closure.
-clickEl(cairo.querySelector('input[name="v2-zone"]'));
+clickEl(cairo);
+await sleep(30);
 const cairoZone = readJson("alyq.demo.delivery_zones.v1").find((zone) => zone.key === "cairo");
+check("selecting a zone option closes the dropdown popup",
+  zoneTrigger.getAttribute("aria-expanded") === "false" && !testid("v2-zone-select-popup"));
 await waitFor(() => {
   const totals = testid("v2-cart-totals");
   const zoneRow = [...(totals?.querySelectorAll(".v2-totals > div") ?? [])]
@@ -253,71 +270,68 @@ await waitFor(() => {
 }, { label: "settled Cairo shipping and WELCOME10 advisory estimate" });
 const estimatedTotal = Number(testid("v2-cart-totals").querySelector(".v2-totals-grand dd")
   .textContent.replace(/[^0-9.]/g, ""));
-check("delivery form uses saved browser-local address and selected configured zone",
+check("delivery form uses saved browser-local address and selected configured zone reflected in the closed trigger",
   document.querySelector('.v2-checkout-form input[autocomplete="address-level2"]')?.value === "Cairo" &&
-  cairo.getAttribute("data-selected") === "true");
-// Issue #7 / #3 (follow-up): the zone list is a bounded, independently
-// scrollable pane so a shop with many governorates never pushes "Place
-// order" far down the page — but its legend and validation error must stay
-// pinned outside that pane, or an admin with a long zone list could scroll
-// right past why Save/submit is blocked. jsdom does not run real CSS layout
-// (no pixel heights), so this proves the DOM contract the CSS relies on for
-// a REAL many-zone shop (12 configured here, well past the 8-12+ the manual
-// report asked to be exercised) — every row must survive, none truncated or
-// virtualized away, and none can render loose outside the pane at any count.
-const zoneFieldset = document.querySelector("fieldset.v2-zone-list");
-const zoneScroll = zoneFieldset?.querySelector(".v2-zone-scroll");
-check(`all ${zones.length} zone rows live inside the bounded scroll pane, none loose in the fieldset`,
-  Boolean(zoneScroll) && zoneScroll.querySelectorAll(".v2-zone").length === zones.length &&
-  zoneFieldset.querySelectorAll(":scope > .v2-zone").length === 0);
-check("the zone list's legend is pinned outside the scrollable pane",
-  Boolean(zoneFieldset?.querySelector(":scope > legend")) && !zoneScroll.contains(zoneFieldset.querySelector("legend")));
-// Beyond the class name existing on the node: the selector jsdom just proved
-// wraps every row must ALSO be the one CSS rule that bounds and scrolls it —
-// `overflow-y: auto` (never `scroll`, which would paint a scrollbar even for
-// a 2-3 zone shop) with a real numeric ceiling, and `overscroll-behavior:
-// contain` so bottoming out the pane never hands the wheel/touch gesture to
-// the page and pushes "Place order" around.
+  testid("v2-zone-select-value").textContent.includes("Cairo"));
+// Re-open to confirm the previously-selected row is marked (checkmark contract)
+// and every configured zone still renders as an option — none truncated or
+// virtualized away, however many a shop configures (12 here, well past the
+// 8-12+ the manual report asked to be exercised).
+clickEl(zoneTrigger);
+await sleep(30);
+const reopenedPopup = testid("v2-zone-select-popup");
+const options = [...reopenedPopup.querySelectorAll('[role="option"]')];
+check(`all ${zones.length} zone rows render as options inside the popup`, options.length === zones.length);
+const selectedOption = options.find((row) => row.textContent.includes("Cairo"));
+check("the previously-selected zone option is marked selected (checkmark contract)",
+  selectedOption?.getAttribute("aria-selected") === "true" && selectedOption?.getAttribute("data-selected") === "true" &&
+  options.filter((row) => row.getAttribute("aria-selected") === "true").length === 1);
+clickEl(zoneTrigger);
+await sleep(30);
+check("dropdown toggles closed when the trigger is clicked again", !testid("v2-zone-select-popup"));
+
+// Issue #1 (8th follow-up round): the popup is a bounded, independently
+// scrollable pane — position:absolute so opening it never changes page
+// height/flow — so a shop with many governorates never pushes "Place order"
+// far down the page. jsdom does not run real CSS layout (no pixel heights),
+// so this proves the DOM/CSS contract the visual test
+// (scripts/rendered-v2-zone-scroll.flow.mjs) exercises with real pixels.
 const css = await readFile(
   fileURLToPath(new URL("../src/modules/online/v2/storefront-v2.css", import.meta.url)), "utf8");
-const zoneScrollRule = /\.v2-zone-scroll\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
-check("the scroll pane's own CSS rule bounds height and only scrolls on genuine overflow",
-  /max-height:\s*min\(\s*46vh\s*,\s*340px\s*\)/.test(zoneScrollRule) &&
-  /overflow-y:\s*auto\b/.test(zoneScrollRule) &&
-  !/overflow-y:\s*scroll\b/.test(zoneScrollRule) &&
-  /overscroll-behavior:\s*contain\b/.test(zoneScrollRule));
-// Issue #B (follow-up): three more properties on the same rule, each closing
-// a specific way the pane could still misbehave even with the height/overflow
-// contract above — `min-height: 0` (the classic flex/grid item refusing to
-// shrink below its own unconstrained content size, which can defeat
-// `max-height` entirely in some layouts), `touch-action: pan-y` (vertical
-// touch scrolling as an explicit contract, not an inherited default that a
-// parent could override), and `overflow-x: hidden` (no horizontal scrollbar
-// however long a name/ETA string gets).
-check("the scroll pane cannot be starved by grid/flex auto-sizing, scrolls by touch, and never grows sideways",
-  /min-height:\s*0\b/.test(zoneScrollRule) &&
-  /touch-action:\s*pan-y\b/.test(zoneScrollRule) &&
-  /overflow-x:\s*hidden\b/.test(zoneScrollRule));
+const zoneSelectRule = /\.store-v2 \.v2-zone-select \{([^}]*)\}/.exec(css)?.[1] ?? "";
+check("the dropdown wrapper is a positioning context, not a page-flow-expanding box",
+  /position:\s*relative\b/.test(zoneSelectRule));
+const zonePopupRule = /\.store-v2 \.v2-zone-select-popup \{([^}]*)\}/.exec(css)?.[1] ?? "";
+check("the popup floats over the page (absolute) and bounds/scrolls itself, never scrolling the page",
+  /position:\s*absolute\b/.test(zonePopupRule) &&
+  /max-height:\s*min\(\s*46vh\s*,\s*340px\s*\)/.test(zonePopupRule) &&
+  /overflow-y:\s*auto\b/.test(zonePopupRule) &&
+  !/overflow-y:\s*scroll\b/.test(zonePopupRule) &&
+  /overscroll-behavior:\s*contain\b/.test(zonePopupRule));
+// Same defensive properties the old scroll pane relied on: `min-height: 0`
+// (classic flex/grid item refusing to shrink below its own unconstrained
+// content size, which can defeat `max-height`), `touch-action: pan-y`
+// (vertical touch scrolling as an explicit contract), `overflow-x: hidden`
+// (no horizontal scrollbar however long a name/ETA string gets).
+check("the popup cannot be starved by grid/flex auto-sizing, scrolls by touch, and never grows sideways",
+  /min-height:\s*0\b/.test(zonePopupRule) &&
+  /touch-action:\s*pan-y\b/.test(zonePopupRule) &&
+  /overflow-x:\s*hidden\b/.test(zonePopupRule));
 
-// Issue B (2nd follow-up): the manual retest reported only 3 zones and NO
-// scrollbar — which is correct behaviour, not a bug, when 3 rows fit inside
-// the pane. jsdom never runs real CSS layout, so it cannot report a genuine
-// `scrollHeight`/`clientHeight` (both always read 0 here) — no in-sandbox
-// Chromium is reachable to measure real pixels (see
-// scripts/rendered-v2-zone-scroll.flow.mjs for that, written but unexecuted).
-// What CAN be proven here, from the exact numbers in the shipped CSS (not
-// assumed/hardcoded), is that a 12-zone shop is MATHEMATICALLY GUARANTEED to
-// overflow the pane at any viewport, while a 3-zone shop is guaranteed to
-// fit — i.e. the pane's max-height really is doing its job, not merely
-// present as an unused declaration.
-const zoneRowRule = /\.store-v2 \.v2-zone \{([^}]*)\}/.exec(css)?.[1] ?? "";
-const rowMinHeight = Number(/min-height:\s*(\d+)px/.exec(zoneRowRule)?.[1] ?? NaN);
-const rowGap = Number(/\.v2-zone-scroll[^{]*\{[^}]*\bgap:\s*(\d+)px/.exec(css)?.[1] ?? NaN);
+// Issue B (2nd follow-up, carried forward): a 12-zone shop is MATHEMATICALLY
+// GUARANTEED to overflow the popup at any viewport, while a 3-zone shop is
+// guaranteed to fit — i.e. the pane's max-height really is doing its job,
+// not merely present as an unused declaration. jsdom cannot report a real
+// `scrollHeight`/`clientHeight` (see scripts/rendered-v2-zone-scroll.flow.mjs
+// for the pixel-accurate proof in real Chromium).
+const zoneOptionRule = /\.store-v2 \.v2-zone-option \{([^}]*)\}/.exec(css)?.[1] ?? "";
+const rowMinHeight = Number(/min-height:\s*(\d+)px/.exec(zoneOptionRule)?.[1] ?? NaN);
+const rowGap = Number(/\.v2-zone-select-popup[^{]*\{[^}]*\bgap:\s*(\d+)px/.exec(css)?.[1] ?? NaN);
 // `min(46vh, 340px)`: 340px is the hard ceiling this pane can EVER reach on
 // any viewport, however tall — so if N rows exceed 340px on the row-height
 // floor alone (before real text wrapping, which only adds height), the pane
 // overflows and must scroll everywhere, full stop.
-const paneCeilingPx = Number(/max-height:\s*min\(\s*46vh\s*,\s*(\d+)px\s*\)/.exec(zoneScrollRule)?.[1] ?? NaN);
+const paneCeilingPx = Number(/max-height:\s*min\(\s*46vh\s*,\s*(\d+)px\s*\)/.exec(zonePopupRule)?.[1] ?? NaN);
 // The narrowest phone this storefront supports realistically still clears
 // ~640px of viewport height even with browser chrome; the mobile override
 // is 42vh, so this is the smallest the pane can ever be in practice.
@@ -328,23 +342,6 @@ check("12 real zone rows mathematically must overflow the pane's own hard ceilin
   contentHeight(12) > paneCeilingPx);
 check("3 real zone rows mathematically fit even the smallest realistic pane height — no scrollbar is correct, not a bug",
   contentHeight(3) <= smallestRealisticPaneFloorPx);
-
-// Issue #1 (3rd follow-up round) raised a theory that the fieldset's own
-// `display: grid` could let CSS Grid's default `align-items: stretch` pull
-// `.v2-zone-scroll` taller than its own `max-height` (grid row tracks
-// auto-size from content, not from a row item's own max-height). The 5th
-// follow-up round tested that theory directly against real Chromium
-// (scripts/rendered-v2-zone-scroll.flow.mjs) with a 12-row fixture: the
-// pane's `clientHeight` stayed correctly clamped at its CSS ceiling with the
-// fieldset left exactly as `display: grid` — the stretch never actually
-// happened in practice, so the grid layout was not a real defect and the
-// fieldset's `display` is intentionally left untouched. What still matters,
-// and is genuinely load-bearing, is that `.v2-zone-scroll` itself owns its
-// own bounded height regardless of what its parent's layout mode is — that
-// contract is asserted directly above/below by parsing its own CSS rule.
-const zoneListRule = /:is\(\.v2-zone-list, \.v2-address-list\)\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
-check("the zone/address fieldset lays out its rows (grid or flex) without ever declaring overflow itself — .v2-zone-scroll is the sole scroll owner",
-  !/overflow(-y)?:\s*(auto|scroll)\b/.test(zoneListRule));
 
 clickEl(testid("v2-place-order"));
 await waitFor(() => orders().length === 3 && Boolean(testid("v2-order-number")) &&

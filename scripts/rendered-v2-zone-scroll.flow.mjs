@@ -1,23 +1,26 @@
 #!/usr/bin/env node
 /**
- * Issue #B (follow-up) — real-Chromium runtime proof for the checkout
- * delivery-zone scroll pane. jsdom (scripts/storefront-v2-journey.flow.mjs)
- * proves the DOM contract — every row lives inside `.v2-zone-scroll`, the
- * legend/validation stay outside it, and the CSS rule text itself declares
- * a bounded `max-height` + `overflow-y: auto` — but jsdom never runs real
- * CSS layout, so `scrollHeight`, `clientHeight` and `scrollTop` are always 0
- * there. This script measures actual pixels in a real browser instead:
+ * Issue #1 (8th follow-up round) — real-Chromium runtime proof for the
+ * checkout delivery-zone DROPDOWN. jsdom (scripts/storefront-v2-journey.flow.mjs)
+ * proves the DOM/CSS-text contract — the popup is `position: absolute` off
+ * a `position: relative` wrapper, every option lives inside it, and the CSS
+ * rule text itself declares a bounded `max-height` + `overflow-y: auto` —
+ * but jsdom never runs real CSS layout, so `scrollHeight`, `clientHeight`
+ * and `scrollTop` are always 0 there, and it cannot prove the popup floats
+ * over the page without expanding it. This script measures actual pixels
+ * in a real browser instead:
  *
- *   · a 12-zone shop genuinely overflows (scrollHeight > clientHeight)
- *   · a 3-zone shop does NOT (no scrollbar forced where none is needed)
+ *   · closed by default: the popup is not in the DOM until the trigger is
+ *     clicked, and opening it does not change the page's own scroll height
+ *   · a 12-zone shop genuinely overflows the popup (scrollHeight > clientHeight)
+ *   · a 3-zone shop does NOT (no scrollbar forced where none is needed) and
+ *     opens with the exact same trigger position (no page reflow either way)
  *   · scrollTop actually moves, both by direct assignment and by a real
- *     mouse-wheel gesture (page.mouse.wheel)
- *   · no horizontal scrollbar appears on the pane or the page, EN or AR/RTL
- *   · the legend and the validation error are never inside the scrollable
- *     region, so scrolling the list never scrolls them out of view
- *   · "Place order"'s position on the page barely moves between the 3-zone
- *     and 12-zone fixtures — the bounded pane, not the zone count, decides
- *     how far down the page runs
+ *     mouse-wheel gesture (page.mouse.wheel) and a real touch-drag gesture
+ *     (page.touchscreen), and only the popup scrolls — never the page
+ *   · no horizontal scrollbar appears on the popup or the page, EN or AR/RTL
+ *   · clicking an option selects it (checkmark + trigger label update) and
+ *     closes the popup
  *
  * Run against a locally built/served app (matches the other
  * scripts/rendered-v2-*.flow.mjs siblings):
@@ -74,7 +77,7 @@ async function seedAndReachCheckout(page, zoneCount, lang) {
   await page.evaluate(({ zones, lang }) => {
     localStorage.setItem("alyq.demo.delivery_zones.v1", JSON.stringify(zones));
     localStorage.setItem("alyq.lang", lang);
-    // A clean cart every pass: this file only cares about the zone pane.
+    // A clean cart every pass: this file only cares about the zone dropdown.
     localStorage.removeItem("alyq.store.cart.v2");
   }, { zones: buildZones(zoneCount), lang });
   await page.reload();
@@ -88,114 +91,169 @@ async function seedAndReachCheckout(page, zoneCount, lang) {
   const codLabel = lang === "ar" ? "الدفع عند الاستلام" : "Cash on delivery";
   await page.locator(".v2-choice-grid").first().getByRole("button", { name: deliveryLabel, exact: true }).click();
   await page.getByRole("button", { name: codLabel, exact: true }).click();
-  const pane = page.locator(".v2-zone-scroll");
-  await pane.waitFor();
-  return pane;
+  const trigger = page.getByTestId("v2-zone-select-trigger");
+  await trigger.waitFor();
+  return trigger;
 }
 
 try {
-  const context = await browser.newContext({ viewport: { width: 390, height: 700 }, locale: "en-US" });
+  const context = await browser.newContext({ viewport: { width: 390, height: 700 }, locale: "en-US",
+    hasTouch: true, isMobile: true });
   const page = await context.newPage();
   page.setDefaultTimeout(30_000);
   page.on("pageerror", (error) => failures.push(`pageerror: ${error.message}`));
   page.on("console", (message) => { if (message.type() === "error") failures.push(`console: ${message.text()}`); });
 
-  // ── EN: 12 zones genuinely overflow ────────────────────────────────────
-  const pane12 = await seedAndReachCheckout(page, 12, "en");
-  assert.equal(await pane12.locator(".v2-zone").count(), 12, "all 12 zone rows rendered, none dropped");
-  const geometry12 = await pane12.evaluate((el) => ({
+  // ── EN: dropdown starts closed, opening it never expands the page ─────
+  const trigger12 = await seedAndReachCheckout(page, 12, "en");
+  assert.equal(await trigger12.getAttribute("aria-expanded"), "false", "the dropdown starts closed");
+  assert.equal(await page.getByTestId("v2-zone-select-popup").count(), 0, "the popup is not in the DOM until opened");
+  const pageHeightClosed = await page.evaluate(() => document.documentElement.scrollHeight);
+  await trigger12.click();
+  const popup12 = page.getByTestId("v2-zone-select-popup");
+  await popup12.waitFor();
+  assert.equal(await trigger12.getAttribute("aria-expanded"), "true", "opening the dropdown flips aria-expanded");
+  const pageHeightOpen = await page.evaluate(() => document.documentElement.scrollHeight);
+  assert.ok(pageHeightOpen <= pageHeightClosed + 2,
+    `opening the popup must not expand the page's own scroll height (closed ${pageHeightClosed}px, open ${pageHeightOpen}px)`);
+  console.log(`✓ EN: dropdown closed by default; opening it does not expand the page (closed ${pageHeightClosed}px, open ${pageHeightOpen}px)`);
+
+  // ── EN: 12 zones genuinely overflow the popup ──────────────────────────
+  assert.equal(await popup12.locator('[role="option"]').count(), 12, "all 12 zone options rendered, none dropped");
+  const geometry12 = await popup12.evaluate((el) => ({
     scrollHeight: el.scrollHeight, clientHeight: el.clientHeight, scrollWidth: el.scrollWidth,
     clientWidth: el.clientWidth,
   }));
   assert.ok(geometry12.scrollHeight > geometry12.clientHeight,
-    `12 zones must genuinely overflow the bounded pane (scrollHeight ${geometry12.scrollHeight} > clientHeight ${geometry12.clientHeight})`);
+    `12 zones must genuinely overflow the bounded popup (scrollHeight ${geometry12.scrollHeight} > clientHeight ${geometry12.clientHeight})`);
   assert.ok(geometry12.scrollWidth <= geometry12.clientWidth + 1,
-    "no horizontal overflow inside the pane with 12 zones");
+    "no horizontal overflow inside the popup with 12 zones");
   const pageScrollWidth12 = await page.evaluate(() => document.documentElement.scrollWidth);
   assert.ok(pageScrollWidth12 <= 390 + 1, "no page-level horizontal scrollbar with 12 zones");
-  console.log(`✓ EN 12-zone pane overflows for real: scrollHeight ${geometry12.scrollHeight} > clientHeight ${geometry12.clientHeight}, no horizontal overflow`);
-
-  // Legend and validation error are never inside the scrollable region.
-  const legendOutside = await page.evaluate(() => {
-    const fieldset = document.querySelector("fieldset.v2-zone-list");
-    const legend = fieldset?.querySelector(":scope > legend");
-    return Boolean(legend) && legend.closest(".v2-zone-scroll") === null;
-  });
-  assert.ok(legendOutside, "the zone list's legend is never inside the scroll pane");
+  console.log(`✓ EN 12-zone popup overflows for real: scrollHeight ${geometry12.scrollHeight} > clientHeight ${geometry12.clientHeight}, no horizontal overflow`);
 
   // scrollTop actually moves: direct assignment to the bottom, then read back.
-  const scrolled = await pane12.evaluate((el) => {
+  const scrolled = await popup12.evaluate((el) => {
     el.scrollTop = el.scrollHeight;
     return el.scrollTop;
   });
-  assert.ok(scrolled > 0, "scrollTop moves off zero when scrolled to the pane's own bottom");
+  assert.ok(scrolled > 0, "scrollTop moves off zero when scrolled to the popup's own bottom");
   const maxScroll = geometry12.scrollHeight - geometry12.clientHeight;
   assert.ok(scrolled >= maxScroll - 2, "scrolling to scrollHeight actually reaches the bottom of real content");
 
-  // A real mouse-wheel gesture over the pane scrolls it, not the page.
-  await pane12.evaluate((el) => { el.scrollTop = 0; });
-  // The page itself scrolls a long way down once COD reveals the full form
-  // (name/phone/address/zone fields) — a real shopper scrolls to the pane
-  // before trying to use it, so the gesture must target where it actually
-  // is on screen right now, not a stale box computed before that scroll.
-  await pane12.scrollIntoViewIfNeeded();
-  const box = await pane12.boundingBox();
+  // A real mouse-wheel gesture over the popup scrolls it, not the page.
+  await popup12.evaluate((el) => { el.scrollTop = 0; });
+  const box = await popup12.boundingBox();
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   const pageScrollBefore = await page.evaluate(() => document.documentElement.scrollTop);
   await page.mouse.wheel(0, 300);
   await page.waitForTimeout(150);
-  const afterWheel = await pane12.evaluate((el) => el.scrollTop);
+  const afterWheel = await popup12.evaluate((el) => el.scrollTop);
   const pageScrollAfter = await page.evaluate(() => document.documentElement.scrollTop);
-  assert.ok(afterWheel > 0, "a mouse-wheel gesture over the pane scrolls the zone list");
+  assert.ok(afterWheel > 0, "a mouse-wheel gesture over the popup scrolls the zone list");
   assert.equal(pageScrollAfter, pageScrollBefore, "the page itself does not also scroll — overscroll-behavior: contain holds");
-  console.log(`✓ scrollTop reaches the real bottom (${scrolled}px) and a mouse-wheel gesture scrolls only the pane (${afterWheel}px)`);
+  console.log(`✓ mouse-wheel scrolls only the popup (${afterWheel}px), the page stays put`);
 
-  // Reset to the top first: the wheel test above deliberately scrolled the
-  // page to bring the pane into view, which would otherwise make this
-  // "barely moves" comparison measure that leftover scroll instead of the
-  // actual page layout difference between a 3-zone and a 12-zone shop.
-  await page.evaluate(() => window.scrollTo(0, 0));
-  const placeOrderTop12 = (await page.getByTestId("v2-place-order").boundingBox())?.y ?? null;
+  // A real touch-drag gesture over the popup scrolls it too (mobile
+  // contract) — driven through CDP's `Input.dispatchTouchEvent`, which DOES
+  // drive Chromium's real touch-scroll pipeline (unlike synthetic DOM
+  // `touchstart`/`touchmove` events, which do not trigger native scrolling).
+  await popup12.evaluate((el) => { el.scrollTop = 0; });
+  const touchStartY = box.y + box.height - 20;
+  const touchEndY = box.y + 20;
+  const cdpSession = await context.newCDPSession(page);
+  await cdpSession.send("Input.dispatchTouchEvent", {
+    type: "touchStart", touchPoints: [{ x: box.x + box.width / 2, y: touchStartY }],
+  });
+  await cdpSession.send("Input.dispatchTouchEvent", {
+    type: "touchMove", touchPoints: [{ x: box.x + box.width / 2, y: (touchStartY + touchEndY) / 2 }],
+  });
+  await cdpSession.send("Input.dispatchTouchEvent", {
+    type: "touchMove", touchPoints: [{ x: box.x + box.width / 2, y: touchEndY }],
+  });
+  await cdpSession.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  await page.waitForTimeout(200);
+  const afterTouch = await popup12.evaluate((el) => el.scrollTop);
+  assert.ok(afterTouch > 0, `a real touch-drag gesture over the popup scrolls the zone list (scrollTop ${afterTouch})`);
+  console.log(`✓ a real touch-drag gesture scrolls the popup too (${afterTouch}px) — mobile scrolling verified`);
 
-  // ── EN: 3 zones fit — no forced scrollbar ──────────────────────────────
-  const pane3 = await seedAndReachCheckout(page, 3, "en");
-  const geometry3 = await pane3.evaluate((el) => ({ scrollHeight: el.scrollHeight, clientHeight: el.clientHeight }));
+  // ── EN: selecting an option updates the trigger and closes the popup ──
+  await popup12.evaluate((el) => { el.scrollTop = 0; });
+  const cairoOption = popup12.locator('[role="option"]', { hasText: "Cairo" });
+  await cairoOption.click();
+  await page.getByTestId("v2-zone-select-popup").waitFor({ state: "detached" });
+  assert.equal(await trigger12.getAttribute("aria-expanded"), "false", "selecting an option closes the popup");
+  assert.ok((await page.getByTestId("v2-zone-select-value").innerText()).includes("Cairo"),
+    "the closed trigger reflects the selected zone");
+  await trigger12.click();
+  const reopened = page.getByTestId("v2-zone-select-popup");
+  await reopened.waitFor();
+  const reopenedCairo = reopened.locator('[role="option"]', { hasText: "Cairo" });
+  assert.equal(await reopenedCairo.getAttribute("aria-selected"), "true", "re-opening shows the checkmark on the selected row");
+  await trigger12.click();
+  await page.getByTestId("v2-zone-select-popup").waitFor({ state: "detached" });
+  console.log("✓ selecting a zone updates the trigger label, shows a checkmark on re-open, and closes the popup");
+
+  // ── EN: 3 zones fit — no forced scrollbar, no page reflow either way ──
+  const trigger3 = await seedAndReachCheckout(page, 3, "en");
+  // Scroll the trigger fully into view FIRST: a freshly-revealed off-screen
+  // button naturally moves once focused/clicked (ordinary browser
+  // scroll-into-view behaviour, unrelated to this dropdown) — the contract
+  // under test is that the POPUP itself never reflows the page once the
+  // trigger is already in a settled position.
+  await trigger3.scrollIntoViewIfNeeded();
+  await page.waitForTimeout(50);
+  const trigger3Box = await trigger3.boundingBox();
+  await trigger3.click();
+  const popup3 = page.getByTestId("v2-zone-select-popup");
+  await popup3.waitFor();
+  const geometry3 = await popup3.evaluate((el) => ({ scrollHeight: el.scrollHeight, clientHeight: el.clientHeight }));
   assert.ok(geometry3.scrollHeight <= geometry3.clientHeight + 1,
     `3 zones must NOT be forced to overflow (scrollHeight ${geometry3.scrollHeight}, clientHeight ${geometry3.clientHeight})`);
-  console.log(`✓ EN 3-zone pane does not overflow: scrollHeight ${geometry3.scrollHeight} ≈ clientHeight ${geometry3.clientHeight} (no forced scrollbar)`);
-
-  // Same reset as the 12-zone measurement above: clicking Delivery/COD
-  // auto-scrolls the page by an amount unrelated to zone count (the browser
-  // follows newly-revealed fields), so both measurements must start from the
-  // identical, genuine top of the document or the comparison is measuring
-  // leftover auto-scroll noise instead of the actual layout difference.
-  await page.evaluate(() => window.scrollTo(0, 0));
-  const placeOrderTop3 = (await page.getByTestId("v2-place-order").boundingBox())?.y ?? null;
-  assert.ok(placeOrderTop12 !== null && placeOrderTop3 !== null, "Place order is visible/reachable in both fixtures");
-  // The only legitimate source of movement is the pane's own bounded height
-  // (294px, at its overflow cap with 12 zones) versus its unclamped natural
-  // height with only 3 (207px here) — a fixed magic-number tolerance doesn't
-  // track that, and a genuinely different viewport/zone-content mix would
-  // shift the real gap. +40px of slack covers layout rounding, not a bug.
-  const expectedMaxDrift = (geometry12.clientHeight - geometry3.clientHeight) + 40;
-  assert.ok(Math.abs(placeOrderTop12 - placeOrderTop3) <= expectedMaxDrift,
-    `"Place order" moves only by the pane's own height difference between 3 zones and 12 zones (${placeOrderTop3}px vs ${placeOrderTop12}px, expected drift <= ${expectedMaxDrift}px) — the bounded pane, not the raw zone count, decides page length`);
-  console.log(`✓ "Place order" stays put regardless of zone count: ${placeOrderTop3}px (3 zones) vs ${placeOrderTop12}px (12 zones)`);
+  const trigger3BoxAfterOpen = await trigger3.boundingBox();
+  assert.ok(Math.abs(trigger3Box.y - trigger3BoxAfterOpen.y) <= 1,
+    `opening a 3-zone popup does not move the trigger — the popup floats, it does not push layout (before ${trigger3Box.y}, after ${trigger3BoxAfterOpen.y})`);
+  console.log(`✓ EN 3-zone popup does not overflow: scrollHeight ${geometry3.scrollHeight} ≈ clientHeight ${geometry3.clientHeight} (no forced scrollbar), and opening it does not reflow the page`);
 
   // ── AR/RTL: same overflow contract, no horizontal scrollbar ────────────
-  const paneAr = await seedAndReachCheckout(page, 12, "ar");
+  const triggerAr = await seedAndReachCheckout(page, 12, "ar");
   assert.equal(await page.locator(".store-v2").getAttribute("dir"), "rtl", "AR renders the shell RTL");
-  const geometryAr = await paneAr.evaluate((el) => ({
+  await triggerAr.click();
+  const popupAr = page.getByTestId("v2-zone-select-popup");
+  await popupAr.waitFor();
+  const geometryAr = await popupAr.evaluate((el) => ({
     scrollHeight: el.scrollHeight, clientHeight: el.clientHeight, scrollWidth: el.scrollWidth, clientWidth: el.clientWidth,
   }));
-  assert.ok(geometryAr.scrollHeight > geometryAr.clientHeight, "AR/RTL 12-zone pane also genuinely overflows");
-  assert.ok(geometryAr.scrollWidth <= geometryAr.clientWidth + 1, "no horizontal overflow inside the AR/RTL pane");
+  assert.ok(geometryAr.scrollHeight > geometryAr.clientHeight, "AR/RTL 12-zone popup also genuinely overflows");
+  assert.ok(geometryAr.scrollWidth <= geometryAr.clientWidth + 1, "no horizontal overflow inside the AR/RTL popup");
   const pageScrollWidthAr = await page.evaluate(() => document.documentElement.scrollWidth);
   assert.ok(pageScrollWidthAr <= 390 + 1, "no page-level horizontal scrollbar in AR/RTL");
-  console.log("✓ AR/RTL: same bounded-overflow contract holds, no horizontal scrollbar");
+  const arCairoOption = popupAr.locator('[role="option"]', { hasText: "القاهرة" });
+  await arCairoOption.click();
+  assert.ok((await page.getByTestId("v2-zone-select-value").innerText()).includes("القاهرة"),
+    "AR/RTL: selecting a zone updates the closed trigger with the Arabic name");
+  console.log("✓ AR/RTL: same bounded-overflow contract holds, no horizontal scrollbar, selection works");
 
-  assert.deepEqual(failures, [], "no Chromium console/page errors across the whole run");
-  console.log("\n✓ Issue #B real-Chromium zone-scroll runtime verification passed");
+  // ── Desktop viewport: same contract at a wider size ────────────────────
+  await context.close();
+  const desktopContext = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
+  const desktopPage = await desktopContext.newPage();
+  desktopPage.setDefaultTimeout(30_000);
+  desktopPage.on("pageerror", (error) => failures.push(`pageerror(desktop): ${error.message}`));
+  desktopPage.on("console", (message) => { if (message.type() === "error") failures.push(`console(desktop): ${message.text()}`); });
+  const desktopTrigger = await seedAndReachCheckout(desktopPage, 12, "en");
+  await desktopTrigger.click();
+  const desktopPopup = desktopPage.getByTestId("v2-zone-select-popup");
+  await desktopPopup.waitFor();
+  const desktopGeometry = await desktopPopup.evaluate((el) => ({ scrollHeight: el.scrollHeight, clientHeight: el.clientHeight }));
+  assert.ok(desktopGeometry.scrollHeight > desktopGeometry.clientHeight, "desktop 1440px: 12-zone popup also genuinely overflows");
+  const desktopPageScrollWidth = await desktopPage.evaluate(() => document.documentElement.scrollWidth);
+  assert.ok(desktopPageScrollWidth <= 1440 + 1, "no page-level horizontal scrollbar on desktop");
+  console.log("✓ desktop 1440px: same bounded-overflow contract holds");
+  await desktopContext.close();
+
+  assert.deepEqual(failures, [], `no Chromium console/page errors across the whole run: ${JSON.stringify(failures)}`);
+  console.log("\n✓ Issue #1 (8th follow-up round) real-Chromium zone-dropdown runtime verification passed");
 } finally {
   await browser.close();
 }

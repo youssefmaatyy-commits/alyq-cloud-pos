@@ -548,37 +548,61 @@
 .store-v2 .v2-choice-grid { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
 .store-v2 .v2-choice-grid button { flex: 1 1 125px; min-height: 48px; border: 1px solid var(--v2-border);
   padding: 8px 12px; background: var(--v2-surface); color: var(--v2-surface-text); }
-.store-v2 .v2-choice-grid button[aria-pressed="true"], .store-v2 :is(.v2-zone, .v2-address-option)[data-selected="true"] {
+.store-v2 .v2-choice-grid button[aria-pressed="true"], .store-v2 .v2-address-option[data-selected="true"] {
   border-color: var(--v2-surface-text); box-shadow: inset 0 0 0 1px var(--v2-surface-text); }
-.store-v2 :is(.v2-zone-list, .v2-address-list) { display: grid; gap: 8px; border: 0; padding: 15px 0; margin: 13px 0 0; }
-.store-v2 :is(.v2-zone-list, .v2-address-list) legend { padding: 0; font-size: 12px; font-weight: 700; }
-.store-v2 :is(.v2-zone, .v2-address-option) { display: flex; align-items: start; gap: 10px; padding: 11px 12px;
+.store-v2 .v2-address-list { display: grid; gap: 8px; border: 0; padding: 15px 0; margin: 13px 0 0; }
+.store-v2 .v2-address-list legend { padding: 0; font-size: 12px; font-weight: 700; }
+.store-v2 .v2-address-option { display: flex; align-items: start; gap: 10px; padding: 11px 12px;
   border: 1px solid var(--v2-border); cursor: pointer; }
-.store-v2 :is(.v2-zone, .v2-address-option) input { width: 18px; height: 18px; margin-top: 2px; flex: none; accent-color: var(--v2-surface-text); }
-.store-v2 :is(.v2-zone, .v2-address-option) span { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
-.store-v2 :is(.v2-zone, .v2-address-option) small { color: var(--v2-surface-muted); font-size: 11px; }
-/* Issue #7 / #B (follow-up): only the zone rows get a bounded, scrollable
-   pane — a shop with a long governorate/zone list no longer pushes the
-   whole checkout (and the Place order button) far down the page. The
-   legend and validation error stay outside this pane so they're always
-   visible. Pricing/eligibility logic is untouched; this is presentation
-   only. Rows keep a touch-sized 44px+ target; `min-height: 0` stops this
-   grid item from refusing to shrink below its unconstrained content size
-   (the classic flex/grid gotcha that can defeat `max-height` in some
-   layouts); `touch-action: pan-y` makes vertical touch scrolling an
-   explicit contract rather than an inherited default; `overflow-x: hidden`
-   is the belt to `overflow-wrap: anywhere`'s braces against a horizontal
-   scrollbar. The pane scrolls independently of the page on mobile. */
-.store-v2 .v2-zone-scroll { display: grid; gap: 8px; max-height: min(46vh, 340px); min-height: 0; overflow-y: auto;
-  overflow-x: hidden; overscroll-behavior: contain; touch-action: pan-y; -webkit-overflow-scrolling: touch;
-  scrollbar-width: thin; padding-inline-end: 4px; }
-.store-v2 .v2-zone { min-height: 44px; scroll-margin-block: 6px; transition: border-color .15s ease, box-shadow .15s ease; }
-.store-v2 .v2-zone[data-selected="true"] { border-width: 2px; border-color: var(--v2-accent);
+.store-v2 .v2-address-option input { width: 18px; height: 18px; margin-top: 2px; flex: none; accent-color: var(--v2-surface-text); }
+.store-v2 .v2-address-option span { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.store-v2 .v2-address-option small { color: var(--v2-surface-muted); font-size: 11px; }
+/* Issue #1 (8th follow-up round): the delivery-zone/governorate picker is a
+   closed-by-default dropdown ("منطقة التوصيل" / "Delivery area"), replacing
+   the always-visible card list entirely — a shop with many zones no longer
+   pushes the whole checkout page down just to show its options. The label
+   sits above the field like the other `.v2-field`s around it; the trigger
+   is a single bordered button showing the current selection plus a
+   chevron; the popup itself is `position: absolute` off a `position:
+   relative` wrapper, so opening it changes nothing in the surrounding
+   document flow/height — it floats over whatever comes after it in the
+   form. `min-width: 0` on the wrapper avoids overflow inside the grid; the
+   popup's own bounded `max-height` + `overflow-y: auto` (mirroring the
+   scroll-pane contract from the old card list) is what scrolls when a shop
+   configures 8-12+ zones — a 3-zone shop's popup simply fits without a
+   scrollbar, exactly like before. */
+.store-v2 .v2-zone-select { position: relative; min-width: 0; margin-top: 13px; display: grid; gap: 6px; }
+.store-v2 .v2-zone-select-label { font-size: 12px; font-weight: 650; color: var(--v2-surface-text); }
+.store-v2 .v2-zone-select-trigger { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  width: 100%; min-height: 52px; padding: 12px 14px; border: 1px solid var(--v2-border);
+  background: var(--v2-surface); color: var(--v2-surface-text); text-align: start; cursor: pointer; }
+.store-v2 .v2-zone-select-trigger[aria-invalid="true"] { border-color: #a62d26; }
+.store-v2 .v2-zone-select-trigger[aria-expanded="true"] { border-color: var(--v2-accent);
   box-shadow: inset 0 0 0 1px var(--v2-accent); }
-.store-v2 .v2-zone[data-selected="true"] strong::after { content: " \2713"; color: var(--v2-accent); font-weight: 700; }
+.store-v2 .v2-zone-select-trigger svg { width: 17px; height: 17px; flex: none; color: var(--v2-accent);
+  transition: transform .15s ease; }
+.store-v2 .v2-zone-select-trigger[aria-expanded="true"] svg { transform: rotate(180deg); }
+.store-v2 .v2-zone-select-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 14px; font-weight: 500; }
+.store-v2 .v2-zone-select-popup { position: absolute; z-index: 30; inset-inline: 0; top: calc(100% + 6px);
+  margin: 0; padding: 6px; list-style: none; background: var(--v2-surface); color: var(--v2-surface-text);
+  border: 1px solid var(--v2-border); box-shadow: 0 18px 44px rgb(0 0 0 / .16);
+  max-height: min(46vh, 340px); min-height: 0; overflow-y: auto; overflow-x: hidden;
+  overscroll-behavior: contain; touch-action: pan-y; -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin; display: grid; gap: 4px; }
 @media (max-width: 480px) {
-  .store-v2 .v2-zone-scroll { max-height: 42vh; }
+  .store-v2 .v2-zone-select-popup { max-height: 42vh; }
 }
+.store-v2 .v2-zone-option { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  width: 100%; min-height: 52px; padding: 10px 12px; border: 1px solid transparent; background: none;
+  color: inherit; text-align: start; cursor: pointer; scroll-margin-block: 6px;
+  transition: border-color .15s ease, background-color .15s ease; }
+.store-v2 .v2-zone-option:hover { background: var(--v2-bg); }
+.store-v2 .v2-zone-option[data-selected="true"] { border-color: var(--v2-accent); background: var(--v2-bg); }
+.store-v2 .v2-zone-option-text { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.store-v2 .v2-zone-option-text small { color: var(--v2-surface-muted); font-size: 11px; }
+.store-v2 .v2-zone-option svg { width: 17px; height: 17px; flex: none; color: var(--v2-accent); }
+
 .store-v2 .v2-payment-instructions { display: grid; gap: 14px; padding-top: 15px; }
 .store-v2 .v2-payment-instructions h3 { font-size: 15px; }
 .store-v2 .v2-payment-instructions ol, .store-v2 .v2-next-steps { padding-inline-start: 22px; display: grid; gap: 11px; }
