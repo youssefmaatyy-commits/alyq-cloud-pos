@@ -2452,4 +2452,141 @@ test("70. Identity & pricing authority: server derives actor identity from auth.
   assert.equal(serverLineGross, 500.0, "Catalogue price of 250.00 produces 500.00 gross, ignoring forged 1.00 EGP");
 });
 
+// ── Test 71: Non-variant reservation lookup (variant_id is null) ────────────
+test("71. Stock reservations: non-variant products match and update reservations where variant_id IS NULL", () => {
+  interface Reservation {
+    online_order_id: string;
+    product_id: string;
+    variant_id: string | null;
+    quantity: number;
+    status: "reserved" | "converted" | "released";
+  }
+
+  const reservations: Reservation[] = [
+    { online_order_id: "ord-1", product_id: "prd-non-variant", variant_id: null, quantity: 2, status: "reserved" },
+    { online_order_id: "ord-1", product_id: "prd-variant", variant_id: "var-123", quantity: 1, status: "reserved" },
+  ];
+
+  // Non-variant lookup must check `variant_id === null` (SQL: `variant_id is null`), not `= null`
+  const targetProduct = "prd-non-variant";
+  const nonVariantMatch = reservations.find(
+    (r) => r.online_order_id === "ord-1" && r.product_id === targetProduct && r.variant_id === null
+  );
+  assert.ok(nonVariantMatch, "Must find non-variant reservation with null variant_id");
+  assert.equal(nonVariantMatch?.quantity, 2);
+
+  // Variant lookup checks exact variant_id
+  const variantMatch = reservations.find(
+    (r) => r.online_order_id === "ord-1" && r.product_id === "prd-variant" && r.variant_id === "var-123"
+  );
+  assert.ok(variantMatch, "Must find variant reservation with exact variant_id");
+  assert.equal(variantMatch?.quantity, 1);
+});
+
+// ── Test 72: Delivery zone enforcement & zero-enabled fallback ─────────────
+test("72. Delivery zone enforcement: required and validated when enabled zones exist; legacy fallback ONLY when zero enabled zones; pickup untouched", () => {
+  const allZones = [
+    { id: "zone-cairo", name_en: "Cairo", name_ar: "القاهرة", shipping_fee: 70, enabled: true, minimum_order_amount: 0, free_shipping_threshold: null },
+    { id: "zone-disabled", name_en: "Closed", name_ar: "مغلق", shipping_fee: 25, enabled: false, minimum_order_amount: 0, free_shipping_threshold: null },
+  ];
+
+  const legacySettings = {
+    enabled: true,
+    fee: 30,
+    minimum: 0,
+    threshold: 0,
+  };
+
+  function validateAndPriceDelivery(payload: {
+    deliveryType: "delivery" | "pickup";
+    deliveryZoneId?: string | null;
+    address?: { city?: string; area?: string; street?: string };
+    zones: typeof allZones;
+  }) {
+    if (payload.deliveryType === "pickup") {
+      return { ok: true, source: "pickup", fee: 0, zoneId: null };
+    }
+
+    // Delivery requires address
+    if (!payload.address?.city || !payload.address?.area || !payload.address?.street) {
+      return { ok: false, error: "A delivery address is required" };
+    }
+
+    const enabledZones = payload.zones.filter((z) => z.enabled);
+
+    if (enabledZones.length > 0) {
+      if (!payload.deliveryZoneId || payload.deliveryZoneId.trim() === "") {
+        return { ok: false, error: "Please select a delivery zone" };
+      }
+      const zone = enabledZones.find((z) => z.id === payload.deliveryZoneId);
+      if (!zone) {
+        return { ok: false, error: "Delivery zone is not available" };
+      }
+      return { ok: true, source: "zone", fee: zone.shipping_fee, zoneId: zone.id };
+    } else {
+      // Zero enabled zones: fallback to legacy website_settings
+      if (!legacySettings.enabled) {
+        return { ok: false, error: "Delivery is not available" };
+      }
+      return { ok: true, source: "legacy", fee: legacySettings.fee, zoneId: null };
+    }
+  }
+
+  // 1. When enabled zones exist, missing zone_id is rejected
+  const missingZoneRes = validateAndPriceDelivery({
+    deliveryType: "delivery",
+    deliveryZoneId: null,
+    address: { city: "Cairo", area: "Nasr City", street: "Street 9" },
+    zones: allZones,
+  });
+  assert.equal(missingZoneRes.ok, false);
+  assert.equal((missingZoneRes as { error: string }).error, "Please select a delivery zone");
+
+  // 2. Disabled zone_id is rejected
+  const disabledZoneRes = validateAndPriceDelivery({
+    deliveryType: "delivery",
+    deliveryZoneId: "zone-disabled",
+    address: { city: "Cairo", area: "Nasr City", street: "Street 9" },
+    zones: allZones,
+  });
+  assert.equal(disabledZoneRes.ok, false);
+  assert.equal((disabledZoneRes as { error: string }).error, "Delivery zone is not available");
+
+  // 3. Valid enabled zone_id succeeds
+  const validZoneRes = validateAndPriceDelivery({
+    deliveryType: "delivery",
+    deliveryZoneId: "zone-cairo",
+    address: { city: "Cairo", area: "Nasr City", street: "Street 9" },
+    zones: allZones,
+  });
+  assert.equal(validZoneRes.ok, true);
+  assert.equal((validZoneRes as { fee: number }).fee, 70);
+  assert.equal((validZoneRes as { zoneId: string }).zoneId, "zone-cairo");
+
+  // 4. Zero enabled zones: legacy fallback is used
+  const noEnabledZones = [
+    { id: "zone-disabled", name_en: "Closed", name_ar: "مغلق", shipping_fee: 25, enabled: false, minimum_order_amount: 0, free_shipping_threshold: null },
+  ];
+  const fallbackRes = validateAndPriceDelivery({
+    deliveryType: "delivery",
+    deliveryZoneId: null,
+    address: { city: "Cairo", area: "Nasr City", street: "Street 9" },
+    zones: noEnabledZones,
+  });
+  assert.equal(fallbackRes.ok, true);
+  assert.equal((fallbackRes as { source: string }).source, "legacy");
+  assert.equal((fallbackRes as { fee: number }).fee, 30);
+
+  // 5. Pickup orders remain unchanged (fee 0, no zone required)
+  const pickupRes = validateAndPriceDelivery({
+    deliveryType: "pickup",
+    deliveryZoneId: null,
+    zones: allZones,
+  });
+  assert.equal(pickupRes.ok, true);
+  assert.equal((pickupRes as { source: string }).source, "pickup");
+  assert.equal((pickupRes as { fee: number }).fee, 0);
+  assert.equal((pickupRes as { zoneId: string | null }).zoneId, null);
+});
+
 

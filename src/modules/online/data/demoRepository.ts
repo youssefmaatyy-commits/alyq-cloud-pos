@@ -2234,13 +2234,22 @@ export class DemoOnlineRepository
       };
     });
     const subtotal = round2(priced.reduce((sum, line) => sum + line.line_total, 0));
-    const zone = input.deliveryZoneId
-      ? (this.deliveryZones.find((candidate) => candidate.id === input.deliveryZoneId) ?? null)
-      : null;
-    if (input.deliveryZoneId && !zone) {
-      throw new OnlineError("delivery_unavailable", "Delivery zone is not available", {
-        field: "delivery_type",
-      });
+    const enabledZones = this.deliveryZones.filter((candidate) => candidate.enabled);
+    let zone: DeliveryZone | null = null;
+    if (input.deliveryType === "delivery") {
+      if (enabledZones.length > 0) {
+        if (!input.deliveryZoneId) {
+          throw new OnlineError("delivery_unavailable", "Please select a delivery zone", {
+            field: "delivery_type",
+          });
+        }
+        zone = enabledZones.find((candidate) => candidate.id === input.deliveryZoneId) ?? null;
+        if (!zone) {
+          throw new OnlineError("delivery_unavailable", "Delivery zone is not available", {
+            field: "delivery_type",
+          });
+        }
+      }
     }
     const settings = resolveSettings(this.settingsDoc.settings).delivery;
     const evaluated = evaluateCartPricing({

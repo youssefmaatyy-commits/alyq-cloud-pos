@@ -1853,6 +1853,7 @@ declare
   v_zone           public.delivery_zones%rowtype;
   v_zone_json      jsonb := null;
   v_legacy_json    jsonb;
+  v_has_enabled_zones boolean;
   v_customer_key   text;
 
   v_line           jsonb;
@@ -1923,25 +1924,28 @@ begin
 
   -- 2. delivery fee preparation
   if v_delivery_type = 'delivery' then
-    if v_zone_id_raw is not null and btrim(v_zone_id_raw) <> '' then
+    if v_city = '' or v_area = '' or v_street = '' then
+      raise exception 'A delivery address is required' using errcode = 'check_violation';
+    end if;
+
+    select exists(select 1 from public.delivery_zones where enabled) into v_has_enabled_zones;
+
+    if v_has_enabled_zones then
+      if v_zone_id_raw is null or btrim(v_zone_id_raw) = '' then
+        raise exception 'Please select a delivery zone' using errcode = 'check_violation';
+      end if;
+
       begin
         v_zone_id := v_zone_id_raw::uuid;
       exception when invalid_text_representation then
         raise exception 'Invalid delivery zone' using errcode = 'check_violation';
       end;
-    else
-      v_zone_id := null;
-    end if;
 
-    if v_city = '' or v_area = '' or v_street = '' then
-      raise exception 'A delivery address is required' using errcode = 'check_violation';
-    end if;
-
-    if v_zone_id is not null then
       select * into v_zone from public.delivery_zones where id = v_zone_id;
       if not found or not v_zone.enabled then
         raise exception 'Delivery zone is not available' using errcode = 'check_violation';
       end if;
+
       v_zone_json := jsonb_build_object(
         'id', v_zone.id::text,
         'name', coalesce(nullif(v_zone.name_en, ''), v_zone.name_ar),
@@ -1950,6 +1954,8 @@ begin
         'threshold', coalesce(v_zone.free_shipping_threshold, 0)
       );
     else
+      -- Zero enabled delivery zones: fallback to legacy website_settings
+      v_zone_id := null;
       if coalesce((v_settings->'delivery'->>'enabled')::boolean, true) = false then
         raise exception 'Delivery is not available' using errcode = 'check_violation';
       end if;

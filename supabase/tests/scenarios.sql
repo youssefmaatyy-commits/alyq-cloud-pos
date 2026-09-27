@@ -1126,6 +1126,10 @@ begin
              'cod_enabled', true, 'instapay_enabled', true))
    where id = 1;
 
+  create temp table pg_temp.saved_delivery_zones as
+    select id, enabled from public.delivery_zones;
+  update public.delivery_zones set enabled = false;
+
   insert into public.coupons (code, discount_type, value, min_subtotal, active, starts_at, ends_at)
   values
     ('SCN-CHK10',   'percent', 10, 0, true,  null,                        null),
@@ -1639,6 +1643,11 @@ begin
   -- ── step back out, which only the owner can do ────────────────────────────
   perform set_config('role', v_owner, true);
   update public.website_settings set settings = v_settings where id = 1;
+  update public.delivery_zones z
+     set enabled = s.enabled
+    from pg_temp.saved_delivery_zones s
+   where z.id = s.id;
+  drop table if exists pg_temp.saved_delivery_zones;
 
   raise notice 'storefront checkout — pickup/delivery × COD/InstaPay accepted and priced from the catalogue; the shop''s own delivery rules hold (city+area+street required, unserved places refused, minimum gates delivery only, free delivery at the threshold measured after the coupon, payload fee ignored); stock held not sold; refusals (stock, quantity, inactive, website-hidden, untracked, coupon, address, outside area, below minimum, delivery off) write zero rows; a replayed key writes no second order; and the guest reads the order back by number and phone while the tables stay staff-only';
 end
