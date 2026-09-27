@@ -42,6 +42,23 @@ import { EMPTY_DISCOUNT, newClientRef } from "../types";
 import { getWebsiteRepository } from "@/modules/online/data";
 import { promotionUnitPrice } from "@/modules/online/services/pricing";
 import type { Promotion, PromotionTarget } from "@/modules/online/types";
+import {
+  getConnectivityStatus,
+  reportNetworkResult,
+  subscribeConnectivity,
+  type ConnectivityStatus,
+} from "../offline/connectivity";
+import { cacheCatalogSnapshot, readCachedCatalog } from "../offline/catalogCache";
+import {
+  enqueueOfflineSale,
+  getLastSyncedAt,
+  getOfflineSaleDisplay,
+  getOfflineSalesForDisplay,
+  getSyncSummary,
+  processOutbox,
+  retrySyncNow,
+  type SyncSummary,
+} from "../offline/outbox";
 
 export interface PosContextValue {
   mode: "supabase" | "demo";
@@ -122,6 +139,30 @@ export interface PosContextValue {
   canDiscount: boolean;
   /** Re-fetch the catalog (after a reset / stock change elsewhere). */
   reloadCatalog: () => Promise<unknown>;
+  // ── offline-first (src/modules/pos/offline/) ──────────────────────────────
+  /** Best-known connectivity — a UI signal only; `completeSale` still tries the network first regardless. */
+  connectivity: "online" | "offline";
+  /** True while the catalog on screen is the last-known IndexedDB copy, not a live read (stock shown is NOT real-time). */
+  workingFromCache: boolean;
+  /** When the cached catalog snapshot currently in use was last refreshed live, if ever. */
+  catalogCachedAt: string | null;
+  /** Counts of the local sync queue: never-yet-tried, failed-but-queued, and stock-conflict-flagged. */
+  syncPendingCount: number;
+  syncErrorCount: number;
+  syncConflictCount: number;
+  /** True while a sync pass is actively running. */
+  syncing: boolean;
+  /** When a queued sale last reached the server successfully, if ever. */
+  lastSyncedAt: string | null;
+  /** Manual "Retry sync" — attempts every queued sale now, ignoring backoff. */
+  retrySync: () => Promise<void>;
+  /**
+   * `sales` with any still-queued/failed offline sales prepended, so the
+   * history and detail screens can render an offline sale before the server
+   * has ever seen it. A sale drops out of this list (and appears only in
+   * `sales`, from the server) the moment it syncs — never shown twice.
+   */
+  visibleSales: SaleModel[];
 }
 
 const PosContext = createContext<PosContextValue | null>(null);
@@ -159,6 +200,20 @@ export function PosProvider({ children }: { children: ReactNode }) {
   const [salesLoading, setSalesLoading] = useState(true);
   const [salesTotal, setSalesTotal] = useState<number | null>(null);
   const [salesTruncated, setSalesTruncated] = useState(false);
+
+  // ── offline-first (see src/modules/pos/offline/) ─────────────────────────
+  // Connectivity is a UI signal, not a hard gate: `completeSale` always
+  // attempts the real network path first and only falls back to the local
+  // queue on a genuine network failure, so a stale/false "offline" reading
+  // never blocks a sale that would actually have gone through.
+  const [connectivity, setConnectivity] = useState<ConnectivityStatus>(() => getConnectivityStatus());
+  const [syncSummary, setSyncSummary] = useState<SyncSummary>({
+    pendingCount: 0, errorCount: 0, conflictCount: 0, syncing: false,
+  });
+  const [offlineSales, setOfflineSales] = useState<SaleModel[]>([]);
+  const [workingFromCache, setWorkingFromCache] = useState(false);
+  const [catalogCachedAt, setCatalogCachedAt] = useState<string | null>(null);
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const repositoryRef = useRef<SalesRepository | null>(null);
   const repository = useMemo(() => {
     if (!repositoryRef.current) repositoryRef.current = getSalesRepository();
@@ -172,23 +227,78 @@ export function PosProvider({ children }: { children: ReactNode }) {
   const canSell = canCompleteSale(user);
   const canDiscount = canApplyDiscount(user);
 
+  // Offline sales only mean anything against a live backend — demo mode has
+  // no network path at all, so every one of its sales already "syncs"
+  // instantly (it IS the local store).
+  const offlineCapable = mode === "supabase";
+
+  const refreshOfflineState = useCallback(async () => {
+    if (!offlineCapable) return;
+    const [display, summary, syncedAt] = await Promise.all([
+      getOfflineSalesForDisplay(),
+      getSyncSummary(),
+      getLastSyncedAt(),
+    ]);
+    setOfflineSales(display);
+    setSyncSummary(summary);
+    setLastSyncedAt(syncedAt);
+  }, [offlineCapable]);
+
+  useEffect(() => {
+    void refreshOfflineState();
+  }, [refreshOfflineState]);
+
+  // Connectivity: the browser's online/offline events set the resting state;
+  // every real Supabase call (catalog load, sale completion, the sync pass
+  // below) corrects it immediately via `reportNetworkResult`, since
+  // `navigator.onLine` alone is known to be unreliable (see offline/connectivity.ts).
+  useEffect(() => {
+    return subscribeConnectivity(setConnectivity);
+  }, []);
+
   // Catalog load — extracted so the POS page can refresh after catalog
   // changes (e.g. a demo reset, an inventory adjustment or a new product).
   const loadCatalog = useCallback(async () => {
-    const repo =
-      isSupabaseConfigured && getSupabaseClient()
-        ? getSupabaseRepository()
-        : getDemoRepository();
-    const [list, combinations, website] = await Promise.all([
-      repo.listProducts(),
-      repo.listVariants(),
-      getWebsiteRepository().getSnapshot().catch(() => null),
-    ]);
-    setProducts(list);
-    setVariants([...combinations].sort(compareVariants));
-    setPromotions(website?.promotions ?? []);
-    setPromotionTargets(website?.promotionTargets ?? []);
-    return list;
+    const usingSupabase = isSupabaseConfigured && !!getSupabaseClient();
+    const repo = usingSupabase ? getSupabaseRepository() : getDemoRepository();
+    try {
+      const [list, combinations, website] = await Promise.all([
+        repo.listProducts(),
+        repo.listVariants(),
+        getWebsiteRepository().getSnapshot().catch(() => null),
+      ]);
+      reportNetworkResult("success");
+      setProducts(list);
+      setVariants([...combinations].sort(compareVariants));
+      setPromotions(website?.promotions ?? []);
+      setPromotionTargets(website?.promotionTargets ?? []);
+      setWorkingFromCache(false);
+      // Refresh the offline "last known" copy on every successful live load —
+      // this is the ONLY writer of the cache; nothing offline ever invents or
+      // edits a product/variant.
+      if (usingSupabase) void cacheCatalogSnapshot(list, combinations).catch(() => {});
+      return list;
+    } catch (err) {
+      const appErr = err instanceof AppError ? err : new AppError("DB", String(err));
+      if (usingSupabase && appErr.code === "NETWORK") {
+        reportNetworkResult("network-error");
+        const cached = await readCachedCatalog();
+        if (cached.products.length > 0) {
+          setProducts(cached.products);
+          setVariants([...cached.variants].sort(compareVariants));
+          setWorkingFromCache(true);
+          setCatalogCachedAt(cached.cachedAt);
+          // Promotions are not cached (Phase 3 scope: products/variants only —
+          // see offline/catalogCache.ts) — an offline cart simply has none,
+          // which is strictly conservative (never overcharges, never applies
+          // a promotion the server can no longer confirm).
+          setPromotions([]);
+          setPromotionTargets([]);
+          return cached.products;
+        }
+      }
+      throw appErr;
+    }
   }, []);
 
   useEffect(() => {
@@ -246,6 +356,52 @@ export function PosProvider({ children }: { children: ReactNode }) {
   // optimisation, demo mode is untouched (the bus reports `unavailable` with no
   // credentials), and a missed event costs freshness rather than correctness.
   useRealtimeWatch(["sales"], () => refreshSales({ silent: true }));
+
+  // ── offline sync engine ───────────────────────────────────────────────────
+  // `runSync` is the one place a queued sale is actually replayed. It reuses
+  // `completeSaleGuarded` (`saleService.completeSale`, imported above) — the
+  // exact same permission/approval gate and RPC call an online sale takes —
+  // so nothing about sync bypasses business rules; only the queue's own
+  // dispatch (network detection, retry ordering, backoff) is new.
+  const runSync = useCallback(
+    async (options: { force?: boolean } = {}) => {
+      if (!offlineCapable) return;
+      const before = await getSyncSummary();
+      if (before.pendingCount + before.errorCount + before.conflictCount === 0) return;
+      setSyncSummary((prev) => ({ ...prev, syncing: true }));
+      try {
+        if (options.force) await retrySyncNow(completeSaleGuarded);
+        else await processOutbox(completeSaleGuarded);
+        await refreshSales({ silent: true });
+      } finally {
+        await refreshOfflineState();
+      }
+    },
+    [offlineCapable, refreshOfflineState, refreshSales],
+  );
+
+  // Sync triggers: connectivity flips to online, and a bounded periodic timer
+  // while the app is open and something is actually queued. No Background
+  // Sync API dependency (browser support varies) and no unbounded/aggressive
+  // retry loop — the interval is long, and each per-entry retry itself backs
+  // off (see offline/outbox.ts).
+  useEffect(() => {
+    if (!offlineCapable) return;
+    if (connectivity === "online") void runSync();
+  }, [offlineCapable, connectivity, runSync]);
+
+  useEffect(() => {
+    if (!offlineCapable) return;
+    const interval = window.setInterval(() => {
+      if (getConnectivityStatus() === "online") void runSync();
+    }, 20_000);
+    return () => window.clearInterval(interval);
+  }, [offlineCapable, runSync]);
+
+  /** The manual "Retry sync" button — attempts everything queued right now. */
+  const retrySync = useCallback(async () => {
+    await runSync({ force: true });
+  }, [runSync]);
 
   // ── cart operations ─────────────────────────────────────────────────────
 
@@ -427,8 +583,18 @@ export function PosProvider({ children }: { children: ReactNode }) {
           user_id: user.id,
           user_name: user.name,
       };
+      const cashOnly = payments.length > 0 && payments.every((p) => p.method === "cash");
+
+      // Offline-first: `completeSaleGuarded` still runs FIRST for every sale —
+      // it owns the permission check and the discount-approval gate, and
+      // nothing here duplicates or bypasses either. Only a genuine NETWORK
+      // failure (see products/data/repository.ts `toAppError`) falls through
+      // to the local queue, and only for a cash-only sale — a payment that
+      // needs network verification (InstaPay/card) is never queued: it stays
+      // refused until the till is back online (Part 5 of the offline brief).
       try {
         const sale = await completeSaleGuarded(input);
+        reportNetworkResult("success");
         await loadCatalog();
         setCompletedSale(sale);
         updateLines(() => []);
@@ -444,17 +610,67 @@ export function PosProvider({ children }: { children: ReactNode }) {
           setApprovalAsk({ requirement: err.approvalRequired, input });
           return null;
         }
+        const appErr = err instanceof AppError ? err : null;
+        if (offlineCapable && appErr?.code === "NETWORK") {
+          reportNetworkResult("network-error");
+          if (!cashOnly) {
+            // Nothing was written. The exact same `input` (same `client_ref`)
+            // can be resubmitted once online — the cart is left untouched.
+            throw new AppError(
+              "VALIDATION",
+              "No connection — only cash sales can be completed offline. InstaPay/card payments need the server to verify them.",
+            );
+          }
+          const record = await enqueueOfflineSale(
+            input,
+            lines.map((line) => ({
+              product_id: line.product_id,
+              variant_id: line.variant_id,
+              qty: line.qty,
+              discount_type: line.item_discount?.type ?? "none",
+              discount_value: line.item_discount?.value ?? 0,
+              name_en: line.name_en,
+              name_ar: line.name_ar,
+              sku: line.sku,
+              unit_price: line.unit_price,
+            })),
+            { subtotal: totals.subtotal, discount_amount: totals.discountAmount, total: totals.total },
+          );
+          const displaySale = await getOfflineSaleDisplay(record.id);
+          await refreshOfflineState();
+          if (displaySale) {
+            setCompletedSale(displaySale);
+            updateLines(() => []);
+            setDiscountValue(EMPTY_DISCOUNT);
+            return displaySale;
+          }
+        }
         throw err;
       } finally {
         setCompleting(false);
       }
     },
-    [canSell, completing, lines, discount, refreshSales, loadCatalog, selectedCustomer, user, updateLines],
+    [
+      canSell,
+      completing,
+      lines,
+      discount,
+      refreshSales,
+      loadCatalog,
+      selectedCustomer,
+      user,
+      updateLines,
+      offlineCapable,
+      totals,
+      refreshOfflineState,
+    ],
   );
 
   const dismissCompleted = useCallback(() => setCompletedSale(null), []);
 
   const dismissApprovalAsk = useCallback(() => setApprovalAsk(null), []);
+
+  const visibleSales = useMemo(() => [...offlineSales, ...sales], [offlineSales, sales]);
 
   const value = useMemo<PosContextValue>(
     () => ({
@@ -493,6 +709,16 @@ export function PosProvider({ children }: { children: ReactNode }) {
       canSell,
       canDiscount,
       reloadCatalog: loadCatalog,
+      connectivity,
+      workingFromCache,
+      catalogCachedAt,
+      syncPendingCount: syncSummary.pendingCount,
+      syncErrorCount: syncSummary.errorCount,
+      syncConflictCount: syncSummary.conflictCount,
+      syncing: syncSummary.syncing,
+      lastSyncedAt,
+      retrySync,
+      visibleSales,
     }),
     [
       mode,
@@ -529,6 +755,13 @@ export function PosProvider({ children }: { children: ReactNode }) {
       canSell,
       canDiscount,
       loadCatalog,
+      connectivity,
+      workingFromCache,
+      catalogCachedAt,
+      syncSummary,
+      lastSyncedAt,
+      retrySync,
+      visibleSales,
     ],
   );
 
