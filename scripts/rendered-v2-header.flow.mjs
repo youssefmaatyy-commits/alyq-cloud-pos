@@ -16,6 +16,9 @@
  *     beside it (not overlapping)
  *   · desktop and mobile viewports both render it responsively
  *   · AR/RTL flips the reading order and keeps everything readable
+ *   · the Arabic half's real glyph ink (measured with Canvas2D
+ *     TextMetrics, diacritics and descenders included) fits inside its own
+ *     rendered box — no bottom clipping — without inflating the header
  *
  * Run against a locally built/served app, same as its rendered-v2-*.flow.mjs
  * siblings:
@@ -105,6 +108,34 @@ async function assertHeaderBranding(page, { label, expectedOrder }) {
   return logo;
 }
 
+/** Issue #1 (7th follow-up round) — the Arabic half's real ink (with its
+ * stacked fatha/kasra/sukun diacritics and the "ق" descender loop) was
+ * visibly cropped at the bottom because the wordmark's line box was exactly
+ * 1 x font-size, with no headroom for a display Arabic face's taller glyph
+ * metrics, while `.v2-logo` clips overflow. Rather than eyeballing a
+ * screenshot on every run, measure the actual rendered ink height with
+ * Canvas2D's `TextMetrics.actualBoundingBoxAscent/Descent` (the same glyph
+ * shaping/font the browser used to paint the span) and assert it fits
+ * inside the span's own rendered box — a real, reproducible anti-regression
+ * check, not a hardcoded line-height number.
+ */
+async function assertNoVerticalClipping(page, label) {
+  const secondary = page.locator(".v2-wordmark-secondary").first();
+  await secondary.waitFor();
+  const result = await secondary.evaluate((el) => {
+    const cs = getComputedStyle(el);
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    ctx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+    const metrics = ctx.measureText(el.textContent ?? "");
+    const inkHeight = (metrics.actualBoundingBoxAscent ?? 0) + (metrics.actualBoundingBoxDescent ?? 0);
+    const boxHeight = el.getBoundingClientRect().height;
+    return { inkHeight, boxHeight, font: ctx.font };
+  });
+  assert.ok(result.inkHeight <= result.boxHeight + 0.5,
+    `${label}: Arabic glyph ink (${result.inkHeight.toFixed(1)}px, font "${result.font}") fits inside its rendered box (${result.boxHeight.toFixed(1)}px) — no bottom/top clipping`);
+}
+
 try {
   // --- Desktop EN: gold text, transparent bg, "ALYQ" leads, nav/cart aligned ---
   await withPage({ width: 1440, height: 900 }, async (page) => {
@@ -128,9 +159,12 @@ try {
   await withPage({ width: 1440, height: 900 }, async (page) => {
     await loginAndVisitStore(page, { lang: "ar", viewport: { width: 1440, height: 900 } });
     await assertHeaderBranding(page, { label: "Desktop AR/RTL", expectedOrder: ["أَلِ", "ALYQ"] });
+    await assertNoVerticalClipping(page, "Desktop AR/RTL");
     const dir = await page.locator(".store-v2").first().getAttribute("dir");
     assert.equal(dir, "rtl", "Desktop AR: the storefront shell is in RTL mode");
-    console.log("✓ Desktop AR/RTL: reading order flips (Arabic name leads), still gold, still transparent");
+    const headerHeight = await page.locator(".v2-header-inner").first().evaluate((el) => el.getBoundingClientRect().height);
+    assert.ok(headerHeight <= 90, `Desktop AR: header stays a normal height (${headerHeight}px) — the extra Arabic line-height headroom did not inflate it`);
+    console.log("✓ Desktop AR/RTL: reading order flips (Arabic name leads), still gold, still transparent, no glyph clipping");
   });
 
   // --- Mobile EN: smaller responsive wordmark, menu/cart still aligned ---
@@ -150,9 +184,10 @@ try {
   await withPage({ width: 1440, height: 900 }, async (page) => {
     await loginAndVisitStore(page, { lang: "ar", viewport: { width: 390, height: 844 } });
     await assertHeaderBranding(page, { label: "Mobile AR/RTL", expectedOrder: ["أَلِ", "ALYQ"] });
+    await assertNoVerticalClipping(page, "Mobile AR/RTL");
     const dir = await page.locator(".store-v2").first().getAttribute("dir");
     assert.equal(dir, "rtl", "Mobile AR: the storefront shell is in RTL mode");
-    console.log("✓ Mobile AR/RTL: reading order flips, still gold, still transparent, responsive");
+    console.log("✓ Mobile AR/RTL: reading order flips, still gold, still transparent, responsive, no glyph clipping");
   });
 
   if (failures.length) {

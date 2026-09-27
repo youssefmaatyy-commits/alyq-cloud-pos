@@ -65,7 +65,24 @@
 .store-v2 .v2-icon-button { width: 44px; height: 44px; position: relative; display: inline-grid; place-items: center; flex: none; border: 0; background: transparent; color: inherit; }
 .store-v2 .v2-icon-button:hover { opacity: .65; }
 .store-v2 .v2-icon-button svg { width: 21px; height: 21px; }
-.store-v2 .v2-logo { display: grid; place-items: center; min-width: 0; max-width: 62vw; overflow: hidden; text-align: center; font-family: var(--v2-font-display); font-size: clamp(19px, 5vw, 29px); font-weight: 600; letter-spacing: .12em; line-height: 1; }
+/* Issue #1 (7th follow-up round / "Arabic clipped at the bottom"): the
+   Arabic name's diacritics (fatha/kasra/sukun) and its trailing "ق"
+   descender loop were being cut off. Root cause: `.v2-logo` sizes itself to
+   fit its own content (it's an auto-height grid item), and that auto
+   height was driven by `line-height: 1` — exactly 1x font-size, with zero
+   headroom — while `.v2-logo` itself clips overflow. The Arabic display
+   font stack's actual glyph ink (Amiri/Noto Naskh Arabic, painting stacked
+   combining marks well outside the plain Latin em-box) is taller than that
+   1x line box, so the excess got clipped by `.v2-logo`'s own
+   `overflow: hidden`, not by any fixed pixel height anywhere. Raising
+   line-height to 1.6 gives the line box the headroom real Arabic display
+   typography needs (verified with Canvas2D TextMetrics — see
+   scripts/rendered-v2-header.flow.mjs's assertNoVerticalClipping) without
+   touching font-size, color, text, or `.v2-header-inner`'s own height
+   budget (52px/40px logo-height defaults + 18px already comfortably cover
+   the new ~46px/~31px content height at desktop/mobile, so the header does
+   not grow). */
+.store-v2 .v2-logo { display: grid; place-items: center; min-width: 0; max-width: 62vw; overflow: hidden; text-align: center; font-family: var(--v2-font-display); font-size: clamp(19px, 5vw, 29px); font-weight: 600; letter-spacing: .12em; line-height: 1.6; }
 .store-v2[dir="rtl"] .v2-logo { letter-spacing: 0; }
 /* Bilingual header wordmark (Issue #1, 6th follow-up round): now the ONLY
    header branding — the merchant removed the boxed logo image entirely in
