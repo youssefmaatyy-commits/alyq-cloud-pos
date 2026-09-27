@@ -87,16 +87,26 @@
   .store-v2 .v2-wordmark-secondary, .store-v2 .v2-wordmark-divider { display: none; }
   .store-v2 .v2-wordmark-primary { max-width: 46vw; }
 }
-/* Issue C (3rd follow-up round): the box a configured logo image renders in.
-   `width: auto` + a fixed `height` already preserves the intrinsic aspect
-   ratio without stretching; `object-fit: contain` only matters once the
-   max-width below actually binds (a wide banner-shaped logo), where it
-   letterboxes instead of distorting. max-width was widened from 190px to
-   230px so the larger default height above (52px desktop) isn't immediately
-   clipped back down for an ordinary wordmark-shaped logo — still far short
-   of the 62vw the text wordmark itself is allowed, so navigation never loses
-   room either side. */
-.store-v2 .v2-logo img { display: block; width: auto; height: var(--v2-mobile-logo-height); max-width: min(48vw, 230px); object-fit: contain; }
+/* Issue #1 (5th follow-up round / "logo too small"): a real uploaded mark
+   (public/alyq-logo.png) is a 1280x1280 square canvas whose actual wordmark
+   only occupies its centre ~767x336px band (measured with ImageMagick
+   `-trim`) — roughly 60% of the width and 26% of the height, the rest being
+   flat brand-colour padding baked into the file. `object-fit: contain` with
+   a fixed height (the previous rule) sizes the box to the image's own 1:1
+   *canvas* ratio, not the wordmark's real ~2.3:1 shape, so the box is
+   always a small square and the visible wordmark inside it shrinks to a
+   sliver (~14px tall out of a 52px-tall box) — no amount of raising the
+   height variable fixes that without also making the header noticeably
+   taller, which is out of bounds here. The uploaded file itself must not be
+   cropped, so the fix is presentation-only: give the `<img>` a fixed
+   `aspect-ratio` matching the wordmark's own real shape (auto-scales with
+   the admin's existing --v2-logo-height/--v2-mobile-logo-height sliders,
+   default 52px/40px -> ~120px/~92px wide, inside the required 90-140px /
+   64-100px ranges) and switch to `object-fit: cover`, which crops the box
+   to that ratio at render time only — the stored file is untouched, and a
+   logo that already has no padding just gets a normal, centred, very light
+   edge crop instead of being stretched or shrunk. */
+.store-v2 .v2-logo img { display: block; width: auto; aspect-ratio: 2.3; height: var(--v2-mobile-logo-height); max-width: min(48vw, 230px); object-fit: cover; object-position: center; }
 @media (min-width: 768px) {
   .store-v2 .v2-logo img { height: var(--v2-logo-height); }
   .store-v2 .v2-logo img.v2-mobile-only { display: none; }
