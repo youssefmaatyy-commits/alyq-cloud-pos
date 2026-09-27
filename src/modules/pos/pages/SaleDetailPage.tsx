@@ -38,7 +38,9 @@ export function SaleDetailPage() {
   const { t, num, date, isRTL } = useI18n();
   const toast = useToast();
   const navigate = useNavigate();
-  const { sales, salesLoading, error, refreshSales } = usePos();
+  // See SalesHistoryPage — `visibleSales` merges in still-queued/failed
+  // offline sales so a detail page for one works even before it has synced.
+  const { visibleSales: sales, salesLoading, error, refreshSales } = usePos();
 
   const [sale, setSale] = useState<Sale | null>(null);
   const [confirmVoid, setConfirmVoid] = useState(false);
@@ -187,12 +189,16 @@ export function SaleDetailPage() {
     );
   }
 
-  const canVoid = canVoidSale() && sale.status !== "voided";
+  // A sale still sitting in the local offline queue does not exist on the
+  // server yet — void/confirm/return all need a real server-side row, so
+  // they wait until this one has synced (see offline/outbox.ts).
+  const notYetSynced = sale.offline_sync_status === "pending" || sale.offline_sync_status === "error";
+  const canVoid = canVoidSale() && sale.status !== "voided" && !notYetSynced;
   // Authorized action: any still-pending InstaPay payment can be confirmed.
   const awaitingInstaPay =
     sale.status !== "voided" &&
     sale.payments.some((p) => p.method === "instapay" && p.status === "pending");
-  const canConfirm = canConfirmPayment() && awaitingInstaPay;
+  const canConfirm = canConfirmPayment() && awaitingInstaPay && !notYetSynced;
 
   return (
     <div>
@@ -209,7 +215,7 @@ export function SaleDetailPage() {
                 ✓ {t("pos.confirmPayment")}
               </Button>
             ) : null}
-            {sale.status !== "voided" ? (
+            {sale.status !== "voided" && !notYetSynced ? (
               <Button variant="secondary" onClick={() => setReturnOpen(true)}>
                 ↩ {t("returns.newReturn")}
               </Button>
@@ -223,6 +229,24 @@ export function SaleDetailPage() {
           </>
         }
       />
+
+      {notYetSynced ? (
+        <div
+          className={`alyq-card mb-4 flex items-center gap-2 p-3 ${
+            sale.offline_sync_status === "error"
+              ? "border-rose-300 bg-rose-50"
+              : "border-amber-300 bg-amber-50"
+          }`}
+          data-testid="sale-detail-offline-banner"
+        >
+          <Badge tone={sale.offline_sync_status === "error" ? "danger" : "warning"}>
+            {sale.offline_sync_status === "error" ? t("pos.offline.syncErrorBadge") : t("pos.offline.pendingSyncBadge")}
+          </Badge>
+          <p className="text-xs font-semibold text-stone-700">
+            {sale.offline_sync_status === "error" ? sale.offline_last_error ?? t("pos.offline.syncErrorHint") : t("pos.offline.offlineHint")}
+          </p>
+        </div>
+      ) : null}
 
       {sale.customer_id || sale.customer_name ? (
         <Link
