@@ -7,7 +7,6 @@ import { usePos } from "../hooks/PosProvider";
 import { lineTotals, round2, validateDiscount } from "../services/posMath";
 import { PaymentPanel } from "./PaymentPanel";
 import { ProductThumb } from "./ProductThumb";
-import { ConnectivityIndicator } from "./ConnectivityIndicator";
 
 /**
  * The Current Sale card — one surface for the whole checkout.
@@ -80,9 +79,6 @@ export function CartPanel() {
             onSelect={(customer) => setSelectedCustomer(customer)}
           />
         </div>
-        {/* Sale status / online-offline-sync indicator — Part 7 of the offline
-            brief: stays in the fixed header, never scrolls with the cart. */}
-        <ConnectivityIndicator />
       </div>
 
       {lines.length === 0 ? (

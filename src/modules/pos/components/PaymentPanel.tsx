@@ -39,15 +39,7 @@ export function PaymentPanel() {
     dismissApprovalAsk,
     clearCart,
     selectedCustomer,
-    connectivity,
   } = usePos();
-
-  // Offline-first (Part 5): InstaPay/Visa need the server to verify them, so
-  // the till never lets a cashier even START one while offline — this is the
-  // UI-side half of the guard; `completeSale` (PosProvider) enforces the same
-  // rule again, refusing (never faking) a non-cash sale if it somehow reaches
-  // that point disconnected. Cash-only never needs to be disabled.
-  const paymentBlockedOffline = connectivity === "offline";
 
   // A till sale is drawer money: it needs an open shift to land in (Phase 27).
   // The gate shows the moment the shift list has loaded with nothing open, so
@@ -73,16 +65,6 @@ export function PaymentPanel() {
       setInstapayStatus("paid");
     }
   }, [isEmpty]);
-
-  // Going offline mid-sale drops back to cash-only immediately — never leaves
-  // an InstaPay/Visa amount sitting in the form as if it could still be sent.
-  useEffect(() => {
-    if (paymentBlockedOffline && split) {
-      setSplit(false);
-      setInstapay("");
-      setVisa("");
-    }
-  }, [paymentBlockedOffline, split]);
 
   const total = totals.total;
   const cashNum = round2(Number(cash) || 0);
@@ -158,8 +140,7 @@ export function PaymentPanel() {
       // `null` means the discount crossed an approval limit: nothing was
       // written, and `approvalAsk` now carries the draft the register can send
       // for approval instead.
-      const sale = await completeSale(payments);
-      if (sale?.offline_sync_status === "pending") toast.success(t("pos.offline.saleQueued"));
+      await completeSale(payments);
     } catch (err) {
       // The race where the shift closes between render and submit: the RPC
       // (or the demo repository) is the authority, and its code comes back
@@ -288,20 +269,13 @@ export function PaymentPanel() {
           cart line list's scrollport. Same contract: a button[role="switch"]
           with the label text in its closest div. */}
       <div className="mt-1 flex items-center justify-between gap-2 rounded-xl border border-stone-200 bg-white px-2.5 py-1">
-        <span className="min-w-0 truncate text-xs font-bold text-stone-700">
-          {t("pos.splitPayment")}
-          {paymentBlockedOffline && (
-            <span className="ms-1.5 font-normal text-stone-400">— {t("pos.offline.paymentUnavailableOffline")}</span>
-          )}
-        </span>
+        <span className="min-w-0 truncate text-xs font-bold text-stone-700">{t("pos.splitPayment")}</span>
         <button
           type="button"
           role="switch"
           aria-checked={split}
-          disabled={paymentBlockedOffline}
-          data-testid="pos-split-toggle"
           onClick={() => toggleSplit(!split)}
-          className={`relative h-5 w-9 shrink-0 rounded-full transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-400 disabled:cursor-not-allowed disabled:opacity-50 ${
+          className={`relative h-5 w-9 shrink-0 rounded-full transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-400 ${
             split ? "bg-stone-800" : "bg-stone-300"
           }`}
         >
