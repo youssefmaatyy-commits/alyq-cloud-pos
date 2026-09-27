@@ -84,6 +84,15 @@ export const ONLINE_ERROR_CODES = [
    */
   "delivery_minimum_not_met",
   "pickup_unavailable",
+  /**
+   * The zone id the cart carried is gone, disabled, or was removed by the
+   * admin between the checkout page loading and the customer submitting
+   * (0054's trigger and 0050's `place_online_order` both raise "Delivery zone
+   * is not available" for this). Distinct from `delivery_area_unsupported`
+   * (a free-text address outside the shop's places): here the shopper picked
+   * a real zone that stopped being valid, and the fix is to choose again.
+   */
+  "delivery_zone_unavailable",
   "payment_unavailable",
   "coupon_invalid",
   "coupon_expired",
@@ -114,6 +123,18 @@ export const ONLINE_ERROR_CODES = [
   "network",
   "not_configured",
   "settings_invalid",
+  /**
+   * PostgREST 42501 — RLS's `with check (public.can('…'))` rejected the write
+   * itself, distinct from the client-side gate that hid the button. Not
+   * auto-detected by `toOnlineError` (see below: the same 42501 means
+   * something different on the anonymous storefront than on an admin
+   * screen) — admin write handlers that are close enough to know which one
+   * they are construct it explicitly, e.g. `DeliveryZonesPage`'s save/delete
+   * catch blocks, for an admin whose session or custom role has drifted out
+   * of sync with the server's own capability computation (0049's
+   * `delivery_zones_update_managers`).
+   */
+  "forbidden",
   "db",
 ] as const;
 export type OnlineErrorCode = (typeof ONLINE_ERROR_CODES)[number];
@@ -242,6 +263,22 @@ export function toOnlineError(error: unknown): OnlineError {
       detail: { sku: skuOf(message) },
     });
   }
+  // Phase 43's `place_online_order` variant branch: a line arrived with no
+  // combination at all ("Choose the colour and the size for %"), or the
+  // combination it named does not belong to that product / is no longer sold
+  // ("That colour and size does not belong to %", "% is no longer sold").
+  // Both used to fall through to the bare `db` code even though
+  // `variant_required` / `variant_mismatch` already existed as codes and
+  // dictionary strings — nothing ever routed a live error to them.
+  if (/choose the colour and the size for/i.test(message)) {
+    return new OnlineError("variant_required", message, { field: "lines" });
+  }
+  if (
+    /does not belong to/i.test(message) ||
+    /is no longer sold/i.test(message)
+  ) {
+    return new OnlineError("variant_mismatch", message, { field: "lines" });
+  }
   if (/coupon .* is not valid/i.test(message)) {
     return new OnlineError("coupon_invalid", message, { field: "coupon_code" });
   }
@@ -262,6 +299,15 @@ export function toOnlineError(error: unknown): OnlineError {
   }
   if (/delivery to .* is not available/i.test(message)) {
     return new OnlineError("delivery_area_unsupported", message, { field: "address" });
+  }
+  // Phase 50/54: `place_online_order` (the zone branch) and the
+  // `online_order_delivery_snapshot` trigger both raise this exact wording
+  // when the `delivery_zone_id` the cart sent no longer names an enabled row.
+  // Before this mapping it fell through to the bare `db` code and the
+  // customer was told "something went wrong" for an order that just needed
+  // them to pick a zone again.
+  if (/delivery zone is not available/i.test(message)) {
+    return new OnlineError("delivery_zone_unavailable", message, { field: "delivery_zone_id" });
   }
   if (/delivery orders need at least/i.test(message)) {
     const minimum = /delivery orders need at least ([\d.]+)/i.exec(message);
@@ -338,6 +384,13 @@ export function toOnlineError(error: unknown): OnlineError {
   if (/cannot be (released|converted)/i.test(message)) {
     return new OnlineError("workflow_refused", message);
   }
+  // A PostgREST 42501 is deliberately NOT reclassified here: this function is
+  // shared by the anonymous storefront (a permission gap there is the shop's
+  // own RLS/grants, not something a shopper did) and the admin screens (where
+  // it usually IS a stale session/role). `checkout.selftest.ts` pins the
+  // storefront's own case staying on the generic `db` text; `forbidden`
+  // (below) exists for callers close enough to the write to know which one
+  // they are — see `DeliveryZonesPage`'s save/delete handlers.
   // Nothing recognisable: hand the operator the server's own wording, code,
   // details and hint (the storefront itself only ever renders the friendly
   // `store.error.db` text) — never a stringified object.
@@ -348,6 +401,37 @@ export function toOnlineError(error: unknown): OnlineError {
       server_hint: described.hint,
     },
   });
+}
+
+/**
+ * `toOnlineError`, but for a caller that already knows it is an authenticated
+ * admin write — not the anonymous storefront, where a PostgREST 42501 is a
+ * misconfigured grant/policy on the shop's own side, not something naming
+ * "you don't have permission" would help a shopper act on. An admin write
+ * screen (delivery zones, promotions, website settings, …) is exactly the
+ * opposite: a 42501 there usually means the caller's session or custom role
+ * has drifted out of sync with the server's own `public.can('…')` check, and
+ * "you don't have permission — ask an admin" is the actionable answer.
+ *
+ * Kept separate from `toOnlineError` itself (rather than teaching it to
+ * recognise 42501 unconditionally) because the two callers need opposite
+ * wording for literally the same SQLSTATE — see `checkout.selftest.ts`'s
+ * "a permission refusal is reported as itself" for the storefront's case.
+ */
+export function toAdminWriteError(error: unknown): OnlineError {
+  const normalized = toOnlineError(error);
+  if (normalized.code !== "db") return normalized;
+  const described = describeThrown(error);
+  if (
+    described.code === "42501" ||
+    /row-level security policy/i.test(described.message) ||
+    /permission denied for (table|function|relation)/i.test(described.message)
+  ) {
+    return new OnlineError("forbidden", described.message, {
+      detail: { server_code: described.code, server_details: described.details, server_hint: described.hint },
+    });
+  }
+  return normalized;
 }
 
 // ── orders ──────────────────────────────────────────────────────────────────

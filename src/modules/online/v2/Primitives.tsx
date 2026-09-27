@@ -6,7 +6,7 @@ import { useStorefront } from "../hooks/StorefrontProvider";
 
 /** The same lightweight, local icon set serves the real V2 shell and the
  * Admin's inert appearance sample. No uploaded SVG or icon-font requests. */
-export type V2IconName = "menu" | "search" | "user" | "bag" | "close" | "arrow";
+export type V2IconName = "menu" | "search" | "user" | "bag" | "close" | "arrow" | "chevronDown" | "check";
 export function V2Icon({ name }: { name: V2IconName }) {
   const paths: Record<V2IconName, ReactNode> = {
     menu: <><path d="M3 7h18M3 12h18M3 17h18" /></>,
@@ -15,6 +15,8 @@ export function V2Icon({ name }: { name: V2IconName }) {
     bag: <><path d="M4.5 8h15l1 13h-17l1-13ZM9 9V6a3 3 0 0 1 6 0v3" /></>,
     close: <><path d="M5 5l14 14M19 5 5 19" /></>,
     arrow: <><path d="M4 12h16m-7-7 7 7-7 7" /></>,
+    chevronDown: <><path d="M5 8.5 12 15l7-6.5" /></>,
+    check: <><path d="M4 12.5 9.5 18 20 6" /></>,
   };
   return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.55"
     strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;

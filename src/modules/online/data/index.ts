@@ -42,7 +42,7 @@ export function getStoreAccountsRepository(): StoreAccountsRepository {
   return getLocalStoreAccounts(getOnlineMode());
 }
 
-export { OnlineError, toOnlineError } from "./repository";
+export { OnlineError, toOnlineError, toAdminWriteError } from "./repository";
 export type {
   CampaignDraft,
   CouponDraft,

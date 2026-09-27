@@ -65,9 +65,76 @@
 .store-v2 .v2-icon-button { width: 44px; height: 44px; position: relative; display: inline-grid; place-items: center; flex: none; border: 0; background: transparent; color: inherit; }
 .store-v2 .v2-icon-button:hover { opacity: .65; }
 .store-v2 .v2-icon-button svg { width: 21px; height: 21px; }
-.store-v2 .v2-logo { display: grid; place-items: center; min-width: 0; text-align: center; font-family: var(--v2-font-display); font-size: clamp(19px, 5vw, 29px); font-weight: 600; letter-spacing: .12em; line-height: 1; }
+/* Issue #1 (7th follow-up round / "Arabic clipped at the bottom"): the
+   Arabic name's diacritics (fatha/kasra/sukun) and its trailing "ق"
+   descender loop were being cut off. Root cause: `.v2-logo` sizes itself to
+   fit its own content (it's an auto-height grid item), and that auto
+   height was driven by `line-height: 1` — exactly 1x font-size, with zero
+   headroom — while `.v2-logo` itself clips overflow. The Arabic display
+   font stack's actual glyph ink (Amiri/Noto Naskh Arabic, painting stacked
+   combining marks well outside the plain Latin em-box) is taller than that
+   1x line box, so the excess got clipped by `.v2-logo`'s own
+   `overflow: hidden`, not by any fixed pixel height anywhere. Raising
+   line-height to 1.6 gives the line box the headroom real Arabic display
+   typography needs (verified with Canvas2D TextMetrics — see
+   scripts/rendered-v2-header.flow.mjs's assertNoVerticalClipping) without
+   touching font-size, color, text, or `.v2-header-inner`'s own height
+   budget (52px/40px logo-height defaults + 18px already comfortably cover
+   the new ~46px/~31px content height at desktop/mobile, so the header does
+   not grow). */
+.store-v2 .v2-logo { display: grid; place-items: center; min-width: 0; max-width: 62vw; overflow: hidden; text-align: center; font-family: var(--v2-font-display); font-size: clamp(19px, 5vw, 29px); font-weight: 600; letter-spacing: .12em; line-height: 1.6; }
 .store-v2[dir="rtl"] .v2-logo { letter-spacing: 0; }
-.store-v2 .v2-logo img { display: block; width: auto; height: var(--v2-mobile-logo-height); max-width: min(48vw, 190px); object-fit: contain; }
+/* Bilingual header wordmark (Issue #1, 6th follow-up round): now the ONLY
+   header branding — the merchant removed the boxed logo image entirely in
+   favour of the shop's own configured name in both languages, e.g.
+   "ALYQ | أَلِــيْـــق", never a second, hardcoded branding system, and
+   asked explicitly for gold text. Both names render in `--v2-accent` (the
+   theme's own accent colour, #a48d59 gold by default for this shop) rather
+   than the auto-contrast `--v2-header-accent-text` token used elsewhere in
+   this header: measured against this shop's actual header background
+   (#34393b), the raw gold only reaches 3.64:1 contrast — under the 4.5:1
+   threshold that token enforces for regular text, so it was silently
+   falling back to plain white and never rendering gold at all. 3.64:1 still
+   clears WCAG's 3:1 threshold for bold/large text (this wordmark is both,
+   19-29px bold), so it stays legible while actually being the gold colour
+   asked for. There is no background on the logo/wordmark itself, so it is
+   always transparent — no white box. Everything clips instead of wrapping
+   so a long shop name can never push the header taller or break onto a
+   second line on mobile. */
+.store-v2 .v2-logo { background: transparent; }
+.store-v2 .v2-wordmark { display: inline-flex; align-items: baseline; gap: .4em; max-width: 100%; min-width: 0; }
+.store-v2 .v2-wordmark-primary { color: var(--v2-accent); font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.store-v2 .v2-wordmark-divider { flex: none; color: var(--v2-accent); font-weight: 400; opacity: .55; font-size: .85em; }
+.store-v2 .v2-wordmark-secondary { color: var(--v2-accent); font-weight: 500; letter-spacing: 0; opacity: .92; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.store-v2 .v2-wordmark-primary:lang(ar), .store-v2 .v2-wordmark-secondary:lang(ar) { font-family: var(--v2-font-arabic-display); letter-spacing: 0; }
+.store-v2 .v2-wordmark-primary:lang(en), .store-v2 .v2-wordmark-secondary:lang(en) { font-family: var(--v2-font-display); }
+/* Below this the primary name alone already fills the available width on a
+   phone (Issue #7's "no mobile overflow" rule) — drop the secondary name and
+   its divider rather than let either script get clipped or wrap. */
+@media (max-width: 380px) {
+  .store-v2 .v2-wordmark-secondary, .store-v2 .v2-wordmark-divider { display: none; }
+  .store-v2 .v2-wordmark-primary { max-width: 46vw; }
+}
+/* Issue #1 (5th follow-up round / "logo too small"): a real uploaded mark
+   (public/alyq-logo.png) is a 1280x1280 square canvas whose actual wordmark
+   only occupies its centre ~767x336px band (measured with ImageMagick
+   `-trim`) — roughly 60% of the width and 26% of the height, the rest being
+   flat brand-colour padding baked into the file. `object-fit: contain` with
+   a fixed height (the previous rule) sizes the box to the image's own 1:1
+   *canvas* ratio, not the wordmark's real ~2.3:1 shape, so the box is
+   always a small square and the visible wordmark inside it shrinks to a
+   sliver (~14px tall out of a 52px-tall box) — no amount of raising the
+   height variable fixes that without also making the header noticeably
+   taller, which is out of bounds here. The uploaded file itself must not be
+   cropped, so the fix is presentation-only: give the `<img>` a fixed
+   `aspect-ratio` matching the wordmark's own real shape (auto-scales with
+   the admin's existing --v2-logo-height/--v2-mobile-logo-height sliders,
+   default 52px/40px -> ~120px/~92px wide, inside the required 90-140px /
+   64-100px ranges) and switch to `object-fit: cover`, which crops the box
+   to that ratio at render time only — the stored file is untouched, and a
+   logo that already has no padding just gets a normal, centred, very light
+   edge crop instead of being stretched or shrunk. */
+.store-v2 .v2-logo img { display: block; width: auto; aspect-ratio: 2.3; height: var(--v2-mobile-logo-height); max-width: min(48vw, 230px); object-fit: cover; object-position: center; }
 @media (min-width: 768px) {
   .store-v2 .v2-logo img { height: var(--v2-logo-height); }
   .store-v2 .v2-logo img.v2-mobile-only { display: none; }
@@ -481,15 +548,61 @@
 .store-v2 .v2-choice-grid { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
 .store-v2 .v2-choice-grid button { flex: 1 1 125px; min-height: 48px; border: 1px solid var(--v2-border);
   padding: 8px 12px; background: var(--v2-surface); color: var(--v2-surface-text); }
-.store-v2 .v2-choice-grid button[aria-pressed="true"], .store-v2 :is(.v2-zone, .v2-address-option)[data-selected="true"] {
+.store-v2 .v2-choice-grid button[aria-pressed="true"], .store-v2 .v2-address-option[data-selected="true"] {
   border-color: var(--v2-surface-text); box-shadow: inset 0 0 0 1px var(--v2-surface-text); }
-.store-v2 :is(.v2-zone-list, .v2-address-list) { display: grid; gap: 8px; border: 0; padding: 15px 0; margin: 13px 0 0; }
-.store-v2 :is(.v2-zone-list, .v2-address-list) legend { padding: 0; font-size: 12px; font-weight: 700; }
-.store-v2 :is(.v2-zone, .v2-address-option) { display: flex; align-items: start; gap: 10px; padding: 11px 12px;
+.store-v2 .v2-address-list { display: grid; gap: 8px; border: 0; padding: 15px 0; margin: 13px 0 0; }
+.store-v2 .v2-address-list legend { padding: 0; font-size: 12px; font-weight: 700; }
+.store-v2 .v2-address-option { display: flex; align-items: start; gap: 10px; padding: 11px 12px;
   border: 1px solid var(--v2-border); cursor: pointer; }
-.store-v2 :is(.v2-zone, .v2-address-option) input { width: 18px; height: 18px; margin-top: 2px; flex: none; accent-color: var(--v2-surface-text); }
-.store-v2 :is(.v2-zone, .v2-address-option) span { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
-.store-v2 :is(.v2-zone, .v2-address-option) small { color: var(--v2-surface-muted); font-size: 11px; }
+.store-v2 .v2-address-option input { width: 18px; height: 18px; margin-top: 2px; flex: none; accent-color: var(--v2-surface-text); }
+.store-v2 .v2-address-option span { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.store-v2 .v2-address-option small { color: var(--v2-surface-muted); font-size: 11px; }
+/* Issue #1 (8th follow-up round): the delivery-zone/governorate picker is a
+   closed-by-default dropdown ("منطقة التوصيل" / "Delivery area"), replacing
+   the always-visible card list entirely — a shop with many zones no longer
+   pushes the whole checkout page down just to show its options. The label
+   sits above the field like the other `.v2-field`s around it; the trigger
+   is a single bordered button showing the current selection plus a
+   chevron; the popup itself is `position: absolute` off a `position:
+   relative` wrapper, so opening it changes nothing in the surrounding
+   document flow/height — it floats over whatever comes after it in the
+   form. `min-width: 0` on the wrapper avoids overflow inside the grid; the
+   popup's own bounded `max-height` + `overflow-y: auto` (mirroring the
+   scroll-pane contract from the old card list) is what scrolls when a shop
+   configures 8-12+ zones — a 3-zone shop's popup simply fits without a
+   scrollbar, exactly like before. */
+.store-v2 .v2-zone-select { position: relative; min-width: 0; margin-top: 13px; display: grid; gap: 6px; }
+.store-v2 .v2-zone-select-label { font-size: 12px; font-weight: 650; color: var(--v2-surface-text); }
+.store-v2 .v2-zone-select-trigger { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  width: 100%; min-height: 52px; padding: 12px 14px; border: 1px solid var(--v2-border);
+  background: var(--v2-surface); color: var(--v2-surface-text); text-align: start; cursor: pointer; }
+.store-v2 .v2-zone-select-trigger[aria-invalid="true"] { border-color: #a62d26; }
+.store-v2 .v2-zone-select-trigger[aria-expanded="true"] { border-color: var(--v2-accent);
+  box-shadow: inset 0 0 0 1px var(--v2-accent); }
+.store-v2 .v2-zone-select-trigger svg { width: 17px; height: 17px; flex: none; color: var(--v2-accent);
+  transition: transform .15s ease; }
+.store-v2 .v2-zone-select-trigger[aria-expanded="true"] svg { transform: rotate(180deg); }
+.store-v2 .v2-zone-select-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 14px; font-weight: 500; }
+.store-v2 .v2-zone-select-popup { position: absolute; z-index: 30; inset-inline: 0; top: calc(100% + 6px);
+  margin: 0; padding: 6px; list-style: none; background: var(--v2-surface); color: var(--v2-surface-text);
+  border: 1px solid var(--v2-border); box-shadow: 0 18px 44px rgb(0 0 0 / .16);
+  max-height: min(46vh, 340px); min-height: 0; overflow-y: auto; overflow-x: hidden;
+  overscroll-behavior: contain; touch-action: pan-y; -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin; display: grid; gap: 4px; }
+@media (max-width: 480px) {
+  .store-v2 .v2-zone-select-popup { max-height: 42vh; }
+}
+.store-v2 .v2-zone-option { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  width: 100%; min-height: 52px; padding: 10px 12px; border: 1px solid transparent; background: none;
+  color: inherit; text-align: start; cursor: pointer; scroll-margin-block: 6px;
+  transition: border-color .15s ease, background-color .15s ease; }
+.store-v2 .v2-zone-option:hover { background: var(--v2-bg); }
+.store-v2 .v2-zone-option[data-selected="true"] { border-color: var(--v2-accent); background: var(--v2-bg); }
+.store-v2 .v2-zone-option-text { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.store-v2 .v2-zone-option-text small { color: var(--v2-surface-muted); font-size: 11px; }
+.store-v2 .v2-zone-option svg { width: 17px; height: 17px; flex: none; color: var(--v2-accent); }
+
 .store-v2 .v2-payment-instructions { display: grid; gap: 14px; padding-top: 15px; }
 .store-v2 .v2-payment-instructions h3 { font-size: 15px; }
 .store-v2 .v2-payment-instructions ol, .store-v2 .v2-next-steps { padding-inline-start: 22px; display: grid; gap: 11px; }

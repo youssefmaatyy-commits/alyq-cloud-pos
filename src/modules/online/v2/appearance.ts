@@ -64,8 +64,21 @@ export function adaptV2Appearance(settings: WebsiteSettings, overrides: V2Appear
   const bodyFont = v2.body_font === "inherit" ? fontStackOf(theme.font_stack) : fontStackOf(v2.body_font);
   const displayFont = v2.display_font === "inherit" ? DISPLAY_STACKS.editorial : DISPLAY_STACKS[v2.display_font];
   const buttonStyle = v2.button_style === "inherit" ? theme.button_style : v2.button_style;
-  const height = v2.logo_height ?? 38;
-  const mobileHeight = v2.mobile_logo_height ?? 38;
+  // Issue C (3rd follow-up round): manual preview confirmed the configured
+  // logo IMAGE renders (loading/path logic is correct) but shows as "a very
+  // small square in the center of the header" — traced to this unconfigured
+  // default. 38px is tiny for a logo that fills its box by height alone (a
+  // square/icon-shaped mark at 38px reads as a tiny badge, not a logo). Both
+  // defaults are chosen to stay *inside* the header's own existing height
+  // floor (see .v2-header-inner in storefront-v2.css: desktop needs
+  // `logo-height + 18 <= 74`, mobile needs `mobile-logo-height + 18 <= 64`),
+  // so a shop that never touches the admin's logo-size sliders gets a
+  // clearly visible logo with ZERO change to the header's own height —
+  // never "enlarging the header," just filling the room already reserved
+  // for it. The admin's own sliders (up to 96px / 64px) still work exactly
+  // as before for a shop that wants something different.
+  const height = v2.logo_height ?? 52;
+  const mobileHeight = v2.mobile_logo_height ?? 40;
   const headerLogoUrl = safeImageField(luminance(header) < 0.179
     ? settings.brand.logo_dark_url ?? settings.images.logo_url
     : settings.images.logo_url);

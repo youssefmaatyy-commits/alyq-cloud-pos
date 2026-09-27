@@ -147,7 +147,16 @@ try {
           const header = document.querySelector(".v2-header-inner");
           const logo = document.querySelector(".v2-logo");
           const track = document.querySelector(".v2-announcement-track");
-          const mobileLogo = document.querySelector(".v2-logo img.v2-mobile-only, .v2-logo picture source");
+          // Issue #1 (6th follow-up round): the live storefront header no
+          // longer ever renders a logo <img>, regardless of any saved
+          // images.logo_url/mobile_logo_url — it always shows the gold text
+          // wordmark instead. (The admin's own settings-studio draft
+          // preview below is a separate component and still shows a
+          // configured image, so admins can preview an upload before
+          // publishing — that is asserted elsewhere in this file.)
+          const logoImage = document.querySelector(".v2-logo img");
+          const wordmarkColour = logo.querySelector(".v2-wordmark-primary")
+            ? getComputedStyle(logo.querySelector(".v2-wordmark-primary")).color : null;
           const head = header.getBoundingClientRect();
           const brand = logo.getBoundingClientRect();
           const varOf = (name) => getComputedStyle(root).getPropertyValue(name).trim();
@@ -156,7 +165,7 @@ try {
             columns: getComputedStyle(grid).gridTemplateColumns.split(" ").length,
             header: { left: head.left, right: head.right, top: head.top, bottom: head.bottom },
             logo: { left: brand.left, right: brand.right, top: brand.top, bottom: brand.bottom },
-            mobileLogo: mobileLogo?.getAttribute("srcset") || mobileLogo?.getAttribute("src") || "",
+            hasLogoImage: Boolean(logoImage), wordmarkColour,
             bg: varOf("--v2-bg"), headerBg: varOf("--v2-header-bg"), buttonRadius: varOf("--v2-button-radius"),
             badgeRadius: varOf("--v2-badge-radius"),
             motion: track && getComputedStyle(track).animationName,
@@ -170,8 +179,9 @@ try {
           `${label} V2 one-column mobile override, shared tablet/desktop columns`);
         assert.ok(observed.logo.left >= -1 && observed.logo.right <= width + 1 &&
           observed.logo.top >= observed.header.top - 1 && observed.logo.bottom <= observed.header.bottom + 1,
-          `${label} custom logo height stays within header`);
-        assert.ok(observed.mobileLogo.includes("hero-editorial-mobile"), `${label} saved mobile logo is in header`);
+          `${label} text wordmark stays within header`);
+        assert.equal(observed.hasLogoImage, false, `${label} the live header never renders a logo image, only the gold text wordmark`);
+        assert.equal(observed.wordmarkColour, "rgb(164, 141, 89)", `${label} header wordmark renders in the configured gold accent colour`);
         assert.equal(observed.bg, "#101820", `${label} saved V2 page colour`);
         assert.equal(observed.headerBg, "#fefefe", `${label} saved V2 header colour`);
         assert.equal(observed.buttonRadius, "0px", `${label} saved V2 button style`);

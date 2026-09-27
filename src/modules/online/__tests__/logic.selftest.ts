@@ -112,6 +112,7 @@ import {
   safeColor,
 } from "../services/settingsDefaults";
 import { announcementStyle, buttonRadiusOf, fontStackOf, shade, themeVariables } from "../services/theme";
+import { adaptV2Appearance } from "../v2/appearance";
 import {
   absoluteUrl,
   buildRobotsTxt,
@@ -127,7 +128,7 @@ import {
 } from "../services/seo";
 import { fromDateTimeLocal, isWindowOpen, toDateTimeLocal } from "../services/datetime";
 import { buildOnlineOrderSheets } from "../services/onlineOrdersExport";
-import { OnlineError, toOnlineError } from "../data";
+import { OnlineError, toAdminWriteError, toOnlineError } from "../data";
 import { getDemoOnlineRepository, resetDemoOnlineRepository } from "../data/demoRepository";
 import { HOMEPAGE_SECTIONS } from "../types";
 import type {
@@ -1692,6 +1693,72 @@ test("the theme document becomes CSS variables, and shades stay valid hex", () =
   assert.equal(fontStackOf(null), fontStackOf("system"), "an unknown font falls back to the system stack");
 });
 
+// Issue #4 (follow-up): the header must show a configured Website Settings
+// logo image — never the bilingual text wordmark instead of it — and fall
+// back to the wordmark ONLY when no logo image is configured at all.
+// `StorefrontV2Shell` renders purely off `adaptV2Appearance().headerLogoUrl`
+// (`{headerLogoUrl ? <img/> : wordmark}`), so pinning that adapter's contract
+// here is what would have caught a field-name drift or an over-eager URL
+// sanitizer silently discarding a real, valid logo.
+test("a configured Website Settings logo always wins the header, and the wordmark shows only when none is configured", () => {
+  const withLogo = adaptV2Appearance(
+    settings({ images: { ...DEFAULT_WEBSITE_SETTINGS.images, logo_url: "https://cdn.example.com/alyq-logo.png" } }),
+  );
+  assert.equal(withLogo.headerLogoUrl, "https://cdn.example.com/alyq-logo.png",
+    "the exact configured URL is what the header receives, unmodified");
+
+  const withoutLogo = adaptV2Appearance(settings({ images: { ...DEFAULT_WEBSITE_SETTINGS.images, logo_url: null } }));
+  assert.equal(withoutLogo.headerLogoUrl, null,
+    "no logo configured means the shell's `headerLogoUrl ? <img/> : wordmark` falls to the wordmark");
+
+  // An unsafe/invalid value (a paste gone wrong, or an old data: URI) must
+  // never reach an <img src>, the same absolute-http(s)-only policy every
+  // other configured image on the storefront already holds to.
+  const unsafe = adaptV2Appearance(
+    settings({ images: { ...DEFAULT_WEBSITE_SETTINGS.images, logo_url: "javascript:alert(1)" } }),
+  );
+  assert.equal(unsafe.headerLogoUrl, null, "an unsafe URL is refused, not smuggled into the header as an <img src>");
+
+  // No separate mobile logo configured: the same image serves both — it is
+  // never silently dropped on small screens just because only the desktop
+  // slot was filled in.
+  const desktopOnly = adaptV2Appearance(
+    settings({ images: { ...DEFAULT_WEBSITE_SETTINGS.images, logo_url: "https://cdn.example.com/logo.png" } }),
+  );
+  assert.equal(desktopOnly.mobileLogoUrl, "https://cdn.example.com/logo.png");
+});
+
+// Issue C (2nd follow-up round): manual preview testing reported the logo
+// STILL not rendering after the round above was added, so this pins the
+// FULL live pipeline end to end, not just the appearance adapter in
+// isolation — admin save (`sanitizeSettings`), the bundled-asset rewrite
+// every save runs through (`settingsForRemoteSave`), and a fresh anonymous
+// visitor's read (`resolveSettings`, exactly what `readSettingsRow()` does
+// with whatever `select("*")` returns) — before the result ever reaches
+// `adaptV2Appearance`. A field-name drift or an over-eager rewrite at ANY
+// of those stops would still show up as a wordmark instead of the image;
+// this only passes if every stop preserves the exact URL the admin saved.
+test("a real logo URL survives save → remote-save rewrite → a fresh visitor's read → the header adapter", () => {
+  const url = "https://project-ref.supabase.co/storage/v1/object/public/product-images/website/real-logo.png";
+  const draft = settings({ images: { ...DEFAULT_WEBSITE_SETTINGS.images, logo_url: url } });
+
+  const savedByAdmin = sanitizeSettings(draft);
+  assert.equal(savedByAdmin.images.logo_url, url, "the admin's own save validates the real URL through unchanged");
+
+  const writtenToDb = settingsForRemoteSave(savedByAdmin, "https://shop.example.com");
+  assert.equal(writtenToDb.images.logo_url, url,
+    "the bundled-asset (/brand/…) rewrite only ever touches bundled paths, never a real uploaded URL");
+
+  // What an anonymous visitor's `readSettingsRow()` does with the row it
+  // gets back — `resolveSettings(row?.settings ?? null)` — is exactly this.
+  const freshVisitorRead = resolveSettings(writtenToDb);
+  assert.equal(freshVisitorRead.images.logo_url, url, "a fresh, unrelated read still has the real logo URL");
+
+  const appearance = adaptV2Appearance(freshVisitorRead);
+  assert.equal(appearance.headerLogoUrl, url, "the header adapter receives the exact URL the admin configured");
+  assert.equal(appearance.mobileLogoUrl, url, "and it serves mobile too, with no separate mobile slot configured");
+});
+
 // ── SEO ─────────────────────────────────────────────────────────────────────
 
 test("slugs are ASCII, so an Arabic product name still gets a usable URL", () => {
@@ -2452,6 +2519,17 @@ test("every live checkout refusal lands on a customer-facing code (never bare db
     ["Coupon WELCOME has been fully used", "coupon_limit_reached"],
     ["Coupon WELCOME needs a subtotal of at least 200", "coupon_min_subtotal"],
     ["Coupon WELCOME does not apply to this cart", "coupon_not_applicable"],
+    // Phase 43's variant branch and 0050/0054's zone branch: these three
+    // wordings used to fall through to the bare `db` code (the storefront's
+    // generic "something went wrong" message) even though a specific code and
+    // dictionary string already existed for each — nothing ever routed the
+    // live error to it. This is issue #1's real root cause for a shopper
+    // whose colour/size or delivery zone stopped being valid between page
+    // load and submission.
+    ["Choose the colour and the size for ALYQ-1001", "variant_required"],
+    ["That colour and size does not belong to ALYQ-1001", "variant_mismatch"],
+    ["Gold / 42 is no longer sold", "variant_mismatch"],
+    ["Delivery zone is not available", "delivery_zone_unavailable"],
   ];
   for (const [text, expected] of cases) {
     const err = toOnlineError(new Error(text));
@@ -2462,6 +2540,45 @@ test("every live checkout refusal lands on a customer-facing code (never bare db
   assert.equal(minimum.detail.minimum, 1000, "the refusal carries the shop's number");
   const outside = toOnlineError(new Error("Delivery to القاهرة is not available"));
   assert.equal(outside.field, "address", "the customer is pointed at the address");
+});
+
+// Issue #2 (follow-up): an RLS `with check (public.can('manage_website'))`
+// rejection (0049's delivery-zone policies, or any other admin write) used
+// to fall through to the same bare `db` text as an actual schema defect —
+// indistinguishable from each other and useless to an operator. `toOnlineError`
+// itself must keep returning `db` for a bare 42501 (it is shared with the
+// anonymous storefront, where the same SQLSTATE means something else
+// entirely — a shop-side grant/policy gap, not something to tell a shopper
+// "you don't have permission" about); only `toAdminWriteError`, used by
+// admin write screens that already know which caller they are, upgrades it.
+test("toAdminWriteError names a 42501 write refusal for what it is, without changing the shared storefront classifier", () => {
+  const rlsError = new Error('new row violates row-level security policy for table "delivery_zones"') as Error & {
+    code: string;
+  };
+  rlsError.code = "42501";
+
+  assert.equal(toOnlineError(rlsError).code, "db",
+    "the shared classifier stays exactly as the storefront's own contract expects");
+  assert.equal(toAdminWriteError(rlsError).code, "forbidden",
+    "an admin write screen gets the actionable read instead");
+
+  // Supabase hands back a `PostgrestError` PLAIN OBJECT, not an `Error`
+  // instance — `code: "42501"` alone (no recognisable wording at all) must
+  // still classify as `forbidden` for the admin path.
+  const rlsPlainObject = toAdminWriteError({
+    message: "permission denied for table delivery_zones",
+    code: "42501",
+    details: null,
+    hint: null,
+  });
+  assert.equal(rlsPlainObject.code, "forbidden", "a bare PostgREST 42501 is recognised by code alone");
+
+  // Anything `toOnlineError` already recognises by wording (a real domain
+  // refusal, not a permission gap) passes through `toAdminWriteError`
+  // completely unchanged — it only ever upgrades the generic `db` bucket.
+  const domainRefusal = toAdminWriteError(new Error("Delivery zone is not available"));
+  assert.equal(domainRefusal.code, "delivery_zone_unavailable",
+    "a recognised domain error is never reclassified as a permission refusal");
 });
 
 console.log("\nPhase 42 · the shop's own delivery rules, end to end in demo mode");

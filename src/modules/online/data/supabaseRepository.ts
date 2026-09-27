@@ -1707,7 +1707,15 @@ export class SupabaseOnlineRepository
         governorate_key: draft.governorate_key ?? null,
         shipping_fee: Math.max(draft.shipping_fee ?? 0, 0),
         minimum_order_amount: Math.max(draft.minimum_order_amount ?? 0, 0),
-        free_shipping_threshold: draft.free_shipping_threshold ?? null,
+        // Clamped the same way `shipping_fee`/`minimum_order_amount` are just
+        // above — the admin form already does this on every keystroke, but a
+        // negative value here trips `delivery_zones_threshold_non_negative`
+        // (0049) with a bare constraint-violation message the operator can't
+        // act on, so the repository holds the same floor a second time.
+        free_shipping_threshold:
+          draft.free_shipping_threshold === null || draft.free_shipping_threshold === undefined
+            ? null
+            : Math.max(draft.free_shipping_threshold, 0),
         estimated_delivery_text_en: draft.estimated_delivery_text_en ?? null,
         estimated_delivery_text_ar: draft.estimated_delivery_text_ar ?? null,
         show_estimated_delivery: draft.show_estimated_delivery ?? true,

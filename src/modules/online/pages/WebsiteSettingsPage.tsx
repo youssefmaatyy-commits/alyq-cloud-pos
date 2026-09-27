@@ -40,9 +40,9 @@ import {
 } from "@/components/ui";
 import { WhatsAppTemplatesPanel } from "../components/admin/WhatsAppTemplatesPanel";
 import { getWebsiteRepository } from "../data";
-import { toOnlineError, type OnlineErrorCode } from "../data/repository";
+import { describeThrown, toOnlineError, type OnlineErrorCode } from "../data/repository";
 import { invalidSettingsColor, resolveSettings, sanitizeSettings, STORE_PALETTE } from "../services/settingsDefaults";
-import { socialChannelHref } from "../services/socialSafety";
+import { invalidSocialSetting, socialChannelHref } from "../services/socialSafety";
 import { storefrontInvalidation } from "../hooks/storefrontInvalidation";
 import {
   moveSection,
@@ -300,6 +300,36 @@ export function WebsiteSettingsPage() {
       toast.error(t("online.settings.invalidColor"));
       return;
     }
+    // Phase 27 (issue #5): `sanitizeSettings` still refuses the whole write on
+    // an unsafe/malformed social link — that guard is a security control (it
+    // stops a malformed or unsafe URL from ever reaching the storefront, even
+    // via a direct repository call) and stays exactly as strict. Before this
+    // check the ONLY signal an admin ever saw for it was the generic
+    // `online.error.settings_invalid` toast ("some appearance values were
+    // invalid") — indistinguishable from a real theme/colour problem, and
+    // shown no matter which tab they were actually editing. A shop whose
+    // years-old Facebook/Instagram/TikTok/WhatsApp value no longer passes
+    // today's stricter check could never save ANY other edit — a colour, an
+    // InstaPay instruction — until they happened to find the Social tab.
+    // Catching it here, the same way the colour guard already does, points
+    // the admin at the exact platform and field and opens that tab, instead
+    // of leaving them to guess. Nothing is auto-cleared or silently dropped:
+    // their last saved settings stay exactly as they are until they fix or
+    // disable that one channel themselves.
+    const invalidSocial = invalidSocialSetting(draft);
+    if (invalidSocial) {
+      setTab("social");
+      toast.error(`${t(`online.settings.${invalidSocial.platform}`)}: ${t(
+        invalidSocial.field === "message"
+          ? "online.social.invalidMessage"
+          : invalidSocial.reason === "required"
+            ? "online.social.required"
+            : invalidSocial.platform === "whatsapp"
+              ? "online.social.invalidPhone"
+              : "online.social.invalidProfile",
+      )}`);
+      return;
+    }
     setSaving(true);
     try {
       const actor = getCurrentUser();
@@ -318,7 +348,15 @@ export function WebsiteSettingsPage() {
       storefrontInvalidation.notify();
       toast.success(t("online.settings.saved"));
     } catch (caught) {
-      toast.error(t(`online.error.${toOnlineError(caught).code}`));
+      // Anything else `sanitizeSettings`/the repository rejects still lands on
+      // the honest (if generic) `online.error.<code>` text — never a raw
+      // exception — and the real reason is logged for whoever has to chase it.
+      const normalized = toOnlineError(caught);
+      console.error("[online.settings] save failed", {
+        code: normalized.code,
+        message: describeThrown(caught).message,
+      });
+      toast.error(t(`online.error.${normalized.code}`));
     } finally {
       setSaving(false);
     }

@@ -24,10 +24,39 @@ const variant = (id, color, size, sizeLabel, stock) => ({ id, product_id: ring.i
   active: true, sort_order: 1, created_at: ring.created_at, updated_at: ring.updated_at });
 const variants = [variant(UUID.gold17, "gold", 17, null, 3), variant(UUID.gold18, "gold", 18, null, 0),
   variant(UUID.silverXS, "silver", null, "XS", 1)];
+// Issue #3 (follow-up): the shipped demo only ever seeds 4 zones, so nothing
+// exercised the checkout zone list's scroll pane with the 8-12+ governorates
+// a real shop can configure — including this test, which used to assert
+// `.length === 4` unconditionally. Pre-seeding the storage key before the app
+// boots (rather than mutating it mid-test) is what the demo repository's own
+// "seed only if missing" rule expects, and it lets the very same journey
+// below select "Cairo" and read its real fee exactly as it always has.
+const zoneAt = ring.created_at;
+const zone = (key, nameEn, nameAr, fee, sort) => ({
+  id: `dz-${key}`, key, name_en: nameEn, name_ar: nameAr, governorate_key: key,
+  shipping_fee: fee, minimum_order_amount: 0, free_shipping_threshold: null,
+  estimated_delivery_text_en: "1–2 business days", estimated_delivery_text_ar: "١–٢ يوم عمل",
+  show_estimated_delivery: true, enabled: true, sort_order: sort, created_at: zoneAt, updated_at: zoneAt,
+});
+const zones = [
+  zone("ismailia", "Ismailia", "الإسماعيلية", 0, 10),
+  zone("cairo", "Cairo", "القاهرة", 70, 20),
+  zone("suez", "Suez", "السويس", 50, 30),
+  zone("alexandria", "Alexandria", "الإسكندرية", 60, 40),
+  zone("giza", "Giza", "الجيزة", 65, 50),
+  zone("luxor", "Luxor", "الأقصر", 90, 60),
+  zone("aswan", "Aswan", "أسوان", 95, 70),
+  zone("sohag", "Sohag", "سوهاج", 85, 80),
+  zone("minya", "Minya", "المنيا", 80, 90),
+  zone("beni-suef", "Beni Suef", "بني سويف", 75, 95),
+  zone("fayoum", "Fayoum", "الفيوم", 78, 98),
+  zone("other", "Other governorates", "باقي المحافظات", 80, 100),
+];
 const ux = await createUxHarness({ beforeImport: ({ localStorage }) => {
   localStorage.setItem("alyq.lang", "en");
   localStorage.setItem("alyq.demo.catalog.v1", JSON.stringify({ seed_revision: 3, categories: buildDemoCategories(),
     products, variants }));
+  localStorage.setItem("alyq.demo.delivery_zones.v1", JSON.stringify(zones));
 } });
 const { dom, document, assert, waitFor, navigate, clickEl, setField, readJson, sleep, finish } = {
   ...ux, document: ux.dom.window.document,
@@ -208,12 +237,29 @@ clickEl(button(testid("v2-checkout").querySelector(".v2-choice-grid"), "Delivery
 await sleep(90);
 clickEl(button(testid("v2-checkout"), "Cash on delivery"));
 await sleep(50);
-const cairo = [...document.querySelectorAll('.v2-zone-list .v2-zone')].find((row) => row.textContent.includes("Cairo"));
-assert.ok(cairo, "published delivery zone exists");
+// Issue #1 (8th follow-up round): the zone picker is now a closed-by-default
+// dropdown, not an always-visible card list — opening/reading/selecting a
+// zone goes through the trigger button and its popup listbox instead of a
+// radio-per-row fieldset.
+const zoneTrigger = testid("v2-zone-select-trigger");
+assert.ok(zoneTrigger, "zone dropdown trigger exists");
+check("zone dropdown starts closed and shows the placeholder, not an always-visible list",
+  zoneTrigger.getAttribute("aria-expanded") === "false" && !testid("v2-zone-select-popup"));
+clickEl(zoneTrigger);
+await sleep(30);
+const zonePopup = testid("v2-zone-select-popup");
+assert.ok(zonePopup, "zone dropdown popup opens on click");
+check("opening the dropdown flips aria-expanded and renders a listbox popup", zoneTrigger.getAttribute("aria-expanded") === "true" &&
+  zonePopup.getAttribute("role") === "listbox");
+const cairo = [...zonePopup.querySelectorAll('[role="option"]')].find((row) => row.textContent.includes("Cairo"));
+assert.ok(cairo, "published delivery zone exists in the dropdown popup");
 // The final user change is the zone, after payment/fulfilment have settled.
 // Checkout must read that live zone instead of a stale callback closure.
-clickEl(cairo.querySelector('input[name="v2-zone"]'));
+clickEl(cairo);
+await sleep(30);
 const cairoZone = readJson("alyq.demo.delivery_zones.v1").find((zone) => zone.key === "cairo");
+check("selecting a zone option closes the dropdown popup",
+  zoneTrigger.getAttribute("aria-expanded") === "false" && !testid("v2-zone-select-popup"));
 await waitFor(() => {
   const totals = testid("v2-cart-totals");
   const zoneRow = [...(totals?.querySelectorAll(".v2-totals > div") ?? [])]
@@ -224,9 +270,79 @@ await waitFor(() => {
 }, { label: "settled Cairo shipping and WELCOME10 advisory estimate" });
 const estimatedTotal = Number(testid("v2-cart-totals").querySelector(".v2-totals-grand dd")
   .textContent.replace(/[^0-9.]/g, ""));
-check("delivery form uses saved browser-local address and selected configured zone",
+check("delivery form uses saved browser-local address and selected configured zone reflected in the closed trigger",
   document.querySelector('.v2-checkout-form input[autocomplete="address-level2"]')?.value === "Cairo" &&
-  cairo.getAttribute("data-selected") === "true");
+  testid("v2-zone-select-value").textContent.includes("Cairo"));
+// Re-open to confirm the previously-selected row is marked (checkmark contract)
+// and every configured zone still renders as an option — none truncated or
+// virtualized away, however many a shop configures (12 here, well past the
+// 8-12+ the manual report asked to be exercised).
+clickEl(zoneTrigger);
+await sleep(30);
+const reopenedPopup = testid("v2-zone-select-popup");
+const options = [...reopenedPopup.querySelectorAll('[role="option"]')];
+check(`all ${zones.length} zone rows render as options inside the popup`, options.length === zones.length);
+const selectedOption = options.find((row) => row.textContent.includes("Cairo"));
+check("the previously-selected zone option is marked selected (checkmark contract)",
+  selectedOption?.getAttribute("aria-selected") === "true" && selectedOption?.getAttribute("data-selected") === "true" &&
+  options.filter((row) => row.getAttribute("aria-selected") === "true").length === 1);
+clickEl(zoneTrigger);
+await sleep(30);
+check("dropdown toggles closed when the trigger is clicked again", !testid("v2-zone-select-popup"));
+
+// Issue #1 (8th follow-up round): the popup is a bounded, independently
+// scrollable pane — position:absolute so opening it never changes page
+// height/flow — so a shop with many governorates never pushes "Place order"
+// far down the page. jsdom does not run real CSS layout (no pixel heights),
+// so this proves the DOM/CSS contract the visual test
+// (scripts/rendered-v2-zone-scroll.flow.mjs) exercises with real pixels.
+const css = await readFile(
+  fileURLToPath(new URL("../src/modules/online/v2/storefront-v2.css", import.meta.url)), "utf8");
+const zoneSelectRule = /\.store-v2 \.v2-zone-select \{([^}]*)\}/.exec(css)?.[1] ?? "";
+check("the dropdown wrapper is a positioning context, not a page-flow-expanding box",
+  /position:\s*relative\b/.test(zoneSelectRule));
+const zonePopupRule = /\.store-v2 \.v2-zone-select-popup \{([^}]*)\}/.exec(css)?.[1] ?? "";
+check("the popup floats over the page (absolute) and bounds/scrolls itself, never scrolling the page",
+  /position:\s*absolute\b/.test(zonePopupRule) &&
+  /max-height:\s*min\(\s*46vh\s*,\s*340px\s*\)/.test(zonePopupRule) &&
+  /overflow-y:\s*auto\b/.test(zonePopupRule) &&
+  !/overflow-y:\s*scroll\b/.test(zonePopupRule) &&
+  /overscroll-behavior:\s*contain\b/.test(zonePopupRule));
+// Same defensive properties the old scroll pane relied on: `min-height: 0`
+// (classic flex/grid item refusing to shrink below its own unconstrained
+// content size, which can defeat `max-height`), `touch-action: pan-y`
+// (vertical touch scrolling as an explicit contract), `overflow-x: hidden`
+// (no horizontal scrollbar however long a name/ETA string gets).
+check("the popup cannot be starved by grid/flex auto-sizing, scrolls by touch, and never grows sideways",
+  /min-height:\s*0\b/.test(zonePopupRule) &&
+  /touch-action:\s*pan-y\b/.test(zonePopupRule) &&
+  /overflow-x:\s*hidden\b/.test(zonePopupRule));
+
+// Issue B (2nd follow-up, carried forward): a 12-zone shop is MATHEMATICALLY
+// GUARANTEED to overflow the popup at any viewport, while a 3-zone shop is
+// guaranteed to fit — i.e. the pane's max-height really is doing its job,
+// not merely present as an unused declaration. jsdom cannot report a real
+// `scrollHeight`/`clientHeight` (see scripts/rendered-v2-zone-scroll.flow.mjs
+// for the pixel-accurate proof in real Chromium).
+const zoneOptionRule = /\.store-v2 \.v2-zone-option \{([^}]*)\}/.exec(css)?.[1] ?? "";
+const rowMinHeight = Number(/min-height:\s*(\d+)px/.exec(zoneOptionRule)?.[1] ?? NaN);
+const rowGap = Number(/\.v2-zone-select-popup[^{]*\{[^}]*\bgap:\s*(\d+)px/.exec(css)?.[1] ?? NaN);
+// `min(46vh, 340px)`: 340px is the hard ceiling this pane can EVER reach on
+// any viewport, however tall — so if N rows exceed 340px on the row-height
+// floor alone (before real text wrapping, which only adds height), the pane
+// overflows and must scroll everywhere, full stop.
+const paneCeilingPx = Number(/max-height:\s*min\(\s*46vh\s*,\s*(\d+)px\s*\)/.exec(zonePopupRule)?.[1] ?? NaN);
+// The narrowest phone this storefront supports realistically still clears
+// ~640px of viewport height even with browser chrome; the mobile override
+// is 42vh, so this is the smallest the pane can ever be in practice.
+const smallestRealisticPaneFloorPx = 0.42 * 640;
+const contentHeight = (rows) => rows * rowMinHeight + (rows - 1) * rowGap;
+check("12 real zone rows mathematically must overflow the pane's own hard ceiling at any viewport size",
+  Number.isFinite(rowMinHeight) && Number.isFinite(rowGap) && Number.isFinite(paneCeilingPx) &&
+  contentHeight(12) > paneCeilingPx);
+check("3 real zone rows mathematically fit even the smallest realistic pane height — no scrollbar is correct, not a bug",
+  contentHeight(3) <= smallestRealisticPaneFloorPx);
+
 clickEl(testid("v2-place-order"));
 await waitFor(() => orders().length === 3 && Boolean(testid("v2-order-number")) &&
   Boolean(testid("v2-order-details")), { label: "settled delivery/COD receipt" });
