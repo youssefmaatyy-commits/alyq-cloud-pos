@@ -60,13 +60,41 @@ const toPublicCategory = (row: StorefrontCategoryV2Row): Category => ({
   updated_at: row.updated_at,
 });
 
-const toProduct = (row: StorefrontProductRow): Product => ({
+export const toProduct = (row: StorefrontProductRow): Product => ({
   ...row,
   // Absent from the published read on purpose. 0 is inert here: `stockStatus()`
   // only treats a threshold as meaningful when it is greater than 0.
   cost_price: 0,
   low_stock_level: 0,
+  // `storefront_catalogue()` (migration 0030) predates `variants_enabled`
+  // (migration 0043) and was never updated to select it, so this column is
+  // simply missing from every live row — `...row` leaves it `undefined`,
+  // which is falsy. That silently hid the PDP's colour/size chooser for
+  // every variant product on a live (Supabase) storefront, however many
+  // real, active combinations it had — a bug demo-mode testing could not
+  // catch, because demo mode reads full `Product` rows straight from the
+  // repository and never goes through this RPC. Default to false here and
+  // let `patchVariantsEnabled` below correct it from real variant presence.
+  variants_enabled: false,
 });
+
+/**
+ * Recovers the `variants_enabled` flag `storefront_catalogue()` cannot supply
+ * yet, without widening what the RPC returns or touching the schema. Its
+ * companion, `storefront_product_variants()`, already enforces
+ * `p.variants_enabled = true` in its own WHERE clause (migration 0043) — so a
+ * product appearing at all in that result is proof positive the flag is true
+ * in the database, no matter what `storefront_catalogue()` said. A variant
+ * product with zero currently-active combinations still reads as a simple,
+ * non-variant, out-of-stock product, which is the honest fallback: there is
+ * nothing left to choose between.
+ */
+export function patchVariantsEnabled(products: Product[], variants: readonly StoreVariant[]): Product[] {
+  const productIdsWithVariants = new Set(variants.map((variant) => variant.product_id));
+  if (productIdsWithVariants.size === 0) return products;
+  return products.map((product) =>
+    productIdsWithVariants.has(product.id) ? { ...product, variants_enabled: true } : product);
+}
 
 /** Fetch only website-visible, active products + active categories. */
 export async function fetchStorefrontCatalog(): Promise<{
@@ -104,10 +132,14 @@ export async function fetchStorefrontCatalog(): Promise<{
       console.warn("[storefront] variant list unavailable", variantResult.error.message);
     }
 
+    const liveVariants = (variantResult.error ? [] : (variantResult.data ?? [])) as StoreVariant[];
     return {
-      products: ((productResult.data ?? []) as StorefrontProductRow[]).map(toProduct),
+      products: patchVariantsEnabled(
+        ((productResult.data ?? []) as StorefrontProductRow[]).map(toProduct),
+        liveVariants,
+      ),
       categories: ((categoryResult.data ?? []) as StorefrontCategoryV2Row[]).map(toPublicCategory),
-      variants: (variantResult.error ? [] : (variantResult.data ?? [])) as StoreVariant[],
+      variants: liveVariants,
       mode: "supabase",
     };
   }
