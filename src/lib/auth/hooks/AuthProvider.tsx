@@ -34,7 +34,14 @@ import {
 } from "../services/authService";
 import { carriesRecoveryMaterial } from "../services/recoveryUrl";
 import { resetSessionCache } from "../services/sessionStore";
+import { restoreOfflineSession } from "../services/offlineSession";
 import { subscribeAuthEvents } from "../services/authEvents";
+import {
+  getConnectivityStatus,
+  reportNetworkResult,
+  subscribeConnectivity,
+} from "@/modules/pos/offline/connectivity";
+import { toAppError } from "@/modules/products/data/repository";
 import { getAuthMode, getUserRepository } from "../data";
 import { recordAudit } from "@/modules/audit/services/auditService";
 
@@ -68,6 +75,8 @@ export interface AuthContextValue {
   changePassword: (current: string, next: string) => Promise<PasswordUpdateResult>;
   /** True while a provider session is being read back on boot. */
   syncing: boolean;
+  /** Authenticated from the safe local register lease, not a live provider session. */
+  offlineSession: boolean;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -109,6 +118,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [endReason, setEndReason] = useState<SessionEndReason>(null);
   const [error, setError] = useState<AuthErrorCode | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [offlineSession, setOfflineSession] = useState(false);
   const booted = useRef(false);
   /**
    * The subscription below is mounted once (re-subscribing would drop provider
@@ -122,12 +132,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (booted.current) return;
     booted.current = true;
 
-    // Offline model first: it is synchronous, so the app renders immediately
-    // with whatever was persisted rather than showing a spinner on every reload.
+    // Restore synchronously. When the browser already knows it is offline, use
+    // only the restricted register lease — never the stored provider token or
+    // its wider capabilities — so a refresh cannot unlock admin screens.
     const { session: restored, reason } = restoreSession();
-    setSession(restored);
-    setEndReason(reason);
-    setStatus(restored ? "authenticated" : "anonymous");
+    const leased =
+      getAuthMode() === "supabase" && getConnectivityStatus() === "offline"
+        ? restoreOfflineSession()
+        : null;
+    const initial = leased ?? restored;
+    setSession(initial);
+    setOfflineSession(Boolean(leased));
+    setEndReason(initial ? null : reason);
+    setStatus(initial ? "authenticated" : "anonymous");
 
     if (getAuthMode() !== "supabase") return;
 
@@ -148,26 +165,47 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const live = await getUserRepository().currentSession();
         if (cancelled) return;
         if (!live || !live.user) {
+          // The provider answered authoritatively: the server session is gone.
           forgetSession();
           setSession(null);
+          setOfflineSession(false);
           setStatus("anonymous");
+          setEndReason("expired");
           return;
         }
-        if (!shouldAdoptFoundProviderSession(restored !== null)) {
+        reportNetworkResult("success");
+        if (!shouldAdoptFoundProviderSession(restored !== null || leased !== null)) {
           if (carriesRecoveryMaterial()) return; // leave the link for the reset page
           await getUserRepository().signOut().catch(() => undefined);
           forgetSession();
           setSession(null);
+          setOfflineSession(false);
           setStatus("anonymous");
           return;
         }
-        const adopted = adoptProviderSession(live, restored?.remember ?? false);
+        const adopted = adoptProviderSession(live, restored?.remember ?? leased?.remember ?? false);
         if (!adopted) return;
         setSession(adopted);
+        setOfflineSession(false);
         setStatus("authenticated");
         setEndReason(null);
-      } catch {
-        /* a provider failure on boot keeps the persisted session; the heartbeat retries */
+      } catch (error) {
+        if (toAppError(error).code === "NETWORK") {
+          reportNetworkResult("network-error");
+          const fallback = restoreOfflineSession();
+          if (fallback) {
+            setSession(fallback);
+            setOfflineSession(true);
+            setStatus("authenticated");
+            setEndReason(null);
+          }
+        } else {
+          forgetSession();
+          setSession(null);
+          setOfflineSession(false);
+          setStatus("anonymous");
+          setEndReason("expired");
+        }
       } finally {
         if (!cancelled) setSyncing(false);
       }
@@ -179,25 +217,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const revalidate = useCallback(() => {
     if (getAuthMode() === "supabase") {
-      // The provider answer is async; the sync check still runs first so an
-      // obviously-dead record is dropped without waiting for a round trip.
-      const immediate = validateSession();
-      if (!immediate.session && immediate.changed) {
-        setSession(null);
-        setStatus("anonymous");
-        setEndReason(immediate.reason);
-        return;
-      }
+      // Do not expire a live-mode record by its access-token clock before the
+      // provider gets a chance to refresh it. When offline, revalidateSession
+      // keeps the restricted lease; when reachable, the provider is authoritative.
       void (async () => {
         const { session: next, reason, changed } = await revalidateSession();
         if (!next) {
           if (changed) {
             setSession(null);
+            setOfflineSession(false);
             setStatus("anonymous");
             setEndReason(reason);
           }
           return;
         }
+        if (getConnectivityStatus() === "offline") {
+          const fallback = restoreOfflineSession();
+          if (fallback) {
+            setSession(fallback);
+            setOfflineSession(true);
+          }
+          return;
+        }
+        setOfflineSession(false);
         if (changed) setSession(next);
       })();
       return;
@@ -214,6 +256,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     if (changed) setSession(next);
   }, []);
+
+  // One connectivity source drives both the POS banner and auth posture. Going
+  // offline immediately narrows the current identity to the safe register lease;
+  // reconnecting asks the provider to validate/refresh it.
+  useEffect(() => subscribeConnectivity((next) => {
+    if (getAuthMode() !== "supabase") return;
+    if (next === "offline") {
+      const fallback = restoreOfflineSession();
+      if (fallback) {
+        setSession(fallback);
+        setOfflineSession(true);
+        setStatus("authenticated");
+        setEndReason(null);
+      }
+      return;
+    }
+    revalidate();
+  }), [revalidate]);
 
   // Navigation + tab focus + heartbeat.
   useEffect(() => {
@@ -234,6 +294,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const { session: next, changed, signedOut } = await resyncCurrentIdentity();
         if (signedOut || !next) {
           setSession(null);
+          setOfflineSession(false);
           setStatus("anonymous");
           setEndReason("signed_out");
           return;
@@ -261,8 +322,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       getAuthMode() === "supabase"
         ? getUserRepository().onAuthChange((event) => {
             if (event.type === "signed_out") {
+              // A refresh request that cannot reach Supabase must not turn a
+              // network outage into a logout. The explicit sign-out action still
+              // clears this lease synchronously in authService.
+              if (getConnectivityStatus() === "offline") {
+                const fallback = restoreOfflineSession();
+                if (fallback) {
+                  setSession(fallback);
+                  setOfflineSession(true);
+                  setStatus("authenticated");
+                  return;
+                }
+              }
               forgetSession();
               setSession(null);
+              setOfflineSession(false);
               setStatus("anonymous");
               setEndReason("signed_out");
               return;
@@ -288,6 +362,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               const adopted = adoptProviderSession(current ?? live, sessionRef.current?.remember ?? false);
               if (!adopted) return;
               setSession(adopted);
+              setOfflineSession(false);
               setStatus("authenticated");
               setEndReason(null);
             })();
@@ -302,6 +377,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const { session: current } = restoreSession();
         if (!current) {
           setSession(null);
+          setOfflineSession(false);
           setStatus("anonymous");
           setEndReason("signed_out");
         }
@@ -317,6 +393,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const { session: next, changed, signedOut } = await resyncCurrentIdentity();
           if (signedOut || !next) {
             setSession(null);
+            setOfflineSession(false);
             setStatus("anonymous");
             setEndReason("signed_out");
             return;
@@ -349,6 +426,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return false;
     }
     setSession(outcome.session);
+    setOfflineSession(false);
     setEndReason(null);
     setStatus("authenticated");
     auditSession("session.login", outcome.session.user, {
@@ -367,6 +445,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // socket outlives the session it was opened for.
     stopRealtime();
     setSession(null);
+    setOfflineSession(false);
     setError(null);
     setEndReason("signed_out");
     setStatus("anonymous");
@@ -378,6 +457,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await signOutRequest({ everywhere: true });
     stopRealtime();
     setSession(null);
+    setOfflineSession(false);
     setError(null);
     setEndReason("signed_out");
     setStatus("anonymous");
@@ -434,6 +514,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       updatePassword,
       changePassword,
       syncing,
+      offlineSession,
     }),
     [
       session,
@@ -441,6 +522,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       endReason,
       error,
       syncing,
+      offlineSession,
       signIn,
       signOut,
       signOutEverywhere,

@@ -50,6 +50,17 @@ import { resetRecoveryMarksForTests } from "../services/recoveryOnce";
 import { getAuditRepository } from "@/modules/audit/data";
 import { APP_ROLES, hasCapability, normalizeRole } from "@/lib/permissions/roles";
 import { capabilityForPath } from "@/lib/permissions/routes";
+import type { AuthUser } from "../types";
+import {
+  OFFLINE_SESSION_IDLE_MS,
+  OFFLINE_SESSION_REMEMBER_MS,
+  OFFLINE_SESSION_STORAGE_KEY,
+  clearOfflineSessionSnapshot,
+  offlineSessionAllowsPath,
+  readOfflineSessionSnapshot,
+  restoreOfflineSession,
+  writeOfflineSessionSnapshot,
+} from "../services/offlineSession";
 
 type TestCase = { name: string; fn: () => void | Promise<void> };
 const tests: TestCase[] = [];
@@ -235,6 +246,59 @@ test("the session round-trips through storage and clears completely", () => {
   assert.equal(readStoredSession(), null);
   assert.equal(local.size + sessionMap.size, 0, "clearing removes every copy");
   assert.equal(getCurrentAuthUser(), ANONYMOUS_USER, "the cache falls back to anonymous");
+});
+
+test("offline register lease stores safe metadata only and blocks privileged routes", () => {
+  const { local, session } = installStorageStub();
+  resetSessionCache();
+  const now = new Date("2026-09-27T10:00:00.000Z");
+  const onlineAdmin: AuthUser = {
+    id: "user-1",
+    username: "cashier.admin",
+    name: "Cashier Admin",
+    role: "admin",
+    auth_id: "provider-auth-id",
+    email: "secret@example.com",
+    phone: "+201000000000",
+    active: true,
+    capabilities: ["sell", "manage_users", "manage_roles", "manage_settings"],
+  };
+
+  writeOfflineSessionSnapshot(onlineAdmin, false, now);
+  assert.equal(local.has(OFFLINE_SESSION_STORAGE_KEY), false, "unchecked keep-me-signed-in is tab scoped");
+  const raw = session.get(OFFLINE_SESSION_STORAGE_KEY) ?? "";
+  assert.ok(raw, "safe snapshot is present in sessionStorage");
+  assert.equal(/password|access_token|refresh_token|secret@example|\+201/.test(raw), false, "no password/token/contact data persisted");
+
+  resetSessionCache();
+  const restored = restoreOfflineSession(new Date(now.getTime() + 60_000));
+  assert.ok(restored);
+  assert.equal(restored!.token, "offline-register-lease-not-a-server-token");
+  assert.deepEqual(restored!.user.capabilities, ["sell"], "admin authority is narrowed to register-only");
+  assert.equal(offlineSessionAllowsPath("/pos"), true);
+  assert.equal(offlineSessionAllowsPath("/pos/sales/offline-1"), true);
+  for (const blocked of ["/", "/settings", "/settings/users", "/online/website", "/products", "/audit"]) {
+    assert.equal(offlineSessionAllowsPath(blocked), false, `${blocked} is blocked offline`);
+  }
+
+  assert.ok(readOfflineSessionSnapshot(new Date(now.getTime() + OFFLINE_SESSION_IDLE_MS - 1)));
+  assert.equal(readOfflineSessionSnapshot(new Date(now.getTime() + OFFLINE_SESSION_IDLE_MS + 1)), null, "tab lease expires without sliding offline");
+});
+
+test("keep-me-signed-in controls offline lease storage/lifetime and logout clears it", () => {
+  const { local, session } = installStorageStub();
+  resetSessionCache();
+  const now = new Date("2026-09-27T10:00:00.000Z");
+  const cashier: AuthUser = {
+    id: "cashier-1", username: "cashier", name: "Cashier", role: "cashier", capabilities: ["sell"],
+  };
+  writeOfflineSessionSnapshot(cashier, true, now);
+  assert.equal(local.has(OFFLINE_SESSION_STORAGE_KEY), true);
+  assert.equal(session.has(OFFLINE_SESSION_STORAGE_KEY), false);
+  assert.ok(readOfflineSessionSnapshot(new Date(now.getTime() + OFFLINE_SESSION_REMEMBER_MS - 1)));
+  clearOfflineSessionSnapshot();
+  assert.equal(local.has(OFFLINE_SESSION_STORAGE_KEY), false, "logout removes persistent lease");
+  assert.equal(restoreOfflineSession(now), null);
 });
 
 test("corrupt or incomplete session records are ignored", () => {

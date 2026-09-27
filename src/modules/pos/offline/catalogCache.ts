@@ -16,7 +16,9 @@
  */
 import type { Product } from "@/modules/products/types";
 import type { ProductVariant } from "@/modules/products/variants";
-import { getOfflineDb } from "./db";
+import { AppError } from "@/modules/products/data/repository";
+import type { CompleteSaleInput } from "../types";
+import { getOfflineDb, type OfflineWrite } from "./db";
 import type { CachedCatalogSnapshot, CachedProduct, CachedVariant } from "./types";
 
 const CATALOG_CACHED_AT_KEY = "catalog_cached_at";
@@ -41,4 +43,84 @@ export async function readCachedCatalog(): Promise<CachedCatalogSnapshot> {
     db.get<{ key: string; value: string }>("sync_metadata", CATALOG_CACHED_AT_KEY),
   ]);
   return { products, variants, cachedAt: meta?.value ?? null };
+}
+
+export interface OfflineInventoryPlan {
+  products: Product[];
+  variants: ProductVariant[];
+  /** Rows committed in the SAME transaction as the sale and outbox entry. */
+  writes: OfflineWrite[];
+}
+
+/**
+ * Optimistically deduct one offline sale from the last verified catalogue.
+ *
+ * This is deliberately pure: callers calculate the next UI state first, then
+ * hand `writes` to `enqueueOfflineSale`, which commits stock + receipt + lines +
+ * outbox atomically. Re-running sync never calls this function, so reconnect
+ * cannot decrement local stock a second time. The server remains authoritative
+ * and re-checks the exact variant when the queued payload reaches the RPC.
+ */
+export function planOfflineInventory(
+  products: readonly Product[],
+  variants: readonly ProductVariant[],
+  lines: readonly CompleteSaleInput["lines"][number][],
+  cachedAt: string | null,
+): OfflineInventoryPlan {
+  const productMap = new Map(products.map((product) => [product.id, { ...product }]));
+  const variantMap = new Map(variants.map((variant) => [variant.id, { ...variant }]));
+  const changedProducts = new Set<string>();
+  const changedVariants = new Set<string>();
+
+  for (const line of lines) {
+    const qty = Number(line.qty);
+    const product = productMap.get(line.product_id);
+    if (!product?.active || !product.stock_tracking_enabled || !Number.isInteger(qty) || qty <= 0) {
+      throw new AppError("VALIDATION", "Cached product is not available for this offline sale", "cart");
+    }
+
+    if (line.variant_id) {
+      const variant = variantMap.get(line.variant_id);
+      if (!product.variants_enabled || !variant?.active || variant.product_id !== product.id) {
+        throw new AppError("VARIANT_UNAVAILABLE", "Cached product variant is not available", "cart");
+      }
+      if (variant.stock_quantity < qty) {
+        throw new AppError("VARIANT_STOCK_INSUFFICIENT", `Only ${variant.stock_quantity} of ${qty} in cached stock`, "cart");
+      }
+      variant.stock_quantity -= qty;
+      variantMap.set(variant.id, variant);
+      changedVariants.add(variant.id);
+    } else {
+      if (product.variants_enabled) {
+        throw new AppError("VARIANT_REQUIRED", "An exact product variant is required", "cart");
+      }
+      if (product.stock_quantity < qty) {
+        throw new AppError("VALIDATION", `Only ${product.stock_quantity} of ${qty} in cached stock`, "cart");
+      }
+    }
+
+    // For variant products this is the server-maintained rollup. Keeping it in
+    // step locally makes every pre-variant stock badge agree with the exact shelf.
+    if (product.stock_quantity < qty) {
+      throw new AppError("VARIANT_STOCK_INSUFFICIENT", "Cached product stock is insufficient", "cart");
+    }
+    product.stock_quantity -= qty;
+    productMap.set(product.id, product);
+    changedProducts.add(product.id);
+  }
+
+  const stamp = cachedAt ?? new Date().toISOString();
+  const nextProducts = products.map((product) => productMap.get(product.id) ?? product);
+  const nextVariants = variants.map((variant) => variantMap.get(variant.id) ?? variant);
+  const writes: OfflineWrite[] = [
+    ...[...changedProducts].map((id) => ({
+      store: "cached_products" as const,
+      value: { ...productMap.get(id)!, cached_at: stamp } satisfies CachedProduct,
+    })),
+    ...[...changedVariants].map((id) => ({
+      store: "cached_variants" as const,
+      value: { ...variantMap.get(id)!, cached_at: stamp } satisfies CachedVariant,
+    })),
+  ];
+  return { products: nextProducts, variants: nextVariants, writes };
 }

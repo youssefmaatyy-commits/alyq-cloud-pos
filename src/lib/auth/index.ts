@@ -45,6 +45,16 @@ export type { AuthBroadcast } from "./services/authEvents";
 export { buildAuthUser, capabilitiesForIdentity, roleOf, usernameToEmail } from "./services/identity";
 export type { IdentityInput } from "./services/identity";
 export {
+  OFFLINE_SESSION_IDLE_MS,
+  OFFLINE_SESSION_REMEMBER_MS,
+  OFFLINE_SESSION_STORAGE_KEY,
+  clearOfflineSessionSnapshot,
+  offlineSessionAllowsPath,
+  readOfflineSessionSnapshot,
+  restoreOfflineSession,
+  writeOfflineSessionSnapshot,
+} from "./services/offlineSession";
+export {
   ANONYMOUS_USER,
   SESSION_STORAGE_KEY,
   clearStoredSession,

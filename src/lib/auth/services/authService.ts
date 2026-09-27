@@ -50,6 +50,9 @@ import {
   writeStoredSession,
 } from "./sessionStore";
 import { broadcastAuth } from "./authEvents";
+import { clearOfflineSessionSnapshot, writeOfflineSessionSnapshot } from "./offlineSession";
+import { reportNetworkResult } from "@/modules/pos/offline/connectivity";
+import { toAppError } from "@/modules/products/data/repository";
 import { recordAudit } from "@/modules/audit/services/auditService";
 
 /** Idle lifetime of a session without "remember me" (demo model). */
@@ -187,6 +190,10 @@ export async function signIn(credentials: Credentials): Promise<SignInOutcome> {
   }
 
   writeStoredSession(session, remember ? "local" : "session");
+  if (repository.kind === "supabase") {
+    writeOfflineSessionSnapshot(session.user, remember);
+    reportNetworkResult("success");
+  }
   broadcastAuth({ kind: "signed_in", user_id: session.user.id, at: new Date().toISOString() });
   return { ok: true, session };
 }
@@ -199,6 +206,10 @@ export async function signIn(credentials: Credentials): Promise<SignInOutcome> {
  */
 export async function signOut(options?: { everywhere?: boolean }): Promise<void> {
   const everywhere = Boolean(options?.everywhere);
+  // Local authority is revoked synchronously even when the provider is
+  // unreachable. Unsynced sales live in IndexedDB and are intentionally not
+  // touched by logout.
+  clearOfflineSessionSnapshot();
   try {
     await getUserRepository().signOut({ everywhere });
   } catch {
@@ -293,18 +304,29 @@ export async function revalidateSession(now: Date = new Date()): Promise<{
   try {
     const live = needsRefresh ? await repository.refreshSession() : await repository.currentSession();
     if (!live || !live.user) {
+      reportNetworkResult("other-error");
       clearStoredSession();
+      clearOfflineSessionSnapshot();
       return { session: null, reason: "expired", changed: true };
     }
+    reportNetworkResult("success");
     const next = sessionFromProvider(live, current.remember, now);
     const persistence = readStoredSession()?.persistence ?? (current.remember ? "local" : "session");
     writeStoredSession(next, persistence);
+    writeOfflineSessionSnapshot(next.user, next.remember, now);
     const changed = next.token !== current.token || next.expires_at !== current.expires_at || next.user !== current.user;
     return { session: next, reason: null, changed };
-  } catch {
+  } catch (error) {
     // A network failure is not a signed-out user: keep the session and try again
-    // on the next heartbeat. Only the provider saying "no session" ends it.
-    return { session: current, reason: null, changed: false };
+    // on the next heartbeat. A reachable provider refusal remains authoritative.
+    if (toAppError(error).code === "NETWORK") {
+      reportNetworkResult("network-error");
+      return { session: current, reason: null, changed: false };
+    }
+    reportNetworkResult("other-error");
+    clearStoredSession();
+    clearOfflineSessionSnapshot();
+    return { session: null, reason: "expired", changed: true };
   }
 }
 
@@ -316,6 +338,8 @@ export function adoptProviderSession(live: LiveSessionInfo, remember = false): A
   if (!live.user) return null;
   const session = sessionFromProvider(live, remember);
   writeStoredSession(session, remember ? "local" : "session");
+  writeOfflineSessionSnapshot(session.user, remember);
+  reportNetworkResult("success");
   return session;
 }
 
@@ -339,6 +363,7 @@ export function shouldAdoptFoundProviderSession(appSessionHeld: boolean): boolea
 /** Drop the local record without asking the provider (a signed-out event). */
 export function forgetSession(): void {
   clearStoredSession();
+  clearOfflineSessionSnapshot();
 }
 
 /** Do two identities differ in any way a permission check would notice? */
@@ -381,15 +406,24 @@ export async function resyncCurrentIdentity(now: Date = new Date()): Promise<{
       const live = await getUserRepository().currentSession();
       if (!live || !live.user || live.user.active === false) {
         clearStoredSession();
+        clearOfflineSessionSnapshot();
         return { session: null, changed: true, signedOut: true };
       }
       const next = sessionFromProvider(live, current.remember, now);
       const changed = identityChanged(current.user, next.user) || next.token !== current.token;
       writeStoredSession(next, persistence);
+      writeOfflineSessionSnapshot(next.user, next.remember, now);
+      reportNetworkResult("success");
       return { session: next, changed, signedOut: false };
-    } catch {
-      // Offline or provider error: keep what we have and try again later.
-      return { session: current, changed: false, signedOut: false };
+    } catch (error) {
+      if (toAppError(error).code === "NETWORK") {
+        reportNetworkResult("network-error");
+        return { session: current, changed: false, signedOut: false };
+      }
+      reportNetworkResult("other-error");
+      clearStoredSession();
+      clearOfflineSessionSnapshot();
+      return { session: null, changed: true, signedOut: true };
     }
   }
 

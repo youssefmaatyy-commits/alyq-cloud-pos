@@ -4,7 +4,9 @@ import { useI18n } from "@/lib/i18n/I18nProvider";
 import { Button, Card, EmptyState } from "@/components/ui";
 import { ROLE_LABELS } from "@/lib/permissions/roles";
 import { canAct } from "@/lib/permissions/enforce";
+import { useAuth } from "@/lib/auth/hooks/AuthProvider";
 import { getCurrentAuthUser } from "@/lib/auth/services/sessionStore";
+import { offlineSessionAllowsPath } from "@/lib/auth/services/offlineSession";
 import { isSelfGuardedPath, pathAdmits } from "@/lib/permissions/routes";
 import { useInventory } from "@/modules/inventory/hooks/InventoryProvider";
 
@@ -28,6 +30,27 @@ export function RouteGuard({ children }: { children: ReactNode }) {
   const { t } = useI18n();
   const location = useLocation();
   const { user } = useInventory();
+  const { offlineSession } = useAuth();
+
+  // A local lease is register authority only. This check runs before the normal
+  // capability table so even an unmatched/settings URL cannot inherit the
+  // online account's former role while the server is unreachable.
+  if (offlineSession && !offlineSessionAllowsPath(location.pathname)) {
+    return (
+      <Card>
+        <EmptyState
+          icon="🔒"
+          title={t("perm.denied")}
+          description={t("pos.offline.offlineHint")}
+          action={
+            <Link to="/pos">
+              <Button variant="secondary">{t("home.pos.title")}</Button>
+            </Link>
+          }
+        />
+      </Card>
+    );
+  }
 
   // Screens with a dedicated guard (audit) render their own, more specific denial.
   if (isSelfGuardedPath(location.pathname)) return <>{children}</>;

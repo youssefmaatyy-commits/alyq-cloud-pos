@@ -24,6 +24,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseClient } from "@/lib/supabase/client";
+import { toAppError } from "@/modules/products/data/repository";
 import { buildAuthUser } from "../services/identity";
 import { recoveryMaterialConsumed, markRecoveryMaterialConsumed } from "../services/recoveryOnce";
 import { recoveryParams } from "../services/recoveryUrl";
@@ -108,21 +109,23 @@ export class SupabaseUserRepository implements UserRepository {
   // ── reading identities ────────────────────────────────────────────────────
 
   private async loadProfile(id: string): Promise<ProfileRow | null> {
-    const { data } = await this.client()
+    const { data, error } = await this.client()
       .from("profiles")
       .select(PROFILE_COLUMNS)
       .eq("id", id)
       .maybeSingle();
+    if (error) throw toAppError(error);
     return (data as ProfileRow | null) ?? null;
   }
 
   private async loadCustomRole(id: string | null): Promise<CustomRoleRow | null> {
     if (!id) return null;
-    const { data } = await this.client()
+    const { data, error } = await this.client()
       .from("custom_roles")
       .select("id, key, name_en, name_ar, base_role, capabilities, active")
       .eq("id", id)
       .maybeSingle();
+    if (error) throw toAppError(error);
     return (data as CustomRoleRow | null) ?? null;
   }
 
@@ -312,7 +315,8 @@ export class SupabaseUserRepository implements UserRepository {
     const client = this.client();
     const { data, error } = await client.auth.getSession();
     const session = data?.session ?? null;
-    if (error || !session?.user) return null;
+    if (error) throw toAppError(error);
+    if (!session?.user) return null;
 
     const profile = await this.loadProfile(session.user.id);
     if (profile && profile.active === false) {
@@ -337,7 +341,12 @@ export class SupabaseUserRepository implements UserRepository {
     const client = this.client();
     const { data, error } = await client.auth.refreshSession();
     const session = data?.session ?? null;
-    if (error || !session?.user) return null;
+    if (error) {
+      const appError = toAppError(error);
+      if (appError.code === "NETWORK") throw appError;
+      return null;
+    }
+    if (!session?.user) return null;
 
     const profile = await this.loadProfile(session.user.id);
     if (profile && profile.active === false) {

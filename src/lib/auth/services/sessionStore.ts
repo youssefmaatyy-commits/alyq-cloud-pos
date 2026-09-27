@@ -133,6 +133,16 @@ export function primeCacheFromStorage(): AuthSession | null {
   return cachedSession;
 }
 
+/**
+ * Install an in-memory-only session (used by the offline verified-session
+ * lease). Its synthetic token is never written to either storage area and is
+ * not a credential that any server would accept.
+ */
+export function setCachedSession(session: AuthSession | null): void {
+  cachedSession = session;
+  cachedLoaded = true;
+}
+
 /** Test seam — drop the in-memory cache (does not touch storage). */
 export function resetSessionCache(): void {
   cachedSession = null;

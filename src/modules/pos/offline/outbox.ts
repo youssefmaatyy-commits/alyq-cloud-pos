@@ -26,7 +26,7 @@
  */
 import type { CompleteSaleInput, Sale, SalePaymentInput } from "../types";
 import { AppError } from "@/modules/products/data/repository";
-import { getOfflineDb } from "./db";
+import { getOfflineDb, type OfflineWrite } from "./db";
 import { reportNetworkResult } from "./connectivity";
 import {
   offlineSaleToDisplaySale,
@@ -66,6 +66,7 @@ export async function enqueueOfflineSale(
   input: CompleteSaleInput,
   lines: OfflineCartLineInput[],
   meta: EnqueueOfflineSaleMeta,
+  catalogWrites: readonly OfflineWrite[] = [],
 ): Promise<OfflineSaleRecord> {
   const db = getOfflineDb();
   const localId = newId();
@@ -124,6 +125,7 @@ export async function enqueueOfflineSale(
     { store: "offline_sales", value: record },
     ...saleLines.map((value) => ({ store: "offline_sale_lines" as const, value })),
     { store: "sync_outbox", value: outboxEntry },
+    ...catalogWrites,
   ]);
   return record;
 }
@@ -263,7 +265,7 @@ async function attemptEntry(entry: SyncOutboxEntry, complete: CompleteSaleFn): P
  * loop leaves them alone rather than re-submitting the same refused sale on
  * a timer.
  */
-export async function processOutbox(complete: CompleteSaleFn, options: { force?: boolean } = {}): Promise<SyncRunResult> {
+async function processOutboxPass(complete: CompleteSaleFn, options: { force?: boolean } = {}): Promise<SyncRunResult> {
   const db = getOfflineDb();
   const entries = await db.getAll<SyncOutboxEntry>("sync_outbox");
   const now = Date.now();
@@ -285,6 +287,20 @@ export async function processOutbox(complete: CompleteSaleFn, options: { force?:
     else result.failed.push(entry.local_sale_id);
   }
   return result;
+}
+
+// Connectivity, the 20-second timer and the manual button can all fire in the
+// same tick. Serialize them here so two passes can never read the same pending
+// row before either has marked/deleted it. Server idempotency remains the final
+// guard, but the client now also makes only one RPC for one queued sale.
+let activeSync: Promise<SyncRunResult> | null = null;
+
+export function processOutbox(complete: CompleteSaleFn, options: { force?: boolean } = {}): Promise<SyncRunResult> {
+  if (activeSync) return activeSync;
+  activeSync = processOutboxPass(complete, options).finally(() => {
+    activeSync = null;
+  });
+  return activeSync;
 }
 
 /** Manual "Retry sync" — attempts everything queued, ignoring backoff/kind. */

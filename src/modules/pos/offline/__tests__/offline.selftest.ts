@@ -16,7 +16,7 @@ import type { ProductVariant } from "@/modules/products/variants";
 import type { CompleteSaleInput, Sale } from "../../types";
 import { resetOfflineDbForTests, getOfflineDb } from "../db";
 import { resetConnectivityForTests, reportNetworkResult, getConnectivityStatus, subscribeConnectivity } from "../connectivity";
-import { cacheCatalogSnapshot, readCachedCatalog } from "../catalogCache";
+import { cacheCatalogSnapshot, planOfflineInventory, readCachedCatalog } from "../catalogCache";
 import {
   enqueueOfflineSale,
   getOfflineSaleDisplay,
@@ -198,6 +198,54 @@ test("catalog cache round-trips the exact live products/variants — nothing fab
   assert.equal(latest.products[0].stock_quantity, 999);
 });
 
+// ── enqueue + local inventory ───────────────────────────────────────────────
+
+test("known-offline exact-variant cash sale queues immediately and decrements cached stock once", async () => {
+  freshEnv();
+  const exactUuid = "123e4567-e89b-42d3-a456-426614174000";
+  const liveProduct = product({ variants_enabled: true, stock_quantity: 10 });
+  const liveVariant = variant({ id: exactUuid, stock_quantity: 10 });
+  await cacheCatalogSnapshot([liveProduct], [liveVariant]);
+  const saleInput = input("cr-fast-offline", {
+    lines: [{ product_id: liveProduct.id, variant_id: exactUuid, qty: 1, discount_type: "none", discount_value: 0 }],
+  });
+  const plan = planOfflineInventory([liveProduct], [liveVariant], saleInput.lines, new Date().toISOString());
+  const started = performance.now();
+  const record = await enqueueOfflineSale(
+    saleInput,
+    [{
+      product_id: liveProduct.id, variant_id: exactUuid, qty: 1,
+      discount_type: "none", discount_value: 0,
+      name_en: liveProduct.name_en, name_ar: liveProduct.name_ar,
+      sku: liveVariant.sku, unit_price: liveProduct.selling_price,
+    }],
+    { subtotal: 500, discount_amount: 0, total: 500 },
+    plan.writes,
+  );
+  assert.ok(performance.now() - started < 1_000, "local completion stays below the one-second target");
+  assert.equal(record.sync_status, "pending");
+  assert.equal(plan.products[0].stock_quantity, 9);
+  assert.equal(plan.variants[0].stock_quantity, 9);
+  const persisted = await readCachedCatalog();
+  assert.equal(persisted.products[0].stock_quantity, 9, "product rollup survives refresh at 9");
+  assert.equal(persisted.variants[0].stock_quantity, 9, "exact shelf survives refresh at 9");
+
+  let calls = 0;
+  await processOutbox(async (received) => {
+    calls += 1;
+    assert.equal(received.client_ref, "cr-fast-offline");
+    assert.equal(received.lines[0].variant_id, exactUuid);
+    return fakeSale("server-fast", "S-FAST");
+  });
+  await processOutbox(async () => {
+    calls += 1;
+    return fakeSale("duplicate", "DUPLICATE");
+  });
+  assert.equal(calls, 1, "sync does not decrement/create the sale twice");
+  const afterSync = await readCachedCatalog();
+  assert.equal(afterSync.variants[0].stock_quantity, 9, "sync itself does not apply a second local decrement");
+});
+
 // ── enqueue + local persistence within one process ─────────────────────────
 
 test("a cash sale completed offline is queued with a stable client_ref and appears pending", async () => {
@@ -294,6 +342,23 @@ test("CRITICAL: a synced sale is never re-submitted — retrying afterwards is a
   await processOutbox(complete);
   await retrySyncNow(complete);
   assert.equal(calls, 1, "the server call never fires a second time for an already-synced sale");
+});
+
+test("simultaneous reconnect/timer/manual triggers share one sync pass", async () => {
+  freshEnv();
+  await enqueueOne("cr-concurrent");
+  let calls = 0;
+  const complete: CompleteSaleFn = async () => {
+    calls += 1;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    return fakeSale("server-concurrent", "S-CONCURRENT");
+  };
+  await Promise.all([
+    processOutbox(complete),
+    processOutbox(complete),
+    retrySyncNow(complete),
+  ]);
+  assert.equal(calls, 1, "one queued sale makes one server call under concurrent triggers");
 });
 
 test("a network failure keeps the sale queued with an error status — never deleted", async () => {

@@ -26,8 +26,18 @@ import { SALES_ROW_CAP, getSalesRepository, type SalesRepository } from "../data
 // `sell` (and `apply_discount` when the input carries one) before anything is
 // written, which the provider's own `canSell` flag cannot do for a caller that
 // never looked at it.
-import { completeSale as completeSaleGuarded } from "../services/saleService";
-import { isApprovalRequired, type ApprovalRequirement } from "@/modules/approvals";
+import {
+  assertCanCompleteSale,
+  completeSale as completeSaleGuarded,
+  discountPercentOf,
+} from "../services/saleService";
+import {
+  assertWithinApprovalLimit,
+  cachedApprovalRules,
+  evaluateDiscountRule,
+  isApprovalRequired,
+  type ApprovalRequirement,
+} from "@/modules/approvals";
 import { cartTotals, validateDiscount, type CartTotals as Totals } from "../services/posMath";
 import { addCartLine, changeCartQuantity, discountCartLine, removeCartLine } from "../services/cartOperations";
 import {
@@ -48,7 +58,7 @@ import {
   subscribeConnectivity,
   type ConnectivityStatus,
 } from "../offline/connectivity";
-import { cacheCatalogSnapshot, readCachedCatalog } from "../offline/catalogCache";
+import { cacheCatalogSnapshot, planOfflineInventory, readCachedCatalog } from "../offline/catalogCache";
 import {
   enqueueOfflineSale,
   getLastSyncedAt,
@@ -140,7 +150,7 @@ export interface PosContextValue {
   /** Re-fetch the catalog (after a reset / stock change elsewhere). */
   reloadCatalog: () => Promise<unknown>;
   // ── offline-first (src/modules/pos/offline/) ──────────────────────────────
-  /** Best-known connectivity — a UI signal only; `completeSale` still tries the network first regardless. */
+  /** Shared connectivity state; known-offline cash completion takes the local path immediately. */
   connectivity: "online" | "offline";
   /** True while the catalog on screen is the last-known IndexedDB copy, not a live read (stock shown is NOT real-time). */
   workingFromCache: boolean;
@@ -202,10 +212,9 @@ export function PosProvider({ children }: { children: ReactNode }) {
   const [salesTruncated, setSalesTruncated] = useState(false);
 
   // ── offline-first (see src/modules/pos/offline/) ─────────────────────────
-  // Connectivity is a UI signal, not a hard gate: `completeSale` always
-  // attempts the real network path first and only falls back to the local
-  // queue on a genuine network failure, so a stale/false "offline" reading
-  // never blocks a sale that would actually have gone through.
+  // Connectivity is shared with auth and the shell. A known-offline cash sale
+  // commits locally without touching HTTP; an apparently-online sale still
+  // tries the server and falls back only on a genuine NETWORK failure.
   const [connectivity, setConnectivity] = useState<ConnectivityStatus>(() => getConnectivityStatus());
   const [syncSummary, setSyncSummary] = useState<SyncSummary>({
     pendingCount: 0, errorCount: 0, conflictCount: 0, syncing: false,
@@ -372,12 +381,21 @@ export function PosProvider({ children }: { children: ReactNode }) {
       try {
         if (options.force) await retrySyncNow(completeSaleGuarded);
         else await processOutbox(completeSaleGuarded);
+
+        // Never let a catalogue read race ahead of queued mutations. If any
+        // sale is still pending/error/conflict, keep the optimistic local stock
+        // visible. Once the outbox is empty every sale has committed server-side,
+        // so the authoritative refresh must now contain those deductions.
+        const after = await getSyncSummary();
+        if (after.pendingCount + after.errorCount + after.conflictCount === 0) {
+          await loadCatalog();
+        }
         await refreshSales({ silent: true });
       } finally {
         await refreshOfflineState();
       }
     },
-    [offlineCapable, refreshOfflineState, refreshSales],
+    [offlineCapable, loadCatalog, refreshOfflineState, refreshSales],
   );
 
   // Sync triggers: connectivity flips to online, and a bounded periodic timer
@@ -585,14 +603,67 @@ export function PosProvider({ children }: { children: ReactNode }) {
       };
       const cashOnly = payments.length > 0 && payments.every((p) => p.method === "cash");
 
-      // Offline-first: `completeSaleGuarded` still runs FIRST for every sale —
-      // it owns the permission check and the discount-approval gate, and
-      // nothing here duplicates or bypasses either. Only a genuine NETWORK
-      // failure (see products/data/repository.ts `toAppError`) falls through
-      // to the local queue, and only for a cash-only sale — a payment that
-      // needs network verification (InstaPay/card) is never queued: it stays
-      // refused until the till is back online (Part 5 of the offline brief).
+      const queueOfflineCashSale = async (): Promise<SaleModel> => {
+        if (!cashOnly) {
+          throw new AppError(
+            "VALIDATION",
+            "No connection — only cash sales can be completed offline. InstaPay/card payments need the server to verify them.",
+          );
+        }
+
+        // The direct offline path may not call the repository, but it still runs
+        // the same local permission and cached approval-rule gates before money
+        // is accepted. Server/RLS checks run again when this exact input syncs.
+        assertCanCompleteSale(input);
+        assertWithinApprovalLimit(
+          evaluateDiscountRule(cachedApprovalRules(), discountPercentOf(input)),
+        );
+
+        const inventory = planOfflineInventory(
+          products,
+          variants,
+          input.lines,
+          catalogCachedAt,
+        );
+        const record = await enqueueOfflineSale(
+          input,
+          lines.map((line) => ({
+            product_id: line.product_id,
+            variant_id: line.variant_id,
+            qty: line.qty,
+            discount_type: line.item_discount?.type ?? "none",
+            discount_value: line.item_discount?.value ?? 0,
+            name_en: line.name_en,
+            name_ar: line.name_ar,
+            sku: line.sku,
+            unit_price: line.unit_price,
+          })),
+          { subtotal: totals.subtotal, discount_amount: totals.discountAmount, total: totals.total },
+          inventory.writes,
+        );
+        const displaySale = await getOfflineSaleDisplay(record.id);
+        if (!displaySale) throw new AppError("DB", "Offline sale was saved but could not be reloaded");
+
+        // Persistence succeeded: reflect the exact same stock plan in React,
+        // then clear the cart and show the receipt. No HTTP/auth/RPC awaited.
+        setProducts(inventory.products);
+        setVariants([...inventory.variants].sort(compareVariants));
+        await refreshOfflineState();
+        setCompletedSale(displaySale);
+        updateLines(() => []);
+        setDiscountValue(EMPTY_DISCOUNT);
+        return displaySale;
+      };
+
       try {
+        // The five-minute bug was here: even after the browser had already told
+        // us it was offline, every sale entered Supabase and waited for fetch/
+        // auth retry timeouts before the catch queued it. A known-offline cash
+        // sale now takes the local transaction immediately.
+        if (offlineCapable && connectivity === "offline") {
+          return await queueOfflineCashSale();
+        }
+
         const sale = await completeSaleGuarded(input);
         reportNetworkResult("success");
         await loadCatalog();
@@ -613,37 +684,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
         const appErr = err instanceof AppError ? err : null;
         if (offlineCapable && appErr?.code === "NETWORK") {
           reportNetworkResult("network-error");
-          if (!cashOnly) {
-            // Nothing was written. The exact same `input` (same `client_ref`)
-            // can be resubmitted once online — the cart is left untouched.
-            throw new AppError(
-              "VALIDATION",
-              "No connection — only cash sales can be completed offline. InstaPay/card payments need the server to verify them.",
-            );
-          }
-          const record = await enqueueOfflineSale(
-            input,
-            lines.map((line) => ({
-              product_id: line.product_id,
-              variant_id: line.variant_id,
-              qty: line.qty,
-              discount_type: line.item_discount?.type ?? "none",
-              discount_value: line.item_discount?.value ?? 0,
-              name_en: line.name_en,
-              name_ar: line.name_ar,
-              sku: line.sku,
-              unit_price: line.unit_price,
-            })),
-            { subtotal: totals.subtotal, discount_amount: totals.discountAmount, total: totals.total },
-          );
-          const displaySale = await getOfflineSaleDisplay(record.id);
-          await refreshOfflineState();
-          if (displaySale) {
-            setCompletedSale(displaySale);
-            updateLines(() => []);
-            setDiscountValue(EMPTY_DISCOUNT);
-            return displaySale;
-          }
+          return await queueOfflineCashSale();
         }
         throw err;
       } finally {
@@ -661,6 +702,10 @@ export function PosProvider({ children }: { children: ReactNode }) {
       user,
       updateLines,
       offlineCapable,
+      connectivity,
+      products,
+      variants,
+      catalogCachedAt,
       totals,
       refreshOfflineState,
     ],

@@ -147,13 +147,39 @@ function NavItem({
 }
 
 export function AppShell({ children }: { children: React.ReactNode }) {
-  const { t, lang, toggleLang } = useI18n();
+  const { t, tPlural, lang, toggleLang } = useI18n();
   const { mode, products } = useCatalog();
   // `mode` says which backend is configured; it does not say that backend is
-  // reachable right now. The POS provider owns the real network signal, so the
-  // global shell must use it instead of claiming "Connected" during Offline Mode.
-  const { connectivity } = usePos();
+  // reachable right now. The POS provider owns the one real network/sync signal.
+  const {
+    connectivity,
+    syncing: posSyncing,
+    syncPendingCount,
+    syncErrorCount,
+    syncConflictCount,
+  } = usePos();
   const liveOffline = mode === "supabase" && connectivity === "offline";
+  const syncFailures = syncErrorCount + syncConflictCount;
+  const liveStatusText =
+    liveOffline
+      ? t("pos.offline.offline")
+      : syncFailures > 0
+        ? t("pos.offline.syncError")
+        : posSyncing
+          ? t("pos.offline.syncing")
+          : syncPendingCount > 0
+            ? tPlural("pos.offline.pendingCount", syncPendingCount, { count: syncPendingCount })
+            : t("mode.live");
+  const liveStatusHint =
+    liveOffline
+      ? t("pos.offline.offlineHint")
+      : syncFailures > 0
+        ? t("pos.offline.syncErrorHint")
+        : posSyncing
+          ? t("pos.offline.syncing")
+          : syncPendingCount > 0
+            ? tPlural("pos.offline.pendingCount", syncPendingCount, { count: syncPendingCount })
+            : t("mode.liveHint");
   // Sidebar visibility follows the signed-in role: an entry is shown only when
   // the same capability table the route guard reads allows the screen.
   const { user } = useInventory();
@@ -437,13 +463,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <span
               className={cn(
                 "h-2 w-2 rounded-full",
-                mode === "supabase" && !liveOffline ? "bg-emerald-400" : "bg-amber-400",
+                mode === "supabase" && !liveOffline && !posSyncing && syncFailures === 0 && syncPendingCount === 0
+                  ? "bg-emerald-400"
+                  : syncFailures > 0
+                    ? "bg-rose-400"
+                    : "bg-amber-400",
               )}
             />
-            {liveOffline ? t("pos.offline.offline") : mode === "supabase" ? t("mode.live") : t("mode.demo")}
+            {mode === "supabase" ? liveStatusText : t("mode.demo")}
           </p>
           <p className="mt-1 text-[11px] font-medium leading-relaxed text-stone-400">
-            {liveOffline ? t("pos.offline.offlineHint") : mode === "supabase" ? t("mode.liveHint") : t("mode.demoHint")}
+            {mode === "supabase" ? liveStatusHint : t("mode.demoHint")}
           </p>
         </div>
       ) : null}
@@ -638,10 +668,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             data-testid="app-connectivity-status"
             className={cn(
               "hidden items-center gap-1 rounded-xl border bg-white px-3 py-2 text-xs font-semibold sm:inline-flex",
-              liveOffline ? "border-amber-300 text-amber-800" : "border-stone-200 text-stone-700",
+              syncFailures > 0
+                ? "border-rose-300 text-rose-700"
+                : liveOffline || posSyncing || syncPendingCount > 0
+                  ? "border-amber-300 text-amber-800"
+                  : "border-stone-200 text-stone-700",
             )}
           >
-            {liveOffline ? t("pos.offline.offline") : mode === "supabase" ? t("mode.live") : t("mode.demo")}
+            {mode === "supabase" ? liveStatusText : t("mode.demo")}
             <ChevronIcon className="h-3 w-3 -rotate-90 text-stone-300" />
           </span>
           {endReason === "expired" ? (
