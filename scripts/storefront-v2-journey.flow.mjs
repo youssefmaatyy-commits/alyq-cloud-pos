@@ -286,6 +286,18 @@ check("the scroll pane's own CSS rule bounds height and only scrolls on genuine 
   /overflow-y:\s*auto\b/.test(zoneScrollRule) &&
   !/overflow-y:\s*scroll\b/.test(zoneScrollRule) &&
   /overscroll-behavior:\s*contain\b/.test(zoneScrollRule));
+// Issue #B (follow-up): three more properties on the same rule, each closing
+// a specific way the pane could still misbehave even with the height/overflow
+// contract above — `min-height: 0` (the classic flex/grid item refusing to
+// shrink below its own unconstrained content size, which can defeat
+// `max-height` entirely in some layouts), `touch-action: pan-y` (vertical
+// touch scrolling as an explicit contract, not an inherited default that a
+// parent could override), and `overflow-x: hidden` (no horizontal scrollbar
+// however long a name/ETA string gets).
+check("the scroll pane cannot be starved by grid/flex auto-sizing, scrolls by touch, and never grows sideways",
+  /min-height:\s*0\b/.test(zoneScrollRule) &&
+  /touch-action:\s*pan-y\b/.test(zoneScrollRule) &&
+  /overflow-x:\s*hidden\b/.test(zoneScrollRule));
 clickEl(testid("v2-place-order"));
 await waitFor(() => orders().length === 3 && Boolean(testid("v2-order-number")) &&
   Boolean(testid("v2-order-details")), { label: "settled delivery/COD receipt" });

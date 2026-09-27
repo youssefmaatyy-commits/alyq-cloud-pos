@@ -1735,6 +1735,37 @@ test("a configured Website Settings logo always wins the header, and the wordmar
   assert.equal(desktopOnly.mobileLogoUrl, "https://cdn.example.com/logo.png");
 });
 
+// Issue C (2nd follow-up round): manual preview testing reported the logo
+// STILL not rendering after the round above was added, so this pins the
+// FULL live pipeline end to end, not just the appearance adapter in
+// isolation — admin save (`sanitizeSettings`), the bundled-asset rewrite
+// every save runs through (`settingsForRemoteSave`), and a fresh anonymous
+// visitor's read (`resolveSettings`, exactly what `readSettingsRow()` does
+// with whatever `select("*")` returns) — before the result ever reaches
+// `adaptV2Appearance`. A field-name drift or an over-eager rewrite at ANY
+// of those stops would still show up as a wordmark instead of the image;
+// this only passes if every stop preserves the exact URL the admin saved.
+test("a real logo URL survives save → remote-save rewrite → a fresh visitor's read → the header adapter", () => {
+  const url = "https://project-ref.supabase.co/storage/v1/object/public/product-images/website/real-logo.png";
+  const draft = settings({ images: { ...DEFAULT_WEBSITE_SETTINGS.images, logo_url: url } });
+
+  const savedByAdmin = sanitizeSettings(draft);
+  assert.equal(savedByAdmin.images.logo_url, url, "the admin's own save validates the real URL through unchanged");
+
+  const writtenToDb = settingsForRemoteSave(savedByAdmin, "https://shop.example.com");
+  assert.equal(writtenToDb.images.logo_url, url,
+    "the bundled-asset (/brand/…) rewrite only ever touches bundled paths, never a real uploaded URL");
+
+  // What an anonymous visitor's `readSettingsRow()` does with the row it
+  // gets back — `resolveSettings(row?.settings ?? null)` — is exactly this.
+  const freshVisitorRead = resolveSettings(writtenToDb);
+  assert.equal(freshVisitorRead.images.logo_url, url, "a fresh, unrelated read still has the real logo URL");
+
+  const appearance = adaptV2Appearance(freshVisitorRead);
+  assert.equal(appearance.headerLogoUrl, url, "the header adapter receives the exact URL the admin configured");
+  assert.equal(appearance.mobileLogoUrl, url, "and it serves mobile too, with no separate mobile slot configured");
+});
+
 // ── SEO ─────────────────────────────────────────────────────────────────────
 
 test("slugs are ASCII, so an Arabic product name still gets a usable URL", () => {

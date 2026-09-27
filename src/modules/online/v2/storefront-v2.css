@@ -510,14 +510,21 @@
 .store-v2 :is(.v2-zone, .v2-address-option) input { width: 18px; height: 18px; margin-top: 2px; flex: none; accent-color: var(--v2-surface-text); }
 .store-v2 :is(.v2-zone, .v2-address-option) span { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
 .store-v2 :is(.v2-zone, .v2-address-option) small { color: var(--v2-surface-muted); font-size: 11px; }
-/* Issue #7: only the zone rows get a bounded, scrollable pane — a shop with a
-   long governorate/zone list no longer pushes the whole checkout (and the
-   Place order button) far down the page. The legend and validation error
-   stay outside this pane so they're always visible. Pricing/eligibility
-   logic is untouched; this is presentation only. Rows keep a touch-sized
-   44px+ target and the pane scrolls independently of the page on mobile. */
-.store-v2 .v2-zone-scroll { display: grid; gap: 8px; max-height: min(46vh, 340px); overflow-y: auto;
-  overscroll-behavior: contain; -webkit-overflow-scrolling: touch; scrollbar-width: thin; padding-inline-end: 4px; }
+/* Issue #7 / #B (follow-up): only the zone rows get a bounded, scrollable
+   pane — a shop with a long governorate/zone list no longer pushes the
+   whole checkout (and the Place order button) far down the page. The
+   legend and validation error stay outside this pane so they're always
+   visible. Pricing/eligibility logic is untouched; this is presentation
+   only. Rows keep a touch-sized 44px+ target; `min-height: 0` stops this
+   grid item from refusing to shrink below its unconstrained content size
+   (the classic flex/grid gotcha that can defeat `max-height` in some
+   layouts); `touch-action: pan-y` makes vertical touch scrolling an
+   explicit contract rather than an inherited default; `overflow-x: hidden`
+   is the belt to `overflow-wrap: anywhere`'s braces against a horizontal
+   scrollbar. The pane scrolls independently of the page on mobile. */
+.store-v2 .v2-zone-scroll { display: grid; gap: 8px; max-height: min(46vh, 340px); min-height: 0; overflow-y: auto;
+  overflow-x: hidden; overscroll-behavior: contain; touch-action: pan-y; -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin; padding-inline-end: 4px; }
 .store-v2 .v2-zone { min-height: 44px; scroll-margin-block: 6px; transition: border-color .15s ease, box-shadow .15s ease; }
 .store-v2 .v2-zone[data-selected="true"] { border-width: 2px; border-color: var(--v2-accent);
   box-shadow: inset 0 0 0 1px var(--v2-accent); }

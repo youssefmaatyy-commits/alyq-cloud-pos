@@ -48,6 +48,15 @@ export function DeliveryZonesPage() {
   const [busy, setBusy] = useState(false);
   const [draft, setDraft] = useState<DeliveryZone | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<DeliveryZone | null>(null);
+  // Manual live-preview reports of a save failing could only ever be answered
+  // with "check the browser console" — useless to someone who does not have
+  // DevTools open, and the reason Issue #2's root cause stayed unconfirmed
+  // across two rounds. This is shown ONLY on this admin, `manage_website`-
+  // gated screen (never the storefront), so the raw SQLSTATE/message is safe
+  // to put in front of the person who can act on it or paste it back.
+  const [saveError, setSaveError] = useState<{ code: OnlineErrorCode; message: string; serverCode: string | null } | null>(
+    null,
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -69,6 +78,7 @@ export function DeliveryZonesPage() {
   const save = async () => {
     if (!draft) return;
     setBusy(true);
+    setSaveError(null);
     try {
       const saved = await repository.saveDeliveryZone(draft);
       setZones((current) => {
@@ -89,12 +99,14 @@ export function DeliveryZonesPage() {
       // custom role that has drifted out of sync with the server's own
       // `manage_website` check (0049's `delivery_zones_update_managers`).
       const normalized = toAdminWriteError(caught);
-      // The admin only ever sees the friendly `online.error.<code>` text (never
-      // raw SQL or a stringified object) — but when the database itself
-      // rejected the write (a constraint, a stale schema, a permission gap)
-      // the actual SQLSTATE/message/hint is what an operator needs to tell a
-      // real defect from a stale cache. Same pattern as the storefront's own
-      // order-placement failure log.
+      // The admin only ever sees the friendly `online.error.<code>` text in
+      // the toast (never raw SQL or a stringified object there) — but when
+      // the database itself rejected the write (a constraint, a stale
+      // schema, a permission gap) the actual SQLSTATE/message/hint is what
+      // an operator needs to tell a real defect from a stale cache. Logged
+      // AND rendered inline in this admin-only modal (never the storefront):
+      // a live-preview report of "it still fails" is otherwise unanswerable
+      // without someone's DevTools open at the same time.
       const described = describeThrown(caught);
       console.error("[online.zones] save failed", {
         code: normalized.code,
@@ -102,6 +114,7 @@ export function DeliveryZonesPage() {
         details: described.details ?? normalized.detail,
         hint: described.hint,
       });
+      setSaveError({ code: normalized.code, message: described.message, serverCode: described.code });
       toast.error(t(`online.error.${normalized.code}`));
     } finally {
       setBusy(false);
@@ -156,7 +169,8 @@ export function DeliveryZonesPage() {
         actions={
           <Button
             data-testid="zone-new"
-            onClick={() =>
+            onClick={() => {
+              setSaveError(null);
               setDraft({
                 id: "",
                 key: "",
@@ -173,8 +187,8 @@ export function DeliveryZonesPage() {
                 sort_order: zones.length * 10,
                 created_at: new Date().toISOString(),
                 updated_at: new Date().toISOString(),
-              })
-            }
+              });
+            }}
           >
             {t("online.zones.new")}
           </Button>
@@ -247,7 +261,7 @@ export function DeliveryZonesPage() {
                   </td>
                   <td className="px-4 py-3 text-end">
                     <div className="flex shrink-0 items-center justify-end gap-2">
-                      <Button size="sm" variant="secondary" onClick={() => setDraft(zone)}>
+                      <Button size="sm" variant="secondary" onClick={() => { setSaveError(null); setDraft(zone); }}>
                         {t("common.edit")}
                       </Button>
                       <Button size="sm" variant="ghost" onClick={() => setConfirmDelete(zone)}>
@@ -264,12 +278,12 @@ export function DeliveryZonesPage() {
 
       <Modal
         open={draft !== null}
-        onClose={() => setDraft(null)}
+        onClose={() => { setDraft(null); setSaveError(null); }}
         size="lg"
         title={draft?.id ? t("online.zones.edit") : t("online.zones.new")}
         footer={
           <>
-            <Button variant="secondary" onClick={() => setDraft(null)} disabled={busy}>
+            <Button variant="secondary" onClick={() => { setDraft(null); setSaveError(null); }} disabled={busy}>
               {t("common.cancel")}
             </Button>
             <Button
@@ -285,6 +299,23 @@ export function DeliveryZonesPage() {
       >
         {draft ? (
           <div className="space-y-3">
+            {saveError ? (
+              <div
+                role="alert"
+                data-testid="zone-save-error"
+                className="rounded-lg border border-rose-300 bg-rose-50 p-3 text-xs text-rose-800"
+              >
+                <p className="font-bold">{t(`online.error.${saveError.code}`)}</p>
+                {/* This screen is gated behind `manage_website`; the raw
+                    server text is safe here (never on the storefront) and is
+                    exactly what a live-preview report needs to be actionable
+                    instead of "check the console". */}
+                <p className="mt-1 break-words font-mono text-[11px] text-rose-700">
+                  {saveError.serverCode ? `[${saveError.serverCode}] ` : ""}
+                  {saveError.message}
+                </p>
+              </div>
+            ) : null}
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label={t("online.zones.key")} required hint={t("online.zones.keyHint")}>
                 <TextInput
