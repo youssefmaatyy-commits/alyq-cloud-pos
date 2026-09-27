@@ -2244,6 +2244,9 @@ export class DemoOnlineRepository
         unit_price: line.unit_price,
         line_total: line.line_total,
         discounted_unit_price: line.discounted_unit_price,
+        promotion_id: line.promotion_id ?? null,
+        promotion_name: line.promotion_name ?? null,
+        rewarded_units: line.rewarded_units ?? 0,
       })),
     });
   }
@@ -2413,6 +2416,7 @@ export class DemoOnlineRepository
     if (mode === "coupon" && (!code || !/^[A-Z0-9_-]{2,30}$/.test(code))) {
       throw new OnlineError("db", "A valid coupon code is required for coupon mode", { field: "code" });
     }
+    const offerType = draft.offer_type ?? draft.rule_type ?? existing?.offer_type ?? existing?.rule_type ?? "standard";
     const next: Promotion = {
       id: existing?.id ?? newId("prm"),
       enabled: draft.enabled ?? existing?.enabled ?? true,
@@ -2423,6 +2427,8 @@ export class DemoOnlineRepository
       name_ar: draft.name_ar ?? existing?.name_ar ?? "",
       description_en: draft.description_en ?? existing?.description_en ?? null,
       description_ar: draft.description_ar ?? existing?.description_ar ?? null,
+      offer_type: offerType,
+      rule_type: offerType,
       discount_type: draft.discount_type ?? existing?.discount_type ?? "percent",
       value: Math.max(draft.value ?? existing?.value ?? 0, 0),
       scope,
@@ -2432,17 +2438,25 @@ export class DemoOnlineRepository
       ends_at: endsAt,
       priority: draft.priority ?? existing?.priority ?? 0,
       stackable: draft.stackable ?? existing?.stackable ?? false,
+      buy_x: draft.buy_x ?? existing?.buy_x ?? null,
+      get_y: draft.get_y ?? existing?.get_y ?? null,
+      reward_type: draft.reward_type ?? existing?.reward_type ?? "free",
+      reward_value: draft.reward_value ?? existing?.reward_value ?? null,
+      repeat_offer: draft.repeat_offer ?? existing?.repeat_offer ?? true,
+      min_quantity: draft.min_quantity ?? existing?.min_quantity ?? null,
       created_at: existing?.created_at ?? at,
       updated_at: at,
     };
     if (!next.name_en.trim() || !next.name_ar.trim()) {
       throw new OnlineError("db", "A promotion needs names in both languages", { field: "name_en" });
     }
-    if (next.discount_type === "percent" && (next.value <= 0 || next.value > 100)) {
-      throw new OnlineError("db", "Percentage discount must be between 0 and 100", { field: "value" });
-    }
-    if (next.discount_type === "fixed" && next.value <= 0) {
-      throw new OnlineError("db", "A promotion needs a positive value", { field: "value" });
+    if (offerType === "standard") {
+      if (next.discount_type === "percent" && (next.value <= 0 || next.value > 100)) {
+        throw new OnlineError("db", "Percentage discount must be between 0 and 100", { field: "value" });
+      }
+      if (next.discount_type === "fixed" && next.value <= 0) {
+        throw new OnlineError("db", "A promotion needs a positive value", { field: "value" });
+      }
     }
     this.promotions = existing
       ? this.promotions.map((promotion) => (promotion.id === next.id ? next : promotion))

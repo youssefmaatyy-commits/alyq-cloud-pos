@@ -249,6 +249,11 @@ export function ProductCard({
             >
               {stockLine}
             </p>
+            {promo.promotionName ? (
+              <p className="mt-0.5 inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700">
+                🏷️ {promo.promotionName}
+              </p>
+            ) : null}
           </div>
         ) : null}
 

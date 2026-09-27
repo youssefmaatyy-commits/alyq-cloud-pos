@@ -13,7 +13,7 @@ export function StorefrontV2Cart() {
   const { t, pick, money } = useI18n();
   const { settings, mode, loading, error, refresh } = useStorefront();
   const { entries, lines, unitCount, isEmpty, increase, decrease, remove, clear,
-    totals, problems, prunedCount, acknowledgePruned } = useStoreCart();
+    totals, problems, prunedCount, acknowledgePruned, preview } = useStoreCart();
   useEffect(() => {
     applyDocumentMeta({ title: t("store.cart.title"), description: "", noIndex: true });
     return () => clearDocumentMeta();
@@ -45,6 +45,10 @@ export function StorefrontV2Cart() {
             const variantId = entry.variant?.id ?? null;
             const key = storeLineKey(entry.product.id, variantId);
             const issue = problems.find((problem) => storeLineKey(problem.product_id, problem.variant_id) === key);
+            const linePreview = preview?.lines.find((candidate) => candidate.product_id === entry.product.id && (candidate.variant_id ?? null) === variantId);
+            const lineEffectiveTotal = linePreview ? linePreview.line_total : entry.lineTotal;
+            const lineOriginalTotal = linePreview ? linePreview.unit_price * entry.quantity : entry.listPrice * entry.quantity;
+            const hasLineDiscount = lineEffectiveTotal < lineOriginalTotal;
             const path = `/store/products/${encodeURIComponent(entry.content?.slug?.trim() || entry.product.id)}`;
             const name = pick(entry.product.name_ar, entry.product.name_en);
             return <article className="v2-cart-line" key={key} data-testid="v2-cart-line" data-variant-id={variantId ?? ""}>
@@ -59,6 +63,10 @@ export function StorefrontV2Cart() {
               </div>
                 {entry.variantLabel ? <p className="v2-cart-variant" data-testid="v2-cart-variant">
                   {entry.variantLabel} · {entry.variant?.sku}</p> : <p className="v2-small">{entry.product.sku}</p>}
+                {linePreview?.promotion_name ? <p className="v2-small font-bold text-emerald-700" style={{ color: "var(--v2-success, #059669)" }}>
+                  🏷️ {linePreview.promotion_name}
+                  {linePreview.rewarded_units && linePreview.rewarded_units > 0 ? ` · 🎁 ${t("online.promos.rewardedUnit")} (${linePreview.rewarded_units})` : ""}
+                </p> : null}
                 <V2Status available={entry.available} mode={mode} tracked={entry.product.stock_tracking_enabled} />
                 {issue ? <p className="v2-field-error" role="alert">{t("store.cart.onlyAvailable", { count: issue.available })}</p> : null}
                 <div className="v2-cart-line-bottom"><div className="v2-stepper" role="group" aria-label={`${t("store.v2.quantity")}: ${name}`}>
@@ -68,8 +76,8 @@ export function StorefrontV2Cart() {
                     disabled={entry.available !== null && entry.quantity >= entry.available}
                     aria-label={t("store.cart.increase")}>+</button>
                 </div><div className="v2-cart-line-price"><span>{money(entry.price)} × {entry.quantity}</span>
-                  <strong>{money(entry.lineTotal)}</strong>
-                  {entry.price < entry.listPrice ? <del>{money(entry.listPrice * entry.quantity)}</del> : null}
+                  <strong>{money(lineEffectiveTotal)}</strong>
+                  {hasLineDiscount ? <del>{money(lineOriginalTotal)}</del> : null}
                 </div></div>
               </div>
             </article>;

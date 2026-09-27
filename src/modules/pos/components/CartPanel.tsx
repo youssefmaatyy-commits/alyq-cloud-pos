@@ -252,11 +252,16 @@ function CartRow({
               )}
             </p>
           )}
-          {line.automatic_promotion_name && (
-            <p className="mt-0.5 inline-flex items-center gap-1 rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">
-              🏷️ {line.automatic_promotion_name}
-            </p>
-          )}
+      {line.automatic_promotion_name && (
+        <p className="mt-0.5 inline-flex items-center gap-1 rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">
+          🏷️ {line.automatic_promotion_name}
+        </p>
+      )}
+      {(line.rewarded_qty ?? 0) > 0 && (
+        <p className="mt-0.5 inline-flex items-center gap-1 rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">
+          🎁 {t("online.promos.rewardedUnit")} ({line.rewarded_qty})
+        </p>
+      )}
           <span className="mt-0.5 block truncate font-mono text-[11px] text-stone-500" dir="ltr">{line.sku}</span>
           {line.qty >= line.max_qty && (
             <p className="mt-0.5 text-[11px] font-semibold text-amber-700">

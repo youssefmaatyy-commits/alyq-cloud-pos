@@ -497,6 +497,17 @@ export type PromotionScope = "store" | "category" | "product" | "variant";
 export type PromotionChannel = "online" | "pos" | "both" | "storefront";
 export type PromotionMode = "automatic" | "coupon";
 export type PromotionStatus = "active" | "scheduled" | "paused" | "expired";
+export type PromotionOfferType = "standard" | "bxgy" | "buy_x_get_y" | "cheapest_item";
+export type PromotionRewardType = "free" | "percent" | "fixed";
+
+export interface PromotionCartLine {
+  product_id: string;
+  category_id: string | null;
+  variant_id: string | null;
+  line_total: number;
+  qty?: number;
+  unit_price?: number;
+}
 
 /**
  * An automatic (codeless) discount or coupon promotion: the storewide sale, a
@@ -517,6 +528,9 @@ export interface Promotion {
   name_ar: string;
   description_en: string | null;
   description_ar: string | null;
+  /** Offer / rule type: standard (percentage/fixed), bxgy (Buy X Get Y), cheapest_item. */
+  offer_type?: PromotionOfferType;
+  rule_type?: PromotionOfferType;
   discount_type: "percent" | "fixed";
   value: number;
   scope: PromotionScope;
@@ -533,6 +547,15 @@ export interface Promotion {
   /** Higher wins when several apply; ties break toward the larger discount. */
   priority: number;
   stackable: boolean;
+
+  /** Buy X Get Y & Cheapest item configurations */
+  buy_x?: number | null;
+  get_y?: number | null;
+  reward_type?: PromotionRewardType | null;
+  reward_value?: number | null;
+  repeat_offer?: boolean;
+  min_quantity?: number | null;
+
   created_at: string;
   updated_at: string;
 }
@@ -586,6 +609,11 @@ export interface PriceSnapshot {
   promo_code: string | null;
   promotion_id: string | null;
   promotion_name: string | null;
+  rule_type?: PromotionOfferType | string | null;
+  buy_x?: number | null;
+  get_y?: number | null;
+  reward_qty?: number | null;
+  rewarded_units?: { line_index: number; product_id: string; variant_id: string | null; unit_price: number; discount: number }[] | null;
   auto_discount: number;
   promo_discount: number;
   promo_free_shipping: boolean;

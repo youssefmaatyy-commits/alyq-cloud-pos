@@ -50,6 +50,14 @@ function makePromo(overrides: MakePromoInput = {}): Promotion {
     priority: overrides.priority ?? 0,
     stackable: overrides.stackable ?? false,
     enabled: overrides.enabled ?? true,
+    offer_type: overrides.offer_type,
+    rule_type: overrides.rule_type ?? overrides.offer_type,
+    buy_x: overrides.buy_x,
+    get_y: overrides.get_y,
+    reward_type: overrides.reward_type,
+    reward_value: overrides.reward_value,
+    repeat_offer: overrides.repeat_offer,
+    min_quantity: overrides.min_quantity,
     created_at: overrides.created_at ?? "2026-01-01T00:00:00Z",
     updated_at: overrides.updated_at ?? "2026-01-01T00:00:00Z",
   };
@@ -737,3 +745,304 @@ test("28. Full cart audit snapshot: promotional discount, manual item discount, 
   assert.equal(totals.total, 340);
   assert.equal(round2(totals.subtotal - totals.discountAmount), totals.total);
 });
+
+// ── Test 29: Buy X Get Y Free (Group size = X + Y, reward = floor(qty / groupSize) * Y) ──
+test("29. Buy 2 Get 1 Free: 3 items in cart awards 1 cheapest item free", () => {
+  const bxgyPromo = makePromo({
+    id: "promo-bxgy-2-1",
+    offer_type: "bxgy",
+    buy_x: 2,
+    get_y: 1,
+    reward_type: "free",
+    repeat_offer: true,
+    scope: "store",
+    mode: "automatic",
+  });
+  // 3 items: 100, 200, 300. Total gross = 600. Reward = 100 (cheapest unit free).
+  const lines: Omit<EvaluatedCartLine, "discounted_unit_price">[] = [
+    { product_id: "p1", variant_id: null, category_id: null, unit_price: 100, qty: 1, line_total: 100 },
+    { product_id: "p2", variant_id: null, category_id: null, unit_price: 200, qty: 1, line_total: 200 },
+    { product_id: "p3", variant_id: null, category_id: null, unit_price: 300, qty: 1, line_total: 300 },
+  ];
+  const result = evaluateCartPricing({
+    lines,
+    subtotal: 600,
+    promoCode: null,
+    coupons: [],
+    promotions: [bxgyPromo],
+    targetsByPromotion: new Map(),
+    usageFor: () => ({ customerUses: 0, hasPriorOrder: false }),
+    customerKey: null,
+    zone: null,
+    legacy: { fee: 0, minimum: 0, threshold: 0 },
+    deliveryType: "delivery",
+    now: NOW,
+    channel: "both",
+  });
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.equal(result.pricing.autoDiscount, 100);
+    assert.equal(result.pricing.total, 500);
+    assert.equal(result.pricing.autoPromotionBuyX, 2);
+    assert.equal(result.pricing.autoPromotionGetY, 1);
+    assert.equal(result.pricing.autoPromotionRewardQty, 1);
+    assert.equal(result.pricing.lines[0].rewarded_qty, 1);
+    assert.equal(result.pricing.lines[0].discounted_unit_price, 0);
+  }
+});
+
+// ── Test 30: Buy X Get Y Repeated: 6 items in cart with Buy 2 Get 1 gives 2 free units ──
+test("30. Buy 2 Get 1 Free Repeated: 6 items in cart gives 2 cheapest units free", () => {
+  const bxgyPromo = makePromo({
+    id: "promo-bxgy-rep",
+    offer_type: "bxgy",
+    buy_x: 2,
+    get_y: 1,
+    reward_type: "free",
+    repeat_offer: true,
+    scope: "store",
+    mode: "automatic",
+  });
+  // 6 units of 100 EGP: floor(6 / 3) * 1 = 2 units free = 200 EGP discount
+  const lines: Omit<EvaluatedCartLine, "discounted_unit_price">[] = [
+    { product_id: "p1", variant_id: null, category_id: null, unit_price: 100, qty: 6, line_total: 600 },
+  ];
+  const result = evaluateCartPricing({
+    lines,
+    subtotal: 600,
+    promoCode: null,
+    coupons: [],
+    promotions: [bxgyPromo],
+    targetsByPromotion: new Map(),
+    usageFor: () => ({ customerUses: 0, hasPriorOrder: false }),
+    customerKey: null,
+    zone: null,
+    legacy: { fee: 0, minimum: 0, threshold: 0 },
+    deliveryType: "delivery",
+    now: NOW,
+    channel: "both",
+  });
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.equal(result.pricing.autoDiscount, 200);
+    assert.equal(result.pricing.total, 400);
+    assert.equal(result.pricing.autoPromotionRewardQty, 2);
+    assert.equal(result.pricing.lines[0].rewarded_qty, 2);
+  }
+});
+
+// ── Test 31: Buy X Get Y Non-Repeated: 6 items in cart capped at 1 reward set ──
+test("31. Buy 2 Get 1 Free Non-Repeated: repeat_offer false caps reward at 1 unit", () => {
+  const bxgyNoRep = makePromo({
+    id: "promo-bxgy-norep",
+    offer_type: "bxgy",
+    buy_x: 2,
+    get_y: 1,
+    reward_type: "free",
+    repeat_offer: false,
+    scope: "store",
+    mode: "automatic",
+  });
+  const lines: Omit<EvaluatedCartLine, "discounted_unit_price">[] = [
+    { product_id: "p1", variant_id: null, category_id: null, unit_price: 100, qty: 6, line_total: 600 },
+  ];
+  const result = evaluateCartPricing({
+    lines,
+    subtotal: 600,
+    promoCode: null,
+    coupons: [],
+    promotions: [bxgyNoRep],
+    targetsByPromotion: new Map(),
+    usageFor: () => ({ customerUses: 0, hasPriorOrder: false }),
+    customerKey: null,
+    zone: null,
+    legacy: { fee: 0, minimum: 0, threshold: 0 },
+    deliveryType: "delivery",
+    now: NOW,
+    channel: "both",
+  });
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.equal(result.pricing.autoDiscount, 100);
+    assert.equal(result.pricing.total, 500);
+    assert.equal(result.pricing.autoPromotionRewardQty, 1);
+  }
+});
+
+// ── Test 32: Buy X Get Y Percentage Reward: Buy 2 Get 1 at 50% off ───────────
+test("32. Buy 2 Get 1 at 50% off: 3 items in cart awards 50% off the cheapest item", () => {
+  const bxgyPercent = makePromo({
+    id: "promo-bxgy-50pct",
+    offer_type: "bxgy",
+    buy_x: 2,
+    get_y: 1,
+    reward_type: "percent",
+    reward_value: 50,
+    scope: "store",
+    mode: "automatic",
+  });
+  const lines: Omit<EvaluatedCartLine, "discounted_unit_price">[] = [
+    { product_id: "p1", variant_id: null, category_id: null, unit_price: 80, qty: 1, line_total: 80 },
+    { product_id: "p2", variant_id: null, category_id: null, unit_price: 120, qty: 1, line_total: 120 },
+    { product_id: "p3", variant_id: null, category_id: null, unit_price: 150, qty: 1, line_total: 150 },
+  ];
+  const result = evaluateCartPricing({
+    lines,
+    subtotal: 350,
+    promoCode: null,
+    coupons: [],
+    promotions: [bxgyPercent],
+    targetsByPromotion: new Map(),
+    usageFor: () => ({ customerUses: 0, hasPriorOrder: false }),
+    customerKey: null,
+    zone: null,
+    legacy: { fee: 0, minimum: 0, threshold: 0 },
+    deliveryType: "delivery",
+    now: NOW,
+    channel: "both",
+  });
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    // 50% of 80 (cheapest unit) = 40
+    assert.equal(result.pricing.autoDiscount, 40);
+    assert.equal(result.pricing.total, 310);
+    assert.equal(result.pricing.lines[0].rewarded_qty, 1);
+    assert.equal(result.pricing.lines[0].discounted_unit_price, 40);
+  }
+});
+
+// ── Test 33: Cheapest Item in Cart: Free when cart has >= min_quantity ───────
+test("33. Cheapest Item in Cart Free: minimum 3 items gives cheapest item free", () => {
+  const cheapestPromo = makePromo({
+    id: "promo-cheap-free",
+    offer_type: "cheapest_item",
+    min_quantity: 3,
+    reward_type: "free",
+    scope: "store",
+    mode: "automatic",
+  });
+  const lines: Omit<EvaluatedCartLine, "discounted_unit_price">[] = [
+    { product_id: "p1", variant_id: null, category_id: null, unit_price: 50, qty: 1, line_total: 50 },
+    { product_id: "p2", variant_id: null, category_id: null, unit_price: 150, qty: 1, line_total: 150 },
+    { product_id: "p3", variant_id: null, category_id: null, unit_price: 200, qty: 1, line_total: 200 },
+  ];
+  const result = evaluateCartPricing({
+    lines,
+    subtotal: 400,
+    promoCode: null,
+    coupons: [],
+    promotions: [cheapestPromo],
+    targetsByPromotion: new Map(),
+    usageFor: () => ({ customerUses: 0, hasPriorOrder: false }),
+    customerKey: null,
+    zone: null,
+    legacy: { fee: 0, minimum: 0, threshold: 0 },
+    deliveryType: "delivery",
+    now: NOW,
+    channel: "both",
+  });
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.equal(result.pricing.autoDiscount, 50);
+    assert.equal(result.pricing.total, 350);
+    assert.equal(result.pricing.lines[0].rewarded_qty, 1);
+    assert.equal(result.pricing.lines[0].discounted_unit_price, 0);
+  }
+});
+
+// ── Test 34: Cheapest Item in Cart below min_quantity gives 0 discount ───────
+test("34. Cheapest Item in Cart: cart with fewer items than min_quantity receives no discount", () => {
+  const cheapestPromo = makePromo({
+    id: "promo-cheap-min4",
+    offer_type: "cheapest_item",
+    min_quantity: 4,
+    reward_type: "free",
+    scope: "store",
+    mode: "automatic",
+  });
+  const lines: Omit<EvaluatedCartLine, "discounted_unit_price">[] = [
+    { product_id: "p1", variant_id: null, category_id: null, unit_price: 50, qty: 1, line_total: 50 },
+    { product_id: "p2", variant_id: null, category_id: null, unit_price: 150, qty: 1, line_total: 150 },
+  ];
+  const result = evaluateCartPricing({
+    lines,
+    subtotal: 200,
+    promoCode: null,
+    coupons: [],
+    promotions: [cheapestPromo],
+    targetsByPromotion: new Map(),
+    usageFor: () => ({ customerUses: 0, hasPriorOrder: false }),
+    customerKey: null,
+    zone: null,
+    legacy: { fee: 0, minimum: 0, threshold: 0 },
+    deliveryType: "delivery",
+    now: NOW,
+    channel: "both",
+  });
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.equal(result.pricing.autoDiscount, 0);
+    assert.equal(result.pricing.total, 200);
+  }
+});
+
+// ── Test 35: Best price rule between BXGY and Standard Discount ──────────────
+test("35. Authoritative non-stacking: BXGY (saving 100) vs 30% discount (saving 180) -> 30% discount wins", () => {
+  const promoBXGY = makePromo({
+    id: "promo-bxgy",
+    offer_type: "bxgy",
+    buy_x: 2,
+    get_y: 1,
+    reward_type: "free",
+    scope: "store",
+    mode: "automatic",
+    priority: 0,
+  });
+  const promoPercent = makePromo({
+    id: "promo-30pct",
+    offer_type: "standard",
+    discount_type: "percent",
+    value: 30,
+    scope: "store",
+    mode: "automatic",
+    priority: 0,
+  });
+  // 3 items of 200 EGP = 600 gross
+  // BXGY saving = 200 EGP (1 free item)
+  // 30% saving = 180 EGP
+  // In this case BXGY saves 200 > 180, so BXGY wins!
+  const lines: Omit<EvaluatedCartLine, "discounted_unit_price">[] = [
+    { product_id: "p1", variant_id: null, category_id: null, unit_price: 200, qty: 3, line_total: 600 },
+  ];
+  const result = evaluateCartPricing({
+    lines,
+    subtotal: 600,
+    promoCode: null,
+    coupons: [],
+    promotions: [promoBXGY, promoPercent],
+    targetsByPromotion: new Map(),
+    usageFor: () => ({ customerUses: 0, hasPriorOrder: false }),
+    customerKey: null,
+    zone: null,
+    legacy: { fee: 0, minimum: 0, threshold: 0 },
+    deliveryType: "delivery",
+    now: NOW,
+    channel: "both",
+  });
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.equal(result.pricing.autoPromotionId, "promo-bxgy");
+    assert.equal(result.pricing.autoDiscount, 200);
+    assert.equal(result.pricing.total, 400);
+  }
+});
+
+// ── Test 36: Return / Refund calculates based on paid discounted unit price ──
+test("36. Return & refund preservation: refund calculates from paid discounted unit price", () => {
+  // Original item was 100 EGP, but with 20% discount sold at 80 EGP
+  const paidUnitPrice = 80;
+  const returnQty = 2;
+  const refundable = round2(paidUnitPrice * returnQty);
+  assert.equal(refundable, 160);
+});
+

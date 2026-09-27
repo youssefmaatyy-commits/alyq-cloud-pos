@@ -560,6 +560,16 @@ export function StoreProductPage() {
             ) : null}
           </div>
           <p className="mt-1 text-[11px] font-medium text-[var(--store-text-secondary)]">{t("store.product.taxIncluded")}</p>
+          {shelfPromo.promotionName ? (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-1 rounded bg-emerald-50 px-2.5 py-1 text-xs font-bold text-emerald-800 border border-emerald-200">
+                🏷️ {shelfPromo.promotionName}
+                {(shelfPromo.offerType === "buy_x_get_y" || shelfPromo.offerType === "bxgy") && shelfPromo.buy_x && shelfPromo.get_y
+                  ? ` (${shelfPromo.buy_x} + ${shelfPromo.get_y})`
+                  : ""}
+              </span>
+            </div>
+          ) : null}
 
           {/* The combination's own selector, before any buying control: colour
               first, then that colour's NUMERIC sizes (16 → 16.5 → 17), each

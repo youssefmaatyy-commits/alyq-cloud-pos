@@ -11,7 +11,7 @@ import { getDemoRepository } from "@/modules/products/data/demoRepository";
 import { applyDemoAdjustment } from "@/modules/inventory/data/demoRepository";
 import { variantCost, variantLabel } from "@/modules/products/variants";
 import { getWebsiteRepository } from "@/modules/online/data";
-import { promotionUnitPrice } from "@/modules/online/services/pricing";
+import { selectAutomaticPromotion } from "@/modules/online/services/pricing";
 import { getDemoShiftRepository } from "@/modules/shifts/data/demoRepository";
 import { safeStorage } from "@/modules/products/data/demoSeed";
 import { cartTotals, lineTotals, round2, validateDiscount } from "../services/posMath";
@@ -190,25 +190,6 @@ export class DemoSalesRepository implements SalesRepository {
         }
 
         const officialUnit = unit;
-        const promotion = promotionSnapshot
-          ? promotionUnitPrice(
-              product.id,
-              variant?.id ?? null,
-              product.category_id ?? null,
-              officialUnit,
-              promotionSnapshot.promotions,
-              promotionTargets,
-              new Date(),
-              "pos",
-            )
-          : { unit: officialUnit, promotionId: null, promotionName: null };
-        unit = promotion.unit;
-        const automaticDiscount = round2(Math.max(0, officialUnit - unit) * qty);
-        const promotionName =
-          promotion.promotionName ??
-          (promotion.promotionId
-            ? promotionSnapshot?.promotions.find((entry) => entry.id === promotion.promotionId)?.name_en ?? null
-            : null);
         const itemDiscount = {
           type: line.discount_type ?? "none",
           value: Number(line.discount_value ?? 0),
@@ -216,7 +197,7 @@ export class DemoSalesRepository implements SalesRepository {
         if (validateDiscount(itemDiscount.type, itemDiscount.value)) {
           throw new AppError("VALIDATION", "Invalid item discount", "discount");
         }
-        const calculated = lineTotals({ unit_price: unit, qty, base_price: officialUnit, item_discount: itemDiscount });
+        const gross = round2(officialUnit * qty);
         items.push({
           id: `sli-${items.length}-${Date.now()}`,
           sale_id: "pending",
@@ -230,18 +211,77 @@ export class DemoSalesRepository implements SalesRepository {
           name_en: product.name_en,
           sku: variant?.sku ?? product.sku,
           barcode: variant?.barcode ?? product.barcode,
-          unit_price: unit,
+          unit_price: officialUnit,
           quantity: qty,
-          gross_total: calculated.gross,
-          line_total: calculated.net,
+          gross_total: gross,
+          line_total: gross,
           discount_type: itemDiscount.type,
           discount_value: itemDiscount.value,
-          discount_amount: calculated.manualDiscount,
-          automatic_promotion_id: promotion.promotionId,
-          automatic_promotion_name: promotionName,
-          automatic_discount_amount: automaticDiscount,
+          discount_amount: 0,
+          automatic_promotion_id: null,
+          automatic_promotion_name: null,
+          automatic_discount_amount: 0,
+          rewarded_qty: 0,
+          promotion_rule_type: null,
           unit_cost: round2(variant ? variantCost(variant, product) : Number(product.cost_price ?? 0)),
         });
+      }
+
+      // Recalculate automatic promotions across the entire cart
+      let autoPromoResult: any = null;
+      if (promotionSnapshot) {
+        const subtotalGross = round2(items.reduce((sum, item) => sum + (item.gross_total ?? 0), 0));
+        const pricingLines = items.map((item) => {
+          const prod = fresh.find((p) => p.id === item.product_id);
+          const official = (item.gross_total ?? 0) / item.quantity;
+          return {
+            product_id: item.product_id,
+            category_id: prod?.category_id ?? null,
+            variant_id: item.variant_id,
+            qty: item.quantity,
+            unit_price: official,
+            line_total: item.gross_total ?? 0,
+          };
+        });
+        autoPromoResult = selectAutomaticPromotion(
+          promotionSnapshot.promotions,
+          promotionTargets,
+          pricingLines,
+          subtotalGross,
+          new Date(),
+          "pos",
+        );
+      }
+
+      for (let idx = 0; idx < items.length; idx++) {
+        const item = items[idx];
+        const official = (item.gross_total ?? 0) / item.quantity;
+        let lineDisc = 0;
+        let rewardedQty = 0;
+        if (autoPromoResult && autoPromoResult.discount > 0) {
+          lineDisc = autoPromoResult.evaluation
+            ? (autoPromoResult.evaluation.lineDiscounts[idx] ?? 0)
+            : round2((autoPromoResult.discount * (item.gross_total ?? 0)) / items.reduce((s, it) => s + (it.gross_total ?? 0), 0));
+          rewardedQty = autoPromoResult.evaluation?.lineRewardedQty?.[idx] ?? 0;
+          item.automatic_promotion_id = autoPromoResult.promotion.id;
+          item.automatic_promotion_name = autoPromoResult.promotion.name_en || autoPromoResult.promotion.name_ar;
+          item.automatic_discount_amount = lineDisc;
+          item.rewarded_qty = rewardedQty;
+          item.promotion_rule_type = autoPromoResult.promotion.offer_type ?? autoPromoResult.promotion.rule_type ?? "standard";
+        }
+        item.unit_price = round2(Math.max((item.gross_total ?? 0) - lineDisc, 0) / item.quantity);
+        const itemDiscount = {
+          type: item.discount_type ?? "none",
+          value: Number(item.discount_value ?? 0),
+        } as const;
+        const calculated = lineTotals({
+          unit_price: item.unit_price,
+          qty: item.quantity,
+          base_price: official,
+          item_discount: itemDiscount,
+        });
+        item.line_total = calculated.net;
+        item.discount_amount = calculated.manualDiscount;
       }
 
       // ── authoritative totals: recomputed from catalog prices ──
@@ -339,8 +379,13 @@ export class DemoSalesRepository implements SalesRepository {
         item_discount_amount: totals.itemDiscountAmount,
         total_discount_amount: round2(totals.discountAmount + items.reduce((sum, item) => sum + (item.automatic_discount_amount ?? 0), 0)),
         automatic_discount_amount: round2(items.reduce((sum, item) => sum + (item.automatic_discount_amount ?? 0), 0)),
-        automatic_promotion_id: items.find((item) => item.automatic_promotion_id)?.automatic_promotion_id ?? null,
-        automatic_promotion_name: items.find((item) => item.automatic_promotion_name)?.automatic_promotion_name ?? null,
+        automatic_promotion_id: autoPromoResult?.promotion.id ?? items.find((item) => item.automatic_promotion_id)?.automatic_promotion_id ?? null,
+        automatic_promotion_name: (autoPromoResult ? (autoPromoResult.promotion.name_en || autoPromoResult.promotion.name_ar) : null) ?? items.find((item) => item.automatic_promotion_name)?.automatic_promotion_name ?? null,
+        promotion_rule_type: autoPromoResult?.promotion.offer_type ?? autoPromoResult?.promotion.rule_type ?? null,
+        promotion_buy_x: autoPromoResult?.promotion.buy_x ?? null,
+        promotion_get_y: autoPromoResult?.promotion.get_y ?? null,
+        promotion_reward_qty: autoPromoResult?.evaluation?.reward_qty ?? null,
+        promotion_rewarded_units: autoPromoResult?.evaluation?.rewardedUnits ?? null,
         total: totals.total,
         amount_received: amountReceived,
         change,

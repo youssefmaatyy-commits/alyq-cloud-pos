@@ -546,6 +546,9 @@ export interface PricingPreviewLine {
   unit_price: number;
   line_total: number;
   discounted_unit_price: number;
+  promotion_id?: string | null;
+  promotion_name?: string | null;
+  rewarded_units?: number;
 }
 
 export interface PricingPreview {
