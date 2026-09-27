@@ -2044,41 +2044,14 @@ begin
     v_winning_reward_qty
   ) returning id, order_number into v_order_id, v_order_number;
 
-  -- 6. Atomic increment of coupon used count if promo code applied
+  -- 6. Coupon customer tracking (recorded for customer limit checks; total used_count is consumed upon order approval)
   if (v_core->>'promo_code') is not null
      and (((v_core->>'promo_discount')::numeric > 0)
           or coalesce((v_core->>'promo_free_shipping')::boolean, false)) then
-    if v_coupon_promo_id is not null then
-      update public.promotions
-      set used_count = used_count + 1, updated_at = now()
-      where id = v_coupon_promo_id
-        and (usage_limit is null or used_count < usage_limit);
-
-      if not found then
-        raise exception 'Coupon % has been fully used', v_coupon_code using errcode = 'check_violation';
-      end if;
-    else
-      update public.coupons
-      set used_count = used_count + 1, updated_at = now()
-      where code = (v_core->>'promo_code')
-        and (usage_limit is null or used_count < usage_limit);
-
-      if not found then
-        raise exception 'Coupon % has been fully used', v_coupon_code using errcode = 'check_violation';
-      end if;
-
-      insert into public.promo_code_usages (coupon_id, order_id, customer_key)
-      select c.id, v_order_id, v_customer_key
-      from public.coupons c where c.code = (v_core->>'promo_code');
-    end if;
-  end if;
-
-  -- Increment automatic promotion used count if applied
-  if v_auto_promo_id is not null and (v_core->>'auto_discount')::numeric > 0 then
-    update public.promotions
-    set used_count = used_count + 1, updated_at = now()
-    where id = v_auto_promo_id
-      and (usage_limit is null or used_count < usage_limit);
+    insert into public.promo_code_usages (coupon_id, order_id, customer_key)
+    select c.id, v_order_id, v_customer_key
+    from public.coupons c where c.code = (v_core->>'promo_code')
+    on conflict do nothing;
   end if;
 
   -- 7. Line items snapshots + reservations
@@ -2339,6 +2312,42 @@ begin
     set status = 'converted'::public.reservation_status, resolved_at = now()
     where online_order_id = v_order.id and status = 'reserved';
 
+    -- Atomic consumption of coupon usage upon approval
+    if v_order.discount_code is not null then
+      update public.promotions
+      set used_count = used_count + 1, updated_at = now()
+      where mode = 'coupon'
+        and upper(regexp_replace(btrim(code), '\s+', '', 'g')) = upper(regexp_replace(btrim(v_order.discount_code), '\s+', '', 'g'))
+        and (usage_limit is null or used_count < usage_limit);
+
+      if not found and exists (
+        select 1 from public.promotions
+        where mode = 'coupon'
+          and upper(regexp_replace(btrim(code), '\s+', '', 'g')) = upper(regexp_replace(btrim(v_order.discount_code), '\s+', '', 'g'))
+          and usage_limit is not null and used_count >= usage_limit
+      ) then
+        raise exception 'Coupon % has already reached its usage limit', v_order.discount_code
+          using errcode = 'check_violation';
+      end if;
+
+      update public.coupons
+      set used_count = used_count + 1, updated_at = now()
+      where code = v_order.discount_code
+        and (usage_limit is null or used_count < usage_limit);
+
+      insert into public.promo_code_usages (coupon_id, order_id, customer_key)
+      select c.id, v_order.id, v_order.customer_phone
+      from public.coupons c where c.code = v_order.discount_code
+      on conflict do nothing;
+    end if;
+
+    if v_order.automatic_promotion_id is not null then
+      update public.promotions
+      set used_count = used_count + 1, updated_at = now()
+      where id = v_order.automatic_promotion_id
+        and (usage_limit is null or used_count < usage_limit);
+    end if;
+
     update public.online_orders
     set status = 'approved'::public.online_order_status,
         sale_id = (v_result->>'sale_id')::uuid,
@@ -2395,22 +2404,27 @@ begin
     set status = 'released'::public.reservation_status, resolved_at = now()
     where online_order_id = v_order.id and status = 'reserved';
 
-    -- Safe coupon & promotion lifecycle: release consumed count
-    if v_order.discount_code is not null then
-      update public.promotions
-      set used_count = greatest(0, used_count - 1), updated_at = now()
-      where mode = 'coupon'
-        and upper(regexp_replace(btrim(code), '\s+', '', 'g')) = upper(regexp_replace(btrim(v_order.discount_code), '\s+', '', 'g'));
+    -- Safe coupon & promotion lifecycle: release consumed count ONLY if the order was approved
+    if v_order.status = 'approved' or v_order.sale_id is not null then
+      if v_order.discount_code is not null then
+        update public.promotions
+        set used_count = greatest(0, used_count - 1), updated_at = now()
+        where mode = 'coupon'
+          and upper(regexp_replace(btrim(code), '\s+', '', 'g')) = upper(regexp_replace(btrim(v_order.discount_code), '\s+', '', 'g'));
 
-      update public.coupons
-      set used_count = greatest(0, used_count - 1), updated_at = now()
-      where code = v_order.discount_code;
-    end if;
+        update public.coupons
+        set used_count = greatest(0, used_count - 1), updated_at = now()
+        where code = v_order.discount_code;
 
-    if v_order.automatic_promotion_id is not null then
-      update public.promotions
-      set used_count = greatest(0, used_count - 1), updated_at = now()
-      where id = v_order.automatic_promotion_id;
+        delete from public.promo_code_usages
+        where order_id = v_order.id;
+      end if;
+
+      if v_order.automatic_promotion_id is not null then
+        update public.promotions
+        set used_count = greatest(0, used_count - 1), updated_at = now()
+        where id = v_order.automatic_promotion_id;
+      end if;
     end if;
 
     update public.online_orders

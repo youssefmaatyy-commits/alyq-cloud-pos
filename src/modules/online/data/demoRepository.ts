@@ -1304,53 +1304,8 @@ export class DemoOnlineRepository
         });
       }
 
-      // A code that actually lowered the order (or waived its shipping)
-      // consumes one use — and one history row keyed to this order. A code
-      // that lost the stacking contest consumes nothing. Cancelling gives the
-      // count back; the history row stays and is excluded by filter.
-      if (
-        pricing.promoCode &&
-        (pricing.promoDiscount > 0 || pricing.promoFreeShipping)
-      ) {
-        const usedPromo = this.promotions.find(
-          (p) => p.mode === "coupon" && p.code && normalizeCouponCode(p.code) === pricing.promoCode,
-        );
-        if (usedPromo) {
-          this.promotions = this.promotions.map((p) =>
-            p.id === usedPromo.id
-              ? { ...p, used_count: (p.used_count ?? 0) + 1, updated_at: at }
-              : p,
-          );
-          write(KEYS.promotions, this.promotions);
-        }
-        const used = this.coupons.find((candidate) => candidate.code === pricing.promoCode);
-        if (used) {
-          this.coupons = this.coupons.map((candidate) =>
-            candidate.id === used.id
-              ? { ...candidate, used_count: candidate.used_count + 1, updated_at: at }
-              : candidate,
-          );
-          write(KEYS.coupons, this.coupons);
-        }
-        if (used && customerKey) {
-          this.promoUsages.push({
-            id: newId("pus"),
-            coupon_id: used.id,
-            order_id: orderId,
-            customer_key: customerKey,
-            used_at: at,
-          });
-          write(KEYS.promoUsages, this.promoUsages);
-        }
-      }
-      if (pricing.autoPromotionId && pricing.autoDiscount > 0) {
-        this.promotions = this.promotions.map((p) =>
-          p.id === pricing.autoPromotionId
-            ? { ...p, used_count: (p.used_count ?? 0) + 1, updated_at: at }
-            : p,
-        );
-        write(KEYS.promotions, this.promotions);
-      }
+      // 6. Coupon & promo tracking: Pending orders do NOT consume usage_limit.
+      // Usage is consumed atomically upon order approval/confirmation (in resolveOrder).
 
       this.orders.push(order);
       this.persistOrders();
@@ -1584,6 +1539,55 @@ export class DemoOnlineRepository
               : reservation,
           );
 
+          // Atomic consumption of coupon & promo usage upon approval
+          if (order.discount_code) {
+            const normalized = normalizeCouponCode(order.discount_code);
+            const usedPromo = this.promotions.find(
+              (p) => p.mode === "coupon" && p.code && normalizeCouponCode(p.code) === normalized,
+            );
+            if (usedPromo) {
+              if (usedPromo.usage_limit != null && (usedPromo.used_count ?? 0) >= usedPromo.usage_limit) {
+                throw new Error(`Coupon ${order.discount_code} has reached its usage limit`);
+              }
+              this.promotions = this.promotions.map((p) =>
+                p.id === usedPromo.id
+                  ? { ...p, used_count: (p.used_count ?? 0) + 1, updated_at: at }
+                  : p,
+              );
+              write(KEYS.promotions, this.promotions);
+            }
+            const used = this.coupons.find((candidate) => candidate.code === order.discount_code);
+            if (used) {
+              if (used.usage_limit != null && used.used_count >= used.usage_limit) {
+                throw new Error(`Coupon ${order.discount_code} has reached its usage limit`);
+              }
+              this.coupons = this.coupons.map((candidate) =>
+                candidate.id === used.id
+                  ? { ...candidate, used_count: candidate.used_count + 1, updated_at: at }
+                  : candidate,
+              );
+              write(KEYS.coupons, this.coupons);
+              if (order.customer_phone) {
+                this.promoUsages.push({
+                  id: newId("pus"),
+                  coupon_id: used.id,
+                  order_id: order.id,
+                  customer_key: order.customer_phone,
+                  used_at: at,
+                });
+                write(KEYS.promoUsages, this.promoUsages);
+              }
+            }
+          }
+          if (order.promotion_id) {
+            this.promotions = this.promotions.map((p) =>
+              p.id === order.promotion_id
+                ? { ...p, used_count: (p.used_count ?? 0) + 1, updated_at: at }
+                : p,
+            );
+            write(KEYS.promotions, this.promotions);
+          }
+
           next = {
             ...next,
             status: "approved",
@@ -1614,7 +1618,8 @@ export class DemoOnlineRepository
             });
           }
 
-          if (order.discount_code) {
+          // Safe coupon & promotion lifecycle: release consumed count ONLY if order was approved
+          if ((order.status === "approved" || order.sale_id) && order.discount_code) {
             const normalized = normalizeCouponCode(order.discount_code);
             this.promotions = this.promotions.map((p) =>
               p.mode === "coupon" && p.code && normalizeCouponCode(p.code) === normalized
@@ -1633,6 +1638,18 @@ export class DemoOnlineRepository
                 : coupon,
             );
             write(KEYS.coupons, this.coupons);
+
+            this.promoUsages = this.promoUsages.filter((u) => u.order_id !== order.id);
+            write(KEYS.promoUsages, this.promoUsages);
+          }
+
+          if ((order.status === "approved" || order.sale_id) && order.promotion_id) {
+            this.promotions = this.promotions.map((p) =>
+              p.id === order.promotion_id
+                ? { ...p, used_count: Math.max((p.used_count ?? 0) - 1, 0), updated_at: at }
+                : p,
+            );
+            write(KEYS.promotions, this.promotions);
           }
 
           next = {

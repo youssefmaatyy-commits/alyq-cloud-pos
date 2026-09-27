@@ -1310,9 +1310,9 @@ begin
   if v_facts->>'discount_code' <> 'SCN-CHK10' then
     raise exception 'the order did not record the code it was priced with (%)', v_facts->>'discount_code';
   end if;
-  if pg_temp.scn_coupon_used('SCN-CHK10') <> v_used + 1 then
-    raise exception 'the coupon usage counter moved by % instead of 1',
-      pg_temp.scn_coupon_used('SCN-CHK10') - v_used;
+  if pg_temp.scn_coupon_used('SCN-CHK10') <> v_used then
+    raise exception 'the coupon usage counter moved at pending checkout (% instead of %)',
+      pg_temp.scn_coupon_used('SCN-CHK10'), v_used;
   end if;
 
   -- K. every accepted order carries its lines and its hold, and only its own
@@ -6034,13 +6034,18 @@ begin
     'coupon_code', 'SCN-NOPE',
     'payment_method', 'cod'), 'is not valid');
 
-  -- 7. a usage limit of one: the second checkout is refused.
+  -- 7. a usage limit of one: when approved, the second checkout is refused.
   v_result := public.place_online_order(jsonb_build_object(
     'client_ref', 'scn-p50-c7a', 'customer_name', 'C', 'customer_phone', '0520000005',
     'delivery_type', 'pickup', 'address', '{}'::jsonb,
     'lines', jsonb_build_array(jsonb_build_object('product_id', v_goods::text, 'qty', 10)),
     'coupon_code', 'SCN-P50-ONE',
     'payment_method', 'cod'));
+  perform pg_temp.become(v_admin, 'authenticated');
+  perform public.resolve_online_order(jsonb_build_object(
+    'order_id', (v_result->>'order_id')::text, 'action', 'approve',
+    'user_id', v_admin::text, 'user_name', 'Amina Admin'));
+  perform pg_temp.become(null, 'anon');
   perform pg_temp.scn_expect_refusal(jsonb_build_object(
     'client_ref', 'scn-p50-c7b', 'customer_name', 'C', 'customer_phone', '0520000006',
     'delivery_type', 'pickup', 'address', '{}'::jsonb,

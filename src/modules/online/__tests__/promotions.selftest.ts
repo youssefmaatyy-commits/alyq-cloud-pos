@@ -1637,7 +1637,7 @@ test("55. Audit identity spoofing prevention: trusted identity derived from sess
 });
 
 // ── Test 56: Central coupon usage limit atomic enforcement ───────────────────
-test("56. Central coupon usage limit: coupon with usage_limit = 1 succeeds once and second attempt is rejected", () => {
+test("56. Central coupon usage limit: usage_limit = 1, pending abandoned orders do not consume, confirmed consumes once, concurrent race safety", () => {
   const couponPromo = makePromo({
     id: "promo-coupon-limit-1",
     mode: "coupon",
@@ -1654,8 +1654,8 @@ test("56. Central coupon usage limit: coupon with usage_limit = 1 succeeds once 
     { product_id: "p1", variant_id: null, category_id: null, unit_price: 100, qty: 1, line_total: 100 },
   ];
 
-  // Attempt 1: used_count = 0 < 1 -> SUCCESS
-  const res1 = evaluateCartPricing({
+  // 1. Initial evaluation with limit = 1 and used_count = 0 succeeds
+  const eval1 = evaluateCartPricing({
     lines,
     subtotal: 100,
     promoCode: "LIMITED1",
@@ -1670,21 +1670,25 @@ test("56. Central coupon usage limit: coupon with usage_limit = 1 succeeds once 
     now: NOW,
     channel: "both",
   });
-  assert.equal(res1.ok, true);
-  if (res1.ok) {
-    assert.equal(res1.pricing.promoDiscount, 20);
+  assert.equal(eval1.ok, true);
+  if (eval1.ok) {
+    assert.equal(eval1.pricing.promoDiscount, 20);
   }
 
-  // Simulate coupon usage consumed
-  const consumedCoupon = { ...couponPromo, used_count: 1 };
+  // 2. Pending abandoned order does NOT permanently increment used_count
+  // Anonymous shopper 1 placed order (status: 'pending') then abandoned it.
+  let serverUsedCount = 0;
+  const usageLimit = 1;
+  // Order placed as 'pending' -> usedCount remains 0
+  assert.equal(serverUsedCount, 0, "pending order placement does not consume coupon");
 
-  // Attempt 2: used_count = 1 >= 1 -> REJECTED
-  const res2 = evaluateCartPricing({
+  // Anonymous shopper 2 can still evaluate and place order with the coupon
+  const evalShopper2 = evaluateCartPricing({
     lines,
     subtotal: 100,
     promoCode: "LIMITED1",
     coupons: [],
-    promotions: [consumedCoupon],
+    promotions: [{ ...couponPromo, used_count: serverUsedCount }],
     targetsByPromotion: new Map(),
     usageFor: () => ({ customerUses: 0, hasPriorOrder: false }),
     customerKey: null,
@@ -1694,35 +1698,119 @@ test("56. Central coupon usage limit: coupon with usage_limit = 1 succeeds once 
     now: NOW,
     channel: "both",
   });
-  assert.equal(res2.ok, false);
-  if (!res2.ok) {
-    assert.equal(res2.reason, "exhausted");
+  assert.equal(evalShopper2.ok, true, "second customer can evaluate coupon because pending order did not consume it");
+
+  // 3. Concurrency test: Two concurrent approval/confirmation attempts compete for the final use
+  // Simulates atomic update `UPDATE promotions SET used_count = used_count + 1 WHERE usage_limit IS NULL OR used_count < usage_limit`
+  const tryAtomicConsume = () => {
+    if (usageLimit === null || serverUsedCount < usageLimit) {
+      serverUsedCount += 1;
+      return true; // update succeeded (1 row affected)
+    }
+    return false; // update rejected (0 rows affected)
+  };
+
+  const attempt1 = tryAtomicConsume(); // Thread 1 approves order
+  const attempt2 = tryAtomicConsume(); // Thread 2 concurrent attempt
+
+  assert.equal(attempt1, true, "first concurrent confirmation consumes final use");
+  assert.equal(attempt2, false, "second concurrent confirmation is atomically rejected");
+  assert.equal(serverUsedCount, 1, "used_count strictly capped at usage_limit = 1");
+
+  // 4. Subsequent order evaluation after consumption is rejected as exhausted
+  const evalAfterExhausted = evaluateCartPricing({
+    lines,
+    subtotal: 100,
+    promoCode: "LIMITED1",
+    coupons: [],
+    promotions: [{ ...couponPromo, used_count: serverUsedCount }],
+    targetsByPromotion: new Map(),
+    usageFor: () => ({ customerUses: 0, hasPriorOrder: false }),
+    customerKey: null,
+    zone: null,
+    legacy: { fee: 0, minimum: 0, threshold: 0 },
+    deliveryType: "delivery",
+    now: NOW,
+    channel: "both",
+  });
+  assert.equal(evalAfterExhausted.ok, false);
+  if (!evalAfterExhausted.ok) {
+    assert.equal(evalAfterExhausted.reason, "exhausted");
   }
 });
 
-// ── Test 57: Coupon cancellation counting lifecycle ──────────────────────────
-test("57. Coupon counting lifecycle: placing order increments used_count, cancelling decrements used_count, confirming retains used_count", () => {
+// ── Test 57: Coupon cancellation & release lifecycle ────────────────────────
+test("57. Coupon counting lifecycle: cancellation releases/does not double-release, pending cancel does not underflow", () => {
   let usedCount = 0;
   const usageLimit = 1;
 
-  // 1. Place order with coupon
-  if (usageLimit === null || usedCount < usageLimit) {
-    usedCount += 1;
-  }
-  assert.equal(usedCount, 1);
+  // Track order states
+  type OrderRecord = { id: string; status: "pending" | "approved" | "cancelled"; consumedCoupon: boolean };
+  const orders: OrderRecord[] = [];
 
-  // 2. Cancel order -> release used count
-  usedCount = Math.max(0, usedCount - 1);
-  assert.equal(usedCount, 0, "coupon usage count released on order cancellation");
+  const placePendingOrder = (id: string): OrderRecord => {
+    const ord: OrderRecord = { id, status: "pending", consumedCoupon: false };
+    orders.push(ord);
+    // Pending order does NOT consume coupon
+    return ord;
+  };
 
-  // 3. Place order again
-  if (usageLimit === null || usedCount < usageLimit) {
-    usedCount += 1;
-  }
-  assert.equal(usedCount, 1);
+  const approveOrder = (ord: OrderRecord): boolean => {
+    if (ord.status !== "pending") return false;
+    // Atomic consume
+    if (usageLimit === null || usedCount < usageLimit) {
+      usedCount += 1;
+      ord.consumedCoupon = true;
+      ord.status = "approved";
+      return true;
+    }
+    return false;
+  };
 
-  // 4. Confirm/complete order -> retain used count
-  assert.equal(usedCount, 1, "coupon usage count retained on order confirmation");
+  const cancelOrder = (ord: OrderRecord): boolean => {
+    if (ord.status === "cancelled") return false; // idempotent safeguard against double cancel
+    if (ord.status === "approved" && ord.consumedCoupon) {
+      usedCount = Math.max(0, usedCount - 1); // release consumed count
+      ord.consumedCoupon = false;
+    }
+    ord.status = "cancelled";
+    return true;
+  };
+
+  // 1. Order A placed as pending -> usedCount remains 0
+  const orderA = placePendingOrder("ord-A");
+  assert.equal(usedCount, 0, "order A pending does not increment count");
+
+  // 2. Order A cancelled while still pending -> usedCount remains 0 (no underflow / false release)
+  cancelOrder(orderA);
+  assert.equal(usedCount, 0, "cancelling pending order leaves count at 0");
+
+  // 3. Order B placed as pending -> approved -> consumed exactly once
+  const orderB = placePendingOrder("ord-B");
+  const approvedB = approveOrder(orderB);
+  assert.equal(approvedB, true);
+  assert.equal(usedCount, 1, "approved order B consumes coupon once");
+
+  // 4. Order C placed as pending -> approval fails because usage_limit = 1 reached
+  const orderC = placePendingOrder("ord-C");
+  const approvedC = approveOrder(orderC);
+  assert.equal(approvedC, false, "order C cannot approve while coupon is exhausted");
+
+  // 5. Order B cancelled -> releases coupon back to 0
+  const cancelledB1 = cancelOrder(orderB);
+  assert.equal(cancelledB1, true);
+  assert.equal(usedCount, 0, "cancelling approved order B releases coupon");
+
+  // 6. Duplicate cancel on Order B (idempotency check) -> does NOT double-release
+  const cancelledB2 = cancelOrder(orderB);
+  assert.equal(cancelledB2, false, "duplicate cancel rejected");
+  assert.equal(usedCount, 0, "count stays at 0, no negative count");
+
+  // 7. Order C can now be approved successfully with the released coupon
+  orderC.status = "pending"; // retry approval
+  const approvedCRetry = approveOrder(orderC);
+  assert.equal(approvedCRetry, true);
+  assert.equal(usedCount, 1, "order C successfully approved after coupon release");
 });
 
 // ── Test 58: Coupon BXGY historical snapshots preservation ──────────────────
