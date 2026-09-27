@@ -68,6 +68,14 @@ check("the canonical public shop is indexable with its real URL, not the old pre
 check("legacy store layout did not leak into the V2 header",
   document.querySelectorAll('header').length === 1 &&
   Boolean(document.querySelector('.v2-header a[href="#/store"]')));
+// Issue #6: the header is the shop's own bilingual name (ALYQ | أَلِــيْـــق by
+// default), read from Website Settings' brand/contact fields — not a second
+// hardcoded logo. English leads in the English UI; the Arabic name trails as
+// a single accessible logo link, styled by the theme's own accent colour.
+check("header shows the configured bilingual wordmark with English leading in the English UI",
+  document.querySelector('.v2-logo .v2-wordmark-primary')?.textContent === "ALYQ" &&
+  Boolean(document.querySelector('.v2-logo .v2-wordmark-secondary')?.textContent?.includes("ي")) &&
+  document.querySelector('a.v2-logo')?.getAttribute("aria-label") === "ALYQ");
 const routeBeforeSkip = dom.window.location.hash;
 clickEl(document.querySelector('.v2-skip'));
 check("keyboard skip targets main content without changing the HashRouter route",
@@ -153,6 +161,10 @@ await waitFor(() => document.documentElement.dir === 'rtl', { label: "Arabic RTL
 check("AR translations + RTL scope appear on the same public route",
   document.querySelector('.store-v2')?.getAttribute('dir') === 'rtl' &&
   (document.querySelector('.v2-desktop-nav')?.textContent ?? '').includes('الرئيسية'));
+check("in Arabic RTL the header wordmark flips lead — Arabic name first, ALYQ trailing",
+  document.querySelector('.v2-logo .v2-wordmark')?.getAttribute('dir') === 'rtl' &&
+  Boolean(document.querySelector('.v2-logo .v2-wordmark-primary')?.textContent?.includes('ي')) &&
+  document.querySelector('.v2-logo .v2-wordmark-secondary')?.textContent === 'ALYQ');
 await navigate(`#/store/products/${ring.id}`, 320);
 check("variant color names switch to Arabic without changing shelf IDs",
   Boolean(document.querySelector('[data-testid="v2-color-gold"]')?.textContent?.includes('ذهبي')));

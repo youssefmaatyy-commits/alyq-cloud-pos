@@ -32,8 +32,29 @@ export function StorefrontV2Shell({ children }: { children: ReactNode }) {
   const messages = useMemo(() => resolvedAnnouncementMessages(settings), [settings]);
   const categories = categoriesFacet.slice(0, 12);
   const hasOffers = campaigns.some((campaign) => isCampaignLive(campaign)) || promotions.some((promotion) => isPromotionLive(promotion));
-  const storeName = pick(settings.brand.display_name_ar || settings.contact.store_name_ar,
-    settings.brand.display_name_en || settings.contact.store_name_en);
+  const brandNameAr = settings.brand.display_name_ar || settings.contact.store_name_ar;
+  const brandNameEn = settings.brand.display_name_en || settings.contact.store_name_en;
+  const storeName = pick(brandNameAr, brandNameEn);
+  // The header wordmark is the shop's own configured name in both languages
+  // (Website Settings → Brand, falling back to the store name already used
+  // for the aria-label), never a hardcoded "ALYQ" string — a renamed shop
+  // gets a renamed header for free. The current UI language leads; the other
+  // script follows in a muted accent tone, and `dir` (not `dir="auto"`,
+  // which gets confused once both scripts share one line) keeps the pair in
+  // the right reading order for RTL.
+  const wordmarkPrimary = lang === "ar" ? { text: brandNameAr, code: "ar" } : { text: brandNameEn, code: "en" };
+  const wordmarkSecondary = lang === "ar" ? { text: brandNameEn, code: "en" } : { text: brandNameAr, code: "ar" };
+  const hasBilingualWordmark = Boolean(wordmarkPrimary.text) && Boolean(wordmarkSecondary.text)
+    && wordmarkPrimary.text !== wordmarkSecondary.text;
+  const wordmark = hasBilingualWordmark ? (
+    <span className="v2-wordmark" dir={dir}>
+      <span className="v2-wordmark-primary" lang={wordmarkPrimary.code}>{wordmarkPrimary.text}</span>
+      <span className="v2-wordmark-divider" aria-hidden="true">|</span>
+      <span className="v2-wordmark-secondary" lang={wordmarkSecondary.code}>{wordmarkSecondary.text}</span>
+    </span>
+  ) : (
+    <span dir="auto">{storeName}</span>
+  );
   const social = resolvedV2SocialChannels(settings, lang);
   const whatsapp = social.find((channel) => channel.platform === "whatsapp");
   const catContent = new Map(categoryContents.map((row) => [row.category_id, row]));
@@ -162,8 +183,8 @@ export function StorefrontV2Shell({ children }: { children: ReactNode }) {
               </picture>
             ) : appearance.mobileLogoUrl ? <>
               <img className="v2-mobile-only" src={appearance.mobileLogoUrl} alt={storeName} />
-              <span className="v2-desktop-only" dir="auto">{storeName}</span>
-            </> : <span dir="auto">{storeName}</span>}
+              <span className="v2-desktop-only">{wordmark}</span>
+            </> : wordmark}
           </Link>
           <div className="v2-header-end">
             {appearance.showLanguage ? <button type="button" className="v2-language-button v2-desktop-only" onClick={toggleLang}

@@ -65,8 +65,28 @@
 .store-v2 .v2-icon-button { width: 44px; height: 44px; position: relative; display: inline-grid; place-items: center; flex: none; border: 0; background: transparent; color: inherit; }
 .store-v2 .v2-icon-button:hover { opacity: .65; }
 .store-v2 .v2-icon-button svg { width: 21px; height: 21px; }
-.store-v2 .v2-logo { display: grid; place-items: center; min-width: 0; text-align: center; font-family: var(--v2-font-display); font-size: clamp(19px, 5vw, 29px); font-weight: 600; letter-spacing: .12em; line-height: 1; }
+.store-v2 .v2-logo { display: grid; place-items: center; min-width: 0; max-width: 62vw; overflow: hidden; text-align: center; font-family: var(--v2-font-display); font-size: clamp(19px, 5vw, 29px); font-weight: 600; letter-spacing: .12em; line-height: 1; }
 .store-v2[dir="rtl"] .v2-logo { letter-spacing: 0; }
+/* Bilingual header wordmark (Issue #7 / branding): the shop's own configured
+   name in both languages, e.g. "ALYQ | أَلِــيْـــق" — never a second,
+   hardcoded branding system. The leading name carries the bold display
+   weight; the trailing name rides in the theme's own accent colour (gold by
+   default) so the pair reads as one premium lockup, not two separate
+   labels. Everything clips instead of wrapping so a long shop name can never
+   push the header taller or break onto a second line on mobile. */
+.store-v2 .v2-wordmark { display: inline-flex; align-items: baseline; gap: .4em; max-width: 100%; min-width: 0; }
+.store-v2 .v2-wordmark-primary { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.store-v2 .v2-wordmark-divider { flex: none; color: var(--v2-accent); font-weight: 400; opacity: .55; font-size: .85em; }
+.store-v2 .v2-wordmark-secondary { color: var(--v2-accent); font-weight: 500; letter-spacing: 0; opacity: .92; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.store-v2 .v2-wordmark-primary:lang(ar), .store-v2 .v2-wordmark-secondary:lang(ar) { font-family: var(--v2-font-arabic-display); letter-spacing: 0; }
+.store-v2 .v2-wordmark-primary:lang(en), .store-v2 .v2-wordmark-secondary:lang(en) { font-family: var(--v2-font-display); }
+/* Below this the primary name alone already fills the available width on a
+   phone (Issue #7's "no mobile overflow" rule) — drop the secondary name and
+   its divider rather than let either script get clipped or wrap. */
+@media (max-width: 380px) {
+  .store-v2 .v2-wordmark-secondary, .store-v2 .v2-wordmark-divider { display: none; }
+  .store-v2 .v2-wordmark-primary { max-width: 46vw; }
+}
 .store-v2 .v2-logo img { display: block; width: auto; height: var(--v2-mobile-logo-height); max-width: min(48vw, 190px); object-fit: contain; }
 @media (min-width: 768px) {
   .store-v2 .v2-logo img { height: var(--v2-logo-height); }
