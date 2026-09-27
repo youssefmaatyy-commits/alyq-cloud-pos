@@ -47,6 +47,31 @@ await waitFor(() => testid("social-validation-error") && testid("social-url-inst
   { label: "unsafe social URL inline error" });
 await save();
 check("malformed profile blocks the entire save and leaves previous settings intact", JSON.stringify(saved()) === first);
+
+// Issue #5 regression: the SAME still-invalid Instagram draft, but the admin
+// is not on the Social tab at all — they switched to General to edit the
+// store name, an edit that has nothing to do with social links. Before this
+// fix, Save fell through to the generic `online.error.settings_invalid` toast
+// ("some appearance values were invalid") no matter which tab was open, and
+// gave no way to tell a real theme problem from a stale Instagram link. It
+// must now name the exact platform, jump the admin to the Social tab to fix
+// it, and leave every other still-invalid draft field (their unsaved store
+// name edit included) exactly where they left it — nothing is saved half way.
+await navigate("#/online/website?tab=general", 500);
+const storeNameInput = () => [...document.querySelectorAll("label")]
+  .find((label) => label.textContent?.trim().startsWith("Store name (English)"))
+  ?.closest("div")?.querySelector("input");
+await waitFor(() => storeNameInput(), { label: "General tab store-name field" });
+setReactValue(storeNameInput(), "ALYQ Rebrand Draft");
+await save();
+check("an unrelated tab's Save is refused with the exact broken platform named, not a generic message",
+  document.querySelector('[aria-live="polite"]')?.textContent?.includes("Instagram") ?? false);
+check("refusal switches the admin straight to the Social tab that needs fixing",
+  dom.window.location.hash.includes("tab=social"));
+check("previous saved settings are untouched by the refused cross-tab save — no half-applied write",
+  JSON.stringify(saved()) === first);
+await navigate("#/online/website?tab=v2", 500);
+
 value("instagram", "https://www.instagram.com/new.shop/");
 toggle("instagram");
 value("tiktok", "https://www.tiktok.com/@new.shop");
