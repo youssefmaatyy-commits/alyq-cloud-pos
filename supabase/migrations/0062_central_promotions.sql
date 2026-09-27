@@ -381,7 +381,7 @@ begin
 end;
 $$;
 
-grant execute on function public.evaluate_promotion_candidate(public.promotions, jsonb, numeric) to authenticated, anon;
+revoke execute on function public.evaluate_promotion_candidate(public.promotions, jsonb, numeric) from public, anon, authenticated;
 
 -- ── evaluate_order_pricing_channel with unified promotions & coupons ───────
 create or replace function public.evaluate_order_pricing_channel(
