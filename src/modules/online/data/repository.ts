@@ -123,6 +123,15 @@ export const ONLINE_ERROR_CODES = [
   "network",
   "not_configured",
   "settings_invalid",
+  /**
+   * PostgREST 42501 — RLS's `with check (public.can('…'))` rejected the write
+   * itself, distinct from the client-side gate that hid the button. Before
+   * this mapping, an admin whose session or custom role had drifted out of
+   * sync with the server's own capability computation saw the bare `db`
+   * text and nothing else, indistinguishable from an actual schema defect —
+   * e.g. delivery-zone saves (0049's `delivery_zones_update_managers`).
+   */
+  "forbidden",
   "db",
 ] as const;
 export type OnlineErrorCode = (typeof ONLINE_ERROR_CODES)[number];
@@ -371,6 +380,21 @@ export function toOnlineError(error: unknown): OnlineError {
   // the sale already converted, which would put taken units back on the shelf.
   if (/cannot be (released|converted)/i.test(message)) {
     return new OnlineError("workflow_refused", message);
+  }
+  // PostgREST 42501: an RLS `with check` (or plain `using`) rejected the row —
+  // the server's own `public.can('…')` disagreed with whatever let the button
+  // render client-side (a stale session, a custom role the server no longer
+  // grants that capability to). This used to fall through to the bare `db`
+  // code, indistinguishable from a genuine schema defect; an admin who hits
+  // it needs "you're not allowed", not "the database refused the request".
+  if (
+    described.code === "42501" ||
+    /row-level security policy/i.test(message) ||
+    /permission denied for (table|function|relation)/i.test(message)
+  ) {
+    return new OnlineError("forbidden", message, {
+      detail: { server_code: described.code, server_details: described.details, server_hint: described.hint },
+    });
   }
   // Nothing recognisable: hand the operator the server's own wording, code,
   // details and hint (the storefront itself only ever renders the friendly

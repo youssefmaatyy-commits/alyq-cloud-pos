@@ -112,6 +112,7 @@ import {
   safeColor,
 } from "../services/settingsDefaults";
 import { announcementStyle, buttonRadiusOf, fontStackOf, shade, themeVariables } from "../services/theme";
+import { adaptV2Appearance } from "../v2/appearance";
 import {
   absoluteUrl,
   buildRobotsTxt,
@@ -1699,6 +1700,41 @@ test("the theme document becomes CSS variables, and shades stay valid hex", () =
   assert.equal(fontStackOf(null), fontStackOf("system"), "an unknown font falls back to the system stack");
 });
 
+// Issue #4 (follow-up): the header must show a configured Website Settings
+// logo image — never the bilingual text wordmark instead of it — and fall
+// back to the wordmark ONLY when no logo image is configured at all.
+// `StorefrontV2Shell` renders purely off `adaptV2Appearance().headerLogoUrl`
+// (`{headerLogoUrl ? <img/> : wordmark}`), so pinning that adapter's contract
+// here is what would have caught a field-name drift or an over-eager URL
+// sanitizer silently discarding a real, valid logo.
+test("a configured Website Settings logo always wins the header, and the wordmark shows only when none is configured", () => {
+  const withLogo = adaptV2Appearance(
+    settings({ images: { ...DEFAULT_WEBSITE_SETTINGS.images, logo_url: "https://cdn.example.com/alyq-logo.png" } }),
+  );
+  assert.equal(withLogo.headerLogoUrl, "https://cdn.example.com/alyq-logo.png",
+    "the exact configured URL is what the header receives, unmodified");
+
+  const withoutLogo = adaptV2Appearance(settings({ images: { ...DEFAULT_WEBSITE_SETTINGS.images, logo_url: null } }));
+  assert.equal(withoutLogo.headerLogoUrl, null,
+    "no logo configured means the shell's `headerLogoUrl ? <img/> : wordmark` falls to the wordmark");
+
+  // An unsafe/invalid value (a paste gone wrong, or an old data: URI) must
+  // never reach an <img src>, the same absolute-http(s)-only policy every
+  // other configured image on the storefront already holds to.
+  const unsafe = adaptV2Appearance(
+    settings({ images: { ...DEFAULT_WEBSITE_SETTINGS.images, logo_url: "javascript:alert(1)" } }),
+  );
+  assert.equal(unsafe.headerLogoUrl, null, "an unsafe URL is refused, not smuggled into the header as an <img src>");
+
+  // No separate mobile logo configured: the same image serves both — it is
+  // never silently dropped on small screens just because only the desktop
+  // slot was filled in.
+  const desktopOnly = adaptV2Appearance(
+    settings({ images: { ...DEFAULT_WEBSITE_SETTINGS.images, logo_url: "https://cdn.example.com/logo.png" } }),
+  );
+  assert.equal(desktopOnly.mobileLogoUrl, "https://cdn.example.com/logo.png");
+});
+
 // ── SEO ─────────────────────────────────────────────────────────────────────
 
 test("slugs are ASCII, so an Arabic product name still gets a usable URL", () => {
@@ -2466,6 +2502,12 @@ test("every live checkout refusal lands on a customer-facing code (never bare db
     ["That colour and size does not belong to ALYQ-1001", "variant_mismatch"],
     ["Gold / 42 is no longer sold", "variant_mismatch"],
     ["Delivery zone is not available", "delivery_zone_unavailable"],
+    // Issue #2 (follow-up): an RLS `with check (public.can('manage_website'))`
+    // rejection (0049's delivery-zone policies, or any other admin write)
+    // used to fall through to the same bare `db` text as an actual schema
+    // defect — indistinguishable from each other and useless to an operator.
+    ['new row violates row-level security policy for table "delivery_zones"', "forbidden"],
+    ["permission denied for table delivery_zones", "forbidden"],
   ];
   for (const [text, expected] of cases) {
     const err = toOnlineError(new Error(text));
@@ -2476,6 +2518,18 @@ test("every live checkout refusal lands on a customer-facing code (never bare db
   assert.equal(minimum.detail.minimum, 1000, "the refusal carries the shop's number");
   const outside = toOnlineError(new Error("Delivery to القاهرة is not available"));
   assert.equal(outside.field, "address", "the customer is pointed at the address");
+
+  // Supabase hands back a `PostgrestError` PLAIN OBJECT, not an `Error`
+  // instance — `code: "42501"` alone (no recognisable wording at all) must
+  // still classify as `forbidden`, the same way it would as a real thrown
+  // PostgrestError from `.upsert().select().single()`.
+  const rlsPlainObject = toOnlineError({
+    message: "new row violates row-level security policy for table \"delivery_zones\"",
+    code: "42501",
+    details: null,
+    hint: null,
+  });
+  assert.equal(rlsPlainObject.code, "forbidden", "a bare PostgREST 42501 is recognised by code alone");
 });
 
 console.log("\nPhase 42 · the shop's own delivery rules, end to end in demo mode");
