@@ -80,21 +80,21 @@ $$;
  * and are no-ops when the wanted state already holds, so a scenario may call
  * ensure_open_shift() without caring what the previous scenario left behind.
  */
-create or replace function pg_temp.ensure_open_shift()
+create or replace function pg_temp.ensure_open_shift(p_user_id text default null)
 returns uuid
 language plpgsql
 as $$
 declare
   v_shift_id uuid;
+  v_uid text := coalesce(p_user_id, nullif(auth.uid()::text, ''), '00000000-0000-4000-8000-0000000000c1');
+  v_name text := coalesce((select name from public.profiles where id = v_uid::uuid), 'Karim Cashier');
 begin
-  select id into v_shift_id from public.shifts where status = 'open';
+  select id into v_shift_id from public.shifts where status = 'open' and opened_by = v_uid;
   if found then
     return v_shift_id;
   end if;
-  perform set_config('role', 'authenticated', true);
-  perform set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-0000000000c1', true);
   insert into public.shifts (branch, register, opening_cash, opened_by, opened_by_name)
-  values ('Main', 'Till 1', 1000, '00000000-0000-4000-8000-0000000000c1', 'Karim Cashier')
+  values ('Main', 'Till 1', 1000, v_uid, v_name)
   returning id into v_shift_id;
   return v_shift_id;
 end;
@@ -5392,7 +5392,8 @@ begin
   insert into public.customers (id, name, phone) values (v_cust, 'Déjà Customer', '01000000001')
   on conflict (id) do nothing;
 
-  perform pg_temp.ensure_open_shift();
+  perform pg_temp.become(v_admin, 'authenticated');
+  perform pg_temp.ensure_open_shift(v_admin::text);
   v_sale := public.pos_complete_sale(jsonb_build_object(
     'client_ref', 'scn-dz-sale-1',
     'user_id',    v_admin::text,
@@ -5599,10 +5600,8 @@ begin
   -- the operational clear zeroed the shelves; restock the plain product so a
   -- fresh till sale can exist (a plain product's stock is directly writable)
   update public.products set stock_quantity = 5 where id = v_plain;
-  perform pg_temp.ensure_open_shift();
-  -- the shift helper stamps the cashier's claim; put the admin back before
-  -- anything below calls a guarded RPC
   perform pg_temp.become(v_admin, 'authenticated');
+  perform pg_temp.ensure_open_shift(v_admin::text);
   perform public.pos_complete_sale(jsonb_build_object(
     'client_ref', 'scn-dz-sale-2',
     'user_id',    v_admin::text,

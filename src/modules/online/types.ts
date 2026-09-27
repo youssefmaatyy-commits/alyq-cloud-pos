@@ -555,6 +555,8 @@ export interface Promotion {
   reward_value?: number | null;
   repeat_offer?: boolean;
   min_quantity?: number | null;
+  usage_limit?: number | null;
+  used_count?: number;
 
   created_at: string;
   updated_at: string;

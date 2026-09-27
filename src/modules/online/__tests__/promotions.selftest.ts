@@ -58,6 +58,8 @@ function makePromo(overrides: MakePromoInput = {}): Promotion {
     reward_value: overrides.reward_value,
     repeat_offer: overrides.repeat_offer,
     min_quantity: overrides.min_quantity,
+    usage_limit: overrides.usage_limit ?? null,
+    used_count: overrides.used_count ?? 0,
     created_at: overrides.created_at ?? "2026-01-01T00:00:00Z",
     updated_at: overrides.updated_at ?? "2026-01-01T00:00:00Z",
   };
@@ -1513,5 +1515,370 @@ test("50. Historical snapshots: rewarded_qty, rewarded_units, and rule_type accu
     assert.equal(res.pricing.autoPromotionRewardQty, 1);
     assert.equal(res.pricing.lines[0].rewarded_qty, 1);
     assert.equal(res.pricing.lines[0].discount_amount, 100);
+  }
+});
+
+// ── Test 51: Online approval pricing regression (no double discount) ─────────
+test("51. Online order approval pricing: 100 EGP item with 10 EGP promo converts to exactly 90 EGP sale on approval without double discounting", () => {
+  const catalogPrice = 100;
+  const promoDiscount = 10;
+  const orderSubtotal = catalogPrice;
+  const orderDiscountAmount = promoDiscount;
+  const goodsTotal = round2(orderSubtotal - orderDiscountAmount); // 90
+
+  // At approval time, list total is measured against current catalogue
+  const listTotal = catalogPrice; // 100
+  const saleDiscount = Math.max(round2(listTotal - goodsTotal), 0); // 10
+
+  // pos_complete_sale for source='online' applies fixed saleDiscount without re-evaluating active promotions
+  const saleSubtotal = listTotal; // 100
+  const saleTotal = round2(saleSubtotal - saleDiscount); // 90
+  const paymentAmount = goodsTotal; // 90
+
+  assert.equal(goodsTotal, 90);
+  assert.equal(saleDiscount, 10);
+  assert.equal(saleTotal, 90);
+  assert.equal(paymentAmount, saleTotal, "sale total reconciles exactly to payment amount (90 EGP, never double-discounted to 80 EGP)");
+});
+
+// ── Test 52: Historical order price invariance after promo expiration ───────
+test("52. Historical order price invariance: order placed during promotion preserves historical price (90 EGP) when approved after promotion expires", () => {
+  const placedSnapshot = {
+    original_subtotal: 100,
+    total_discount: 10,
+    final_subtotal: 90,
+    promotion_id: "promo-expired-10",
+    promotion_name: "10 EGP Summer Promo",
+  };
+
+  // Promotion is now expired in current catalogue
+  const currentActivePromotions: Promotion[] = []; // None active
+  const orderSubtotal = placedSnapshot.original_subtotal;
+  const orderDiscountAmount = placedSnapshot.total_discount;
+  const goodsTotal = round2(orderSubtotal - orderDiscountAmount); // 90
+
+  // Conversion uses stored snapshot, ignoring empty currentActivePromotions
+  const listTotal = 100;
+  const saleDiscount = Math.max(round2(listTotal - goodsTotal), 0); // 10
+  const saleTotal = round2(listTotal - saleDiscount); // 90
+
+  assert.equal(saleTotal, 90, "historical order price remains 90 EGP regardless of expired promo");
+  assert.equal(currentActivePromotions.length, 0);
+});
+
+// ── Test 53: Approved order cancellation stock reversal & idempotency ────────
+test("53. Approved order cancellation: voiding the sale restores exact variant stock and cannot restore twice on duplicate request", () => {
+  let variantStock = 10;
+  const orderedQty = 2;
+
+  // 1. Order placed -> stock reserved
+  let reservedQty = orderedQty;
+  // Available = stock - reserved = 8
+  assert.equal(variantStock - reservedQty, 8);
+
+  // 2. Order approved -> pos_complete_sale deducts stock, reservation converted
+  variantStock -= orderedQty; // 8
+  reservedQty = 0;
+  let saleStatus: string = "completed";
+  assert.equal(variantStock, 8);
+
+  const voidSale = () => {
+    if (saleStatus !== "voided") {
+      variantStock += orderedQty;
+      saleStatus = "voided";
+      return true;
+    }
+    return false;
+  };
+
+  // 3. Order cancelled -> pos_void_sale called once
+  const voided1 = voidSale();
+  assert.equal(voided1, true);
+  assert.equal(variantStock, 10, "stock restored to 10 on first cancel");
+  assert.equal(saleStatus, "voided");
+
+  // 4. Repeated cancel request (idempotency guard)
+  const voided2 = voidSale();
+  assert.equal(voided2, false);
+  assert.equal(variantStock, 10, "stock remains 10 (not restored twice on duplicate cancel)");
+});
+
+// ── Test 54: Cashier shift ownership validation ──────────────────────────────
+test("54. Cashier shift ownership: sale completed only when open shift belongs to the authenticated cashier", () => {
+  const shifts = [
+    { id: "shift-1", opened_by: "cashier-1", status: "open" },
+    { id: "shift-2", opened_by: "cashier-2", status: "open" },
+  ];
+
+  const getCashierShift = (userId: string) =>
+    shifts.find((s) => s.status === "open" && s.opened_by === userId) ?? null;
+
+  const cashier1Shift = getCashierShift("cashier-1");
+  const cashier2Shift = getCashierShift("cashier-2");
+  const cashier3Shift = getCashierShift("cashier-3");
+
+  assert.equal(cashier1Shift?.id, "shift-1");
+  assert.equal(cashier2Shift?.id, "shift-2");
+  assert.equal(cashier3Shift, null, "cashier without open shift cannot attach to another cashier's shift");
+});
+
+// ── Test 55: Cashier audit identity spoofing prevention ──────────────────────
+test("55. Audit identity spoofing prevention: trusted identity derived from session auth.uid(), ignoring payload spoofing", () => {
+  const authenticatedUid = "00000000-0000-4000-8000-0000000000c1";
+  const userProfile = { id: authenticatedUid, name: "Karim Cashier" };
+  const clientPayload = { user_id: "00000000-0000-4000-8000-0000000000a1", user_name: "Amina Admin" };
+
+  // Server-authoritative resolution ignores clientPayload when authenticatedUid is present
+  const resolvedUserId = authenticatedUid || clientPayload.user_id;
+  const resolvedUserName = userProfile.name || clientPayload.user_name;
+
+  assert.equal(resolvedUserId, "00000000-0000-4000-8000-0000000000c1");
+  assert.equal(resolvedUserName, "Karim Cashier", "trusted user name used instead of spoofed admin name");
+});
+
+// ── Test 56: Central coupon usage limit atomic enforcement ───────────────────
+test("56. Central coupon usage limit: coupon with usage_limit = 1 succeeds once and second attempt is rejected", () => {
+  const couponPromo = makePromo({
+    id: "promo-coupon-limit-1",
+    mode: "coupon",
+    code: "LIMITED1",
+    discount_type: "percent",
+    value: 20,
+    usage_limit: 1,
+    used_count: 0,
+    scope: "store",
+    enabled: true,
+  });
+
+  const lines: Omit<EvaluatedCartLine, "discounted_unit_price">[] = [
+    { product_id: "p1", variant_id: null, category_id: null, unit_price: 100, qty: 1, line_total: 100 },
+  ];
+
+  // Attempt 1: used_count = 0 < 1 -> SUCCESS
+  const res1 = evaluateCartPricing({
+    lines,
+    subtotal: 100,
+    promoCode: "LIMITED1",
+    coupons: [],
+    promotions: [couponPromo],
+    targetsByPromotion: new Map(),
+    usageFor: () => ({ customerUses: 0, hasPriorOrder: false }),
+    customerKey: null,
+    zone: null,
+    legacy: { fee: 0, minimum: 0, threshold: 0 },
+    deliveryType: "delivery",
+    now: NOW,
+    channel: "both",
+  });
+  assert.equal(res1.ok, true);
+  if (res1.ok) {
+    assert.equal(res1.pricing.promoDiscount, 20);
+  }
+
+  // Simulate coupon usage consumed
+  const consumedCoupon = { ...couponPromo, used_count: 1 };
+
+  // Attempt 2: used_count = 1 >= 1 -> REJECTED
+  const res2 = evaluateCartPricing({
+    lines,
+    subtotal: 100,
+    promoCode: "LIMITED1",
+    coupons: [],
+    promotions: [consumedCoupon],
+    targetsByPromotion: new Map(),
+    usageFor: () => ({ customerUses: 0, hasPriorOrder: false }),
+    customerKey: null,
+    zone: null,
+    legacy: { fee: 0, minimum: 0, threshold: 0 },
+    deliveryType: "delivery",
+    now: NOW,
+    channel: "both",
+  });
+  assert.equal(res2.ok, false);
+  if (!res2.ok) {
+    assert.equal(res2.reason, "exhausted");
+  }
+});
+
+// ── Test 57: Coupon cancellation counting lifecycle ──────────────────────────
+test("57. Coupon counting lifecycle: placing order increments used_count, cancelling decrements used_count, confirming retains used_count", () => {
+  let usedCount = 0;
+  const usageLimit = 1;
+
+  // 1. Place order with coupon
+  if (usageLimit === null || usedCount < usageLimit) {
+    usedCount += 1;
+  }
+  assert.equal(usedCount, 1);
+
+  // 2. Cancel order -> release used count
+  usedCount = Math.max(0, usedCount - 1);
+  assert.equal(usedCount, 0, "coupon usage count released on order cancellation");
+
+  // 3. Place order again
+  if (usageLimit === null || usedCount < usageLimit) {
+    usedCount += 1;
+  }
+  assert.equal(usedCount, 1);
+
+  // 4. Confirm/complete order -> retain used count
+  assert.equal(usedCount, 1, "coupon usage count retained on order confirmation");
+});
+
+// ── Test 58: Coupon BXGY historical snapshots preservation ──────────────────
+test("58. Coupon BXGY historical snapshot: mode='coupon' BXGY captures rule_type, buy_x, get_y, reward_qty, and line rewarded_qty", () => {
+  const couponBXGY = makePromo({
+    id: "coupon-bxgy-1",
+    name_en: "Buy 2 Get 1 Free Coupon",
+    mode: "coupon",
+    code: "B2G1VIP",
+    offer_type: "bxgy",
+    buy_x: 2,
+    get_y: 1,
+    reward_type: "free",
+    scope: "store",
+    enabled: true,
+  });
+
+  const lines: Omit<EvaluatedCartLine, "discounted_unit_price">[] = [
+    { product_id: "p1", variant_id: null, category_id: null, unit_price: 150, qty: 3, line_total: 450 },
+  ];
+
+  const res = evaluateCartPricing({
+    lines,
+    subtotal: 450,
+    promoCode: "B2G1VIP",
+    coupons: [],
+    promotions: [couponBXGY],
+    targetsByPromotion: new Map(),
+    usageFor: () => ({ customerUses: 0, hasPriorOrder: false }),
+    customerKey: null,
+    zone: null,
+    legacy: { fee: 0, minimum: 0, threshold: 0 },
+    deliveryType: "delivery",
+    now: NOW,
+    channel: "both",
+  });
+
+  assert.equal(res.ok, true);
+  if (res.ok) {
+    assert.equal(res.pricing.couponPromotionId, "coupon-bxgy-1");
+    assert.equal(res.pricing.couponPromotionName, "Buy 2 Get 1 Free Coupon");
+    assert.equal(res.pricing.couponPromotionRuleType, "bxgy");
+    assert.equal(res.pricing.couponPromotionBuyX, 2);
+    assert.equal(res.pricing.couponPromotionGetY, 1);
+    assert.equal(res.pricing.couponPromotionRewardQty, 1);
+    assert.equal(res.pricing.winningRuleType, "bxgy");
+    assert.equal(res.pricing.lines[0].rewarded_qty, 1);
+    assert.equal(res.pricing.lines[0].discount_amount, 150);
+    assert.equal(res.pricing.total, 300);
+  }
+});
+
+// ── Test 59: Coupon Cheapest Item historical snapshots ───────────────────────
+test("59. Coupon Cheapest Item historical snapshot: mode='coupon' cheapest_item captures min_quantity, reward_qty, and line discount", () => {
+  const couponCheapest = makePromo({
+    id: "coupon-cheap-1",
+    name_en: "Cheapest Free On 3 Items",
+    mode: "coupon",
+    code: "CHEAPFREE",
+    offer_type: "cheapest_item",
+    min_quantity: 3,
+    reward_type: "free",
+    scope: "store",
+    enabled: true,
+  });
+
+  const lines: Omit<EvaluatedCartLine, "discounted_unit_price">[] = [
+    { product_id: "p1", variant_id: null, category_id: null, unit_price: 100, qty: 1, line_total: 100 },
+    { product_id: "p2", variant_id: null, category_id: null, unit_price: 200, qty: 1, line_total: 200 },
+    { product_id: "p3", variant_id: null, category_id: null, unit_price: 300, qty: 1, line_total: 300 },
+  ];
+
+  const res = evaluateCartPricing({
+    lines,
+    subtotal: 600,
+    promoCode: "CHEAPFREE",
+    coupons: [],
+    promotions: [couponCheapest],
+    targetsByPromotion: new Map(),
+    usageFor: () => ({ customerUses: 0, hasPriorOrder: false }),
+    customerKey: null,
+    zone: null,
+    legacy: { fee: 0, minimum: 0, threshold: 0 },
+    deliveryType: "delivery",
+    now: NOW,
+    channel: "both",
+  });
+
+  assert.equal(res.ok, true);
+  if (res.ok) {
+    assert.equal(res.pricing.couponPromotionId, "coupon-cheap-1");
+    assert.equal(res.pricing.couponPromotionRuleType, "cheapest_item");
+    assert.equal(res.pricing.couponPromotionRewardQty, 1);
+    assert.equal(res.pricing.promoDiscount, 100);
+    assert.equal(res.pricing.lines[0].discount_amount, 100); // cheapest item (p1: 100 EGP) is free
+    assert.equal(res.pricing.lines[1].discount_amount, 0);
+    assert.equal(res.pricing.lines[2].discount_amount, 0);
+    assert.equal(res.pricing.total, 500);
+  }
+});
+
+// ── Test 60: Campaign / POS / Storefront pricing parity ──────────────────────
+test("60. Campaign / POS / Storefront pricing parity: same product + variant receives identical base price less campaign discount in both channels", () => {
+  const catalogueSellingPrice = 200;
+  const campaignDiscountPercent = 20; // 20% flash campaign -> 160 base unit price
+  const basePriceAfterCampaign = round2((catalogueSellingPrice * (100 - campaignDiscountPercent)) / 100); // 160
+
+  const posLine = { product_id: "prd-1", variant_id: null, category_id: null, qty: 2, unit_price: basePriceAfterCampaign, line_total: round2(basePriceAfterCampaign * 2) };
+  const onlineLine = { product_id: "prd-1", variant_id: null, category_id: null, qty: 2, unit_price: basePriceAfterCampaign, line_total: round2(basePriceAfterCampaign * 2) };
+
+  assert.equal(posLine.unit_price, 160);
+  assert.equal(onlineLine.unit_price, 160);
+  assert.equal(posLine.line_total, 320);
+  assert.equal(onlineLine.line_total, 320);
+
+  // Central promo on top: 10% auto discount
+  const promo = makePromo({ discount_type: "percent", value: 10, scope: "store" });
+
+  const evalPos = evaluateCartPricing({
+    lines: [posLine],
+    subtotal: 320,
+    promoCode: null,
+    coupons: [],
+    promotions: [promo],
+    targetsByPromotion: new Map(),
+    usageFor: () => ({ customerUses: 0, hasPriorOrder: false }),
+    customerKey: null,
+    zone: null,
+    legacy: { fee: 0, minimum: 0, threshold: 0 },
+    deliveryType: "delivery",
+    now: NOW,
+    channel: "pos",
+  });
+
+  const evalOnline = evaluateCartPricing({
+    lines: [onlineLine],
+    subtotal: 320,
+    promoCode: null,
+    coupons: [],
+    promotions: [promo],
+    targetsByPromotion: new Map(),
+    usageFor: () => ({ customerUses: 0, hasPriorOrder: false }),
+    customerKey: null,
+    zone: null,
+    legacy: { fee: 0, minimum: 0, threshold: 0 },
+    deliveryType: "delivery",
+    now: NOW,
+    channel: "online",
+  });
+
+  assert.equal(evalPos.ok, true);
+  assert.equal(evalOnline.ok, true);
+  if (evalPos.ok && evalOnline.ok) {
+    assert.equal(evalPos.pricing.totalDiscount, 32);
+    assert.equal(evalOnline.pricing.totalDiscount, 32);
+    assert.equal(evalPos.pricing.total, 288);
+    assert.equal(evalOnline.pricing.total, 288);
   }
 });

@@ -1312,6 +1312,17 @@ export class DemoOnlineRepository
         pricing.promoCode &&
         (pricing.promoDiscount > 0 || pricing.promoFreeShipping)
       ) {
+        const usedPromo = this.promotions.find(
+          (p) => p.mode === "coupon" && p.code && normalizeCouponCode(p.code) === pricing.promoCode,
+        );
+        if (usedPromo) {
+          this.promotions = this.promotions.map((p) =>
+            p.id === usedPromo.id
+              ? { ...p, used_count: (p.used_count ?? 0) + 1, updated_at: at }
+              : p,
+          );
+          write(KEYS.promotions, this.promotions);
+        }
         const used = this.coupons.find((candidate) => candidate.code === pricing.promoCode);
         if (used) {
           this.coupons = this.coupons.map((candidate) =>
@@ -1331,6 +1342,14 @@ export class DemoOnlineRepository
           });
           write(KEYS.promoUsages, this.promoUsages);
         }
+      }
+      if (pricing.autoPromotionId && pricing.autoDiscount > 0) {
+        this.promotions = this.promotions.map((p) =>
+          p.id === pricing.autoPromotionId
+            ? { ...p, used_count: (p.used_count ?? 0) + 1, updated_at: at }
+            : p,
+        );
+        write(KEYS.promotions, this.promotions);
       }
 
       this.orders.push(order);
@@ -1596,6 +1615,14 @@ export class DemoOnlineRepository
           }
 
           if (order.discount_code) {
+            const normalized = normalizeCouponCode(order.discount_code);
+            this.promotions = this.promotions.map((p) =>
+              p.mode === "coupon" && p.code && normalizeCouponCode(p.code) === normalized
+                ? { ...p, used_count: Math.max((p.used_count ?? 0) - 1, 0), updated_at: at }
+                : p,
+            );
+            write(KEYS.promotions, this.promotions);
+
             this.coupons = this.coupons.map((coupon) =>
               coupon.code === order.discount_code
                 ? {

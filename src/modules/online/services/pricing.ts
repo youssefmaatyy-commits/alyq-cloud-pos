@@ -1035,6 +1035,19 @@ export interface EvaluatedCart {
   promoCode: string | null;
   promoDiscount: number;
   promoFreeShipping: boolean;
+  couponPromotionId?: string | null;
+  couponPromotionName?: string | null;
+  couponPromotionRuleType?: PromotionOfferType | null;
+  couponPromotionBuyX?: number | null;
+  couponPromotionGetY?: number | null;
+  couponPromotionRewardQty?: number | null;
+  couponPromotionRewardedUnits?: { line_index: number; product_id: string; variant_id: string | null; unit_price: number; discount: number }[] | null;
+  winningPromotionId?: string | null;
+  winningPromotionName?: string | null;
+  winningRuleType?: PromotionOfferType | null;
+  winningBuyX?: number | null;
+  winningGetY?: number | null;
+  winningRewardQty?: number | null;
   grossShippingFee: number;
   shippingDiscount: number;
   shippingSource: string;
@@ -1129,6 +1142,13 @@ export function evaluateCartPricing(input: CartPricingInput): CartPricingResult 
       const endStr = couponPromo.end_date || couponPromo.ends_at;
       if (endStr && Date.parse(endStr) < now.getTime()) {
         return { ok: false, reason: "expired", message: `Coupon ${code} has expired` };
+      }
+      if (
+        couponPromo.usage_limit !== null &&
+        couponPromo.usage_limit !== undefined &&
+        (couponPromo.used_count ?? 0) >= couponPromo.usage_limit
+      ) {
+        return { ok: false, reason: "exhausted", message: `Coupon ${code} has been fully used` };
       }
       const minSub = couponPromo.minimum_order_amount ?? 0;
       if (subtotal < minSub) {
@@ -1352,6 +1372,13 @@ export function evaluateCartPricing(input: CartPricingInput): CartPricingResult 
     };
   });
 
+  const winningPromoId = autoId ?? (promoDiscount > 0 && appliedCouponPromo ? appliedCouponPromo.id : null);
+  const winningPromoName = autoName ?? (promoDiscount > 0 && appliedCouponPromo ? (appliedCouponPromo.name_en || appliedCouponPromo.name_ar) : null);
+  const winningRuleType = autoRuleType ?? (promoDiscount > 0 && appliedCouponPromo && evalCoupon ? evalCoupon.rule_type : null);
+  const winningBuyX = autoBuyX ?? (promoDiscount > 0 && appliedCouponPromo && evalCoupon ? evalCoupon.buy_x ?? null : null);
+  const winningGetY = autoGetY ?? (promoDiscount > 0 && appliedCouponPromo && evalCoupon ? evalCoupon.get_y ?? null : null);
+  const winningRewardQty = autoRewardQty ?? (promoDiscount > 0 && appliedCouponPromo && evalCoupon ? evalCoupon.reward_qty ?? null : null);
+
   return {
     ok: true,
     pricing: {
@@ -1367,6 +1394,19 @@ export function evaluateCartPricing(input: CartPricingInput): CartPricingResult 
       promoCode: code,
       promoDiscount: round2(promoDiscount),
       promoFreeShipping,
+      couponPromotionId: appliedCouponPromo ? appliedCouponPromo.id : null,
+      couponPromotionName: appliedCouponPromo ? (appliedCouponPromo.name_en || appliedCouponPromo.name_ar) : null,
+      couponPromotionRuleType: appliedCouponPromo && evalCoupon ? evalCoupon.rule_type : null,
+      couponPromotionBuyX: appliedCouponPromo && evalCoupon ? evalCoupon.buy_x ?? null : null,
+      couponPromotionGetY: appliedCouponPromo && evalCoupon ? evalCoupon.get_y ?? null : null,
+      couponPromotionRewardQty: appliedCouponPromo && evalCoupon ? evalCoupon.reward_qty ?? null : null,
+      couponPromotionRewardedUnits: appliedCouponPromo && evalCoupon ? evalCoupon.rewardedUnits : [],
+      winningPromotionId: winningPromoId,
+      winningPromotionName: winningPromoName,
+      winningRuleType: winningRuleType,
+      winningBuyX: winningBuyX,
+      winningGetY: winningGetY,
+      winningRewardQty: winningRewardQty,
       grossShippingFee: round2(grossFee + shipDiscount),
       shippingDiscount: round2(shipDiscount),
       shippingSource: shipSource,
