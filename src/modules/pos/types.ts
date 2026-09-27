@@ -155,6 +155,20 @@ export interface Sale {
    * `null` for online-channel sales and for rows before the column existed.
    */
   shift_id?: string | null;
+  /**
+   * Offline-first (client-only bookkeeping — never a database column).
+   *
+   * Set only on a sale the till completed while offline, and read only by the
+   * connectivity/sync UI. Absent (`undefined`) means "not an offline sale" —
+   * every sale read from the server is untouched by this field. See
+   * `src/modules/pos/offline/types.ts` for the full offline-sale record this
+   * is projected from.
+   */
+  offline_sync_status?: "pending" | "syncing" | "synced" | "error";
+  /** Human-readable reason the last sync attempt failed, when it did. */
+  offline_last_error?: string | null;
+  /** Coarse classification of `offline_last_error`. */
+  offline_last_error_kind?: "network" | "conflict" | "rejected" | null;
 }
 
 /** Payload the cart sends to complete a sale. */
