@@ -510,6 +510,21 @@
 .store-v2 :is(.v2-zone, .v2-address-option) input { width: 18px; height: 18px; margin-top: 2px; flex: none; accent-color: var(--v2-surface-text); }
 .store-v2 :is(.v2-zone, .v2-address-option) span { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
 .store-v2 :is(.v2-zone, .v2-address-option) small { color: var(--v2-surface-muted); font-size: 11px; }
+/* Issue #7: only the zone rows get a bounded, scrollable pane — a shop with a
+   long governorate/zone list no longer pushes the whole checkout (and the
+   Place order button) far down the page. The legend and validation error
+   stay outside this pane so they're always visible. Pricing/eligibility
+   logic is untouched; this is presentation only. Rows keep a touch-sized
+   44px+ target and the pane scrolls independently of the page on mobile. */
+.store-v2 .v2-zone-scroll { display: grid; gap: 8px; max-height: min(46vh, 340px); overflow-y: auto;
+  overscroll-behavior: contain; -webkit-overflow-scrolling: touch; scrollbar-width: thin; padding-inline-end: 4px; }
+.store-v2 .v2-zone { min-height: 44px; scroll-margin-block: 6px; transition: border-color .15s ease, box-shadow .15s ease; }
+.store-v2 .v2-zone[data-selected="true"] { border-width: 2px; border-color: var(--v2-accent);
+  box-shadow: inset 0 0 0 1px var(--v2-accent); }
+.store-v2 .v2-zone[data-selected="true"] strong::after { content: " \2713"; color: var(--v2-accent); font-weight: 700; }
+@media (max-width: 480px) {
+  .store-v2 .v2-zone-scroll { max-height: 42vh; }
+}
 .store-v2 .v2-payment-instructions { display: grid; gap: 14px; padding-top: 15px; }
 .store-v2 .v2-payment-instructions h3 { font-size: 15px; }
 .store-v2 .v2-payment-instructions ol, .store-v2 .v2-next-steps { padding-inline-start: 22px; display: grid; gap: 11px; }

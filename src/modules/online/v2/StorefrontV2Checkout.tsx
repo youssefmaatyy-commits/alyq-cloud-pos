@@ -151,16 +151,21 @@ export function StorefrontV2Checkout() {
           </div>
           {deliveryType === "delivery" && settings.delivery.enabled ? <>
             {zones.length ? <fieldset className="v2-zone-list"><legend>{t("store.checkout.chooseZone")}</legend>
-              {zones.map((zone) => <label key={zone.id} className="v2-zone" data-selected={zone.id === deliveryZoneId}>
-                <input type="radio" name="v2-zone" checked={zone.id === deliveryZoneId}
-                  onChange={() => setDeliveryZoneId(zone.id)} />
-                <span><strong>{pick(zone.name_ar, zone.name_en)}</strong>
-                  <small>{zone.shipping_fee ? t("store.checkout.zoneFee", { amount: money(zone.shipping_fee) }) : t("store.checkout.free")}
-                    {zone.minimum_order_amount ? ` · ${t("store.checkout.zoneMinimum", { amount: money(zone.minimum_order_amount) })}` : ""}
-                    {zone.show_estimated_delivery !== false &&
-                      pick(zone.estimated_delivery_text_ar, zone.estimated_delivery_text_en) ?
-                      ` · ${pick(zone.estimated_delivery_text_ar, zone.estimated_delivery_text_en)}` : ""}</small></span>
-              </label>)}
+              {/* Issue #7: the legend and the validation error stay outside the
+                  scrollport so they're never scrolled out of view — only the
+                  zone rows themselves get a bounded, scrollable pane. */}
+              <div className="v2-zone-scroll">
+                {zones.map((zone) => <label key={zone.id} className="v2-zone" data-selected={zone.id === deliveryZoneId}>
+                  <input type="radio" name="v2-zone" checked={zone.id === deliveryZoneId}
+                    onChange={() => setDeliveryZoneId(zone.id)} />
+                  <span><strong>{pick(zone.name_ar, zone.name_en)}</strong>
+                    <small>{zone.shipping_fee ? t("store.checkout.zoneFee", { amount: money(zone.shipping_fee) }) : t("store.checkout.free")}
+                      {zone.minimum_order_amount ? ` · ${t("store.checkout.zoneMinimum", { amount: money(zone.minimum_order_amount) })}` : ""}
+                      {zone.show_estimated_delivery !== false &&
+                        pick(zone.estimated_delivery_text_ar, zone.estimated_delivery_text_en) ?
+                        ` · ${pick(zone.estimated_delivery_text_ar, zone.estimated_delivery_text_en)}` : ""}</small></span>
+                </label>)}
+              </div>
               {showErrors && issues.zone ? <p role="alert" className="v2-field-error">{t("store.checkout.zoneRequired")}</p> : null}
             </fieldset> : null}
             {places.length ? <datalist id="v2-delivery-places">{places.map((place, index) =>

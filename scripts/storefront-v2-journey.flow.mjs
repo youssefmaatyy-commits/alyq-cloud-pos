@@ -227,6 +227,20 @@ const estimatedTotal = Number(testid("v2-cart-totals").querySelector(".v2-totals
 check("delivery form uses saved browser-local address and selected configured zone",
   document.querySelector('.v2-checkout-form input[autocomplete="address-level2"]')?.value === "Cairo" &&
   cairo.getAttribute("data-selected") === "true");
+// Issue #7: the zone list is a bounded, independently scrollable pane so a
+// shop with many governorates never pushes "Place order" far down the page —
+// but its legend and validation error must stay pinned outside that pane, or
+// an admin with a long zone list could scroll right past why Save/submit is
+// blocked. jsdom does not run real CSS layout (no pixel heights), so this
+// proves the DOM contract the CSS relies on; real-Chromium geometry is
+// covered separately by scripts/rendered-v2*.flow.mjs.
+const zoneFieldset = document.querySelector("fieldset.v2-zone-list");
+const zoneScroll = zoneFieldset?.querySelector(".v2-zone-scroll");
+check("zone rows live inside the bounded scroll pane, not loose in the fieldset",
+  Boolean(zoneScroll) && zoneScroll.querySelectorAll(".v2-zone").length === 4 &&
+  zoneFieldset.querySelectorAll(":scope > .v2-zone").length === 0);
+check("the zone list's legend is pinned outside the scrollable pane",
+  Boolean(zoneFieldset?.querySelector(":scope > legend")) && !zoneScroll.contains(zoneFieldset.querySelector("legend")));
 clickEl(testid("v2-place-order"));
 await waitFor(() => orders().length === 3 && Boolean(testid("v2-order-number")) &&
   Boolean(testid("v2-order-details")), { label: "settled delivery/COD receipt" });
