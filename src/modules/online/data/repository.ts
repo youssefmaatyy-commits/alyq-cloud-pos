@@ -84,6 +84,15 @@ export const ONLINE_ERROR_CODES = [
    */
   "delivery_minimum_not_met",
   "pickup_unavailable",
+  /**
+   * The zone id the cart carried is gone, disabled, or was removed by the
+   * admin between the checkout page loading and the customer submitting
+   * (0054's trigger and 0050's `place_online_order` both raise "Delivery zone
+   * is not available" for this). Distinct from `delivery_area_unsupported`
+   * (a free-text address outside the shop's places): here the shopper picked
+   * a real zone that stopped being valid, and the fix is to choose again.
+   */
+  "delivery_zone_unavailable",
   "payment_unavailable",
   "coupon_invalid",
   "coupon_expired",
@@ -242,6 +251,22 @@ export function toOnlineError(error: unknown): OnlineError {
       detail: { sku: skuOf(message) },
     });
   }
+  // Phase 43's `place_online_order` variant branch: a line arrived with no
+  // combination at all ("Choose the colour and the size for %"), or the
+  // combination it named does not belong to that product / is no longer sold
+  // ("That colour and size does not belong to %", "% is no longer sold").
+  // Both used to fall through to the bare `db` code even though
+  // `variant_required` / `variant_mismatch` already existed as codes and
+  // dictionary strings — nothing ever routed a live error to them.
+  if (/choose the colour and the size for/i.test(message)) {
+    return new OnlineError("variant_required", message, { field: "lines" });
+  }
+  if (
+    /does not belong to/i.test(message) ||
+    /is no longer sold/i.test(message)
+  ) {
+    return new OnlineError("variant_mismatch", message, { field: "lines" });
+  }
   if (/coupon .* is not valid/i.test(message)) {
     return new OnlineError("coupon_invalid", message, { field: "coupon_code" });
   }
@@ -262,6 +287,15 @@ export function toOnlineError(error: unknown): OnlineError {
   }
   if (/delivery to .* is not available/i.test(message)) {
     return new OnlineError("delivery_area_unsupported", message, { field: "address" });
+  }
+  // Phase 50/54: `place_online_order` (the zone branch) and the
+  // `online_order_delivery_snapshot` trigger both raise this exact wording
+  // when the `delivery_zone_id` the cart sent no longer names an enabled row.
+  // Before this mapping it fell through to the bare `db` code and the
+  // customer was told "something went wrong" for an order that just needed
+  // them to pick a zone again.
+  if (/delivery zone is not available/i.test(message)) {
+    return new OnlineError("delivery_zone_unavailable", message, { field: "delivery_zone_id" });
   }
   if (/delivery orders need at least/i.test(message)) {
     const minimum = /delivery orders need at least ([\d.]+)/i.exec(message);

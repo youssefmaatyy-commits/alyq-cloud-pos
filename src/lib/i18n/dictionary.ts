@@ -2016,6 +2016,7 @@ export const en = {
   "online.error.delivery_unavailable": "Delivery is not available right now.",
   "online.error.delivery_area_unsupported": "The address is outside the shop's delivery areas.",
   "online.error.delivery_minimum_not_met": "The order is below the shop's delivery minimum.",
+  "online.error.delivery_zone_unavailable": "That delivery zone is no longer available. Choose another one.",
   "online.error.pickup_unavailable": "Pickup is not available right now.",
   "online.error.payment_unavailable": "That payment method is not available.",
   "online.error.coupon_invalid": "That coupon code is not valid.",
@@ -3289,6 +3290,8 @@ export const en = {
     "We do not deliver to that address yet — choose pickup, or message us.",
   "store.error.delivery_minimum_not_met":
     "Your order is below the shop's minimum for delivery.",
+  "store.error.delivery_zone_unavailable":
+    "That delivery zone is no longer available. Please choose another one and try again.",
   "store.error.pickup_unavailable": "Pickup is not available right now.",
   "store.error.payment_unavailable": "That payment method is not available.",
   "store.error.coupon_invalid": "That coupon code is not valid.",
@@ -6337,6 +6340,7 @@ export const ar: Record<TranslationKey, string> = {
   "online.error.delivery_unavailable": "التوصيل غير متاح حالياً.",
   "online.error.delivery_area_unsupported": "العنوان خارج مناطق التوصيل.",
   "online.error.delivery_minimum_not_met": "قيمة الطلب أقل من الحد الأدنى للتوصيل.",
+  "online.error.delivery_zone_unavailable": "منطقة التوصيل هذه لم تعد متاحة. اختر منطقة أخرى.",
   "online.error.pickup_unavailable": "الاستلام من المعرض غير متاح حالياً.",
   "online.error.payment_unavailable": "طريقة الدفع هذه غير متاحة.",
   "online.error.coupon_invalid": "كود الخصم غير صالح.",
@@ -7604,6 +7608,7 @@ export const ar: Record<TranslationKey, string> = {
   "store.error.delivery_unavailable": "التوصيل غير متاح حالياً — اختر الاستلام من المعرض.",
   "store.error.delivery_area_unsupported": "لا نوصّل إلى هذا العنوان بعد — اختر الاستلام من المعرض أو راسلنا.",
   "store.error.delivery_minimum_not_met": "قيمة طلبك أقل من الحد الأدنى للتوصيل.",
+  "store.error.delivery_zone_unavailable": "منطقة التوصيل هذه لم تعد متاحة. اختر منطقة أخرى وحاول مرة أخرى.",
   "store.error.pickup_unavailable": "الاستلام من المعرض غير متاح حالياً.",
   "store.error.payment_unavailable": "طريقة الدفع هذه غير متاحة.",
   "store.error.coupon_invalid": "كود الخصم غير صالح.",

@@ -2455,6 +2455,17 @@ test("every live checkout refusal lands on a customer-facing code (never bare db
     ["Coupon WELCOME has been fully used", "coupon_limit_reached"],
     ["Coupon WELCOME needs a subtotal of at least 200", "coupon_min_subtotal"],
     ["Coupon WELCOME does not apply to this cart", "coupon_not_applicable"],
+    // Phase 43's variant branch and 0050/0054's zone branch: these three
+    // wordings used to fall through to the bare `db` code (the storefront's
+    // generic "something went wrong" message) even though a specific code and
+    // dictionary string already existed for each — nothing ever routed the
+    // live error to it. This is issue #1's real root cause for a shopper
+    // whose colour/size or delivery zone stopped being valid between page
+    // load and submission.
+    ["Choose the colour and the size for ALYQ-1001", "variant_required"],
+    ["That colour and size does not belong to ALYQ-1001", "variant_mismatch"],
+    ["Gold / 42 is no longer sold", "variant_mismatch"],
+    ["Delivery zone is not available", "delivery_zone_unavailable"],
   ];
   for (const [text, expected] of cases) {
     const err = toOnlineError(new Error(text));
