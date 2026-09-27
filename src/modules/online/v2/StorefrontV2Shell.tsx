@@ -53,7 +53,10 @@ export function StorefrontV2Shell({ children }: { children: ReactNode }) {
       <span className="v2-wordmark-secondary" lang={wordmarkSecondary.code}>{wordmarkSecondary.text}</span>
     </span>
   ) : (
-    <span dir="auto">{storeName}</span>
+    // A single configured name (no distinct second-language name to pair
+    // it with) still gets the same gold header treatment as the bilingual
+    // lockup above, not the header's plain text colour.
+    <span className="v2-wordmark-primary" dir="auto">{storeName}</span>
   );
   const social = resolvedV2SocialChannels(settings, lang);
   const whatsapp = social.find((channel) => channel.platform === "whatsapp");
@@ -173,19 +176,15 @@ export function StorefrontV2Shell({ children }: { children: ReactNode }) {
                 aria-expanded={searchOpen} onClick={() => setSearchOpen((value) => !value)}><Icon name="search" /></button>
             ) : null}
           </div>
-          <Link to="/store" className="v2-logo" aria-label={storeName}>
-            {appearance.headerLogoUrl ? (
-              <picture>
-                {appearance.mobileLogoUrl && appearance.mobileLogoUrl !== appearance.headerLogoUrl ? (
-                  <source media="(max-width: 767px)" srcSet={appearance.mobileLogoUrl} />
-                ) : null}
-                <img src={appearance.headerLogoUrl} alt={storeName} />
-              </picture>
-            ) : appearance.mobileLogoUrl ? <>
-              <img className="v2-mobile-only" src={appearance.mobileLogoUrl} alt={storeName} />
-              <span className="v2-desktop-only">{wordmark}</span>
-            </> : wordmark}
-          </Link>
+          {/* Issue #1 (6th follow-up round): the storefront header branding is
+             a text wordmark only, never a logo image — the merchant asked
+             for the boxed image gone entirely and replaced with the shop's
+             own gold "ALYQ | أَلِــيْـــق"-style bilingual wordmark. Only the
+             admin's own settings-studio preview (StorefrontV2DraftPreview)
+             still shows an uploaded image, so admins can see what they're
+             about to publish; the live public shell below never reads
+             headerLogoUrl/mobileLogoUrl again. */}
+          <Link to="/store" className="v2-logo" aria-label={storeName}>{wordmark}</Link>
           <div className="v2-header-end">
             {appearance.showLanguage ? <button type="button" className="v2-language-button v2-desktop-only" onClick={toggleLang}
               aria-label={t("store.nav.changeLanguage")}>{lang === "ar" ? "EN" : "عربي"}</button> : null}

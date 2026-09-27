@@ -67,15 +67,26 @@
 .store-v2 .v2-icon-button svg { width: 21px; height: 21px; }
 .store-v2 .v2-logo { display: grid; place-items: center; min-width: 0; max-width: 62vw; overflow: hidden; text-align: center; font-family: var(--v2-font-display); font-size: clamp(19px, 5vw, 29px); font-weight: 600; letter-spacing: .12em; line-height: 1; }
 .store-v2[dir="rtl"] .v2-logo { letter-spacing: 0; }
-/* Bilingual header wordmark (Issue #7 / branding): the shop's own configured
-   name in both languages, e.g. "ALYQ | أَلِــيْـــق" — never a second,
-   hardcoded branding system. The leading name carries the bold display
-   weight; the trailing name rides in the theme's own accent colour (gold by
-   default) so the pair reads as one premium lockup, not two separate
-   labels. Everything clips instead of wrapping so a long shop name can never
-   push the header taller or break onto a second line on mobile. */
+/* Bilingual header wordmark (Issue #1, 6th follow-up round): now the ONLY
+   header branding — the merchant removed the boxed logo image entirely in
+   favour of the shop's own configured name in both languages, e.g.
+   "ALYQ | أَلِــيْـــق", never a second, hardcoded branding system, and
+   asked explicitly for gold text. Both names render in `--v2-accent` (the
+   theme's own accent colour, #a48d59 gold by default for this shop) rather
+   than the auto-contrast `--v2-header-accent-text` token used elsewhere in
+   this header: measured against this shop's actual header background
+   (#34393b), the raw gold only reaches 3.64:1 contrast — under the 4.5:1
+   threshold that token enforces for regular text, so it was silently
+   falling back to plain white and never rendering gold at all. 3.64:1 still
+   clears WCAG's 3:1 threshold for bold/large text (this wordmark is both,
+   19-29px bold), so it stays legible while actually being the gold colour
+   asked for. There is no background on the logo/wordmark itself, so it is
+   always transparent — no white box. Everything clips instead of wrapping
+   so a long shop name can never push the header taller or break onto a
+   second line on mobile. */
+.store-v2 .v2-logo { background: transparent; }
 .store-v2 .v2-wordmark { display: inline-flex; align-items: baseline; gap: .4em; max-width: 100%; min-width: 0; }
-.store-v2 .v2-wordmark-primary { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.store-v2 .v2-wordmark-primary { color: var(--v2-accent); font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .store-v2 .v2-wordmark-divider { flex: none; color: var(--v2-accent); font-weight: 400; opacity: .55; font-size: .85em; }
 .store-v2 .v2-wordmark-secondary { color: var(--v2-accent); font-weight: 500; letter-spacing: 0; opacity: .92; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .store-v2 .v2-wordmark-primary:lang(ar), .store-v2 .v2-wordmark-secondary:lang(ar) { font-family: var(--v2-font-arabic-display); letter-spacing: 0; }
