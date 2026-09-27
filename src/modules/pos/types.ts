@@ -181,6 +181,8 @@ export interface CompleteSaleInput {
   }[];
   discount_type: DiscountType;
   discount_value: number;
+  coupon_code?: string | null;
+  promo_code?: string | null;
   /** One or more payments whose amounts sum exactly to the sale total. */
   payments: SalePaymentInput[];
   customer_id?: string | null;

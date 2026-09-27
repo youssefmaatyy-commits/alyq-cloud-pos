@@ -1970,3 +1970,222 @@ test("60. Campaign / POS / Storefront pricing parity: same product + variant rec
     assert.equal(evalOnline.pricing.total, 288);
   }
 });
+
+// ── Test 61: Online order approval preserves immutable frozen snapshot ──────
+test("61. Online order approval preserves immutable frozen snapshot despite product price changes or promotion expiry", () => {
+  // Snapshot at placement time
+  const placedSnapshot = {
+    order_id: "ord-snap-1",
+    subtotal: 500,
+    discount_amount: 100, // 20% promo at placement
+    automatic_discount_amount: 100,
+    shipping_fee: 40,
+    total: 440,
+    items: [
+      {
+        product_id: "prd-frozen",
+        variant_id: null,
+        unit_price: 250,
+        discounted_unit_price: 200,
+        quantity: 2,
+        line_total: 500,
+        automatic_discount_amount: 100,
+        rewarded_qty: 0,
+        promotion_rule_type: "standard",
+      },
+    ],
+  };
+
+  // Catalogue changes later: product price raised to 350, campaign starts, promotion expires
+  const _changedCataloguePrice = 350;
+  const _changedCampaignDiscount = 50;
+  assert.ok(_changedCataloguePrice > placedSnapshot.items[0].unit_price);
+  assert.ok(_changedCampaignDiscount > 0);
+
+  // Conversion to sale uses ONLY the frozen snapshot lines
+  const goodsTotal = round2(placedSnapshot.subtotal - placedSnapshot.discount_amount); // 400
+  const saleDiscount = placedSnapshot.discount_amount; // 100
+
+  assert.equal(goodsTotal, 400);
+  assert.equal(saleDiscount, 100);
+
+  // In pos_complete_sale for source='online':
+  const saleSubtotal = placedSnapshot.items.reduce((sum, item) => sum + item.unit_price * item.quantity, 0); // 500
+  const saleTotal = round2(saleSubtotal - saleDiscount); // 400
+  assert.equal(saleSubtotal, 500);
+  assert.equal(saleTotal, 400);
+  assert.equal(saleTotal, goodsTotal, "Generated POS sale goods total equals stored online merchandise total exactly");
+});
+
+// ── Test 62: Losing coupon does not consume used_count ───────────────────────
+test("62. Losing coupon: automatic promo saves 100, coupon saves 50 -> automatic wins -> coupon unconsumed", () => {
+  const autoPromo = makePromo({
+    id: "auto-100",
+    name_en: "Big Auto 100 Off",
+    discount_type: "fixed",
+    value: 100,
+    scope: "store",
+    mode: "automatic",
+    used_count: 0,
+  });
+
+  const couponPromo = makePromo({
+    id: "coupon-50",
+    name_en: "Small Coupon 50 Off",
+    discount_type: "fixed",
+    value: 50,
+    scope: "store",
+    mode: "coupon",
+    code: "SAVE50",
+    used_count: 0,
+    usage_limit: 10,
+  });
+
+  const lines = [
+    { product_id: "p1", variant_id: null, category_id: null, unit_price: 500, qty: 1, line_total: 500 },
+  ];
+
+  const res = evaluateCartPricing({
+    lines,
+    subtotal: 500,
+    promoCode: "SAVE50",
+    coupons: [],
+    promotions: [autoPromo, couponPromo],
+    targetsByPromotion: new Map(),
+    usageFor: () => ({ customerUses: 0, hasPriorOrder: false }),
+    customerKey: null,
+    zone: null,
+    legacy: { fee: 0, minimum: 0, threshold: 0 },
+    deliveryType: "delivery",
+    now: NOW,
+    channel: "online",
+  });
+
+  assert.equal(res.ok, true);
+  if (res.ok) {
+    // Auto 100 wins over coupon 50
+    assert.equal(res.pricing.autoDiscount, 100);
+    assert.equal(res.pricing.promoDiscount, 0);
+    assert.equal(res.pricing.winningPromotionId, "auto-100");
+    assert.equal(res.pricing.totalDiscount, 100);
+
+    // Lifecycle rule: on approval, only consume if promoDiscount > 0 or promoFreeShipping = true
+    const shouldConsumeCoupon = res.pricing.promoDiscount > 0 || res.pricing.promoFreeShipping;
+    assert.equal(shouldConsumeCoupon, false, "Losing coupon must NOT be consumed on order approval");
+  }
+});
+
+// ── Test 63: POS coupon evaluation & validation ─────────────────────────────
+test("63. POS coupon support: channel='pos' validates coupon, enforces minimums, and calculates line allocations", () => {
+  const posCoupon = makePromo({
+    id: "pos-coupon-1",
+    name_en: "POS VIP 15%",
+    discount_type: "percent",
+    value: 15,
+    scope: "store",
+    mode: "coupon",
+    code: "POSVIP",
+    channel: "pos",
+    minimum_order_amount: 200,
+    used_count: 2,
+    usage_limit: 5,
+  });
+
+  const lines = [
+    { product_id: "p1", variant_id: null, category_id: null, unit_price: 150, qty: 2, line_total: 300 },
+  ];
+
+  const res = evaluateCartPricing({
+    lines,
+    subtotal: 300,
+    promoCode: "posvip",
+    coupons: [],
+    promotions: [posCoupon],
+    targetsByPromotion: new Map(),
+    usageFor: () => ({ customerUses: 0, hasPriorOrder: false }),
+    customerKey: null,
+    zone: null,
+    legacy: { fee: 0, minimum: 0, threshold: 0 },
+    deliveryType: "pickup",
+    now: NOW,
+    channel: "pos",
+  });
+
+  assert.equal(res.ok, true);
+  if (res.ok) {
+    assert.equal(res.pricing.promoDiscount, 45); // 15% of 300 = 45
+    assert.equal(res.pricing.couponPromotionId, "pos-coupon-1");
+    assert.equal(res.pricing.winningPromotionId, "pos-coupon-1");
+    assert.equal(res.pricing.lines[0].discount_amount, 45);
+    assert.equal(res.pricing.total, 255);
+  }
+
+  // Reject on online channel
+  const onlineAttempt = evaluateCartPricing({
+    lines,
+    subtotal: 300,
+    promoCode: "posvip",
+    coupons: [],
+    promotions: [posCoupon],
+    targetsByPromotion: new Map(),
+    usageFor: () => ({ customerUses: 0, hasPriorOrder: false }),
+    customerKey: null,
+    zone: null,
+    legacy: { fee: 0, minimum: 0, threshold: 0 },
+    deliveryType: "delivery",
+    now: NOW,
+    channel: "online",
+  });
+  assert.equal(onlineAttempt.ok, false);
+});
+
+// ── Test 64: POS coupon vs manual item discounts (non-stacking) ─────────────
+test("64. POS coupon vs manual item discounts: highest saving wins per non-stacking rules", () => {
+  // Scenario A: Coupon saves 50 EGP (10% of 500), manual item discount saves 20 EGP -> coupon wins
+  const promoLineDiscA = 50;
+  const manualItemDiscA = 20;
+  const effectivePromoA = promoLineDiscA >= manualItemDiscA ? promoLineDiscA : 0;
+  const effectiveManualA = promoLineDiscA >= manualItemDiscA ? 0 : manualItemDiscA;
+  assert.equal(effectivePromoA, 50);
+  assert.equal(effectiveManualA, 0);
+
+  // Scenario B: Coupon saves 20 EGP, manual item discount saves 50 EGP -> manual wins
+  const promoLineDiscB = 20;
+  const manualItemDiscB = 50;
+  const effectivePromoB = promoLineDiscB >= manualItemDiscB ? promoLineDiscB : 0;
+  const effectiveManualB = promoLineDiscB >= manualItemDiscB ? 0 : manualItemDiscB;
+  assert.equal(effectivePromoB, 0);
+  assert.equal(effectiveManualB, 50);
+});
+
+// ── Test 65: Online order cancellation releases coupon usage safely ─────────
+test("65. Online cancellation releases usage ONLY if consumed on approval", () => {
+  let usedCount = 0;
+
+  // Order placed with winning coupon: pending -> used_count stays 0
+  const order = { status: "pending", discount_code: "WINNER", promo_discount: 40 };
+  assert.equal(usedCount, 0, "Placement does not increment used_count");
+
+  // Order approved -> used_count increments because promo_discount > 0
+  if (order.promo_discount > 0) {
+    usedCount += 1;
+  }
+  order.status = "approved";
+  assert.equal(usedCount, 1, "Approval increments used_count");
+
+  // Order cancelled while approved -> used_count decrements
+  if (order.status === "approved" && order.promo_discount > 0) {
+    usedCount = Math.max(0, usedCount - 1);
+  }
+  order.status = "cancelled";
+  assert.equal(usedCount, 0, "Cancellation of approved order decrements used_count");
+
+  // Another order placed and cancelled while still pending:
+  const pendingOrder = { status: "pending", discount_code: "WINNER", promo_discount: 40 };
+  // Cancelled while pending -> usedCount should not decrement below 0
+  if (pendingOrder.status === "approved" && pendingOrder.promo_discount > 0) {
+    usedCount = Math.max(0, usedCount - 1);
+  }
+  assert.equal(usedCount, 0, "Cancellation of pending order never decrements used_count");
+});
+

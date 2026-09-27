@@ -23,9 +23,11 @@
 --   · Cashier-owned open shift enforcement (never attaches a sale to another cashier's shift)
 --   · Atomic coupon usage limit enforcement & reservation-safe counting lifecycle
 --   · Full historical snapshots for automatic and coupon promotions (BXGY, Cheapest Item, Standard)
---   · Approved online order conversion without double discounting
+--   · Approved online order conversion without double discounting using immutable frozen snapshots
 --   · Approved online order cancellation with complete stock & variant reversal via pos_void_sale
 -- ═══════════════════════════════════════════════════════════════════════════
+
+begin;
 
 alter table public.promotions
   add column if not exists mode text not null default 'automatic',
@@ -1104,6 +1106,20 @@ declare
   v_auto_buy_x      integer := null;
   v_auto_get_y      integer := null;
   v_auto_reward_qty integer := null;
+  v_pos_promo_code  text := null;
+  v_coupon_id       uuid := null;
+  v_coupon_name     text := null;
+  v_coupon_discount numeric(14,2) := 0;
+  v_coupon_rule_type text := null;
+  v_coupon_buy_x    integer := null;
+  v_coupon_get_y    integer := null;
+  v_coupon_reward_qty integer := null;
+  v_winning_id      uuid := null;
+  v_winning_name    text := null;
+  v_winning_rule_type text := null;
+  v_winning_buy_x   integer := null;
+  v_winning_get_y   integer := null;
+  v_winning_reward_qty integer := null;
   v_auto_stack      boolean := false;
   v_line_index      integer := 0;
   v_official_unit   numeric(14,2) := 0;
@@ -1205,20 +1221,9 @@ begin
       raise exception 'Invalid quantity' using errcode = 'check_violation';
     end if;
 
-    v_item_discount_type := coalesce(v_line->>'discount_type', 'none');
-    v_item_discount_value := coalesce((v_line->>'discount_value')::numeric, 0);
-    if v_item_discount_type not in ('none', 'percent', 'fixed')
-       or v_item_discount_value < 0
-       or (v_item_discount_type = 'percent' and v_item_discount_value > 100) then
-      raise exception 'Invalid item discount' using errcode = 'check_violation';
-    end if;
-
     select * into v_product from public.products where id = (v_line->>'product_id')::uuid for update;
     if not found then
       raise exception 'Product % not found', v_line->>'product_id' using errcode = 'foreign_key_violation';
-    end if;
-    if not v_product.active or not v_product.stock_tracking_enabled then
-      raise exception 'Product % is not sellable', v_product.sku using errcode = 'check_violation';
     end if;
 
     if v_product.variants_enabled then
@@ -1234,24 +1239,60 @@ begin
         raise exception 'That colour and size does not belong to %', v_product.sku
           using errcode = 'check_violation';
       end if;
-      if not v_variant.active then
+      if v_source = 'pos' and not v_variant.active then
         raise exception '% is no longer sold',
           coalesce(public.variant_label(v_variant.color_en, v_variant.color_ar,
                                        v_variant.size, v_variant.size_label), v_variant.sku)
           using errcode = 'check_violation';
       end if;
-      if v_qty > v_variant.stock_quantity then
+      if v_source = 'pos' and v_qty > v_variant.stock_quantity then
         raise exception 'Only % of % in stock', v_variant.stock_quantity,
           coalesce(public.variant_label(v_variant.color_en, v_variant.color_ar,
                                        v_variant.size, v_variant.size_label), v_variant.sku)
           using errcode = 'check_violation';
       end if;
+    else
+      v_variant_id := null;
+      if v_source = 'pos' and v_qty > v_product.stock_quantity then
+        raise exception 'Only % of % in stock', v_product.stock_quantity, v_product.sku using errcode = 'check_violation';
+      end if;
+    end if;
 
-      if v_variant.price_override is not null then
-        v_unit := v_variant.price_override;
+    if v_source = 'pos' then
+      v_item_discount_type := coalesce(v_line->>'discount_type', 'none');
+      v_item_discount_value := coalesce((v_line->>'discount_value')::numeric, 0);
+      if v_item_discount_type not in ('none', 'percent', 'fixed')
+         or v_item_discount_value < 0
+         or (v_item_discount_type = 'percent' and v_item_discount_value > 100) then
+        raise exception 'Invalid item discount' using errcode = 'check_violation';
+      end if;
+
+      if not v_product.active or not v_product.stock_tracking_enabled then
+        raise exception 'Product % is not sellable', v_product.sku using errcode = 'check_violation';
+      end if;
+
+      if v_product.variants_enabled then
+        if v_variant.price_override is not null then
+          v_unit := v_variant.price_override;
+        else
+          v_unit := v_product.selling_price;
+          select * into v_campaign
+          from public.campaigns
+          where active
+            and starts_at <= now() and ends_at >= now()
+            and (product_ids = '[]'::jsonb or jsonb_array_length(product_ids) = 0 or product_ids @> to_jsonb(array[v_product.id::text]))
+          order by case when discount_type = 'percent' then 1000 + discount_value else discount_value end desc
+          limit 1;
+          if found then
+            if v_campaign.discount_type = 'percent' then
+              v_unit := round((v_unit * (100 - v_campaign.discount_value) / 100)::numeric, 2);
+            else
+              v_unit := greatest(round((v_unit - v_campaign.discount_value)::numeric, 2), 0);
+            end if;
+          end if;
+        end if;
       else
         v_unit := v_product.selling_price;
-        -- Apply campaign discount for parity if not overridden
         select * into v_campaign
         from public.campaigns
         where active
@@ -1267,44 +1308,37 @@ begin
           end if;
         end if;
       end if;
-    else
-      v_variant_id := null;
-      if v_qty > v_product.stock_quantity then
-        raise exception 'Only % of % in stock', v_product.stock_quantity, v_product.sku using errcode = 'check_violation';
-      end if;
-      v_unit := v_product.selling_price;
-      -- Apply campaign discount for parity
-      select * into v_campaign
-      from public.campaigns
-      where active
-        and starts_at <= now() and ends_at >= now()
-        and (product_ids = '[]'::jsonb or jsonb_array_length(product_ids) = 0 or product_ids @> to_jsonb(array[v_product.id::text]))
-      order by case when discount_type = 'percent' then 1000 + discount_value else discount_value end desc
-      limit 1;
-      if found then
-        if v_campaign.discount_type = 'percent' then
-          v_unit := round((v_unit * (100 - v_campaign.discount_value) / 100)::numeric, 2);
-        else
-          v_unit := greatest(round((v_unit - v_campaign.discount_value)::numeric, 2), 0);
-        end if;
-      end if;
-    end if;
 
-    v_line_gross := round((v_unit * v_qty)::numeric, 2);
-    v_pricing_lines := v_pricing_lines || jsonb_build_object(
-      'product_id', v_product.id::text,
-      'category_id', v_product.category_id::text,
-      'variant_id', case when v_variant_id is null then null else v_variant_id::text end,
-      'qty', v_qty,
-      'unit_price', v_unit,
-      'line_total', v_line_gross
-    );
-    v_subtotal := v_subtotal + v_line_gross;
+      v_line_gross := round((v_unit * v_qty)::numeric, 2);
+      v_pricing_lines := v_pricing_lines || jsonb_build_object(
+        'product_id', v_product.id::text,
+        'category_id', v_product.category_id::text,
+        'variant_id', case when v_variant_id is null then null else v_variant_id::text end,
+        'qty', v_qty,
+        'unit_price', v_unit,
+        'line_total', v_line_gross
+      );
+      v_subtotal := v_subtotal + v_line_gross;
+
+    else
+      -- ── ONLINE CONVERSION: Use frozen price snapshot from online_order_items (or catalogue fallback) ──
+      if v_line->>'unit_price' is not null then
+        v_unit := round((v_line->>'unit_price')::numeric, 2);
+      elsif v_product.variants_enabled and v_variant.price_override is not null then
+        v_unit := v_variant.price_override;
+      else
+        v_unit := v_product.selling_price;
+      end if;
+      v_line_gross := round((v_unit * v_qty)::numeric, 2);
+      v_subtotal := v_subtotal + v_line_gross;
+    end if;
   end loop;
 
-  -- ── 3. Server-automatic promotion evaluation (POS ONLY) ───────────────────
-  -- Online orders have already been frozen and priced authoritatively at placement
+  -- ── 3. Promotion & Coupon evaluation (POS ONLY) ───────────────────────────
   if v_source = 'pos' then
+    v_pos_promo_code := nullif(upper(regexp_replace(btrim(coalesce(p_payload->>'coupon_code', p_payload->>'promo_code', '')), '\s+', '', 'g')), '');
+    v_customer_phone := nullif(btrim(coalesce(p_payload ->> 'customer_phone', '')), '');
+
     select coalesce(result->'lines', '[]'::jsonb),
            nullif(result->>'auto_promotion_id', '')::uuid,
            result->>'auto_promotion_name',
@@ -1312,25 +1346,36 @@ begin
            result->>'auto_promotion_rule_type',
            (result->>'auto_promotion_buy_x')::integer,
            (result->>'auto_promotion_get_y')::integer,
-           (result->>'auto_promotion_reward_qty')::integer
-      into v_priced_lines, v_auto_id, v_auto_name, v_auto_discount,
-           v_auto_rule_type, v_auto_buy_x, v_auto_get_y, v_auto_reward_qty
+           (result->>'auto_promotion_reward_qty')::integer,
+           nullif(result->>'coupon_promotion_id', '')::uuid,
+           result->>'coupon_promotion_name',
+           coalesce((result->>'promo_discount')::numeric, 0),
+           result->>'coupon_promotion_rule_type',
+           (result->>'coupon_promotion_buy_x')::integer,
+           (result->>'coupon_promotion_get_y')::integer,
+           (result->>'coupon_promotion_reward_qty')::integer,
+           nullif(result->>'winning_promotion_id', '')::uuid,
+           result->>'winning_promotion_name',
+           result->>'winning_rule_type',
+           (result->>'winning_buy_x')::integer,
+           (result->>'winning_get_y')::integer,
+           (result->>'winning_reward_qty')::integer
+      into v_priced_lines,
+           v_auto_id, v_auto_name, v_auto_discount,
+           v_auto_rule_type, v_auto_buy_x, v_auto_get_y, v_auto_reward_qty,
+           v_coupon_id, v_coupon_name, v_coupon_discount,
+           v_coupon_rule_type, v_coupon_buy_x, v_coupon_get_y, v_coupon_reward_qty,
+           v_winning_id, v_winning_name, v_winning_rule_type,
+           v_winning_buy_x, v_winning_get_y, v_winning_reward_qty
       from public.evaluate_order_pricing_channel(
-        v_subtotal, v_pricing_lines, null, null, '{}'::jsonb, '{}'::jsonb, 'pickup', false, 'pos'
+        v_subtotal, v_pricing_lines, v_pos_promo_code, v_customer_phone, '{}'::jsonb, '{}'::jsonb, 'pickup', true, 'pos'
       ) result;
 
-    if v_auto_discount <= 0 then
-      v_auto_id := null;
-      v_auto_name := null;
-      v_auto_discount := 0;
-      v_auto_rule_type := null;
-      v_auto_buy_x := null;
-      v_auto_get_y := null;
-      v_auto_reward_qty := null;
-      v_auto_stack := false;
-    else
+    if v_winning_id is not null then
       select coalesce(stackable, false) into v_auto_stack
-      from public.promotions where id = v_auto_id;
+      from public.promotions where id = v_winning_id;
+    else
+      v_auto_stack := false;
     end if;
 
     -- Manual discount + promotion non-stacking line calculation
@@ -1400,23 +1445,50 @@ begin
     end if;
     v_total := greatest(0, v_invoice_base - v_discount_amount);
 
-    -- Increment automatic promotion used count if applied
-    if v_auto_id is not null and v_actual_promo_discount_total > 0 then
+    -- Atomic consumption of coupon / promo used_count upon successful sale
+    if v_coupon_id is not null and v_coupon_discount > 0 and v_actual_promo_discount_total > 0 then
       update public.promotions
       set used_count = used_count + 1, updated_at = now()
-      where id = v_auto_id;
+      where id = v_coupon_id
+        and (usage_limit is null or used_count < usage_limit);
+
+      if not found and exists (
+        select 1 from public.promotions
+        where id = v_coupon_id and usage_limit is not null and used_count >= usage_limit
+      ) then
+        raise exception 'Coupon has already reached its usage limit' using errcode = 'check_violation';
+      end if;
+    elsif v_pos_promo_code is not null and v_coupon_discount > 0 and v_actual_promo_discount_total > 0 then
+      update public.coupons
+      set used_count = used_count + 1, updated_at = now()
+      where code = v_pos_promo_code
+        and (usage_limit is null or used_count < usage_limit);
+
+      if not found and exists (
+        select 1 from public.coupons
+        where code = v_pos_promo_code and usage_limit is not null and used_count >= usage_limit
+      ) then
+        raise exception 'Coupon has already reached its usage limit' using errcode = 'check_violation';
+      end if;
+    end if;
+
+    if v_auto_id is not null and v_auto_discount > 0 and v_actual_promo_discount_total > 0 and (v_coupon_id is null or v_auto_id <> v_coupon_id) then
+      update public.promotions
+      set used_count = used_count + 1, updated_at = now()
+      where id = v_auto_id
+        and (usage_limit is null or used_count < usage_limit);
     end if;
 
   else
     -- ── ONLINE CONVERSION ───────────────────────────────────────────────────
     -- Preserves exact server-saved order pricing snapshot without double-discounting
-    v_auto_id := nullif(p_payload->>'automatic_promotion_id', '')::uuid;
-    v_auto_name := nullif(p_payload->>'automatic_promotion_name', '');
+    v_winning_id := nullif(p_payload->>'automatic_promotion_id', '')::uuid;
+    v_winning_name := nullif(p_payload->>'automatic_promotion_name', '');
     v_actual_promo_discount_total := coalesce((p_payload->>'automatic_discount_amount')::numeric, 0);
-    v_auto_rule_type := nullif(p_payload->>'promotion_rule_type', '');
-    v_auto_buy_x := (p_payload->>'promotion_buy_x')::integer;
-    v_auto_get_y := (p_payload->>'promotion_get_y')::integer;
-    v_auto_reward_qty := (p_payload->>'promotion_reward_qty')::integer;
+    v_winning_rule_type := nullif(p_payload->>'promotion_rule_type', '');
+    v_winning_buy_x := (p_payload->>'promotion_buy_x')::integer;
+    v_winning_get_y := (p_payload->>'promotion_get_y')::integer;
+    v_winning_reward_qty := (p_payload->>'promotion_reward_qty')::integer;
     v_rewarded_units_json := coalesce(p_payload->'promotion_rewarded_units', '[]'::jsonb);
 
     v_discount_amount := least(round(v_discount_value::numeric, 2), v_subtotal);
@@ -1510,14 +1582,14 @@ begin
     v_sale_number, v_client_ref, v_sale_status::public.sale_status,
     coalesce(v_first_method, 'cash'), case when v_all_paid then 'paid' else 'pending' end::public.payment_status,
     v_subtotal, v_discount_type::public.discount_type, v_discount_value, v_discount_amount, v_item_discount_total,
-    v_item_discount_total + v_actual_promo_discount_total + v_discount_amount,
+    case when v_source = 'online' then v_discount_amount else v_item_discount_total + v_actual_promo_discount_total + v_discount_amount end,
     v_actual_promo_discount_total,
-    case when v_actual_promo_discount_total > 0 or v_source = 'online' then v_auto_id else null end,
-    case when v_actual_promo_discount_total > 0 or v_source = 'online' then v_auto_name else null end,
-    case when v_actual_promo_discount_total > 0 or v_source = 'online' then v_auto_rule_type else null end,
-    case when v_actual_promo_discount_total > 0 or v_source = 'online' then v_auto_buy_x else null end,
-    case when v_actual_promo_discount_total > 0 or v_source = 'online' then v_auto_get_y else null end,
-    case when v_actual_promo_discount_total > 0 or v_source = 'online' then v_auto_reward_qty else null end,
+    case when v_actual_promo_discount_total > 0 or v_source = 'online' then v_winning_id else null end,
+    case when v_actual_promo_discount_total > 0 or v_source = 'online' then v_winning_name else null end,
+    case when v_actual_promo_discount_total > 0 or v_source = 'online' then v_winning_rule_type else null end,
+    case when v_actual_promo_discount_total > 0 or v_source = 'online' then v_winning_buy_x else null end,
+    case when v_actual_promo_discount_total > 0 or v_source = 'online' then v_winning_get_y else null end,
+    case when v_actual_promo_discount_total > 0 or v_source = 'online' then v_winning_reward_qty else null end,
     case when v_actual_promo_discount_total > 0 or v_source = 'online' then v_rewarded_units_json else null end,
     v_total,
     case when v_cash_received > 0 then v_cash_received else null end,
@@ -1596,20 +1668,20 @@ begin
       end if;
       v_line_net := v_line_gross - (v_effective_promo_disc + v_effective_manual_disc);
     else
-      -- Online conversion line pricing
-      select * into v_product from public.products where id = (v_line->>'product_id')::uuid;
-      if v_product.variants_enabled then
-        v_variant_id := public.variant_id_of(v_line ->> 'variant_id');
-        select * into v_variant from public.product_variants where id = v_variant_id;
-        v_unit := coalesce(v_variant.price_override, v_product.selling_price);
+      -- Online conversion: use frozen line snapshot directly (or catalogue fallback)
+      if v_line->>'unit_price' is not null then
+        v_unit := round((v_line->>'unit_price')::numeric, 2);
+      elsif v_product.variants_enabled and v_variant.price_override is not null then
+        v_unit := v_variant.price_override;
       else
         v_unit := v_product.selling_price;
       end if;
       v_line_gross := round((v_unit * v_qty)::numeric, 2);
-      v_line_net := v_line_gross;
       v_effective_manual_disc := 0;
-      v_effective_promo_disc := 0;
-      v_line_applied_reward_qty := 0;
+      v_effective_promo_disc := round(coalesce((v_line->>'automatic_discount_amount')::numeric, (v_line->>'discount_amount')::numeric, 0)::numeric, 2);
+      v_line_net := v_line_gross - v_effective_promo_disc;
+      v_line_applied_reward_qty := coalesce((v_line->>'rewarded_qty')::integer, 0);
+      v_winning_rule_type := v_line->>'promotion_rule_type';
       v_item_discount_type := 'none';
       v_item_discount_value := 0;
     end if;
@@ -1621,7 +1693,7 @@ begin
       select * into v_variant from public.product_variants
        where id = v_variant_id and product_id = v_product.id
        for update;
-      v_official_unit := coalesce(v_variant.price_override, v_product.selling_price);
+      v_official_unit := v_unit;
       v_unit_cost := round(coalesce(v_variant.cost_override, v_product.cost_price, 0)::numeric, 2);
       v_variant_label := coalesce(public.variant_label(v_variant.color_en, v_variant.color_ar,
                                                       v_variant.size, v_variant.size_label), v_variant.sku);
@@ -1640,11 +1712,11 @@ begin
         v_official_unit, v_qty,
         v_line_gross, v_line_net,
         v_item_discount_type::public.discount_type, v_item_discount_value, v_effective_manual_disc,
-        case when v_effective_promo_disc > 0 then v_auto_id else null end,
-        case when v_effective_promo_disc > 0 then v_auto_name else null end,
+        case when v_effective_promo_disc > 0 then v_winning_id else null end,
+        case when v_effective_promo_disc > 0 then v_winning_name else null end,
         v_effective_promo_disc,
         v_line_applied_reward_qty,
-        case when v_effective_promo_disc > 0 then v_auto_rule_type else null end,
+        case when v_effective_promo_disc > 0 then v_winning_rule_type else null end,
         v_unit_cost
       );
 
@@ -1665,7 +1737,7 @@ begin
         end,
         v_user_id, v_user_name);
     else
-      v_official_unit := v_product.selling_price;
+      v_official_unit := v_unit;
       v_unit_cost := round(coalesce(v_product.cost_price, 0)::numeric, 2);
 
       insert into public.sale_items (
@@ -1679,11 +1751,11 @@ begin
         v_product.barcode, v_official_unit, v_qty,
         v_line_gross, v_line_net,
         v_item_discount_type::public.discount_type, v_item_discount_value, v_effective_manual_disc,
-        case when v_effective_promo_disc > 0 then v_auto_id else null end,
-        case when v_effective_promo_disc > 0 then v_auto_name else null end,
+        case when v_effective_promo_disc > 0 then v_winning_id else null end,
+        case when v_effective_promo_disc > 0 then v_winning_name else null end,
         v_effective_promo_disc,
         v_line_applied_reward_qty,
-        case when v_effective_promo_disc > 0 then v_auto_rule_type else null end,
+        case when v_effective_promo_disc > 0 then v_winning_rule_type else null end,
         v_unit_cost
       );
 
@@ -2173,6 +2245,7 @@ declare
   v_result      jsonb;
   v_reservation record;
   v_status      public.online_order_status;
+  v_coupon_applied boolean := false;
 begin
   if auth.uid() is not null then
     v_user_id := auth.uid()::text;
@@ -2267,15 +2340,7 @@ begin
 
     -- The sale covers merchandise; the delivery fee stays on the order
     v_goods_total := round((v_order.subtotal - v_order.discount_amount)::numeric, 2);
-
-    select coalesce(sum(round((coalesce(v.price_override, p.selling_price) * i.quantity)::numeric, 2)), 0)
-      into v_list_total
-    from public.online_order_items i
-    join public.products p on p.id = i.product_id
-    left join public.product_variants v on v.id = i.variant_id
-    where i.order_id = v_order.id;
-
-    v_sale_discount := greatest(round((v_list_total - v_goods_total)::numeric, 2), 0);
+    v_sale_discount := greatest(round(v_order.discount_amount::numeric, 2), 0);
 
     -- Pass frozen order snapshot to pos_complete_sale with source='online'
     v_result := public.pos_complete_sale(jsonb_build_object(
@@ -2297,8 +2362,17 @@ begin
       'promotion_get_y', v_order.promotion_get_y,
       'promotion_reward_qty', v_order.promotion_reward_qty,
       'lines', coalesce((
-        select jsonb_agg(jsonb_build_object('product_id', i.product_id, 'qty', i.quantity,
-                                            'variant_id', i.variant_id))
+        select jsonb_agg(jsonb_build_object(
+          'product_id', i.product_id,
+          'variant_id', i.variant_id,
+          'qty', i.quantity,
+          'unit_price', i.unit_price,
+          'discounted_unit_price', i.discounted_unit_price,
+          'line_total', i.line_total,
+          'automatic_discount_amount', i.automatic_discount_amount,
+          'rewarded_qty', i.rewarded_qty,
+          'promotion_rule_type', i.promotion_rule_type
+        ))
         from public.online_order_items i where i.order_id = v_order.id
       ), '[]'::jsonb),
       'payments', jsonb_build_array(jsonb_build_object(
@@ -2312,8 +2386,18 @@ begin
     set status = 'converted'::public.reservation_status, resolved_at = now()
     where online_order_id = v_order.id and status = 'reserved';
 
-    -- Atomic consumption of coupon usage upon approval
+    -- Atomic consumption of coupon usage upon approval (ONLY if coupon actually contributed)
+    v_coupon_applied := false;
     if v_order.discount_code is not null then
+      if v_order.price_snapshot is not null then
+        v_coupon_applied := (coalesce((v_order.price_snapshot->>'promo_discount')::numeric, 0) > 0)
+          or coalesce((v_order.price_snapshot->>'promo_free_shipping')::boolean, false);
+      else
+        v_coupon_applied := (coalesce(v_order.discount_amount, 0) > 0);
+      end if;
+    end if;
+
+    if v_coupon_applied then
       update public.promotions
       set used_count = used_count + 1, updated_at = now()
       where mode = 'coupon'
@@ -2341,7 +2425,11 @@ begin
       on conflict do nothing;
     end if;
 
-    if v_order.automatic_promotion_id is not null then
+    if v_order.automatic_promotion_id is not null and (
+      coalesce(v_order.automatic_discount_amount, 0) > 0
+      or coalesce(v_order.promotion_reward_qty, 0) > 0
+      or (v_order.price_snapshot is not null and coalesce((v_order.price_snapshot->>'auto_discount')::numeric, 0) > 0)
+    ) then
       update public.promotions
       set used_count = used_count + 1, updated_at = now()
       where id = v_order.automatic_promotion_id
@@ -2406,7 +2494,17 @@ begin
 
     -- Safe coupon & promotion lifecycle: release consumed count ONLY if the order was approved
     if v_order.status = 'approved' or v_order.sale_id is not null then
+      v_coupon_applied := false;
       if v_order.discount_code is not null then
+        if v_order.price_snapshot is not null then
+          v_coupon_applied := (coalesce((v_order.price_snapshot->>'promo_discount')::numeric, 0) > 0)
+            or coalesce((v_order.price_snapshot->>'promo_free_shipping')::boolean, false);
+        else
+          v_coupon_applied := (coalesce(v_order.discount_amount, 0) > 0);
+        end if;
+      end if;
+
+      if v_coupon_applied then
         update public.promotions
         set used_count = greatest(0, used_count - 1), updated_at = now()
         where mode = 'coupon'
@@ -2420,11 +2518,19 @@ begin
         where order_id = v_order.id;
       end if;
 
-      if v_order.automatic_promotion_id is not null then
+      if v_order.automatic_promotion_id is not null and (
+        coalesce(v_order.automatic_discount_amount, 0) > 0
+        or coalesce(v_order.promotion_reward_qty, 0) > 0
+        or (v_order.price_snapshot is not null and coalesce((v_order.price_snapshot->>'auto_discount')::numeric, 0) > 0)
+      ) then
         update public.promotions
         set used_count = greatest(0, used_count - 1), updated_at = now()
         where id = v_order.automatic_promotion_id;
       end if;
+    else
+      -- If order was pending and cancelled, just clean up any provisional usages
+      delete from public.promo_code_usages
+      where order_id = v_order.id;
     end if;
 
     update public.online_orders
@@ -2486,3 +2592,5 @@ $$;
 
 revoke execute on function public.resolve_online_order(jsonb) from public, anon;
 grant execute on function public.resolve_online_order(jsonb) to authenticated;
+
+commit;

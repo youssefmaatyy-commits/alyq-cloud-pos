@@ -2370,12 +2370,16 @@ test("a coupon's use is counted when an order is placed and given back when it i
   assert.ok(placed.order.discount_amount > 0);
   assert.equal(placed.order.total, round2(placed.order.subtotal - placed.order.discount_amount + placed.order.delivery_fee));
 
-  const used = (await repository.listCoupons()).find((coupon) => coupon.code === "E2E10");
-  assert.equal(used?.used_count, 1);
+  const pendingUsed = (await repository.listCoupons()).find((coupon) => coupon.code === "E2E10");
+  assert.equal(pendingUsed?.used_count, 0, "pending order does not consume coupon until approval");
 
-  await repository.resolveOrder(placed.order.id, { action: "cancel", reason: "Out of stock", ...STAFF });
+  await repository.resolveOrder(placed.order.id, { action: "approve", ...STAFF });
+  const approvedUsed = (await repository.listCoupons()).find((coupon) => coupon.code === "E2E10");
+  assert.equal(approvedUsed?.used_count, 1, "approved order atomically consumes coupon usage");
+
+  await repository.resolveOrder(placed.order.id, { action: "cancel", reason: "Customer request", ...STAFF });
   const given = (await repository.listCoupons()).find((coupon) => coupon.code === "E2E10");
-  assert.equal(given?.used_count, 0, "a cancelled order gives the coupon back");
+  assert.equal(given?.used_count, 0, "a cancelled approved order gives the coupon back");
 
   await assert.rejects(
     repository.placeOrder({
