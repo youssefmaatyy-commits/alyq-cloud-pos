@@ -24,10 +24,39 @@ const variant = (id, color, size, sizeLabel, stock) => ({ id, product_id: ring.i
   active: true, sort_order: 1, created_at: ring.created_at, updated_at: ring.updated_at });
 const variants = [variant(UUID.gold17, "gold", 17, null, 3), variant(UUID.gold18, "gold", 18, null, 0),
   variant(UUID.silverXS, "silver", null, "XS", 1)];
+// Issue #3 (follow-up): the shipped demo only ever seeds 4 zones, so nothing
+// exercised the checkout zone list's scroll pane with the 8-12+ governorates
+// a real shop can configure — including this test, which used to assert
+// `.length === 4` unconditionally. Pre-seeding the storage key before the app
+// boots (rather than mutating it mid-test) is what the demo repository's own
+// "seed only if missing" rule expects, and it lets the very same journey
+// below select "Cairo" and read its real fee exactly as it always has.
+const zoneAt = ring.created_at;
+const zone = (key, nameEn, nameAr, fee, sort) => ({
+  id: `dz-${key}`, key, name_en: nameEn, name_ar: nameAr, governorate_key: key,
+  shipping_fee: fee, minimum_order_amount: 0, free_shipping_threshold: null,
+  estimated_delivery_text_en: "1–2 business days", estimated_delivery_text_ar: "١–٢ يوم عمل",
+  show_estimated_delivery: true, enabled: true, sort_order: sort, created_at: zoneAt, updated_at: zoneAt,
+});
+const zones = [
+  zone("ismailia", "Ismailia", "الإسماعيلية", 0, 10),
+  zone("cairo", "Cairo", "القاهرة", 70, 20),
+  zone("suez", "Suez", "السويس", 50, 30),
+  zone("alexandria", "Alexandria", "الإسكندرية", 60, 40),
+  zone("giza", "Giza", "الجيزة", 65, 50),
+  zone("luxor", "Luxor", "الأقصر", 90, 60),
+  zone("aswan", "Aswan", "أسوان", 95, 70),
+  zone("sohag", "Sohag", "سوهاج", 85, 80),
+  zone("minya", "Minya", "المنيا", 80, 90),
+  zone("beni-suef", "Beni Suef", "بني سويف", 75, 95),
+  zone("fayoum", "Fayoum", "الفيوم", 78, 98),
+  zone("other", "Other governorates", "باقي المحافظات", 80, 100),
+];
 const ux = await createUxHarness({ beforeImport: ({ localStorage }) => {
   localStorage.setItem("alyq.lang", "en");
   localStorage.setItem("alyq.demo.catalog.v1", JSON.stringify({ seed_revision: 3, categories: buildDemoCategories(),
     products, variants }));
+  localStorage.setItem("alyq.demo.delivery_zones.v1", JSON.stringify(zones));
 } });
 const { dom, document, assert, waitFor, navigate, clickEl, setField, readJson, sleep, finish } = {
   ...ux, document: ux.dom.window.document,
@@ -227,20 +256,36 @@ const estimatedTotal = Number(testid("v2-cart-totals").querySelector(".v2-totals
 check("delivery form uses saved browser-local address and selected configured zone",
   document.querySelector('.v2-checkout-form input[autocomplete="address-level2"]')?.value === "Cairo" &&
   cairo.getAttribute("data-selected") === "true");
-// Issue #7: the zone list is a bounded, independently scrollable pane so a
-// shop with many governorates never pushes "Place order" far down the page —
-// but its legend and validation error must stay pinned outside that pane, or
-// an admin with a long zone list could scroll right past why Save/submit is
-// blocked. jsdom does not run real CSS layout (no pixel heights), so this
-// proves the DOM contract the CSS relies on; real-Chromium geometry is
-// covered separately by scripts/rendered-v2*.flow.mjs.
+// Issue #7 / #3 (follow-up): the zone list is a bounded, independently
+// scrollable pane so a shop with many governorates never pushes "Place
+// order" far down the page — but its legend and validation error must stay
+// pinned outside that pane, or an admin with a long zone list could scroll
+// right past why Save/submit is blocked. jsdom does not run real CSS layout
+// (no pixel heights), so this proves the DOM contract the CSS relies on for
+// a REAL many-zone shop (12 configured here, well past the 8-12+ the manual
+// report asked to be exercised) — every row must survive, none truncated or
+// virtualized away, and none can render loose outside the pane at any count.
 const zoneFieldset = document.querySelector("fieldset.v2-zone-list");
 const zoneScroll = zoneFieldset?.querySelector(".v2-zone-scroll");
-check("zone rows live inside the bounded scroll pane, not loose in the fieldset",
-  Boolean(zoneScroll) && zoneScroll.querySelectorAll(".v2-zone").length === 4 &&
+check(`all ${zones.length} zone rows live inside the bounded scroll pane, none loose in the fieldset`,
+  Boolean(zoneScroll) && zoneScroll.querySelectorAll(".v2-zone").length === zones.length &&
   zoneFieldset.querySelectorAll(":scope > .v2-zone").length === 0);
 check("the zone list's legend is pinned outside the scrollable pane",
   Boolean(zoneFieldset?.querySelector(":scope > legend")) && !zoneScroll.contains(zoneFieldset.querySelector("legend")));
+// Beyond the class name existing on the node: the selector jsdom just proved
+// wraps every row must ALSO be the one CSS rule that bounds and scrolls it —
+// `overflow-y: auto` (never `scroll`, which would paint a scrollbar even for
+// a 2-3 zone shop) with a real numeric ceiling, and `overscroll-behavior:
+// contain` so bottoming out the pane never hands the wheel/touch gesture to
+// the page and pushes "Place order" around.
+const css = await readFile(
+  fileURLToPath(new URL("../src/modules/online/v2/storefront-v2.css", import.meta.url)), "utf8");
+const zoneScrollRule = /\.v2-zone-scroll\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
+check("the scroll pane's own CSS rule bounds height and only scrolls on genuine overflow",
+  /max-height:\s*min\(\s*46vh\s*,\s*340px\s*\)/.test(zoneScrollRule) &&
+  /overflow-y:\s*auto\b/.test(zoneScrollRule) &&
+  !/overflow-y:\s*scroll\b/.test(zoneScrollRule) &&
+  /overscroll-behavior:\s*contain\b/.test(zoneScrollRule));
 clickEl(testid("v2-place-order"));
 await waitFor(() => orders().length === 3 && Boolean(testid("v2-order-number")) &&
   Boolean(testid("v2-order-details")), { label: "settled delivery/COD receipt" });
