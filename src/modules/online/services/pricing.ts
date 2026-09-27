@@ -339,7 +339,8 @@ export function checkCoupon(
 }
 
 /** Normalise what the customer typed: stored codes are uppercase and trimmed. */
-export function normalizeCouponCode(raw: string): string {
+export function normalizeCouponCode(raw: string | null | undefined): string {
+  if (!raw) return "";
   return raw.trim().toUpperCase().replace(/\s+/g, "");
 }
 
@@ -563,12 +564,14 @@ export function customerKeyFor(
 export function isPromotionLive(promotion: Promotion, now: Date = new Date()): boolean {
   if (!promotion.enabled) return false;
   const at = now.getTime();
-  if (promotion.starts_at) {
-    const start = Date.parse(promotion.starts_at);
+  const startStr = promotion.start_date || promotion.starts_at;
+  if (startStr) {
+    const start = Date.parse(startStr);
     if (Number.isFinite(start) && at < start) return false;
   }
-  if (promotion.ends_at) {
-    const end = Date.parse(promotion.ends_at);
+  const endStr = promotion.end_date || promotion.ends_at;
+  if (endStr) {
+    const end = Date.parse(endStr);
     if (Number.isFinite(end) && at > end) return false;
   }
   return true;
@@ -629,11 +632,16 @@ export function promotionDiscount(
     );
   }
   let discount: number;
-  if (promotion.discount_type === "percent") {
+  const isPercent =
+    promotion.type === "percentage" ||
+    promotion.type === "percent" ||
+    promotion.discount_type === "percent";
+  if (isPercent) {
     const percent = Math.min(Math.max(promotion.value, 0), 100);
     discount = round2((eligible * percent) / 100);
-    if (promotion.maximum_discount_amount !== null) {
-      discount = Math.min(discount, round2(promotion.maximum_discount_amount));
+    const maxDiscount = promotion.max_discount_amount ?? promotion.maximum_discount_amount;
+    if (maxDiscount != null && maxDiscount > 0) {
+      discount = Math.min(discount, round2(maxDiscount));
     }
   } else {
     discount = round2(promotion.value);
@@ -656,14 +664,25 @@ export function selectAutomaticPromotion(
   channel: PromotionChannel = "online",
 ): { promotion: Promotion; discount: number } | null {
   const ordered = [...promotions].sort((a, b) => {
-    if (b.priority !== a.priority) return b.priority - a.priority;
-    return a.created_at.localeCompare(b.created_at);
+    const pA = a.priority ?? 0;
+    const pB = b.priority ?? 0;
+    if (pB !== pA) return pB - pA;
+    return (a.created_at ?? "").localeCompare(b.created_at ?? "");
   });
   let best: { promotion: Promotion; discount: number } | null = null;
   for (const promotion of ordered) {
+    if (promotion.mode === "coupon") continue;
     if (!isPromotionLive(promotion, now)) continue;
-    if (promotion.channel && promotion.channel !== "both" && promotion.channel !== channel) continue;
-    if (subtotal < promotion.minimum_order_amount) continue;
+    if (
+      promotion.channel &&
+      promotion.channel !== "both" &&
+      promotion.channel !== channel &&
+      !(channel === "both")
+    ) {
+      continue;
+    }
+    const minSubtotal = promotion.minimum_order_amount ?? 0;
+    if (subtotal < minSubtotal) continue;
     const targetIds = targetsByPromotion.get(promotion.id) ?? new Set<string>();
     if (!promotionApplies(promotion, targetIds, lines)) continue;
     const discount = promotionDiscount(promotion, targetIds, lines, subtotal);
@@ -764,66 +783,128 @@ export type CartPricingResult =
  */
 export function evaluateCartPricing(input: CartPricingInput): CartPricingResult {
   const now = input.now ?? new Date();
-  const subtotal = round2(Math.max(input.subtotal, 0));
-  const lines = input.lines.map((line) => ({ ...line }));
+  const lines = (input.lines ?? []).map((line) => {
+    const qty = (line as { qty?: number }).qty ?? 1;
+    const unit_price =
+      (line as { unit_price?: number }).unit_price ??
+      (qty > 0 && line.line_total != null ? line.line_total / qty : 0);
+    const line_total = line.line_total ?? round2(unit_price * qty);
+    return {
+      ...line,
+      qty,
+      unit_price,
+      line_total,
+    };
+  });
+  const subtotal = round2(
+    Math.max(
+      input.subtotal != null && Number.isFinite(input.subtotal)
+        ? input.subtotal
+        : lines.reduce((sum, line) => sum + line.line_total, 0),
+      0,
+    ),
+  );
 
   const auto =
-    input.deliveryType === "pickup" || input.deliveryType === "delivery"
-      ? selectAutomaticPromotion(
-          input.promotions,
-          input.targetsByPromotion,
+    input.deliveryType !== "pickup" && input.deliveryType !== "delivery" && input.deliveryType !== undefined
+      ? null
+      : selectAutomaticPromotion(
+          input.promotions ?? [],
+          input.targetsByPromotion ?? new Map(),
           lines,
           subtotal,
           now,
           input.channel ?? "online",
-        )
-      : null;
+        );
 
   let code: string | null = null;
   let promoDiscount = 0;
   let promoFreeShipping = false;
   let promoStackable = false;
   let appliedCoupon: Coupon | null = null;
+  let appliedCouponPromo: Promotion | null = null;
   if (input.promoCode) {
     code = normalizeCouponCode(input.promoCode);
     if (!code) {
       return { ok: false, reason: "not_found", message: `Coupon ${input.promoCode} is not valid` };
     }
-    const coupon = input.coupons.find((candidate) => candidate.code === code) ?? null;
-    const usage = input.usageFor(coupon?.id ?? "");
-    const check = checkPromoCode(
-      coupon,
-      {
-        subtotal,
-        lines: lines.map((line) => ({
-          product_id: line.product_id,
-          category_id: line.category_id,
-          line_total: line.line_total,
-        })),
-        now,
-      },
-      {
-        customerUses: coupon ? usage.customerUses : 0,
-        hasPriorOrder: usage.hasPriorOrder,
-      },
+    const couponPromo = (input.promotions ?? []).find(
+      (candidate) =>
+        candidate.mode === "coupon" &&
+        candidate.code &&
+        normalizeCouponCode(candidate.code) === code,
     );
-    if (!check.ok) {
-      const messages: Record<CouponRejection, string> = {
-        not_found: `Coupon ${code} is not valid`,
-        inactive: `Coupon ${code} is not valid`,
-        not_started: `Coupon ${code} is not active yet`,
-        expired: `Coupon ${code} has expired`,
-        exhausted: `Coupon ${code} has been fully used`,
-        min_subtotal: `Coupon ${code} needs a subtotal of at least ${coupon?.min_subtotal ?? 0}`,
-        not_applicable: `Coupon ${code} does not apply to this cart`,
-        limit_reached: `Coupon ${code} has reached its usage limit`,
-      };
-      return { ok: false, reason: check.reason, message: messages[check.reason] };
+    if (couponPromo) {
+      if (!couponPromo.enabled) {
+        return { ok: false, reason: "inactive", message: `Coupon ${code} is not valid` };
+      }
+      const channel = input.channel ?? "online";
+      if (
+        couponPromo.channel &&
+        couponPromo.channel !== "both" &&
+        couponPromo.channel !== channel &&
+        !(channel === "both")
+      ) {
+        return { ok: false, reason: "not_applicable", message: `Coupon ${code} does not apply to this channel` };
+      }
+      const startStr = couponPromo.start_date || couponPromo.starts_at;
+      if (startStr && Date.parse(startStr) > now.getTime()) {
+        return { ok: false, reason: "not_started", message: `Coupon ${code} is not active yet` };
+      }
+      const endStr = couponPromo.end_date || couponPromo.ends_at;
+      if (endStr && Date.parse(endStr) < now.getTime()) {
+        return { ok: false, reason: "expired", message: `Coupon ${code} has expired` };
+      }
+      const minSub = couponPromo.minimum_order_amount ?? 0;
+      if (subtotal < minSub) {
+        return {
+          ok: false,
+          reason: "min_subtotal",
+          message: `Coupon ${code} needs a subtotal of at least ${minSub}`,
+        };
+      }
+      const targets = input.targetsByPromotion?.get(couponPromo.id) ?? new Set<string>();
+      if (!promotionApplies(couponPromo, targets, lines)) {
+        return { ok: false, reason: "not_applicable", message: `Coupon ${code} does not apply to this cart` };
+      }
+      promoDiscount = promotionDiscount(couponPromo, targets, lines, subtotal);
+      promoFreeShipping = false;
+      promoStackable = Boolean(couponPromo.stackable);
+      appliedCouponPromo = couponPromo;
+    } else {
+      const coupon = (input.coupons ?? []).find((candidate) => candidate.code === code) ?? null;
+      const usage = input.usageFor ? input.usageFor(coupon?.id ?? "") : { customerUses: 0, hasPriorOrder: false };
+      const check = checkPromoCode(
+        coupon,
+        {
+          subtotal,
+          lines: lines.map((line) => ({
+            product_id: line.product_id,
+            category_id: line.category_id,
+            line_total: line.line_total,
+          })),
+          now,
+        },
+        usage,
+      );
+      if (!check.ok) {
+        const messages: Record<CouponRejection, string> = {
+          not_found: `Coupon ${code} is not valid`,
+          inactive: `Coupon ${code} is not valid`,
+          not_started: `Coupon ${code} is not active yet`,
+          expired: `Coupon ${code} has expired`,
+          exhausted: `Coupon ${code} has been fully used`,
+          min_subtotal: `Coupon ${code} needs a subtotal of at least ${coupon?.min_subtotal ?? 0}`,
+          not_applicable: `Coupon ${code} does not apply to this cart`,
+          limit_reached: `Coupon ${code} has reached its usage limit`,
+        };
+        return { ok: false, reason: check.reason, message: messages[check.reason] };
+      }
+      promoDiscount = check.discount;
+      promoFreeShipping = check.freeShipping;
+      promoStackable = check.coupon.stackable;
+      appliedCoupon = check.coupon;
     }
-    promoDiscount = check.discount;
-    promoFreeShipping = check.freeShipping;
-    promoStackable = check.coupon.stackable;
-    appliedCoupon = check.coupon;
   }
 
   // Stacking: both only when both agree, else the larger alone (the code wins
@@ -906,6 +987,7 @@ export function evaluateCartPricing(input: CartPricingInput): CartPricingResult 
   // shares sum exactly. The line's total share is what its units cost.
   const couponTargets = code ? (appliedCoupon?.target_ids ?? []) : [];
   const couponScope = appliedCoupon?.applies_to ?? "all";
+  const couponPromoTargets = appliedCouponPromo ? (input.targetsByPromotion.get(appliedCouponPromo.id) ?? new Set<string>()) : new Set<string>();
   const autoTargets = autoId && auto ? (input.targetsByPromotion.get(autoId) ?? new Set<string>()) : new Set<string>();
   const autoEligible = lines.map(
     (line) =>
@@ -916,6 +998,9 @@ export function evaluateCartPricing(input: CartPricingInput): CartPricingResult 
   );
   const codeEligible = lines.map((line) => {
     if (!code || promoDiscount <= 0) return false;
+    if (appliedCouponPromo) {
+      return promotionApplies(appliedCouponPromo, couponPromoTargets, [line]);
+    }
     if (couponScope === "all") return true;
     if (couponScope === "products") return couponTargets.includes(line.product_id);
     return line.category_id !== null && couponTargets.includes(line.category_id);
@@ -984,30 +1069,79 @@ export function promotionUnitPrice(
   targetsByPromotion: ReadonlyMap<string, ReadonlySet<string>>,
   now: Date = new Date(),
   channel: PromotionChannel = "online",
-): { unit: number; promotionId: string | null } {
+  couponCode?: string | null,
+): {
+  unit: number;
+  promotionId: string | null;
+  promotionName?: string | null;
+  discountAmount?: number;
+  percentOff?: number | null;
+} {
   const line: PromotionCartLine = {
     product_id: productId,
     category_id: categoryId,
     variant_id: variantId,
     line_total: unitPrice,
   };
-  let best: { unit: number; promotionId: string } | null = null;
+  let best: {
+    unit: number;
+    promotionId: string;
+    promotionName: string;
+    discountAmount: number;
+    percentOff: number | null;
+  } | null = null;
   const ordered = [...promotions].sort((a, b) => {
-    if (b.priority !== a.priority) return b.priority - a.priority;
-    return a.created_at.localeCompare(b.created_at);
+    const pA = a.priority ?? 0;
+    const pB = b.priority ?? 0;
+    if (pB !== pA) return pB - pA;
+    return (a.created_at ?? "").localeCompare(b.created_at ?? "");
   });
+  const normalizedCode = normalizeCouponCode(couponCode);
   for (const promotion of ordered) {
+    if (promotion.mode === "coupon") {
+      if (!normalizedCode || normalizeCouponCode(promotion.code) !== normalizedCode) {
+        continue;
+      }
+    }
     // Display-only offers: no minimum its cart cannot prove, live, in scope.
-    if (promotion.minimum_order_amount > 0) continue;
+    if (promotion.minimum_order_amount && promotion.minimum_order_amount > 0) continue;
     if (!isPromotionLive(promotion, now)) continue;
-    if (promotion.channel && promotion.channel !== "both" && promotion.channel !== channel) continue;
+    if (
+      promotion.channel &&
+      promotion.channel !== "both" &&
+      promotion.channel !== channel &&
+      !(channel === "both")
+    ) {
+      continue;
+    }
     const targetIds = targetsByPromotion.get(promotion.id) ?? new Set<string>();
     if (!promotionApplies(promotion, targetIds, [line])) continue;
     const discount = promotionDiscount(promotion, targetIds, [line], unitPrice);
     const unit = round2(Math.max(unitPrice - discount, 0));
-    if (!best || unit < best.unit) best = { unit, promotionId: promotion.id };
+    const saving = round2(unitPrice - unit);
+    if (!best || unit < best.unit) {
+      const name = promotion.name_en || promotion.name_ar || "";
+      const isPercent =
+        promotion.type === "percentage" ||
+        promotion.type === "percent" ||
+        promotion.discount_type === "percent";
+      const percentOff = isPercent
+        ? Math.round(promotion.value)
+        : unitPrice > 0
+          ? Math.round((saving / unitPrice) * 100)
+          : null;
+      best = { unit, promotionId: promotion.id, promotionName: name, discountAmount: saving, percentOff };
+    }
   }
-  return best ?? { unit: round2(unitPrice), promotionId: null };
+  return (
+    best ?? {
+      unit: round2(unitPrice),
+      promotionId: null,
+      promotionName: null,
+      discountAmount: 0,
+      percentOff: null,
+    }
+  );
 }
 
 // ── brands ──────────────────────────────────────────────────────────────────

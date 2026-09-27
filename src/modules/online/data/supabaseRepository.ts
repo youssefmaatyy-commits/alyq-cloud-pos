@@ -256,6 +256,8 @@ interface DeliveryZoneRow {
 interface PromotionRow {
   id: string;
   enabled: boolean;
+  mode?: string | null;
+  code?: string | null;
   channel?: string | null;
   name_en: string;
   name_ar: string;
@@ -593,6 +595,8 @@ function mapPromotion(row: PromotionRow): Promotion {
   return {
     id: row.id,
     enabled: row.enabled,
+    mode: row.mode === "coupon" ? "coupon" : "automatic",
+    code: row.code ?? null,
     channel: row.channel === "online" || row.channel === "pos" ? row.channel : "both",
     name_en: row.name_en,
     name_ar: row.name_ar,
@@ -1759,9 +1763,21 @@ export class SupabaseOnlineRepository
           field: "scope",
         });
       }
+      const mode = draft.mode ?? "automatic";
+      const code =
+        mode === "coupon"
+          ? draft.code
+            ? draft.code.trim().toUpperCase().replace(/\s+/g, "")
+            : null
+          : null;
+      if (mode === "coupon" && (!code || !/^[A-Z0-9_-]{2,30}$/.test(code))) {
+        throw new OnlineError("db", "A valid coupon code is required for coupon mode", { field: "code" });
+      }
       const payload = {
         ...(draft.id ? { id: draft.id } : {}),
         enabled: draft.enabled ?? true,
+        mode,
+        code,
         channel: draft.channel ?? "both",
         name_en: draft.name_en ?? "",
         name_ar: draft.name_ar ?? "",

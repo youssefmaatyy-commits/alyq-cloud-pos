@@ -494,17 +494,23 @@ export interface DeliveryZone {
 // ── automatic promotions ───────────────────────────────────────────────────
 
 export type PromotionScope = "store" | "category" | "product" | "variant";
-export type PromotionChannel = "online" | "pos" | "both";
+export type PromotionChannel = "online" | "pos" | "both" | "storefront";
+export type PromotionMode = "automatic" | "coupon";
+export type PromotionStatus = "active" | "scheduled" | "paused" | "expired";
 
 /**
- * An automatic (codeless) discount: the storewide sale, a category offer, a
- * product or variant offer. The best applicable one is chosen per order by
- * priority then size; it combines with a promo code only when both are
- * stackable, otherwise the larger discount wins alone.
+ * An automatic (codeless) discount or coupon promotion: the storewide sale, a
+ * category offer, a product or variant offer. The best applicable one is
+ * chosen per order by priority then size; it combines with a promo code only
+ * when both are stackable, otherwise the larger discount wins alone.
  */
 export interface Promotion {
   id: string;
   enabled: boolean;
+  /** Explicit promotion mode: automatic (codeless) or coupon (requires code). */
+  mode?: PromotionMode;
+  /** Coupon code when mode === 'coupon'. */
+  code?: string | null;
   /** Explicit sales channel; old rows default to both. */
   channel?: PromotionChannel;
   name_en: string;
@@ -519,11 +525,33 @@ export interface Promotion {
   maximum_discount_amount: number | null;
   starts_at: string | null;
   ends_at: string | null;
+  /** Backward-compatible property aliases. */
+  start_date?: string | null;
+  end_date?: string | null;
+  type?: "percent" | "fixed" | "percentage" | "fixed_amount";
+  max_discount_amount?: number | null;
   /** Higher wins when several apply; ties break toward the larger discount. */
   priority: number;
   stackable: boolean;
   created_at: string;
   updated_at: string;
+}
+
+/** Status computed from enabled state and scheduling dates against a clock. */
+export function getPromotionStatus(promotion: Promotion, now: Date = new Date()): PromotionStatus {
+  if (!promotion.enabled) return "paused";
+  const at = now.getTime();
+  const start = promotion.starts_at || (promotion as { start_date?: string }).start_date;
+  if (start) {
+    const startTime = Date.parse(start);
+    if (Number.isFinite(startTime) && at < startTime) return "scheduled";
+  }
+  const end = promotion.ends_at || (promotion as { end_date?: string }).end_date;
+  if (end) {
+    const endTime = Date.parse(end);
+    if (Number.isFinite(endTime) && at > endTime) return "expired";
+  }
+  return "active";
 }
 
 export type PromotionTargetKind = "category" | "product" | "variant";

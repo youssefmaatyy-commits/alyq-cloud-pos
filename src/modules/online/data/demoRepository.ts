@@ -2405,9 +2405,19 @@ export class DemoOnlineRepository
       });
     }
     const wasEnabled = existing?.enabled ?? false;
+    const mode = draft.mode ?? existing?.mode ?? "automatic";
+    const code =
+      mode === "coupon"
+        ? (draft.code ? draft.code.trim().toUpperCase().replace(/\s+/g, "") : (existing?.code ?? null))
+        : null;
+    if (mode === "coupon" && (!code || !/^[A-Z0-9_-]{2,30}$/.test(code))) {
+      throw new OnlineError("db", "A valid coupon code is required for coupon mode", { field: "code" });
+    }
     const next: Promotion = {
       id: existing?.id ?? newId("prm"),
       enabled: draft.enabled ?? existing?.enabled ?? true,
+      mode,
+      code,
       channel: draft.channel ?? existing?.channel ?? "both",
       name_en: draft.name_en ?? existing?.name_en ?? "",
       name_ar: draft.name_ar ?? existing?.name_ar ?? "",
@@ -2428,7 +2438,12 @@ export class DemoOnlineRepository
     if (!next.name_en.trim() || !next.name_ar.trim()) {
       throw new OnlineError("db", "A promotion needs names in both languages", { field: "name_en" });
     }
-    if (next.value <= 0) throw new OnlineError("db", "A promotion needs a value", { field: "value" });
+    if (next.discount_type === "percent" && (next.value <= 0 || next.value > 100)) {
+      throw new OnlineError("db", "Percentage discount must be between 0 and 100", { field: "value" });
+    }
+    if (next.discount_type === "fixed" && next.value <= 0) {
+      throw new OnlineError("db", "A promotion needs a positive value", { field: "value" });
+    }
     this.promotions = existing
       ? this.promotions.map((promotion) => (promotion.id === next.id ? next : promotion))
       : [...this.promotions, next];

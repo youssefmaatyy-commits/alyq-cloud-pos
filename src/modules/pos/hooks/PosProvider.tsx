@@ -28,7 +28,7 @@ import { SALES_ROW_CAP, getSalesRepository, type SalesRepository } from "../data
 // never looked at it.
 import { completeSale as completeSaleGuarded } from "../services/saleService";
 import { isApprovalRequired, type ApprovalRequirement } from "@/modules/approvals";
-import { cartTotals, validateDiscount, type CartTotals as Totals } from "../services/posMath";
+import { cartTotals, round2, validateDiscount, type CartTotals as Totals } from "../services/posMath";
 import { addCartLine, changeCartQuantity, discountCartLine, removeCartLine } from "../services/cartOperations";
 import {
   type CartDiscount,
@@ -311,7 +311,11 @@ export function PosProvider({ children }: { children: ReactNode }) {
         name_ar: current.name_ar,
         name_en: current.name_en,
         barcode: variant?.barcode ?? current.barcode,
-        unit_price: effective.unit,
+        base_price: round2(officialUnit),
+        unit_price: round2(effective.unit),
+        automatic_promotion_id: effective.promotionId,
+        automatic_promotion_name: effective.promotionName ?? null,
+        automatic_discount_amount: round2(Math.max(0, officialUnit - effective.unit)),
         max_qty: maxQty,
         qty: 1,
         image_url: variant?.image_url ?? current.image_url,

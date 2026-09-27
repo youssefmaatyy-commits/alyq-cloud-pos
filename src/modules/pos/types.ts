@@ -220,7 +220,13 @@ export interface CartLine {
   name_ar: string;
   name_en: string;
   barcode: string | null;
+  /** List / catalogue price before promotion. */
+  base_price?: number;
+  /** Price after central automatic promotion (or catalogue price if none). */
   unit_price: number;
+  automatic_promotion_id?: string | null;
+  automatic_promotion_name?: string | null;
+  automatic_discount_amount?: number;
   /** Maximum sellable quantity right now — the VARIANT's shelf when there is one. */
   max_qty: number;
   qty: number;

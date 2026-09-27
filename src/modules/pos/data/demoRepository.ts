@@ -201,12 +201,14 @@ export class DemoSalesRepository implements SalesRepository {
               new Date(),
               "pos",
             )
-          : { unit: officialUnit, promotionId: null };
+          : { unit: officialUnit, promotionId: null, promotionName: null };
         unit = promotion.unit;
         const automaticDiscount = round2(Math.max(0, officialUnit - unit) * qty);
-        const promotionName = promotion.promotionId
-          ? promotionSnapshot?.promotions.find((entry) => entry.id === promotion.promotionId)?.name_en ?? null
-          : null;
+        const promotionName =
+          promotion.promotionName ??
+          (promotion.promotionId
+            ? promotionSnapshot?.promotions.find((entry) => entry.id === promotion.promotionId)?.name_en ?? null
+            : null);
         const itemDiscount = {
           type: line.discount_type ?? "none",
           value: Number(line.discount_value ?? 0),
@@ -214,7 +216,7 @@ export class DemoSalesRepository implements SalesRepository {
         if (validateDiscount(itemDiscount.type, itemDiscount.value)) {
           throw new AppError("VALIDATION", "Invalid item discount", "discount");
         }
-        const calculated = lineTotals({ unit_price: unit, qty, item_discount: itemDiscount });
+        const calculated = lineTotals({ unit_price: unit, qty, base_price: officialUnit, item_discount: itemDiscount });
         items.push({
           id: `sli-${items.length}-${Date.now()}`,
           sale_id: "pending",
@@ -234,7 +236,7 @@ export class DemoSalesRepository implements SalesRepository {
           line_total: calculated.net,
           discount_type: itemDiscount.type,
           discount_value: itemDiscount.value,
-          discount_amount: calculated.discount,
+          discount_amount: calculated.manualDiscount,
           automatic_promotion_id: promotion.promotionId,
           automatic_promotion_name: promotionName,
           automatic_discount_amount: automaticDiscount,
@@ -247,7 +249,12 @@ export class DemoSalesRepository implements SalesRepository {
         throw new AppError("VALIDATION", "Invalid discount", "discount");
       }
       const totals = cartTotals(
-        items.map((i) => ({ unit_price: i.unit_price, qty: i.quantity, item_discount: { type: i.discount_type ?? "none", value: i.discount_value ?? 0 } })),
+        items.map((i) => ({
+          unit_price: i.unit_price,
+          qty: i.quantity,
+          base_price: (i.gross_total ?? (i.unit_price * i.quantity)) / (i.quantity || 1),
+          item_discount: { type: i.discount_type ?? "none", value: i.discount_value ?? 0 },
+        })),
         { type: input.discount_type, value: input.discount_value },
       );
 

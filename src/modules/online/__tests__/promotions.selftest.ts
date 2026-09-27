@@ -1,0 +1,739 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import {
+  evaluateCartPricing,
+  normalizeCouponCode,
+  promotionDiscount,
+  promotionUnitPrice,
+  selectAutomaticPromotion,
+  type EvaluatedCartLine,
+} from "../services/pricing";
+import {
+  getPromotionStatus,
+  type Promotion,
+} from "../types";
+import {
+  cartTotals,
+  lineTotals,
+  round2,
+  validateDiscount,
+} from "@/modules/pos/services/posMath";
+
+type MakePromoInput = Partial<Promotion> & {
+  type?: "percentage" | "fixed_amount";
+  max_discount_amount?: number | null;
+  start_date?: string;
+  end_date?: string;
+};
+
+function makePromo(overrides: MakePromoInput = {}): Promotion {
+  const type = overrides.discount_type ?? (overrides.type === "percentage" ? "percent" : overrides.type === "fixed_amount" ? "fixed" : "percent");
+  const start = overrides.starts_at ?? overrides.start_date ?? "2026-01-01T00:00:00Z";
+  const end = overrides.ends_at ?? overrides.end_date ?? "2026-12-31T23:59:59Z";
+  const maxDisc = overrides.maximum_discount_amount ?? overrides.max_discount_amount ?? null;
+  return {
+    id: overrides.id ?? "promo-" + Math.random().toString(36).slice(2, 7),
+    name_ar: overrides.name_ar ?? "عرض تجريبي",
+    name_en: overrides.name_en ?? "Test Promo",
+    description_ar: overrides.description_ar ?? null,
+    description_en: overrides.description_en ?? null,
+    discount_type: type,
+    value: overrides.value ?? 10,
+    scope: overrides.scope ?? "store",
+    channel: overrides.channel ?? "both",
+    mode: overrides.mode ?? "automatic",
+    code: overrides.code ?? null,
+    minimum_order_amount: overrides.minimum_order_amount ?? 0,
+    maximum_discount_amount: maxDisc,
+    starts_at: start,
+    ends_at: end,
+    priority: overrides.priority ?? 0,
+    stackable: overrides.stackable ?? false,
+    enabled: overrides.enabled ?? true,
+    created_at: overrides.created_at ?? "2026-01-01T00:00:00Z",
+    updated_at: overrides.updated_at ?? "2026-01-01T00:00:00Z",
+  };
+}
+
+const NOW = new Date("2026-06-15T12:00:00Z");
+
+// ── Test 1: Automatic percentage discount on entire store ────────────────────
+test("1. Automatic percentage discount on entire store applies across cart lines", () => {
+  const promo = makePromo({
+    id: "promo-store-20",
+    discount_type: "percent",
+    value: 20,
+    scope: "store",
+    mode: "automatic",
+  });
+  const lines: Omit<EvaluatedCartLine, "discounted_unit_price">[] = [
+    { product_id: "prd-1", variant_id: null, category_id: "cat-1", unit_price: 100, qty: 2, line_total: 200 },
+    { product_id: "prd-2", variant_id: null, category_id: "cat-2", unit_price: 200, qty: 1, line_total: 200 },
+  ];
+  const result = evaluateCartPricing({
+    lines,
+    subtotal: 400,
+    promoCode: null,
+    coupons: [],
+    promotions: [promo],
+    targetsByPromotion: new Map(),
+    usageFor: () => ({ customerUses: 0, hasPriorOrder: false }),
+    customerKey: null,
+    zone: null,
+    legacy: { fee: 0, minimum: 0, threshold: 0 },
+    deliveryType: "delivery",
+    now: NOW,
+    channel: "both",
+  });
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    // Gross subtotal = 100*2 + 200*1 = 400
+    // 20% auto discount = 80
+    assert.equal(result.pricing.autoDiscount, 80);
+    assert.equal(result.pricing.totalDiscount, 80);
+    assert.equal(result.pricing.total, 320);
+    assert.equal(result.pricing.lines[0].discounted_unit_price, 80);
+    assert.equal(result.pricing.lines[1].discounted_unit_price, 160);
+  }
+});
+
+// ── Test 2: Automatic fixed discount on entire store ─────────────────────────
+test("2. Automatic fixed discount on entire store distributed proportionally without negative totals", () => {
+  const promo = makePromo({
+    id: "promo-fixed-50",
+    discount_type: "fixed",
+    value: 50,
+    scope: "store",
+    mode: "automatic",
+  });
+  const lines: Omit<EvaluatedCartLine, "discounted_unit_price">[] = [
+    { product_id: "prd-1", variant_id: null, category_id: null, unit_price: 100, qty: 1, line_total: 100 },
+    { product_id: "prd-2", variant_id: null, category_id: null, unit_price: 100, qty: 1, line_total: 100 },
+  ];
+  const result = evaluateCartPricing({
+    lines,
+    subtotal: 200,
+    promoCode: null,
+    coupons: [],
+    promotions: [promo],
+    targetsByPromotion: new Map(),
+    usageFor: () => ({ customerUses: 0, hasPriorOrder: false }),
+    customerKey: null,
+    zone: null,
+    legacy: { fee: 0, minimum: 0, threshold: 0 },
+    deliveryType: "delivery",
+    now: NOW,
+    channel: "both",
+  });
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.equal(result.pricing.autoDiscount, 50);
+    assert.equal(result.pricing.total, 150);
+  }
+});
+
+// ── Test 3: Category-scoped promotion ────────────────────────────────────────
+test("3. Category-scoped promotion applies ONLY to products in that category", () => {
+  const promo = makePromo({
+    id: "promo-cat-rings",
+    discount_type: "percent",
+    value: 15,
+    scope: "category",
+    mode: "automatic",
+  });
+  const targets = new Map([["promo-cat-rings", new Set(["category:cat-rings"])]]);
+  const lines: Omit<EvaluatedCartLine, "discounted_unit_price">[] = [
+    { product_id: "prd-ring", variant_id: null, category_id: "cat-rings", unit_price: 200, qty: 1, line_total: 200 },
+    { product_id: "prd-necklace", variant_id: null, category_id: "cat-necklaces", unit_price: 300, qty: 1, line_total: 300 },
+  ];
+  const result = evaluateCartPricing({
+    lines,
+    subtotal: 500,
+    promoCode: null,
+    coupons: [],
+    promotions: [promo],
+    targetsByPromotion: targets,
+    usageFor: () => ({ customerUses: 0, hasPriorOrder: false }),
+    customerKey: null,
+    zone: null,
+    legacy: { fee: 0, minimum: 0, threshold: 0 },
+    deliveryType: "delivery",
+    now: NOW,
+    channel: "both",
+  });
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    // 15% of 200 = 30. Ring -> 170, Necklace -> 300
+    assert.equal(result.pricing.autoDiscount, 30);
+    assert.equal(result.pricing.lines[0].discounted_unit_price, 170);
+    assert.equal(result.pricing.lines[1].discounted_unit_price, 300);
+  }
+});
+
+// ── Test 4: Product-scoped promotion ─────────────────────────────────────────
+test("4. Product-scoped promotion applies ONLY to targeted product IDs", () => {
+  const promo = makePromo({
+    id: "promo-prod-1",
+    discount_type: "percent",
+    value: 25,
+    scope: "product",
+    mode: "automatic",
+  });
+  const targets = new Map([["promo-prod-1", new Set(["product:prd-1"])]]);
+  const lines: Omit<EvaluatedCartLine, "discounted_unit_price">[] = [
+    { product_id: "prd-1", variant_id: null, category_id: null, unit_price: 100, qty: 1, line_total: 100 },
+    { product_id: "prd-2", variant_id: null, category_id: null, unit_price: 100, qty: 1, line_total: 100 },
+  ];
+  const result = evaluateCartPricing({
+    lines,
+    subtotal: 200,
+    promoCode: null,
+    coupons: [],
+    promotions: [promo],
+    targetsByPromotion: targets,
+    usageFor: () => ({ customerUses: 0, hasPriorOrder: false }),
+    customerKey: null,
+    zone: null,
+    legacy: { fee: 0, minimum: 0, threshold: 0 },
+    deliveryType: "delivery",
+    now: NOW,
+    channel: "both",
+  });
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.equal(result.pricing.autoDiscount, 25);
+    assert.equal(result.pricing.lines[0].discounted_unit_price, 75);
+    assert.equal(result.pricing.lines[1].discounted_unit_price, 100);
+  }
+});
+
+// ── Test 5: Exact variant UUID promotion ────────────────────────────────────
+test("5. Exact variant UUID promotion applies ONLY to targeted variant UUID and not sibling variants", () => {
+  const promo = makePromo({
+    id: "promo-var-gold",
+    discount_type: "fixed",
+    value: 40,
+    scope: "variant",
+    mode: "automatic",
+  });
+  const targets = new Map([["promo-var-gold", new Set(["variant:var-gold-uuid"])]]);
+  const lines: Omit<EvaluatedCartLine, "discounted_unit_price">[] = [
+    { product_id: "prd-ring", variant_id: "var-gold-uuid", category_id: null, unit_price: 200, qty: 1, line_total: 200 },
+    { product_id: "prd-ring", variant_id: "var-silver-uuid", category_id: null, unit_price: 200, qty: 1, line_total: 200 },
+  ];
+  const result = evaluateCartPricing({
+    lines,
+    subtotal: 400,
+    promoCode: null,
+    coupons: [],
+    promotions: [promo],
+    targetsByPromotion: targets,
+    usageFor: () => ({ customerUses: 0, hasPriorOrder: false }),
+    customerKey: null,
+    zone: null,
+    legacy: { fee: 0, minimum: 0, threshold: 0 },
+    deliveryType: "delivery",
+    now: NOW,
+    channel: "both",
+  });
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.equal(result.pricing.autoDiscount, 40);
+    assert.equal(result.pricing.lines[0].discounted_unit_price, 160);
+    assert.equal(result.pricing.lines[1].discounted_unit_price, 200);
+  }
+});
+
+// ── Test 6: Mode "automatic" applies automatically without coupon code ───────
+test("6. Mode 'automatic' applies automatically without coupon code", () => {
+  const autoPromo = makePromo({
+    id: "promo-auto",
+    discount_type: "percent",
+    value: 10,
+    mode: "automatic",
+    code: null,
+  });
+  const unit = promotionUnitPrice(
+    "prd-1",
+    null,
+    null,
+    100,
+    [autoPromo],
+    new Map(),
+    NOW,
+    "both",
+    null,
+  );
+  assert.equal(unit.unit, 90);
+  assert.equal(unit.promotionId, "promo-auto");
+});
+
+// ── Test 7: Mode "coupon" requires valid promo code ──────────────────────────
+test("7. Mode 'coupon' requires valid promo code and does not apply without code", () => {
+  const couponPromo = makePromo({
+    id: "promo-coupon",
+    discount_type: "percent",
+    value: 15,
+    mode: "coupon",
+    code: "SAVE15",
+  });
+  // Without code:
+  const withoutCode = promotionUnitPrice(
+    "prd-1",
+    null,
+    null,
+    100,
+    [couponPromo],
+    new Map(),
+    NOW,
+    "both",
+    null,
+  );
+  assert.equal(withoutCode.unit, 100);
+  assert.equal(withoutCode.promotionId, null);
+
+  // With wrong code:
+  const wrongCode = promotionUnitPrice(
+    "prd-1",
+    null,
+    null,
+    100,
+    [couponPromo],
+    new Map(),
+    NOW,
+    "both",
+    "WRONGCODE",
+  );
+  assert.equal(wrongCode.unit, 100);
+  assert.equal(wrongCode.promotionId, null);
+
+  // With matching code:
+  const withCode = promotionUnitPrice(
+    "prd-1",
+    null,
+    null,
+    100,
+    [couponPromo],
+    new Map(),
+    NOW,
+    "both",
+    "SAVE15",
+  );
+  assert.equal(withCode.unit, 85);
+  assert.equal(withCode.promotionId, "promo-coupon");
+});
+
+// ── Test 8: Coupon code case-insensitivity and whitespace trimming ───────────
+test("8. Coupon code normalization trims whitespace and ignores case", () => {
+  assert.equal(normalizeCouponCode("  SaVe15 "), "SAVE15");
+  assert.equal(normalizeCouponCode("discount-2026"), "DISCOUNT-2026");
+  assert.equal(normalizeCouponCode(""), "");
+  assert.equal(normalizeCouponCode(null), "");
+
+  const couponPromo = makePromo({
+    id: "promo-coupon-case",
+    discount_type: "fixed",
+    value: 20,
+    mode: "coupon",
+    code: "SUMMER",
+  });
+  const res = promotionUnitPrice(
+    "prd-1",
+    null,
+    null,
+    100,
+    [couponPromo],
+    new Map(),
+    NOW,
+    "both",
+    "  summer  ",
+  );
+  assert.equal(res.unit, 80);
+  assert.equal(res.promotionId, "promo-coupon-case");
+});
+
+// ── Test 9: Multiple competing promotions - highest EGP savings wins ─────────
+test("9. Multiple competing promotions: highest EGP savings promotion wins (best price rule)", () => {
+  const promo10pct = makePromo({ id: "p10", discount_type: "percent", value: 10, mode: "automatic" });
+  const promo30pct = makePromo({ id: "p30", discount_type: "percent", value: 30, mode: "automatic" });
+  const promoFixed25 = makePromo({ id: "pf25", discount_type: "fixed", value: 25, mode: "automatic" });
+
+  // On a 100 EGP item:
+  // p10 saves 10 EGP
+  // p30 saves 30 EGP
+  // pf25 saves 25 EGP
+  // Winner: p30 (saves 30) -> price 70
+  const chosen = selectAutomaticPromotion(
+    [promo10pct, promo30pct, promoFixed25],
+    new Map(),
+    [{ product_id: "prd-1", category_id: null, variant_id: null, line_total: 100 }],
+    100,
+    NOW,
+    "both",
+  );
+  assert.equal(chosen?.promotion.id, "p30");
+  assert.equal(chosen?.discount, 30);
+
+  // On a 50 EGP item:
+  // p10 saves 5 EGP
+  // p30 saves 15 EGP
+  // pf25 saves 25 EGP
+  // Winner: pf25 (saves 25) -> price 25
+  const chosen2 = selectAutomaticPromotion(
+    [promo10pct, promo30pct, promoFixed25],
+    new Map(),
+    [{ product_id: "prd-1", category_id: null, variant_id: null, line_total: 50 }],
+    50,
+    NOW,
+    "both",
+  );
+  assert.equal(chosen2?.promotion.id, "pf25");
+  assert.equal(chosen2?.discount, 25);
+});
+
+// ── Test 10: Non-stacking rule ───────────────────────────────────────────────
+test("10. Non-stacking rule: promotions do not stack by default", () => {
+  const promoA = makePromo({ id: "pA", discount_type: "percent", value: 20, mode: "automatic" });
+  const promoB = makePromo({ id: "pB", discount_type: "percent", value: 10, mode: "automatic" });
+
+  const res = promotionUnitPrice(
+    "prd-1",
+    null,
+    null,
+    100,
+    [promoA, promoB],
+    new Map(),
+    NOW,
+    "both",
+  );
+  // Takes 20% (price 80), NOT 20% + 10% = 30% (price 70)
+  assert.equal(res.unit, 80);
+});
+
+// ── Test 11: Min subtotal requirement ────────────────────────────────────────
+test("11. Minimum subtotal requirement: promotion ignored when subtotal below threshold", () => {
+  const promoWithMin = makePromo({
+    id: "p-min-500",
+    discount_type: "percent",
+    value: 20,
+    minimum_order_amount: 500,
+    mode: "automatic",
+  });
+
+  // Cart subtotal = 300 (< 500)
+  const cartSmall: Omit<EvaluatedCartLine, "discounted_unit_price">[] = [
+    { product_id: "prd-1", variant_id: null, category_id: null, unit_price: 300, qty: 1, line_total: 300 },
+  ];
+  const resSmall = evaluateCartPricing({
+    lines: cartSmall,
+    subtotal: 300,
+    promoCode: null,
+    coupons: [],
+    promotions: [promoWithMin],
+    targetsByPromotion: new Map(),
+    usageFor: () => ({ customerUses: 0, hasPriorOrder: false }),
+    customerKey: null,
+    zone: null,
+    legacy: { fee: 0, minimum: 0, threshold: 0 },
+    deliveryType: "delivery",
+    now: NOW,
+    channel: "both",
+  });
+  assert.equal(resSmall.ok, true);
+  if (resSmall.ok) {
+    assert.equal(resSmall.pricing.autoDiscount, 0);
+    assert.equal(resSmall.pricing.total, 300);
+  }
+
+  // Cart subtotal = 600 (>= 500)
+  const cartLarge: Omit<EvaluatedCartLine, "discounted_unit_price">[] = [
+    { product_id: "prd-1", variant_id: null, category_id: null, unit_price: 300, qty: 2, line_total: 600 },
+  ];
+  const resLarge = evaluateCartPricing({
+    lines: cartLarge,
+    subtotal: 600,
+    promoCode: null,
+    coupons: [],
+    promotions: [promoWithMin],
+    targetsByPromotion: new Map(),
+    usageFor: () => ({ customerUses: 0, hasPriorOrder: false }),
+    customerKey: null,
+    zone: null,
+    legacy: { fee: 0, minimum: 0, threshold: 0 },
+    deliveryType: "delivery",
+    now: NOW,
+    channel: "both",
+  });
+  assert.equal(resLarge.ok, true);
+  if (resLarge.ok) {
+    assert.equal(resLarge.pricing.autoDiscount, 120); // 20% of 600
+    assert.equal(resLarge.pricing.total, 480);
+  }
+});
+
+// ── Test 12: Max discount cap ────────────────────────────────────────────────
+test("12. Maximum discount cap: promotion discount capped at max_discount_amount", () => {
+  const promoCapped = makePromo({
+    id: "p-capped",
+    discount_type: "percent",
+    value: 50, // 50% of 1000 would be 500
+    maximum_discount_amount: 150, // capped at 150
+    mode: "automatic",
+  });
+  const lines: Omit<EvaluatedCartLine, "discounted_unit_price">[] = [
+    { product_id: "prd-1", variant_id: null, category_id: null, unit_price: 1000, qty: 1, line_total: 1000 },
+  ];
+  const res = evaluateCartPricing({
+    lines,
+    subtotal: 1000,
+    promoCode: null,
+    coupons: [],
+    promotions: [promoCapped],
+    targetsByPromotion: new Map(),
+    usageFor: () => ({ customerUses: 0, hasPriorOrder: false }),
+    customerKey: null,
+    zone: null,
+    legacy: { fee: 0, minimum: 0, threshold: 0 },
+    deliveryType: "delivery",
+    now: NOW,
+    channel: "both",
+  });
+  assert.equal(res.ok, true);
+  if (res.ok) {
+    assert.equal(res.pricing.autoDiscount, 150);
+    assert.equal(res.pricing.total, 850);
+  }
+});
+
+// ── Test 13: Percentage discount cannot exceed 100% ──────────────────────────
+test("13. Percentage discount calculation safely clamps between 0% and 100%", () => {
+  const pOver = makePromo({ discount_type: "percent", value: 150 });
+  assert.equal(promotionDiscount(pOver, new Set(), [], 100), 100);
+  const pUnder = makePromo({ discount_type: "percent", value: -20 });
+  assert.equal(promotionDiscount(pUnder, new Set(), [], 100), 0);
+  const pNorm = makePromo({ discount_type: "percent", value: 25 });
+  assert.equal(promotionDiscount(pNorm, new Set(), [], 100), 25);
+});
+
+// ── Test 14: Fixed discount cannot exceed base price (price never below 0) ───
+test("14. Fixed discount cannot exceed base price (price never drops below 0)", () => {
+  const pFixed = makePromo({ discount_type: "fixed", value: 100 });
+  assert.equal(promotionDiscount(pFixed, new Set(), [], 50), 50);
+  const promo = makePromo({ id: "p-excess", discount_type: "fixed", value: 300, mode: "automatic" });
+  const unit = promotionUnitPrice("prd-1", null, null, 100, [promo], new Map(), NOW, "both");
+  assert.equal(unit.unit, 0);
+});
+
+// ── Test 15: Scheduled promotion active in start_date/end_date window ────────
+test("15. Scheduled promotion active inside date window", () => {
+  const promo = makePromo({
+    id: "p-sched",
+    starts_at: "2026-06-01T00:00:00Z",
+    ends_at: "2026-06-30T23:59:59Z",
+    value: 10,
+    mode: "automatic",
+  });
+  const res = promotionUnitPrice("prd-1", null, null, 100, [promo], new Map(), new Date("2026-06-15T12:00:00Z"), "both");
+  assert.equal(res.unit, 90);
+  assert.equal(getPromotionStatus(promo, new Date("2026-06-15T12:00:00Z")), "active");
+});
+
+// ── Test 16: Scheduled promotion inactive before start_date ──────────────────
+test("16. Scheduled promotion inactive before start_date", () => {
+  const promo = makePromo({
+    id: "p-future",
+    starts_at: "2026-07-01T00:00:00Z",
+    ends_at: "2026-07-31T23:59:59Z",
+    value: 10,
+    mode: "automatic",
+  });
+  const res = promotionUnitPrice("prd-1", null, null, 100, [promo], new Map(), new Date("2026-06-15T12:00:00Z"), "both");
+  assert.equal(res.unit, 100);
+  assert.equal(getPromotionStatus(promo, new Date("2026-06-15T12:00:00Z")), "scheduled");
+});
+
+// ── Test 17: Scheduled promotion inactive after end_date ────────────────────
+test("17. Scheduled promotion inactive after end_date", () => {
+  const promo = makePromo({
+    id: "p-past",
+    starts_at: "2026-05-01T00:00:00Z",
+    ends_at: "2026-05-31T23:59:59Z",
+    value: 10,
+    mode: "automatic",
+  });
+  const res = promotionUnitPrice("prd-1", null, null, 100, [promo], new Map(), new Date("2026-06-15T12:00:00Z"), "both");
+  assert.equal(res.unit, 100);
+  assert.equal(getPromotionStatus(promo, new Date("2026-06-15T12:00:00Z")), "expired");
+});
+
+// ── Test 18: Disabled promotion (enabled = false) never applies ──────────────
+test("18. Disabled promotion (enabled = false) never applies", () => {
+  const promo = makePromo({
+    id: "p-disabled",
+    enabled: false,
+    value: 20,
+    mode: "automatic",
+  });
+  const res = promotionUnitPrice("prd-1", null, null, 100, [promo], new Map(), NOW, "both");
+  assert.equal(res.unit, 100);
+  assert.equal(getPromotionStatus(promo, NOW), "paused");
+});
+
+// ── Test 19: Channel targeting POS applies on POS and not on Storefront ──────
+test("19. Channel targeting POS applies on POS and not on Storefront", () => {
+  const promoPos = makePromo({
+    id: "p-pos-only",
+    channel: "pos",
+    value: 10,
+    mode: "automatic",
+  });
+  const posRes = promotionUnitPrice("prd-1", null, null, 100, [promoPos], new Map(), NOW, "pos");
+  assert.equal(posRes.unit, 90);
+  const webRes = promotionUnitPrice("prd-1", null, null, 100, [promoPos], new Map(), NOW, "online");
+  assert.equal(webRes.unit, 100);
+});
+
+// ── Test 20: Channel targeting Storefront applies on Storefront not POS ──────
+test("20. Channel targeting Storefront applies on Storefront and not on POS", () => {
+  const promoOnline = makePromo({
+    id: "p-online-only",
+    channel: "online",
+    value: 15,
+    mode: "automatic",
+  });
+  const webRes = promotionUnitPrice("prd-1", null, null, 100, [promoOnline], new Map(), NOW, "online");
+  assert.equal(webRes.unit, 85);
+  const posRes = promotionUnitPrice("prd-1", null, null, 100, [promoOnline], new Map(), NOW, "pos");
+  assert.equal(posRes.unit, 100);
+});
+
+// ── Test 21: Channel targeting Both applies on POS and Storefront ────────────
+test("21. Channel targeting Both applies on POS and Storefront", () => {
+  const promoBoth = makePromo({
+    id: "p-both",
+    channel: "both",
+    value: 20,
+    mode: "automatic",
+  });
+  const webRes = promotionUnitPrice("prd-1", null, null, 100, [promoBoth], new Map(), NOW, "online");
+  assert.equal(webRes.unit, 80);
+  const posRes = promotionUnitPrice("prd-1", null, null, 100, [promoBoth], new Map(), NOW, "pos");
+  assert.equal(posRes.unit, 80);
+});
+
+// ── Test 22: POS manual cashier item discount coexists safely with promo ─────
+test("22. POS manual cashier item discount coexists safely with automatic promotion", () => {
+  // Base price = 100, Auto promo makes unit_price = 80 (20 EGP auto discount)
+  // Cashier applies 10% manual item discount on the line
+  const line = {
+    base_price: 100,
+    unit_price: 80,
+    qty: 2,
+    item_discount: { type: "percent" as const, value: 10 },
+  };
+  const amounts = lineTotals(line);
+  // Gross = 100 * 2 = 200
+  // Promo subtotal = 80 * 2 = 160
+  // Promo discount = 200 - 160 = 40
+  // Manual discount = 10% of 160 = 16
+  // Total discount = 40 + 16 = 56
+  // Net = 160 - 16 = 144
+  assert.equal(amounts.gross, 200);
+  assert.equal(amounts.promoDiscount, 40);
+  assert.equal(amounts.manualDiscount, 16);
+  assert.equal(amounts.discount, 56);
+  assert.equal(amounts.net, 144);
+});
+
+// ── Test 23: POS manual invoice discount coexists safely with line promos ────
+test("23. POS manual cashier invoice discount coexists safely with line promotions", () => {
+  const lines = [
+    { base_price: 100, unit_price: 80, qty: 1, item_discount: { type: "none" as const, value: 0 } },
+    { base_price: 200, unit_price: 150, qty: 1, item_discount: { type: "fixed" as const, value: 10 } },
+  ];
+  // Line 1: gross 100, promo 20, manual 0, net 80
+  // Line 2: gross 200, promo 50, manual 10, net 140
+  // Subtotal gross = 300, total promo = 70, total manual item = 10, lines net = 220
+  // Cashier adds 10% invoice discount on remaining 220 = 22
+  // Final total = 220 - 22 = 198
+  const totals = cartTotals(lines, { type: "percent", value: 10 });
+  assert.equal(totals.subtotal, 300);
+  assert.equal(totals.promoDiscountAmount, 70);
+  assert.equal(totals.itemDiscountAmount, 10);
+  assert.equal(totals.invoiceDiscountAmount, 22);
+  assert.equal(totals.discountAmount, 102); // 70 + 10 + 22
+  assert.equal(totals.total, 198);
+});
+
+// ── Test 24: getPromotionStatus helper ───────────────────────────────────────
+test("24. getPromotionStatus returns 'active', 'scheduled', 'expired', or 'paused'", () => {
+  const now = new Date("2026-06-15T12:00:00Z");
+  assert.equal(getPromotionStatus(makePromo({ enabled: false }), now), "paused");
+  assert.equal(
+    getPromotionStatus(makePromo({ enabled: true, starts_at: "2026-07-01T00:00:00Z" }), now),
+    "scheduled",
+  );
+  assert.equal(
+    getPromotionStatus(makePromo({ enabled: true, ends_at: "2026-05-01T00:00:00Z" }), now),
+    "expired",
+  );
+  assert.equal(
+    getPromotionStatus(
+      makePromo({ enabled: true, starts_at: "2026-06-01T00:00:00Z", ends_at: "2026-06-30T00:00:00Z" }),
+      now,
+    ),
+    "active",
+  );
+});
+
+// ── Test 25: Promotion value & discount validations ──────────────────────────
+test("25. Promotion validation: percentage value <= 100 and non-negative numbers", () => {
+  assert.equal(validateDiscount("percent", 100), null);
+  assert.equal(validateDiscount("percent", 101), "tooHigh");
+  assert.equal(validateDiscount("percent", -5), "invalid");
+  assert.equal(validateDiscount("fixed", 50), null);
+  assert.equal(validateDiscount("fixed", -1), "invalid");
+});
+
+// ── Test 26: Coupon mode requires non-empty code ─────────────────────────────
+test("26. Coupon mode validation requires coupon code", () => {
+  const couponWithoutCode = makePromo({ mode: "coupon", code: "" });
+  assert.equal(Boolean(couponWithoutCode.code?.trim()), false);
+
+  const couponWithCode = makePromo({ mode: "coupon", code: "PROMO2026" });
+  assert.equal(normalizeCouponCode(couponWithCode.code), "PROMO2026");
+});
+
+// ── Test 27: Targeted scopes require target UUIDs ────────────────────────────
+test("27. Targeted scopes (category, product, variant) require target mappings", () => {
+  const catPromo = makePromo({ scope: "category", id: "p-cat" });
+  const targetsCat = new Map([[catPromo.id, new Set(["category:cat-1"])]]);
+  assert.equal(targetsCat.get(catPromo.id)?.has("category:cat-1"), true);
+  assert.equal(targetsCat.get(catPromo.id)?.has("category:cat-2"), false);
+
+  const varPromo = makePromo({ scope: "variant", id: "p-var" });
+  const targetsVar = new Map([[varPromo.id, new Set(["variant:uuid-1234"])]]);
+  assert.equal(targetsVar.get(varPromo.id)?.has("variant:uuid-1234"), true);
+});
+
+// ── Test 28: Cart breakdown and audit fields ─────────────────────────────────
+test("28. Full cart audit snapshot: promotional discount, manual item discount, invoice discount, and total EGP", () => {
+  const lines = [
+    { base_price: 500, unit_price: 400, qty: 1, item_discount: { type: "percent" as const, value: 10 } },
+  ];
+  // Gross: 500
+  // Promo discount: 100 (400 net unit)
+  // Cashier item discount: 10% of 400 = 40
+  // Line net: 360
+  // Cashier invoice discount: 20 EGP fixed on 360 = 20
+  // Final total: 340
+  // Total discount breakdown: 100 promo + 40 item + 20 invoice = 160 total discount
+  const totals = cartTotals(lines, { type: "fixed", value: 20 });
+  assert.equal(totals.subtotal, 500);
+  assert.equal(totals.promoDiscountAmount, 100);
+  assert.equal(totals.itemDiscountAmount, 40);
+  assert.equal(totals.invoiceDiscountAmount, 20);
+  assert.equal(totals.discountAmount, 160);
+  assert.equal(totals.total, 340);
+  assert.equal(round2(totals.subtotal - totals.discountAmount), totals.total);
+});

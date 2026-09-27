@@ -799,25 +799,18 @@ test("customer keys normalize like the server", () => {
 test("display prices show real current offers, never promises", () => {
   const targets = new Map([["prm-ring", new Set(["category:cat-rings"])]]);
   const ring20 = makePromotion({ id: "prm-ring", value: 20, scope: "category" });
-  assert.deepEqual(
-    promotionUnitPrice("prd-1", null, "cat-rings", 200, [ring20], targets, NOW),
-    { unit: 160, promotionId: "prm-ring" },
-  );
-  assert.deepEqual(
-    promotionUnitPrice("prd-2", null, "cat-neck", 100, [ring20], targets, NOW),
-    { unit: 100, promotionId: null },
-    "out of scope shows list",
-  );
-  assert.deepEqual(
-    promotionUnitPrice("prd-1", null, "cat-rings", 200, [makePromotion({ minimum_order_amount: 500 })], new Map(), NOW),
-    { unit: 200, promotionId: null },
-    "a cart-level minimum is not a display promise",
-  );
-  assert.deepEqual(
-    promotionUnitPrice("prd-1", null, "cat-rings", 200, [makePromotion({ enabled: false })], new Map(), NOW),
-    { unit: 200, promotionId: null },
-    "a disabled offer shows nothing",
-  );
+  const res1 = promotionUnitPrice("prd-1", null, "cat-rings", 200, [ring20], targets, NOW);
+  assert.equal(res1.unit, 160);
+  assert.equal(res1.promotionId, "prm-ring");
+  const res2 = promotionUnitPrice("prd-2", null, "cat-neck", 100, [ring20], targets, NOW);
+  assert.equal(res2.unit, 100);
+  assert.equal(res2.promotionId, null);
+  const res3 = promotionUnitPrice("prd-1", null, "cat-rings", 200, [makePromotion({ minimum_order_amount: 500 })], new Map(), NOW);
+  assert.equal(res3.unit, 200);
+  assert.equal(res3.promotionId, null);
+  const res4 = promotionUnitPrice("prd-1", null, "cat-rings", 200, [makePromotion({ enabled: false })], new Map(), NOW);
+  assert.equal(res4.unit, 200);
+  assert.equal(res4.promotionId, null);
 });
 
 // ── delivery fees ───────────────────────────────────────────────────────────

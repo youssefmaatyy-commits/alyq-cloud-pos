@@ -58,6 +58,7 @@ import {
   deliveryFeeFor,
   freeDeliveryProgress,
   normalizeCouponCode,
+  promotionUnitPrice,
   round2,
   variantUnitPriceOf,
   type CartTotals,
@@ -260,6 +261,8 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
     products,
     variants: publishedVariants,
     campaigns,
+    promotions,
+    promotionTargets,
     catalogContext,
     settings,
     loading: catalogueLoading,
@@ -339,6 +342,12 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
 
   const entries = useMemo<CartEntry[]>(() => {
     const now = new Date();
+    const promotionTargetsMap = new Map<string, Set<string>>();
+    for (const target of promotionTargets ?? []) {
+      const set = promotionTargetsMap.get(target.promotion_id) ?? new Set<string>();
+      set.add(`${target.target_kind}:${target.target_id}`);
+      promotionTargetsMap.set(target.promotion_id, set);
+    }
     return lines.flatMap((line) => {
       const product = productsById.get(line.product_id);
       if (!product) return [];
@@ -348,9 +357,20 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
       if (line.variant_id && !variant) return [];
 
       const campaign = campaignFor(product.id, campaigns, now);
-      const price = variant
+      const campaignPrice = variant
         ? variantUnitPriceOf(variant, product.selling_price, campaign)
         : variantUnitPriceOf({ price_override: null }, product.selling_price, campaign);
+      const promoOffer = promotionUnitPrice(
+        product.id,
+        variant?.id ?? null,
+        product.category_id ?? null,
+        campaignPrice,
+        promotions ?? [],
+        promotionTargetsMap,
+        now,
+        "storefront",
+      );
+      const price = Math.min(promoOffer.unit, campaignPrice);
       const available = variant
         ? product.stock_tracking_enabled
           ? variantAvailableToPromise(
@@ -374,7 +394,7 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
         },
       ];
     });
-  }, [campaigns, catalogContext.contents, catalogContext.reserved, catalogContext.reservedVariant, lang, lines, productsById, variantsById]);
+  }, [campaigns, catalogContext.contents, catalogContext.reserved, catalogContext.reservedVariant, lang, lines, productsById, promotionTargets, promotions, variantsById]);
 
   const subtotal = useMemo(
     () => round2(entries.reduce((sum, entry) => sum + entry.lineTotal, 0)),
