@@ -937,7 +937,7 @@ export function selectAutomaticPromotion(
   });
   let best: AutomaticPromotionSelection | null = null;
   for (const promotion of ordered) {
-    if (promotion.mode === "coupon") continue;
+    if (isCouponPromotion(promotion)) continue;
     if (!isPromotionLive(promotion, now)) continue;
     if (
       promotion.channel &&
