@@ -46,9 +46,17 @@ export function V2Coupon() {
 export function V2CartTotals({ showDelivery = false }: { showDelivery?: boolean }) {
   const { t, pick, money } = useI18n();
   const { settings } = useStorefront();
-  const { totals, preview, previewLoading, deliveryType, deliveryZoneId, freeDelivery } = useStoreCart();
+  const { totals, preview, previewLoading, deliveryType, deliveryZoneId, freeDelivery,
+    couponCode } = useStoreCart();
   const zone = useStorefront().deliveryZones.find((entry) => entry.id === deliveryZoneId && entry.enabled);
-  const shown = preview;
+  // The advisory preview is debounced, so for a moment after a coupon is
+  // applied (or removed) it still describes the PREVIOUS coupon state — and
+  // that stale breakdown still carries the automatic promotion the coupon has
+  // just displaced, which is what made the cart render a discount that no
+  // longer applies. Only trust a preview whose own code matches the coupon the
+  // cart currently holds; otherwise fall back to the locally reconciled
+  // totals until the fresh preview lands.
+  const shown = preview && preview.promoCode === couponCode ? preview : null;
   return <div data-testid="v2-cart-totals">
     <dl className="v2-totals">
       <div><dt>{t("store.cart.subtotal")}</dt><dd>{money(shown?.subtotal ?? totals.subtotal)}</dd></div>

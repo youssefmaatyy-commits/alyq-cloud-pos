@@ -97,7 +97,14 @@ export function StorefrontV2Checkout() {
   const cart = useStoreCart();
   const { entries, lines, totals, preview, isEmpty, problems, placing, checkout, checkoutError,
     prunedCount, acknowledgePruned, clearCheckoutError, deliveryType, setDeliveryType, paymentMethod, setPaymentMethod,
-    deliveryZoneId, setDeliveryZoneId } = cart;
+    deliveryZoneId, setDeliveryZoneId, couponCode } = cart;
+  // Same stale-preview guard the cart totals use: the debounced preview keeps
+  // describing the previous coupon state for a moment after a code is applied
+  // or removed, and that older breakdown still carries the automatic
+  // promotion the coupon has displaced. Ignore it until its own code matches
+  // the coupon the cart currently holds, so the amount the shopper is asked
+  // to pay never comes from a breakdown for a different coupon.
+  const livePreview = preview && preview.promoCode === couponCode ? preview : null;
   const [name, setName] = useState(customer?.name ?? "");
   const [phone, setPhone] = useState(customer?.phone ?? "");
   const [email, setEmail] = useState(customer?.email ?? "");
@@ -110,8 +117,8 @@ export function StorefrontV2Checkout() {
   const defaultAddress = addresses.find((row) => row.is_default) ?? addresses[0] ?? null;
   const zones = useMemo(() => deliveryZones.filter((zone) => zone.enabled), [deliveryZones]);
   const places = useMemo(() => deliveryAreasOf(settings.delivery), [settings.delivery]);
-  const goodsTotal = Math.max(0, (preview?.subtotal ?? totals.subtotal) -
-    (preview?.totalDiscount ?? totals.discount_amount + totals.auto_discount));
+  const goodsTotal = Math.max(0, (livePreview?.subtotal ?? totals.subtotal) -
+    (livePreview?.totalDiscount ?? totals.discount_amount + totals.auto_discount));
   const issues = v2CheckoutIssues({ name, phone, address, deliveryType, deliveryZoneId,
     goodsTotal, blockedLines: problems.length + Math.max(0, lines.length - entries.length) +
       entries.filter((entry) => !entry.product.stock_tracking_enabled).length }, settings, zones);
@@ -273,7 +280,7 @@ export function StorefrontV2Checkout() {
             t("store.checkout.codHint")}</p> : <div className="v2-payment-instructions">
             <h3>{t("store.checkout.instapaySteps")}</h3>
             {instapayInstructions ? <p className="v2-preline">{instapayInstructions}</p> :
-              <ol><li>{t("store.checkout.instapayStep1", { amount: money(preview?.total ?? totals.total) })}</li>
+              <ol><li>{t("store.checkout.instapayStep1", { amount: money(livePreview?.total ?? totals.total) })}</li>
                 <li>{t("store.checkout.instapayStep2")}</li><li>{t("store.checkout.instapayStep3")}</li></ol>}
             {settings.social.instapay_holder ? <p>{t("store.checkout.instapayHolder")}: {settings.social.instapay_holder}</p> : null}
             {settings.social.instapay_account ? <p dir="ltr">{settings.social.instapay_account}</p> : null}
