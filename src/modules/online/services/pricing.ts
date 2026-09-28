@@ -19,18 +19,27 @@
  * them as a second percentage: two stacked discounts on one line is how a shop
  * sells below cost by accident.
  */
-import type {
-  Campaign,
-  Coupon,
-  DeliveryArea,
-  DeliverySettings,
-  DeliveryType,
-  DeliveryZone,
-  ProductContent,
-  Promotion,
-  PromotionChannel,
-  PromotionOfferType,
-} from "../types";
+
+
+export function isCouponPromotion(
+  promo: { mode?: string | null; code?: string | null } | null | undefined
+): boolean {
+  if (!promo) return false;
+
+  if (
+    promo.mode === "coupon" ||
+    (typeof promo.mode === "string" &&
+      promo.mode.toLowerCase() === "coupon")
+  ) {
+    return true;
+  }
+
+  if (promo.code && promo.code.trim().length > 0) {
+    return true;
+  }
+
+  return false;
+}
 
 /** Money is Egyptian pounds, rounded to piastres. */
 export function round2(value: number): number {
