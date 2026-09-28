@@ -232,13 +232,13 @@ export function StoreCartPage() {
                 <dt className="text-[var(--store-text-secondary)]">{t("store.cart.subtotal")}</dt>
                 <dd className="font-bold text-[var(--store-text-primary)]"><Money value={preview?.subtotal ?? totals.subtotal} /></dd>
               </div>
-              {(preview?.autoDiscount ?? 0) > 0 ? (
+              {(preview?.autoDiscount ?? totals.auto_discount) > 0 ? (
                 <div className="flex justify-between gap-2 text-emerald-700">
                   <dt>
                     {t("store.checkout.productDiscounts")}
-                    {preview?.autoPromotionName ? ` · ${preview.autoPromotionName}` : ""}
+                    {(preview?.autoPromotionName ?? totals.auto_promotion_name) ? ` · ${preview?.autoPromotionName ?? totals.auto_promotion_name}` : ""}
                   </dt>
-                  <dd className="font-bold">−{money(preview?.autoDiscount ?? 0)}</dd>
+                  <dd className="font-bold">−{money(preview?.autoDiscount ?? totals.auto_discount)}</dd>
                 </div>
               ) : null}
               {(preview?.promoDiscount ?? totals.discount_amount) > 0 ? (

@@ -1841,6 +1841,7 @@ export class DemoOnlineRepository
       discount: check.discount,
       discountType: coupon.discount_type,
       value: coupon.value,
+      stackable: coupon.stackable,
       ...(check.freeShipping ? { freeShipping: true as const } : {}),
     };
   }
@@ -2234,21 +2235,23 @@ export class DemoOnlineRepository
       };
     });
     const subtotal = round2(priced.reduce((sum, line) => sum + line.line_total, 0));
+    // A zone is resolved when one was actually chosen; the Cart page itself
+    // never requires one — it previews with the legacy delivery settings
+    // (below, inside evaluateCartPricing) until a zone is picked, exactly
+    // like `preview_storefront_pricing` in production, which only looks up
+    // `p_zone_id` when it is not null. Requiring a zone up front here (as this
+    // used to) broke the Cart-page preview for every shopper who had not yet
+    // reached the checkout step and chosen one, which then silently fell back
+    // to unreconciled local totals. The zone IS required to actually place a
+    // delivery order — that is enforced separately in `placeOrder` below.
     const enabledZones = this.deliveryZones.filter((candidate) => candidate.enabled);
     let zone: DeliveryZone | null = null;
-    if (input.deliveryType === "delivery") {
-      if (enabledZones.length > 0) {
-        if (!input.deliveryZoneId) {
-          throw new OnlineError("delivery_unavailable", "Please select a delivery zone", {
-            field: "delivery_type",
-          });
-        }
-        zone = enabledZones.find((candidate) => candidate.id === input.deliveryZoneId) ?? null;
-        if (!zone) {
-          throw new OnlineError("delivery_unavailable", "Delivery zone is not available", {
-            field: "delivery_type",
-          });
-        }
+    if (input.deliveryType === "delivery" && input.deliveryZoneId) {
+      zone = enabledZones.find((candidate) => candidate.id === input.deliveryZoneId) ?? null;
+      if (!zone) {
+        throw new OnlineError("delivery_unavailable", "Delivery zone is not available", {
+          field: "delivery_type",
+        });
       }
     }
     const settings = resolveSettings(this.settingsDoc.settings).delivery;

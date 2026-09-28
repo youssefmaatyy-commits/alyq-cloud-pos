@@ -1176,6 +1176,7 @@ export class SupabaseOnlineRepository
         discount_type?: "percent" | "fixed";
         value?: Numeric;
         min_subtotal?: Numeric;
+        stackable?: boolean;
       } | null;
 
       if (!result?.valid) {
@@ -1194,6 +1195,7 @@ export class SupabaseOnlineRepository
         discount: toNumber(result.discount ?? 0),
         discountType: result.discount_type ?? "percent",
         value: toNumber(result.value ?? 0),
+        stackable: result.stackable ?? false,
       };
     } catch (error) {
       throw toOnlineError(error);

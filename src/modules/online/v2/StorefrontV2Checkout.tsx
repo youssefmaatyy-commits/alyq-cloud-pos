@@ -111,7 +111,7 @@ export function StorefrontV2Checkout() {
   const zones = useMemo(() => deliveryZones.filter((zone) => zone.enabled), [deliveryZones]);
   const places = useMemo(() => deliveryAreasOf(settings.delivery), [settings.delivery]);
   const goodsTotal = Math.max(0, (preview?.subtotal ?? totals.subtotal) -
-    (preview?.totalDiscount ?? totals.discount_amount));
+    (preview?.totalDiscount ?? totals.discount_amount + totals.auto_discount));
   const issues = v2CheckoutIssues({ name, phone, address, deliveryType, deliveryZoneId,
     goodsTotal, blockedLines: problems.length + Math.max(0, lines.length - entries.length) +
       entries.filter((entry) => !entry.product.stock_tracking_enabled).length }, settings, zones);
