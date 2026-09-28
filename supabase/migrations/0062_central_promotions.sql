@@ -875,14 +875,7 @@ begin
     end if;
   end if;
 
-  -- ── 3. Stacking: the coupon wins unless both are stackable ─────────────────
-  -- A valid coupon that discounts the goods ALWAYS switches the automatic
-  -- promotion off, however small the code and however large the sale. There is
-  -- deliberately no "larger discount wins" contest: a code the shopper typed
-  -- and the cart accepted must visibly do something, and the cart/checkout must
-  -- never show the displaced automatic discount beside it. Mirrors
-  -- `reconcileAutomaticAndCoupon` and `evaluateCartPricing` in
-  -- src/modules/online/services/pricing.ts.
+  -- ── 3. Stacking: best discount wins unless both are stackable ──────────────
   if v_code is not null and v_auto_id is not null then
     if v_auto_stack and v_coupon_stack then
       v_goods_discount := least(v_auto_discount + v_coupon_discount, v_subtotal);
@@ -893,7 +886,7 @@ begin
       v_winning_buy_x := coalesce(v_coupon_promo_buy_x, v_auto_buy_x);
       v_winning_get_y := coalesce(v_coupon_promo_get_y, v_auto_get_y);
       v_winning_reward_qty := coalesce(v_coupon_promo_reward_qty, v_auto_reward_qty);
-    elsif v_coupon_discount > 0 then
+    elsif v_coupon_discount >= v_auto_discount then
       v_auto_discount := 0;
       v_auto_id := null;
       v_auto_name := null;
@@ -912,9 +905,6 @@ begin
       v_winning_get_y := v_coupon_promo_get_y;
       v_winning_reward_qty := v_coupon_promo_reward_qty;
     else
-      -- Only reachable for a code carrying no goods discount at all (a
-      -- free-shipping coupon). It must not cancel a real automatic discount,
-      -- so the sale stands and the code stands down — unchanged behaviour.
       v_coupon_discount := 0;
       v_coupon_free_ship := false;
       v_coupon_line_discounts := array_fill(0::numeric, array[v_count]);

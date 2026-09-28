@@ -6657,6 +6657,103 @@ begin
 end
 $stocktake60$;
 
+-- ─── 0064 · a coupon always replaces the automatic promotion ────────────────
+-- Asserted against `evaluate_order_pricing_channel` directly, because that is
+-- the function 0064 replaces and the one every caller routes through
+-- (place_online_order, pos_complete_sale, preview_storefront_pricing). The
+-- end-to-end shape of case 1 is also covered through place_online_order in
+-- Part 21 above; these four pin the rule and its two deliberate exceptions at
+-- the source.
+do $coupon64$
+declare
+  v_admin  uuid  := '00000000-0000-4000-8000-0000000000a1';
+  v_promo  uuid  := '00000000-0000-4000-8000-0000000f0064';
+  v_legacy jsonb := '{"fee":0,"minimum":0,"threshold":0}'::jsonb;
+  v_lines  jsonb := jsonb_build_array(jsonb_build_object(
+    'product_id', '00000000-0000-4000-8000-0000000f0065',
+    'variant_id', null, 'category_id', null,
+    'qty', 1, 'unit_price', 500, 'line_total', 500));
+  v_out    jsonb;
+begin
+  perform pg_temp.become(v_admin, 'authenticated');
+
+  insert into public.promotions
+    (id, enabled, mode, channel, name_en, name_ar,
+     discount_type, value, scope, minimum_order_amount, priority, stackable)
+  values
+    (v_promo, true, 'automatic', 'both', 'Rule 64 storewide', 'خصم قاعدة 64',
+     'percent', 15, 'store', 0, 0, false)
+  on conflict (id) do update
+    set enabled = true, value = 15, scope = 'store', stackable = false;
+
+  insert into public.coupons
+    (code, discount_type, value, min_subtotal, active, stackable)
+  values
+    ('SCN64-TEN',   'percent',       10, 0, true, false),
+    ('SCN64-STACK', 'percent',       10, 0, true, true),
+    ('SCN64-SHIP',  'free_shipping',  1, 0, true, false)
+  on conflict (code) do update
+    set discount_type = excluded.discount_type, value = excluded.value,
+        active = true, stackable = excluded.stackable;
+
+  -- 1. The sale (15% = 75) is worth MORE than the code (10% = 50), and the
+  --    code still wins outright. This is the case the old "larger discount
+  --    wins" rule got wrong: it kept the 75 and silently dropped the code.
+  v_out := public.evaluate_order_pricing_channel(
+    500::numeric, v_lines, 'SCN64-TEN', null, null, v_legacy, 'pickup', false, 'online');
+  if (v_out->>'auto_discount')::numeric <> 0 then
+    raise exception '0064: the larger sale survived a smaller coupon (auto_discount %)',
+      v_out->>'auto_discount';
+  end if;
+  if (v_out->>'promo_discount')::numeric <> 50 then
+    raise exception '0064: the coupon booked % instead of its own 50', v_out->>'promo_discount';
+  end if;
+  if (v_out->>'total_discount')::numeric <> 50 then
+    raise exception '0064: two discounts came off the same cart (total_discount %)',
+      v_out->>'total_discount';
+  end if;
+
+  -- 2. No code at all: the automatic sale still discounts the cart on its own.
+  v_out := public.evaluate_order_pricing_channel(
+    500::numeric, v_lines, null, null, null, v_legacy, 'pickup', false, 'online');
+  if (v_out->>'auto_discount')::numeric <> 75 then
+    raise exception '0064: the sale stopped applying when no code was typed (auto_discount %)',
+      v_out->>'auto_discount';
+  end if;
+
+  -- 3. Stackable on BOTH sides still stacks — 0064 removed the size contest,
+  --    not stacking.
+  update public.promotions set stackable = true where id = v_promo;
+  v_out := public.evaluate_order_pricing_channel(
+    500::numeric, v_lines, 'SCN64-STACK', null, null, v_legacy, 'pickup', false, 'online');
+  if (v_out->>'auto_discount')::numeric <> 75 or (v_out->>'promo_discount')::numeric <> 50 then
+    raise exception '0064: two stackable offers stopped stacking (auto %, promo %)',
+      v_out->>'auto_discount', v_out->>'promo_discount';
+  end if;
+  update public.promotions set stackable = false where id = v_promo;
+
+  -- 4. A free_shipping code is worth nothing against the goods, so it must NOT
+  --    cancel the sale — accepting it would otherwise leave the shopper worse
+  --    off than typing no code at all.
+  v_out := public.evaluate_order_pricing_channel(
+    500::numeric, v_lines, 'SCN64-SHIP', null, null, v_legacy, 'pickup', false, 'online');
+  if (v_out->>'auto_discount')::numeric <> 75 then
+    raise exception '0064: a free-shipping code cancelled the sale (auto_discount %)',
+      v_out->>'auto_discount';
+  end if;
+  if (v_out->>'promo_discount')::numeric <> 0 then
+    raise exception '0064: a free-shipping code took money off the goods (%)',
+      v_out->>'promo_discount';
+  end if;
+
+  -- Leave no storewide sale or stray code behind for anything that runs later.
+  delete from public.promotions where id = v_promo;
+  delete from public.coupons where code in ('SCN64-TEN', 'SCN64-STACK', 'SCN64-SHIP');
+
+  raise notice '0064 — a coupon that discounts the goods always replaces the automatic promotion, even a smaller one; no code leaves the sale applying; both-stackable still stacks; and a free_shipping code never cancels the sale';
+end
+$coupon64$;
+
 do $$
 begin
   perform set_config('request.jwt.claim.sub', '', true);
