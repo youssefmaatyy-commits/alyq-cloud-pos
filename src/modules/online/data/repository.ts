@@ -588,7 +588,20 @@ export interface MarketingSnapshot {
 
 /** A coupon check, as the checkout form needs it. */
 export type CouponCheckResult =
-  | { valid: true; code: string; discount: number; discountType: "percent" | "fixed" | "free_shipping"; value: number; freeShipping?: boolean }
+  | {
+      valid: true;
+      code: string;
+      discount: number;
+      discountType: "percent" | "fixed" | "free_shipping";
+      value: number;
+      freeShipping?: boolean;
+      /**
+       * Whether this coupon combines with an automatic promotion instead of
+       * the larger-wins rule. Defaults to false (the safe assumption) when a
+       * backend has not been updated to report it yet.
+       */
+      stackable?: boolean;
+    }
   | { valid: false; reason: CouponCheckReason; minSubtotal?: number };
 
 export const COUPON_CHECK_REASONS = [

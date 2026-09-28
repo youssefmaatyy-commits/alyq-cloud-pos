@@ -19,7 +19,18 @@
  * them as a second percentage: two stacked discounts on one line is how a shop
  * sells below cost by accident.
  */
-
+import type {
+  Campaign,
+  Coupon,
+  DeliveryArea,
+  DeliverySettings,
+  DeliveryType,
+  DeliveryZone,
+  ProductContent,
+  Promotion,
+  PromotionChannel,
+  PromotionOfferType,
+} from "../types";
 
 export function isCouponPromotion(
   promo: { mode?: string | null; code?: string | null } | null | undefined
@@ -66,12 +77,53 @@ export interface PricedLine {
 export interface CartTotals {
   lines: PricedLine[];
   subtotal: number;
+  /** The coupon code, when one is both entered and currently applying. */
   discount_code: string | null;
+  /** The coupon's own discount — never the automatic promotion's (see
+   * `auto_discount`), so a screen that shows "Discount code: −X" never
+   * mislabels the storewide sale as if the typed code had produced it. */
   discount_amount: number;
+  /**
+   * The automatic (codeless) promotion's discount, already reconciled against
+   * any applied coupon by `reconcileAutomaticAndCoupon` — zero when a
+   * non-stackable coupon outweighs it, so this and `discount_amount` never
+   * both count the same saving.
+   */
+  auto_discount: number;
+  auto_promotion_id: string | null;
+  auto_promotion_name: string | null;
   delivery_fee: number;
   total: number;
   /** Units across every line — the header's "3 items". */
   unit_count: number;
+}
+
+/**
+ * The non-stacking rule applied when an automatic promotion and a coupon code
+ * both discount the same cart: both survive only when both are marked
+ * stackable, otherwise the larger discount alone applies and a tie goes to the
+ * coupon code. Mirrors the tie-break `evaluateCartPricing` (and the SQL core,
+ * `evaluate_order_pricing`) applies server-side, so a cart page that reconciles
+ * its own quick, local numbers with this helper shows the same figure the
+ * authoritative engine will land on — no visible jump once the advisory
+ * preview or the server response arrives.
+ */
+export function reconcileAutomaticAndCoupon(
+  autoDiscount: number,
+  autoStackable: boolean,
+  couponDiscount: number,
+  couponStackable: boolean,
+): { autoDiscount: number; couponDiscount: number } {
+  let auto = Math.max(autoDiscount, 0);
+  let coupon = Math.max(couponDiscount, 0);
+  if (auto > 0 && coupon > 0 && !(autoStackable && couponStackable)) {
+    if (coupon >= auto) {
+      auto = 0;
+    } else {
+      coupon = 0;
+    }
+  }
+  return { autoDiscount: auto, couponDiscount: coupon };
 }
 
 /** A campaign is live when it is switched on and the clock is inside its window. */
@@ -524,6 +576,11 @@ export function priceCart(input: {
     subtotal,
     discount_code: check?.ok ? coupon?.code ?? null : null,
     discount_amount: discountAmount,
+    // priceCart is the campaign-only step: automatic promotions are evaluated
+    // afterwards, across the whole order, by evaluateCartPricing — never here.
+    auto_discount: 0,
+    auto_promotion_id: null,
+    auto_promotion_name: null,
     delivery_fee: deliveryFee,
     total: round2(subtotal - discountAmount + deliveryFee),
     unit_count: unitCount,

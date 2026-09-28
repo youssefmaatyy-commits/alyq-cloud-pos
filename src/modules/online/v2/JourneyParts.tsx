@@ -52,9 +52,9 @@ export function V2CartTotals({ showDelivery = false }: { showDelivery?: boolean 
   return <div data-testid="v2-cart-totals">
     <dl className="v2-totals">
       <div><dt>{t("store.cart.subtotal")}</dt><dd>{money(shown?.subtotal ?? totals.subtotal)}</dd></div>
-      {(shown?.autoDiscount ?? 0) > 0 ? <div className="v2-totals-discount"><dt>
-        {t("store.checkout.productDiscounts")}{shown?.autoPromotionName ? ` · ${shown.autoPromotionName}` : ""}
-      </dt><dd>−{money(shown?.autoDiscount ?? 0)}</dd></div> : null}
+      {(shown?.autoDiscount ?? totals.auto_discount) > 0 ? <div className="v2-totals-discount"><dt>
+        {t("store.checkout.productDiscounts")}{(shown?.autoPromotionName ?? totals.auto_promotion_name) ? ` · ${shown?.autoPromotionName ?? totals.auto_promotion_name}` : ""}
+      </dt><dd>−{money(shown?.autoDiscount ?? totals.auto_discount)}</dd></div> : null}
       {(shown?.promoDiscount ?? totals.discount_amount) > 0 ? <div className="v2-totals-discount"><dt>
         {t("store.cart.discount")}{shown?.promoCode ?? totals.discount_code ? ` · ${shown?.promoCode ?? totals.discount_code}` : ""}
       </dt><dd>−{money(shown?.promoDiscount ?? totals.discount_amount)}</dd></div> : null}

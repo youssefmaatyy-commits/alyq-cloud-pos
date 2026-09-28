@@ -212,7 +212,10 @@ export function StoreCheckoutPage() {
     if (!preview) return null;
     return preview;
   }, [preview]);
-  const goodsTotal = round2((shown?.subtotal ?? totals.subtotal) - (shown?.totalDiscount ?? totals.discount_amount));
+  const goodsTotal = round2(
+    (shown?.subtotal ?? totals.subtotal) -
+      (shown?.totalDiscount ?? totals.discount_amount + totals.auto_discount),
+  );
   const zoneMinimum = activeZone && deliveryType === "delivery" ? activeZone.minimum_order_amount : null;
   const deliveryShortfall =
     zoneMinimum !== null
@@ -782,13 +785,13 @@ export function StoreCheckoutPage() {
                 <dt className="text-[var(--store-text-secondary)]">{t("store.cart.subtotal")}</dt>
                 <dd className="font-bold text-[var(--store-text-primary)]"><Money value={shown?.subtotal ?? totals.subtotal} /></dd>
               </div>
-              {(shown?.autoDiscount ?? 0) > 0 ? (
+              {(shown?.autoDiscount ?? totals.auto_discount) > 0 ? (
                 <div className="flex justify-between gap-2 text-emerald-700">
                   <dt>
                     {t("store.checkout.productDiscounts")}
-                    {shown?.autoPromotionName ? ` · ${shown.autoPromotionName}` : ""}
+                    {(shown?.autoPromotionName ?? totals.auto_promotion_name) ? ` · ${shown?.autoPromotionName ?? totals.auto_promotion_name}` : ""}
                   </dt>
-                  <dd className="font-bold">−{money(shown?.autoDiscount ?? 0)}</dd>
+                  <dd className="font-bold">−{money(shown?.autoDiscount ?? totals.auto_discount)}</dd>
                 </div>
               ) : null}
               {(shown?.promoDiscount ?? totals.discount_amount) > 0 ? (

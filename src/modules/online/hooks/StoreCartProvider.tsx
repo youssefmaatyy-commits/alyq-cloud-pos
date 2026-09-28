@@ -58,10 +58,12 @@ import {
   deliveryFeeFor,
   freeDeliveryProgress,
   normalizeCouponCode,
-  promotionUnitPrice,
+  reconcileAutomaticAndCoupon,
   round2,
+  selectAutomaticPromotion,
   variantUnitPriceOf,
   type CartTotals,
+  type PromotionCartLine,
   type StoreVariant,
 } from "../services/pricing";
 import {
@@ -286,6 +288,10 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
   const [couponInput, setCouponInput] = useState("");
   const [couponError, setCouponError] = useState<CouponCheckReason | null>(null);
   const [couponDiscount, setCouponDiscount] = useState(0);
+  // Whether the applied coupon is itself marked stackable — false (the safe
+  // default) until a check says otherwise, so an unknown coupon never
+  // silently combines with the automatic promotion.
+  const [couponStackable, setCouponStackable] = useState(false);
   const [applyingCoupon, setApplyingCoupon] = useState(false);
   const [deliveryType, setDeliveryType] = useState<DeliveryType>(stored.deliveryType);
   const [paymentMethod, setPaymentMethod] = useState<OnlinePaymentMethod>(stored.paymentMethod);
@@ -342,12 +348,6 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
 
   const entries = useMemo<CartEntry[]>(() => {
     const now = new Date();
-    const promotionTargetsMap = new Map<string, Set<string>>();
-    for (const target of promotionTargets ?? []) {
-      const set = promotionTargetsMap.get(target.promotion_id) ?? new Set<string>();
-      set.add(`${target.target_kind}:${target.target_id}`);
-      promotionTargetsMap.set(target.promotion_id, set);
-    }
     return lines.flatMap((line) => {
       const product = productsById.get(line.product_id);
       if (!product) return [];
@@ -357,20 +357,14 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
       if (line.variant_id && !variant) return [];
 
       const campaign = campaignFor(product.id, campaigns, now);
-      const campaignPrice = variant
+      // Campaign (and a variant's own override) only. An automatic promotion
+      // is a CART-level discount, reconciled once against any coupon below —
+      // never baked into a line's own price, or a coupon typed afterwards
+      // would be computed off an already-discounted subtotal and the two
+      // would silently stack (Bug: promotion + coupon stacking).
+      const price = variant
         ? variantUnitPriceOf(variant, product.selling_price, campaign)
         : variantUnitPriceOf({ price_override: null }, product.selling_price, campaign);
-      const promoOffer = promotionUnitPrice(
-        product.id,
-        variant?.id ?? null,
-        product.category_id ?? null,
-        campaignPrice,
-        promotions ?? [],
-        promotionTargetsMap,
-        now,
-        "storefront",
-      );
-      const price = Math.min(promoOffer.unit, campaignPrice);
       const available = variant
         ? product.stock_tracking_enabled
           ? variantAvailableToPromise(
@@ -394,15 +388,83 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
         },
       ];
     });
-  }, [campaigns, catalogContext.contents, catalogContext.reserved, catalogContext.reservedVariant, lang, lines, productsById, promotionTargets, promotions, variantsById]);
+  }, [campaigns, catalogContext.contents, catalogContext.reserved, catalogContext.reservedVariant, lang, lines, productsById, variantsById]);
 
   const subtotal = useMemo(
     () => round2(entries.reduce((sum, entry) => sum + entry.lineTotal, 0)),
     [entries],
   );
 
-  const discount = Math.min(Math.max(round2(couponDiscount), 0), subtotal);
-  const deliveryFee = deliveryFeeFor(settings.delivery, deliveryType, round2(subtotal - discount));
+  // The one automatic (codeless) promotion the cart itself would apply —
+  // evaluated once against the whole cart, the same way `evaluateCartPricing`
+  // and the SQL core do, instead of per line. Promotions and their targets are
+  // already public, client-side catalogue data (unlike coupon codes), so this
+  // is safe to compute locally without waiting on the advisory preview.
+  const promotionTargetsByPromotion = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    for (const target of promotionTargets ?? []) {
+      const set = map.get(target.promotion_id) ?? new Set<string>();
+      set.add(`${target.target_kind}:${target.target_id}`);
+      map.set(target.promotion_id, set);
+    }
+    return map;
+  }, [promotionTargets]);
+
+  const pricingLines = useMemo<PromotionCartLine[]>(
+    () =>
+      entries.map((entry) => ({
+        product_id: entry.product.id,
+        category_id: entry.product.category_id ?? null,
+        variant_id: entry.variant?.id ?? null,
+        qty: entry.quantity,
+        unit_price: entry.price,
+        line_total: entry.lineTotal,
+      })),
+    [entries],
+  );
+
+  const autoSelection = useMemo(
+    () =>
+      selectAutomaticPromotion(
+        promotions ?? [],
+        promotionTargetsByPromotion,
+        pricingLines,
+        subtotal,
+        new Date(),
+        "storefront",
+      ),
+    [promotions, promotionTargetsByPromotion, pricingLines, subtotal],
+  );
+
+  // Reconcile the automatic promotion against the (server-verified) coupon
+  // discount with the same non-stacking rule the authoritative engine uses:
+  // both apply only when both are marked stackable, otherwise the larger wins
+  // and a tie favours the coupon code. This is what stops the Cart page from
+  // ever showing an automatic discount AND a coupon discount both taken off
+  // the same subtotal.
+  const reconciled = useMemo(
+    () =>
+      reconcileAutomaticAndCoupon(
+        Math.min(Math.max(round2(autoSelection?.discount ?? 0), 0), subtotal),
+        autoSelection?.promotion.stackable ?? false,
+        couponCode ? Math.min(Math.max(round2(couponDiscount), 0), subtotal) : 0,
+        couponCode ? couponStackable : false,
+      ),
+    [autoSelection, couponCode, couponDiscount, couponStackable, subtotal],
+  );
+  const autoDiscount = reconciled.autoDiscount;
+  const discount = reconciled.couponDiscount;
+  const autoPromotionId = autoDiscount > 0 ? (autoSelection?.promotion.id ?? null) : null;
+  const autoPromotionName =
+    autoDiscount > 0
+      ? autoSelection?.promotion.name_en || autoSelection?.promotion.name_ar || null
+      : null;
+
+  const deliveryFee = deliveryFeeFor(
+    settings.delivery,
+    deliveryType,
+    round2(subtotal - autoDiscount - discount),
+  );
   const totals = useMemo<CartTotals>(
     () => ({
       lines: entries.map((entry) => ({
@@ -417,16 +479,28 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
       subtotal,
       discount_code: discount > 0 ? couponCode : null,
       discount_amount: discount,
+      auto_discount: autoDiscount,
+      auto_promotion_id: autoPromotionId,
+      auto_promotion_name: autoPromotionName,
       delivery_fee: deliveryFee,
-      total: round2(subtotal - discount + deliveryFee),
+      total: round2(subtotal - autoDiscount - discount + deliveryFee),
       unit_count: entries.reduce((sum, entry) => sum + entry.quantity, 0),
     }),
-    [couponCode, deliveryFee, discount, entries, subtotal],
+    [
+      autoDiscount,
+      autoPromotionId,
+      autoPromotionName,
+      couponCode,
+      deliveryFee,
+      discount,
+      entries,
+      subtotal,
+    ],
   );
 
   const freeDelivery = useMemo(
-    () => freeDeliveryProgress(settings.delivery, round2(subtotal - discount)),
-    [discount, settings.delivery, subtotal],
+    () => freeDeliveryProgress(settings.delivery, round2(subtotal - autoDiscount - discount)),
+    [autoDiscount, discount, settings.delivery, subtotal],
   );
 
   const problems = useMemo(
@@ -595,10 +669,12 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
       if (result.valid) {
         setCouponCode(result.code);
         setCouponDiscount(result.discount);
+        setCouponStackable(result.stackable ?? false);
         setCouponError(null);
       } else {
         setCouponCode(null);
         setCouponDiscount(0);
+        setCouponStackable(false);
         setCouponError(result.reason);
       }
       return result;
@@ -638,6 +714,7 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
   const clearCoupon = useCallback(() => {
     setCouponCode(null);
     setCouponDiscount(0);
+    setCouponStackable(false);
     setCouponError(null);
     setCouponInput("");
   }, []);
