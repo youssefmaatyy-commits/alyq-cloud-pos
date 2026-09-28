@@ -224,3 +224,84 @@ test("Cart promotion/coupon stacking — the worked example, through the real de
     "checkout's total is exactly the cart's goods total plus the newly-chosen zone's fee",
   );
 });
+
+// ── 6. the rule end to end, in both directions ──────────────────────────────
+/**
+ * The follow-up to the V2 cart bug: "coupon always wins" has to be the same
+ * answer from every authoritative path, not just the local cart totals.
+ * These run through the demo repository's `previewPricing`, which is
+ * `evaluateCartPricing` — the engine behind the advisory preview and the
+ * mirror of the SQL `evaluate_order_pricing_channel`.
+ *
+ * The first case is the one the old "larger discount wins" rule got wrong:
+ * the automatic promotion is worth MORE than the coupon, and the coupon must
+ * still take over completely.
+ */
+async function pricingFixture(autoPercent: number, coupons: { code: string; value: number; stackable?: boolean }[],
+  autoStackable = false) {
+  resetDemoOnlineRepository();
+  const repository = getDemoOnlineRepository();
+  const product = await demoProduct("ALYQ-1001");
+  const qty = 8;
+  const subtotal = round2(product.selling_price * qty);
+  await repository.savePromotion(
+    {
+      enabled: true, mode: "automatic", channel: "both",
+      name_en: `Storewide ${autoPercent}%`, name_ar: `خصم عام ${autoPercent}%`,
+      description_en: null, description_ar: null,
+      discount_type: "percent", value: autoPercent, scope: "store",
+      minimum_order_amount: 0, maximum_discount_amount: null,
+      starts_at: null, ends_at: null, priority: 0, stackable: autoStackable,
+    },
+    [],
+  );
+  for (const coupon of coupons) {
+    await repository.saveCoupon({
+      code: coupon.code, discount_type: "percent", value: coupon.value,
+      min_subtotal: 0, max_discount: null, usage_limit: null,
+      applies_to: "all", target_ids: [], active: true,
+      starts_at: null, ends_at: null, stackable: coupon.stackable ?? false,
+    });
+  }
+  const lines = [{ product_id: product.id, qty }];
+  const price = (couponCode: string | null) =>
+    repository.previewPricing({ lines, couponCode, deliveryZoneId: null, deliveryType: "delivery" as const });
+  return { subtotal, price };
+}
+
+test("automatic 15% + coupon 10% → the coupon alone, even though the sale was worth more", async () => {
+  const { subtotal, price } = await pricingFixture(15, [{ code: "TEN", value: 10 }]);
+  const result = await price("TEN");
+  assert.equal(result.autoDiscount, 0, "the 15% sale is switched off by the smaller code");
+  assert.equal(result.promoDiscount, round2(subtotal * 0.1), "the coupon's own 10% is what applies");
+  assert.equal(result.totalDiscount, round2(subtotal * 0.1), "only one discount ever comes off");
+  // No zone chosen, so the legacy delivery fee is in the total — tie the total
+  // to the breakdown rather than hard-coding the shop's default fee.
+  assert.equal(result.total, round2(subtotal - round2(subtotal * 0.1) + result.deliveryFee));
+});
+
+test("automatic 10% + coupon 20% → the coupon alone", async () => {
+  const { subtotal, price } = await pricingFixture(10, [{ code: "TWENTY", value: 20 }]);
+  const result = await price("TWENTY");
+  assert.equal(result.autoDiscount, 0);
+  assert.equal(result.promoDiscount, round2(subtotal * 0.2));
+  assert.equal(result.totalDiscount, round2(subtotal * 0.2));
+});
+
+test("no coupon → the automatic promotion still discounts the cart on its own", async () => {
+  const { subtotal, price } = await pricingFixture(15, []);
+  const result = await price(null);
+  assert.equal(result.autoDiscount, round2(subtotal * 0.15), "nothing displaces the sale when no code is typed");
+  assert.equal(result.promoDiscount, 0);
+  assert.equal(result.promoCode, null);
+  assert.equal(result.total, round2(subtotal - round2(subtotal * 0.15) + result.deliveryFee));
+});
+
+test("stackable on BOTH sides still stacks — the new rule did not remove stacking", async () => {
+  const { subtotal, price } = await pricingFixture(10, [{ code: "STACK10", value: 10, stackable: true }], true);
+  const result = await price("STACK10");
+  const each = round2(subtotal * 0.1);
+  assert.equal(result.autoDiscount, each, "an explicitly stackable sale survives the coupon");
+  assert.equal(result.promoDiscount, each);
+  assert.equal(result.totalDiscount, round2(each * 2), "both savings apply when both sides opted in");
+});

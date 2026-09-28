@@ -677,16 +677,18 @@ test("per-customer limits, first-order-only and free shipping", () => {
   }
 });
 
-test("stacking needs both sides to agree, else the larger wins alone", () => {
+test("stacking needs both sides to agree, else the coupon wins alone", () => {
   const coupon = makeCoupon({ code: "SAVE20", discount_type: "fixed", value: 20 });
   const auto = makePromotion({ id: "prm-auto", value: 15 });
-  // 15% of 1100 = 165 vs code 20: the automatic wins alone by default.
+  // 15% of 1100 = 165 vs code 20. The code is far smaller and still wins: a
+  // coupon the cart accepted always switches the automatic promotion off, so
+  // the shopper never sees the displaced sale beside their code.
   const contested = evaluatePromo({ promoCode: "SAVE20", coupons: [coupon], promotions: [auto], targetsByPromotion: new Map() });
   assert.equal(contested.ok, true);
   if (contested.ok) {
-    assert.equal(contested.pricing.autoDiscount, 165);
-    assert.equal(contested.pricing.promoDiscount, 0);
-    assert.equal(contested.pricing.totalDiscount, 165);
+    assert.equal(contested.pricing.autoDiscount, 0);
+    assert.equal(contested.pricing.promoDiscount, 20);
+    assert.equal(contested.pricing.totalDiscount, 20);
   }
   // Both stackable: 165 + 20 combine, capped at the subtotal.
   const stacked = evaluatePromo({

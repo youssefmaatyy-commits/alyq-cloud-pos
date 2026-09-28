@@ -6165,6 +6165,36 @@ begin
     raise exception 'the override variant discounted to % instead of 255', v_amt;
   end if;
 
+  -- A coupon ALWAYS replaces the storewide sale, even when the sale is worth
+  -- more. Same 500 goods: the 15% sale is 75, the SCN-P50-10 code is 50. The
+  -- code wins, the sale is switched off, and only the 50 comes off — the old
+  -- "larger discount wins" rule kept the 75 here and left the shopper's code
+  -- doing nothing.
+  v_result := public.place_online_order(jsonb_build_object(
+    'client_ref', 'scn-p50-g1c', 'customer_name', 'G', 'customer_phone', '0530000003',
+    'delivery_type', 'pickup', 'address', '{}'::jsonb,
+    'lines', jsonb_build_array(
+      jsonb_build_object('product_id', v_ring::text, 'qty', 1),
+      jsonb_build_object('product_id', v_varprod::text, 'qty', 1, 'variant_id', v_gold::text)),
+    'coupon_code', 'SCN-P50-10',
+    'payment_method', 'cod'));
+  v_facts := pg_temp.scn_order_facts((v_result->>'order_id')::uuid);
+  if (v_facts->>'discount_amount')::numeric <> 50 then
+    raise exception 'the coupon did not replace the storewide sale: discounted % instead of 50',
+      v_facts->>'discount_amount';
+  end if;
+  if (v_facts->'price_snapshot'->>'auto_discount')::numeric <> 0 then
+    raise exception 'the storewide sale survived a winning coupon (auto_discount %)',
+      v_facts->'price_snapshot'->>'auto_discount';
+  end if;
+  if (v_facts->'price_snapshot'->>'promo_discount')::numeric <> 50 then
+    raise exception 'the coupon booked % instead of its own 50',
+      v_facts->'price_snapshot'->>'promo_discount';
+  end if;
+  if (v_facts->>'total')::numeric <> 450 then
+    raise exception 'the coupon order totalled % instead of 500 - 50', v_facts->>'total';
+  end if;
+
   -- Disabling restores normal price for NEW orders; history does not move.
   perform pg_temp.become(v_admin, 'authenticated');
   update public.promotions set enabled = false where id = v_promo;
