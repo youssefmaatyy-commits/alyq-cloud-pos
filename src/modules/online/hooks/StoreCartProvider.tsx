@@ -437,11 +437,10 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
   );
 
   // Reconcile the automatic promotion against the (server-verified) coupon
-  // discount with the same non-stacking rule the authoritative engine uses:
-  // both apply only when both are marked stackable, otherwise the larger wins
-  // and a tie favours the coupon code. This is what stops the Cart page from
-  // ever showing an automatic discount AND a coupon discount both taken off
-  // the same subtotal.
+  // discount with the non-stacking rule: both apply only when both are marked
+  // stackable, otherwise the coupon always wins and the automatic promotion is
+  // switched off. This is what stops the Cart page from ever showing an
+  // automatic discount AND a coupon discount both taken off the same subtotal.
   const reconciled = useMemo(
     () =>
       reconcileAutomaticAndCoupon(

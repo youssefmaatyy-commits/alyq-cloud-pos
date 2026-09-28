@@ -50,17 +50,33 @@ test("reconcileAutomaticAndCoupon: no coupon leaves the automatic promotion unto
   assert.deepEqual(result, { autoDiscount: 46.24, couponDiscount: 0 });
 });
 
-test("reconcileAutomaticAndCoupon: a coupon that ties the automatic discount wins the tie (matches the worked example)", () => {
+test("reconcileAutomaticAndCoupon: a coupon that ties the automatic discount wins (matches the worked example)", () => {
   // 10% off 462.40 both ways: automatic promotion and coupon compute the
   // identical 46.24. Neither is marked stackable, so only one may apply —
-  // the tie-break favours the coupon, exactly like evaluateCartPricing.
+  // and it is always the coupon.
   const result = reconcileAutomaticAndCoupon(46.24, false, 46.24, false);
   assert.deepEqual(result, { autoDiscount: 0, couponDiscount: 46.24 });
 });
 
-test("reconcileAutomaticAndCoupon: the larger, non-stackable discount always wins", () => {
-  assert.deepEqual(reconcileAutomaticAndCoupon(80, false, 20, false), { autoDiscount: 80, couponDiscount: 0 });
+test("reconcileAutomaticAndCoupon: a non-stackable coupon always disables the automatic promotion", () => {
+  // No size contest any more: the code the shopper typed wins even when the
+  // storewide automatic promotion would have been worth far more. A coupon
+  // that is accepted must visibly do something, and the automatic discount it
+  // displaces must stop being rendered the moment the coupon lands.
+  assert.deepEqual(reconcileAutomaticAndCoupon(80, false, 20, false), { autoDiscount: 0, couponDiscount: 20 });
   assert.deepEqual(reconcileAutomaticAndCoupon(20, false, 80, false), { autoDiscount: 0, couponDiscount: 80 });
+});
+
+test("reconcileAutomaticAndCoupon: no coupon discount leaves the automatic promotion alone", () => {
+  // A code worth nothing (or none at all) never switches the automatic
+  // promotion off — only a coupon that actually discounts does.
+  assert.deepEqual(reconcileAutomaticAndCoupon(80, false, 0, false), { autoDiscount: 80, couponDiscount: 0 });
+  assert.deepEqual(reconcileAutomaticAndCoupon(80, true, 0, true), { autoDiscount: 80, couponDiscount: 0 });
+});
+
+test("reconcileAutomaticAndCoupon: negative inputs are floored, never turned into a credit", () => {
+  assert.deepEqual(reconcileAutomaticAndCoupon(-5, false, -5, false), { autoDiscount: 0, couponDiscount: 0 });
+  assert.deepEqual(reconcileAutomaticAndCoupon(-5, false, 20, false), { autoDiscount: 0, couponDiscount: 20 });
 });
 
 test("reconcileAutomaticAndCoupon: both stackable means both apply, even in a tie", () => {
@@ -70,12 +86,16 @@ test("reconcileAutomaticAndCoupon: both stackable means both apply, even in a ti
   });
 });
 
-test("reconcileAutomaticAndCoupon: one-sided stackable still falls back to larger-wins", () => {
+test("reconcileAutomaticAndCoupon: one-sided stackable is not stackable — the coupon still wins alone", () => {
   // Only the coupon says it stacks; the automatic promotion does not agree,
-  // so the pair is treated as non-stackable, same as evaluate_order_pricing.
+  // so the pair is treated as non-stackable and the coupon takes over.
   assert.deepEqual(reconcileAutomaticAndCoupon(46.24, false, 46.24, true), {
     autoDiscount: 0,
     couponDiscount: 46.24,
+  });
+  assert.deepEqual(reconcileAutomaticAndCoupon(90, true, 10, false), {
+    autoDiscount: 0,
+    couponDiscount: 10,
   });
 });
 
@@ -203,4 +223,85 @@ test("Cart promotion/coupon stacking — the worked example, through the real de
     round2(beforeZone.subtotal - beforeZone.autoDiscount - beforeZone.promoDiscount + 25),
     "checkout's total is exactly the cart's goods total plus the newly-chosen zone's fee",
   );
+});
+
+// ── 6. the rule end to end, in both directions ──────────────────────────────
+/**
+ * The follow-up to the V2 cart bug: "coupon always wins" has to be the same
+ * answer from every authoritative path, not just the local cart totals.
+ * These run through the demo repository's `previewPricing`, which is
+ * `evaluateCartPricing` — the engine behind the advisory preview and the
+ * mirror of the SQL `evaluate_order_pricing_channel`.
+ *
+ * The first case is the one the old "larger discount wins" rule got wrong:
+ * the automatic promotion is worth MORE than the coupon, and the coupon must
+ * still take over completely.
+ */
+async function pricingFixture(autoPercent: number, coupons: { code: string; value: number; stackable?: boolean }[],
+  autoStackable = false) {
+  resetDemoOnlineRepository();
+  const repository = getDemoOnlineRepository();
+  const product = await demoProduct("ALYQ-1001");
+  const qty = 8;
+  const subtotal = round2(product.selling_price * qty);
+  await repository.savePromotion(
+    {
+      enabled: true, mode: "automatic", channel: "both",
+      name_en: `Storewide ${autoPercent}%`, name_ar: `خصم عام ${autoPercent}%`,
+      description_en: null, description_ar: null,
+      discount_type: "percent", value: autoPercent, scope: "store",
+      minimum_order_amount: 0, maximum_discount_amount: null,
+      starts_at: null, ends_at: null, priority: 0, stackable: autoStackable,
+    },
+    [],
+  );
+  for (const coupon of coupons) {
+    await repository.saveCoupon({
+      code: coupon.code, discount_type: "percent", value: coupon.value,
+      min_subtotal: 0, max_discount: null, usage_limit: null,
+      applies_to: "all", target_ids: [], active: true,
+      starts_at: null, ends_at: null, stackable: coupon.stackable ?? false,
+    });
+  }
+  const lines = [{ product_id: product.id, qty }];
+  const price = (couponCode: string | null) =>
+    repository.previewPricing({ lines, couponCode, deliveryZoneId: null, deliveryType: "delivery" as const });
+  return { subtotal, price };
+}
+
+test("automatic 15% + coupon 10% → the coupon alone, even though the sale was worth more", async () => {
+  const { subtotal, price } = await pricingFixture(15, [{ code: "TEN", value: 10 }]);
+  const result = await price("TEN");
+  assert.equal(result.autoDiscount, 0, "the 15% sale is switched off by the smaller code");
+  assert.equal(result.promoDiscount, round2(subtotal * 0.1), "the coupon's own 10% is what applies");
+  assert.equal(result.totalDiscount, round2(subtotal * 0.1), "only one discount ever comes off");
+  // No zone chosen, so the legacy delivery fee is in the total — tie the total
+  // to the breakdown rather than hard-coding the shop's default fee.
+  assert.equal(result.total, round2(subtotal - round2(subtotal * 0.1) + result.deliveryFee));
+});
+
+test("automatic 10% + coupon 20% → the coupon alone", async () => {
+  const { subtotal, price } = await pricingFixture(10, [{ code: "TWENTY", value: 20 }]);
+  const result = await price("TWENTY");
+  assert.equal(result.autoDiscount, 0);
+  assert.equal(result.promoDiscount, round2(subtotal * 0.2));
+  assert.equal(result.totalDiscount, round2(subtotal * 0.2));
+});
+
+test("no coupon → the automatic promotion still discounts the cart on its own", async () => {
+  const { subtotal, price } = await pricingFixture(15, []);
+  const result = await price(null);
+  assert.equal(result.autoDiscount, round2(subtotal * 0.15), "nothing displaces the sale when no code is typed");
+  assert.equal(result.promoDiscount, 0);
+  assert.equal(result.promoCode, null);
+  assert.equal(result.total, round2(subtotal - round2(subtotal * 0.15) + result.deliveryFee));
+});
+
+test("stackable on BOTH sides still stacks — the new rule did not remove stacking", async () => {
+  const { subtotal, price } = await pricingFixture(10, [{ code: "STACK10", value: 10, stackable: true }], true);
+  const result = await price("STACK10");
+  const each = round2(subtotal * 0.1);
+  assert.equal(result.autoDiscount, each, "an explicitly stackable sale survives the coupon");
+  assert.equal(result.promoDiscount, each);
+  assert.equal(result.totalDiscount, round2(each * 2), "both savings apply when both sides opted in");
 });

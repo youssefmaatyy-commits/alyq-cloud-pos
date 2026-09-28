@@ -85,9 +85,9 @@ export interface CartTotals {
   discount_amount: number;
   /**
    * The automatic (codeless) promotion's discount, already reconciled against
-   * any applied coupon by `reconcileAutomaticAndCoupon` — zero when a
-   * non-stackable coupon outweighs it, so this and `discount_amount` never
-   * both count the same saving.
+   * any applied coupon by `reconcileAutomaticAndCoupon` — zero whenever a
+   * non-stackable coupon is applied, so this and `discount_amount` never both
+   * count the same saving.
    */
   auto_discount: number;
   auto_promotion_id: string | null;
@@ -101,12 +101,16 @@ export interface CartTotals {
 /**
  * The non-stacking rule applied when an automatic promotion and a coupon code
  * both discount the same cart: both survive only when both are marked
- * stackable, otherwise the larger discount alone applies and a tie goes to the
- * coupon code. Mirrors the tie-break `evaluateCartPricing` (and the SQL core,
- * `evaluate_order_pricing`) applies server-side, so a cart page that reconciles
- * its own quick, local numbers with this helper shows the same figure the
- * authoritative engine will land on — no visible jump once the advisory
- * preview or the server response arrives.
+ * stackable, otherwise the COUPON always wins and the automatic promotion is
+ * switched off entirely.
+ *
+ * There is deliberately no "larger discount wins" contest any more. A shopper
+ * who types a valid code has made an explicit choice, and the cart must answer
+ * it unambiguously: one code in, one discount line out. The old size contest
+ * meant a code could be accepted and then silently produce nothing (the
+ * storewide sale simply stayed on screen instead), which read to shoppers as
+ * the cart ignoring their coupon — and, while the advisory preview caught up,
+ * as an automatic discount that had already been displaced still being shown.
  */
 export function reconcileAutomaticAndCoupon(
   autoDiscount: number,
@@ -114,14 +118,12 @@ export function reconcileAutomaticAndCoupon(
   couponDiscount: number,
   couponStackable: boolean,
 ): { autoDiscount: number; couponDiscount: number } {
-  let auto = Math.max(autoDiscount, 0);
-  let coupon = Math.max(couponDiscount, 0);
-  if (auto > 0 && coupon > 0 && !(autoStackable && couponStackable)) {
-    if (coupon >= auto) {
-      auto = 0;
-    } else {
-      coupon = 0;
-    }
+  const auto = Math.max(autoDiscount, 0);
+  const coupon = Math.max(couponDiscount, 0);
+  // A valid coupon (one actually worth something) disables the automatic
+  // promotion outright unless BOTH sides opted into stacking.
+  if (coupon > 0 && !(autoStackable && couponStackable)) {
+    return { autoDiscount: 0, couponDiscount: coupon };
   }
   return { autoDiscount: auto, couponDiscount: coupon };
 }
@@ -1272,8 +1274,10 @@ export function evaluateCartPricing(input: CartPricingInput): CartPricingResult 
     }
   }
 
-  // Stacking: both only when both agree, else the larger alone (the code wins
-  // ties, exactly like the server).
+  // Stacking: both only when both agree, otherwise the coupon alone. There is
+  // no size contest — a code that actually discounts always switches the
+  // automatic promotion off, exactly like `reconcileAutomaticAndCoupon` and
+  // the SQL core, `evaluate_order_pricing_channel`.
   let autoDiscount = auto?.discount ?? 0;
   let autoId = auto?.promotion.id ?? null;
   let autoName: string | null = auto ? (auto.promotion.name_en || auto.promotion.name_ar || null) : null;
@@ -1286,7 +1290,10 @@ export function evaluateCartPricing(input: CartPricingInput): CartPricingResult 
   if (code && auto) {
     if (auto.promotion.stackable && promoStackable) {
       // both apply
-    } else if (promoDiscount >= autoDiscount) {
+    } else if (promoDiscount > 0) {
+      // The coupon always wins, however small. Only a code carrying NO goods
+      // discount at all (a free-shipping coupon) leaves the automatic
+      // promotion standing — see the branch below.
       autoDiscount = 0;
       autoId = null;
       autoName = null;
@@ -1296,6 +1303,9 @@ export function evaluateCartPricing(input: CartPricingInput): CartPricingResult 
       autoRewardQty = null;
       autoRewardedUnits = null;
     } else {
+      // A free-shipping-only code: worth nothing against the goods, so it
+      // must not be allowed to cancel a real automatic discount. Unchanged
+      // behaviour — the automatic promotion stands and the code stands down.
       promoDiscount = 0;
       promoFreeShipping = false;
     }

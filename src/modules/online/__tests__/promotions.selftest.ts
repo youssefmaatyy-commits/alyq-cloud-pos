@@ -2017,8 +2017,8 @@ test("61. Online order approval preserves immutable frozen snapshot despite prod
   assert.equal(saleTotal, goodsTotal, "Generated POS sale goods total equals stored online merchandise total exactly");
 });
 
-// ── Test 62: Losing coupon does not consume used_count ───────────────────────
-test("62. Losing coupon: automatic promo saves 100, coupon saves 50 -> automatic wins -> coupon unconsumed", () => {
+// ── Test 62: A smaller coupon still beats the automatic promotion ────────────
+test("62. Coupon beats automatic promo even when smaller: auto 100 vs coupon 50 -> coupon wins -> coupon consumed", () => {
   const autoPromo = makePromo({
     id: "auto-100",
     name_en: "Big Auto 100 Off",
@@ -2063,15 +2063,67 @@ test("62. Losing coupon: automatic promo saves 100, coupon saves 50 -> automatic
 
   assert.equal(res.ok, true);
   if (res.ok) {
-    // Auto 100 wins over coupon 50
-    assert.equal(res.pricing.autoDiscount, 100);
-    assert.equal(res.pricing.promoDiscount, 0);
-    assert.equal(res.pricing.winningPromotionId, "auto-100");
-    assert.equal(res.pricing.totalDiscount, 100);
+    // The coupon wins outright even though the automatic promotion was worth
+    // twice as much: a code the cart accepted must always be the discount the
+    // shopper gets, and the automatic promotion it displaces must vanish.
+    assert.equal(res.pricing.autoDiscount, 0);
+    assert.equal(res.pricing.promoDiscount, 50);
+    assert.equal(res.pricing.winningPromotionId, "coupon-50");
+    assert.equal(res.pricing.totalDiscount, 50, "only one discount is ever taken off");
 
     // Lifecycle rule: on approval, only consume if promoDiscount > 0 or promoFreeShipping = true
     const shouldConsumeCoupon = res.pricing.promoDiscount > 0 || res.pricing.promoFreeShipping;
-    assert.equal(shouldConsumeCoupon, false, "Losing coupon must NOT be consumed on order approval");
+    assert.equal(shouldConsumeCoupon, true, "the winning coupon IS consumed on order approval");
+  }
+});
+
+// ── Test 62b: a free-shipping code never cancels the automatic promotion ─────
+test("62b. A code worth nothing against the goods leaves the automatic promotion standing", () => {
+  const autoPromo = makePromo({
+    id: "auto-100",
+    name_en: "Big Auto 100 Off",
+    discount_type: "fixed",
+    value: 100,
+    scope: "store",
+    mode: "automatic",
+    used_count: 0,
+  });
+
+  const res = evaluateCartPricing({
+    lines: [{ product_id: "p1", variant_id: null, category_id: null, unit_price: 500, qty: 1, line_total: 500 }],
+    subtotal: 500,
+    promoCode: "FREESHIP",
+    // A legacy free-shipping coupon: valid, but worth 0 against the goods.
+    coupons: [
+      {
+        id: "cpn-ship", code: "FREESHIP",
+        title_en: "Free shipping", title_ar: "شحن مجاني",
+        description_en: null, description_ar: null,
+        discount_type: "free_shipping", value: 0,
+        min_subtotal: 0, max_discount: null, usage_limit: null, used_count: 0,
+        per_customer_limit: null, first_order_only: false, stackable: false,
+        applies_to: "all", target_ids: [], active: true, starts_at: null, ends_at: null,
+        created_at: NOW.toISOString(), updated_at: NOW.toISOString(),
+      },
+    ],
+    promotions: [autoPromo],
+    targetsByPromotion: new Map(),
+    usageFor: () => ({ customerUses: 0, hasPriorOrder: false }),
+    customerKey: null,
+    zone: null,
+    legacy: { fee: 0, minimum: 0, threshold: 0 },
+    deliveryType: "delivery",
+    now: NOW,
+    channel: "online",
+  });
+
+  assert.equal(res.ok, true);
+  if (res.ok) {
+    // "Coupon always wins" must not be read as "any accepted code wipes the
+    // sale" — a code that discounts nothing would leave the shopper worse off.
+    assert.equal(res.pricing.autoDiscount, 100, "the automatic promotion survives a goods-worthless code");
+    assert.equal(res.pricing.promoDiscount, 0);
+    assert.equal(res.pricing.totalDiscount, 100);
   }
 });
 

@@ -597,8 +597,8 @@ export type CouponCheckResult =
       freeShipping?: boolean;
       /**
        * Whether this coupon combines with an automatic promotion instead of
-       * the larger-wins rule. Defaults to false (the safe assumption) when a
-       * backend has not been updated to report it yet.
+       * replacing it. Defaults to false (the safe assumption) when a backend
+       * has not been updated to report it yet.
        */
       stackable?: boolean;
     }

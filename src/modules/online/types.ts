@@ -513,7 +513,8 @@ export interface PromotionCartLine {
  * An automatic (codeless) discount or coupon promotion: the storewide sale, a
  * category offer, a product or variant offer. The best applicable one is
  * chosen per order by priority then size; it combines with a promo code only
- * when both are stackable, otherwise the larger discount wins alone.
+ * when both are stackable, otherwise a promo code that discounts anything at
+ * all switches the automatic promotion off entirely.
  */
 export interface Promotion {
   id: string;
