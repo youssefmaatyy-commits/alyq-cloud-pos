@@ -63,8 +63,13 @@ import {
   salesTrendSeries,
   topProducts,
 } from "./dashboardQuery";
-import { fetchFinancialSummary } from "@/modules/reports/services/reportAggregates";
-import type { FinancialTotals } from "@/modules/reports/services/financialExport";
+import { presetRange, toExportRange } from "@/modules/reports/services/dateRanges";
+import type { PaymentMethodSalesRow } from "@/modules/reports/services/salesAnalytics";
+import { fetchFinancialSummary, fetchProfitabilitySummary } from "@/modules/reports/services/reportAggregates";
+import type {
+  FinancialTotals,
+} from "@/modules/reports/services/financialExport";
+import type { ProfitabilitySummaryParts } from "@/modules/reports/services/reportAggregates";
 
 /**
  * The command centre (Phase 46 edition).
@@ -157,13 +162,6 @@ export function DashboardPage() {
     () => [...onlineOrders].sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, 6),
     [onlineOrders],
   );
-  const channelToday = useMemo(() => {
-    const posToday = sales
-      .filter((sale) => sale.status !== "voided" && isSaleToday(sale.created_at))
-      .reduce((sum, sale) => sum + sale.total, 0);
-    return { pos: posToday, web: onlineKpis.salesToday };
-  }, [sales, onlineKpis.salesToday]);
-
   /* ── Performance series (Phase 14) ────────────────────────────────────────
      Computed for everybody but rendered only behind `maySeePerformance`, so the
      gate is a rendering decision, not a data decision — the numbers on screen
@@ -206,12 +204,67 @@ export function DashboardPage() {
     () => (dbMonthly ? monthlyKpisFromTotals(dbMonthly) : clientMonthly),
     [dbMonthly, clientMonthly],
   );
+
+  // Today's headline figures use the same bounded aggregate contract as the
+  // reports screen. The row providers remain a graceful fallback in demo mode
+  // or for a role that cannot view reports; they are never used to manufacture
+  // a discount or cost/profit figure that the source data cannot support.
+  const todayRange = useMemo(() => toExportRange(presetRange("today")), []);
+  const [dbToday, setDbToday] = useState<FinancialTotals | null>(null);
+  const [dbTodayProfitability, setDbTodayProfitability] = useState<ProfitabilitySummaryParts | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const [financial, profitability] = await Promise.all([
+        fetchFinancialSummary(todayRange),
+        fetchProfitabilitySummary(todayRange),
+      ]);
+      if (cancelled) return;
+      setDbToday(financial.ok ? financial.value : null);
+      setDbTodayProfitability(profitability.ok ? profitability.value : null);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [sales, todayRange]);
+
+  const todayRevenue = dbToday?.revenue ?? snapshot.sales.todayRevenue;
+  const todayInvoices = dbToday?.invoiceCount ?? snapshot.sales.todayCount;
+  const todayAov = todayInvoices > 0 ? todayRevenue / todayInvoices : 0;
+  const todayRefunded = dbToday?.refundsPaid ?? snapshot.returns.todayTotal;
+  const todayDiscounts = dbTodayProfitability
+    ? dbTodayProfitability.automaticDiscounts +
+      dbTodayProfitability.manualItemDiscounts +
+      dbTodayProfitability.manualInvoiceDiscounts +
+      dbTodayProfitability.promoCodeDiscounts
+    : null;
+  const todayNetSales = dbTodayProfitability
+    ? dbTodayProfitability.netSales - dbTodayProfitability.refundsAmount
+    : null;
+  // Cost is shown only if every sold unit has its immutable cost snapshot. A
+  // partial COGS number is not a "rough profit" — it is an understatement.
+  const todayGrossProfit =
+    dbTodayProfitability && dbTodayProfitability.cogsUnknownUnits === 0
+      ? todayNetSales! - dbTodayProfitability.cogs
+      : null;
+
   const trend = useMemo(() => salesTrendSeries({ sales }), [sales]);
   const revenueVsExpenses = useMemo(
     () => revenueVsExpensesSeries({ sales, expenses }),
     [sales, expenses],
   );
-  const methods = useMemo(() => paymentMix(sales), [sales]);
+  // The aggregate returns additive payment amounts, including split payments.
+  // Use it whenever available rather than building a donut from the provider's
+  // capped invoice window; the fallback keeps demo mode usable.
+  const methods = useMemo<PaymentMethodSalesRow[]>(() => {
+    if (!dbMonthly) return paymentMix(sales);
+    const aggregateRows: PaymentMethodSalesRow[] = [
+      { method: "cash", invoices: 0, amount: dbMonthly.cash, paid: 0, pending: 0, share: 0 },
+      { method: "visa", invoices: 0, amount: dbMonthly.card, paid: 0, pending: 0, share: 0 },
+      { method: "instapay", invoices: 0, amount: dbMonthly.instapay, paid: 0, pending: 0, share: 0 },
+    ];
+    return aggregateRows.filter((row) => row.amount > 0);
+  }, [dbMonthly, sales]);
   const bestSellersList = useMemo(() => topProducts({ sales, products }), [sales, products]);
   const monthExpenses = useMemo(() => monthExpensesTotal(expenses), [expenses]);
   const hasChartData = trend.some((point) => point.revenue > 0 || point.invoices > 0);
@@ -275,11 +328,14 @@ export function DashboardPage() {
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5" data-testid="dash-kpi-row">
         <KpiTile
           label={t("dashboard.todayRevenue")}
-          value={money(snapshot.sales.todayRevenue)}
+          value={money(todayRevenue)}
           tone="primary"
           featured
           icon={<WalletIcon />}
-          hint={`${snapshot.sales.todayCount} ${t("dashboard.todaySales").toLowerCase()}`}
+          hint={t("dashboard.todayInvoicesAov", {
+            count: num(todayInvoices, 0),
+            average: money(todayAov),
+          })}
           to={mayOpenSales ? "/pos/sales?today=1" : undefined}
           testId="kpi-today-sales"
         />
@@ -306,7 +362,7 @@ export function DashboardPage() {
           value={String(snapshot.returns.todayCount)}
           tone="neutral"
           icon={<RotateCcwIcon />}
-          hint={money(snapshot.returns.todayTotal)}
+          hint={t("dashboard.todayRefunded", { amount: money(todayRefunded) })}
           to={mayOpenReturns ? "/returns" : undefined}
           testId="kpi-returns"
         />
@@ -356,6 +412,52 @@ export function DashboardPage() {
           hint={`${snapshot.expenses.todayCount} ${t("common.results")}`}
         />
       </div>
+
+      {/* ── Today's financial controls — aggregate-backed, never a full-history sum ── */}
+      {maySeePerformance ? (
+        <Card className="mt-5 p-4" testId="dash-today-financials">
+          <div className="mb-3">
+            <h2 className="text-base font-black text-stone-900">{t("dashboard.todayFinancials")}</h2>
+            <p className="mt-0.5 text-xs font-medium text-stone-500">{t("dashboard.todayFinancialsHint")}</p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <StatTile
+              label={t("dashboard.todayNetSales")}
+              value={todayNetSales === null ? "—" : money(todayNetSales)}
+              tone="primary"
+              hint={t("dashboard.todayNetSalesHint", { refunded: money(todayRefunded) })}
+            />
+            <StatTile
+              label={t("dashboard.todayDiscounts")}
+              value={todayDiscounts === null ? "—" : money(todayDiscounts)}
+              tone="success"
+              hint={t("dashboard.todayDiscountsHint")}
+            />
+            <StatTile
+              label={t("dashboard.todayRefunds")}
+              value={money(todayRefunded)}
+              tone={todayRefunded > 0 ? "warning" : "neutral"}
+              hint={
+                dbToday
+                  ? t("dashboard.todayRefundsHint", { count: num(dbToday.refundsCount, 0) })
+                  : t("dashboard.aggregateFallback")
+              }
+            />
+            {maySeeCost ? (
+              <StatTile
+                label={t("dashboard.todayGrossProfit")}
+                value={todayGrossProfit === null ? "—" : money(todayGrossProfit)}
+                tone={todayGrossProfit !== null && todayGrossProfit < 0 ? "danger" : "success"}
+                hint={
+                  todayGrossProfit === null
+                    ? t("dashboard.costQualityIncomplete")
+                    : t("dashboard.costQualityComplete")
+                }
+              />
+            ) : null}
+          </div>
+        </Card>
+      ) : null}
 
       {/* ── The website (gated like the sidebar) ───────────────────────────── */}
       {canSeeWebsite ? (
@@ -456,14 +558,8 @@ export function DashboardPage() {
                   COD {onlineKpis.codCount} · InstaPay {onlineKpis.instapayCount}
                 </span>
               </div>
-              <div className="mt-3 h-24">
-                <TrendChart
-                  points={channelTrendPoints(trend, channelToday)}
-                  color={CHART_COLORS[2]}
-                />
-              </div>
-              <p className="mt-1 text-[11px] font-medium text-stone-500">
-                {t("dashboard.channelSplitHint", { days: DASHBOARD_TREND_DAYS })}
+              <p className="mt-3 text-[11px] font-medium leading-relaxed text-stone-500">
+                {t("dashboard.webCodSplitHint")}
               </p>
             </Card>
 
@@ -881,28 +977,6 @@ export function DashboardPage() {
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
-
-function isSaleToday(iso: string): boolean {
-  const now = new Date();
-  return new Date(iso) >= new Date(now.getFullYear(), now.getMonth(), now.getDate());
-}
-
-/**
- * Web-vs-POS channel series: the 7-day POS revenue from the reports trend (the
- * same numbers the chart above draws) with today's website revenue overlaid on
- * the last point — small, readable, and it never invents website history the
- * loaded queue cannot prove.
- */
-function channelTrendPoints(
-  trend: Array<{ date: string; revenue: number }>,
-  channelToday: { pos: number; web: number },
-): Array<{ date: string; total: number }> {
-  if (trend.length === 0) return [];
-  const points = trend.map((point) => ({ date: point.date, total: point.revenue }));
-  const last = points[points.length - 1];
-  points[points.length - 1] = { ...last, total: last.total + channelToday.web };
-  return points;
-}
 
 // Local capability checks — kept in one place so the KPI row reads cleanly.
 function canActRoute(path: string): boolean {

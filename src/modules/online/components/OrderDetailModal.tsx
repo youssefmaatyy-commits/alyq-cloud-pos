@@ -20,9 +20,26 @@ import { useOnlineOrders } from "../hooks/OnlineOrdersProvider";
 import { WhatsAppUpdatePanel, useWhatsAppUpdates } from "./WhatsAppUpdatePanel";
 import { suggestedTemplateKey } from "../services/whatsapp";
 import type { WhatsAppTemplateKey } from "../types";
+import { operationalStageLabelKey, operationalStageOf } from "../services/orderOperations";
 
 /** Which actions need a reason typed before they run. */
 const REASON_ACTIONS: OrderAction[] = ["cancel", "payment_reject"];
+
+/** Common shop reasons are a starting point, never a replacement for the note. */
+const REASON_PRESET_KEYS = {
+  cancel: [
+    "online.orders.reasonPreset.cancel.customerRequest",
+    "online.orders.reasonPreset.cancel.stock",
+    "online.orders.reasonPreset.cancel.delivery",
+    "online.orders.reasonPreset.cancel.duplicate",
+  ],
+  payment_reject: [
+    "online.orders.reasonPreset.reject.reference",
+    "online.orders.reasonPreset.reject.proof",
+    "online.orders.reasonPreset.reject.amount",
+    "online.orders.reasonPreset.reject.pending",
+  ],
+} as const;
 
 const STATUS_TONE: Record<OnlineOrder["status"], "neutral" | "success" | "danger" | "info" | "warning"> = {
   pending: "warning",
@@ -71,6 +88,8 @@ export function OrderDetailModal({ order, onClose }: { order: OnlineOrder | null
   if (!order) return null;
 
   const actions = actionsFor(order);
+  const actionLabel = (action: OrderAction) =>
+    t(action === "cancel" && order.status === "pending" ? "online.action.reject" : `online.action.${action}`);
   const sale = saleFor(order);
   const busy = busyAction?.orderId === order.id ? busyAction.action : null;
 
@@ -82,7 +101,11 @@ export function OrderDetailModal({ order, onClose }: { order: OnlineOrder | null
     setReasonFor(null);
     setReason("");
     if (updated) {
-      toast.success(t(`online.orders.done.${action}`));
+      toast.success(
+        action === "cancel" && order.status === "pending"
+          ? t("online.orders.done.reject")
+          : t(`online.orders.done.${action}`),
+      );
       const suggested = suggestedTemplateKey(updated);
       if (suggested && action !== "cancel" && action !== "payment_approve" && action !== "payment_reject") {
         setOfferKey(suggested);
@@ -122,7 +145,9 @@ export function OrderDetailModal({ order, onClose }: { order: OnlineOrder | null
             <span className="font-mono text-sm font-bold text-[#9a7a49]" dir="ltr">
               {order.order_number}
             </span>
-            <Badge tone={STATUS_TONE[order.status]}>{t(`online.status.${order.status}`)}</Badge>
+            <Badge tone={STATUS_TONE[order.status]}>
+              {t(operationalStageLabelKey(operationalStageOf(order)))}
+            </Badge>
             <Badge tone={PAYMENT_TONE[order.payment_status]}>
               {t(`online.paymentStatus.${order.payment_status}`)}
             </Badge>
@@ -146,7 +171,7 @@ export function OrderDetailModal({ order, onClose }: { order: OnlineOrder | null
                       setReasonFor(action);
                     }}
                   >
-                    {t(`online.action.${action}`)}
+                    {actionLabel(action)}
                   </Button>
                 );
               }
@@ -194,6 +219,11 @@ export function OrderDetailModal({ order, onClose }: { order: OnlineOrder | null
                   : t("online.deliveryType.delivery")}
               </p>
               <p className={value}>{address || t("online.orders.noAddress")}</p>
+              {order.delivery_zone_name_ar || order.delivery_zone_name_en ? (
+                <p className="text-xs font-semibold text-stone-600">
+                  {pick(order.delivery_zone_name_ar ?? "", order.delivery_zone_name_en ?? "")}
+                </p>
+              ) : null}
               {order.address?.notes ? <p className="text-xs text-stone-600">{order.address.notes}</p> : null}
               {order.notes ? (
                 <p className="rounded-lg bg-amber-50 px-2 py-1.5 text-xs font-semibold text-amber-900">
@@ -447,7 +477,7 @@ export function OrderDetailModal({ order, onClose }: { order: OnlineOrder | null
         open={reasonFor !== null}
         onClose={() => setReasonFor(null)}
         size="sm"
-        title={reasonFor ? t(`online.action.${reasonFor}`) : ""}
+        title={reasonFor ? actionLabel(reasonFor) : ""}
         footer={
           <>
             <Button variant="secondary" onClick={() => setReasonFor(null)} disabled={running}>
@@ -467,6 +497,22 @@ export function OrderDetailModal({ order, onClose }: { order: OnlineOrder | null
         <p className="text-sm leading-relaxed text-stone-600">
           {reasonFor === "cancel" ? t("online.orders.cancelPrompt") : t("online.orders.rejectPrompt")}
         </p>
+        {reasonFor === "cancel" || reasonFor === "payment_reject" ? (
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {REASON_PRESET_KEYS[reasonFor].map((key) => (
+              <Button
+                key={key}
+                type="button"
+                size="sm"
+                variant="ghost"
+                disabled={running}
+                onClick={() => setReason(t(key))}
+              >
+                {t(key)}
+              </Button>
+            ))}
+          </div>
+        ) : null}
         <TextArea
           value={reason}
           onChange={(event) => setReason(event.target.value)}

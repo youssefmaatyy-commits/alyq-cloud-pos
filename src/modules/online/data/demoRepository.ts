@@ -114,6 +114,7 @@ import {
   type StoreCustomerPatch,
   type WebsiteSnapshot,
   type OnlineOrdersRepository,
+  type PendingOrderAlert,
   type StoreAccountsRepository,
   type WebsiteRepository,
 } from "./repository";
@@ -584,6 +585,8 @@ export class DemoOnlineRepository
     const merged: OnlineOrderFilter = {
       status: filter.status ?? "all",
       paymentStatus: filter.paymentStatus ?? "all",
+      deliveryType: filter.deliveryType ?? "all",
+      paymentMethod: filter.paymentMethod ?? "all",
       search: (filter.search ?? "").trim(),
       from: filter.from ?? null,
       to: filter.to ?? null,
@@ -600,6 +603,8 @@ export class DemoOnlineRepository
         if (merged.paymentStatus !== "all" && order.payment_status !== merged.paymentStatus) {
           return false;
         }
+        if (merged.deliveryType !== "all" && order.delivery_type !== merged.deliveryType) return false;
+        if (merged.paymentMethod !== "all" && order.payment_method !== merged.paymentMethod) return false;
         if (needle) {
           const haystack = [
             order.order_number,
@@ -627,6 +632,17 @@ export class DemoOnlineRepository
 
     const limited = merged.limit && merged.limit > 0 ? result.slice(0, merged.limit) : result;
     return delay(limited);
+  }
+
+  async listPendingOrderAlerts(limit = 100): Promise<PendingOrderAlert[]> {
+    await this.ensureSeeded();
+    return delay(
+      this.orders
+        .filter((order) => order.status === "pending")
+        .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
+        .slice(0, Math.max(1, limit))
+        .map((order) => ({ id: order.id, orderNumber: order.order_number, createdAt: order.created_at })),
+    );
   }
 
   async getOrder(id: string): Promise<OnlineOrder> {

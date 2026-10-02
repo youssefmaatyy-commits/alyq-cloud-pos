@@ -36,8 +36,17 @@ import { POLL_CHOICES, SAFETY_NET_POLL_MS } from "../hooks/useOnlineNotification
 import { useOnlineNotificationState } from "../hooks/OnlineNotificationsProvider";
 import { OrderDetailModal } from "../components/OrderDetailModal";
 import { buildOnlineOrderSheets } from "../services/onlineOrdersExport";
-import { ONLINE_ORDER_STATUSES, ONLINE_PAYMENT_STATUSES, type OnlineOrder, type OnlineOrderStatus, type OnlinePaymentStatus } from "../types";
-import type { OnlineOrderFilter } from "../data/repository";
+import {
+  DELIVERY_TYPES,
+  ONLINE_ORDER_STATUSES,
+  ONLINE_PAYMENT_METHODS,
+  ONLINE_PAYMENT_STATUSES,
+  type OnlineOrder,
+  type OnlineOrderStatus,
+  type OnlinePaymentStatus,
+} from "../types";
+import { ONLINE_QUEUE_PAGE_SIZE, type OnlineOrderFilter } from "../data/repository";
+import { operationalStageLabelKey, operationalStageOf, queueAgeOf } from "../services/orderOperations";
 import { variantLabelOf } from "../services/variantLabel";
 
 const STATUS_TONE: Record<OnlineOrder["status"], "neutral" | "success" | "danger" | "info" | "warning"> = {
@@ -79,6 +88,8 @@ export function OnlineOrdersPage() {
 
   const [statusDraft, setStatusDraft] = useState(filter.status);
   const [paymentDraft, setPaymentDraft] = useState(filter.paymentStatus);
+  const [deliveryDraft, setDeliveryDraft] = useState(filter.deliveryType);
+  const [paymentMethodDraft, setPaymentMethodDraft] = useState(filter.paymentMethod);
   const [searchDraft, setSearchDraft] = useState(filter.search);
 
   // Phase 46: the dashboard (and the shell's notifications) route here with the
@@ -120,6 +131,8 @@ export function OnlineOrdersPage() {
       [
         filter.status !== "all" ? 1 : 0,
         filter.paymentStatus !== "all" ? 1 : 0,
+        filter.deliveryType !== "all" ? 1 : 0,
+        filter.paymentMethod !== "all" ? 1 : 0,
         filter.search.trim() ? 1 : 0,
         filter.from ? 1 : 0,
         filter.to ? 1 : 0,
@@ -264,7 +277,7 @@ export function OnlineOrdersPage() {
             { key: "cancelled", label: t("online.status.cancelled"), tone: "danger" },
           ]}
         />
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           <TextInput
             value={searchDraft}
             leading={<SearchIcon />}
@@ -309,6 +322,38 @@ export function OnlineOrdersPage() {
               </option>
             ))}
           </SelectInput>
+          <SelectInput
+            value={deliveryDraft}
+            onChange={(event) => {
+              const next = event.target.value as typeof deliveryDraft;
+              setDeliveryDraft(next);
+              setFilter({ deliveryType: next });
+            }}
+            aria-label={t("online.orders.filterFulfilment")}
+          >
+            <option value="all">{t("online.orders.allFulfilment")}</option>
+            {DELIVERY_TYPES.map((deliveryType) => (
+              <option key={deliveryType} value={deliveryType}>
+                {t(`online.deliveryType.${deliveryType}`)}
+              </option>
+            ))}
+          </SelectInput>
+          <SelectInput
+            value={paymentMethodDraft}
+            onChange={(event) => {
+              const next = event.target.value as typeof paymentMethodDraft;
+              setPaymentMethodDraft(next);
+              setFilter({ paymentMethod: next });
+            }}
+            aria-label={t("online.orders.filterPaymentMethod")}
+          >
+            <option value="all">{t("online.orders.allPaymentMethods")}</option>
+            {ONLINE_PAYMENT_METHODS.map((method) => (
+              <option key={method} value={method}>
+                {t(`online.paymentMethod.${method}`)}
+              </option>
+            ))}
+          </SelectInput>
           {/* The date pair must shrink inside its grid cell: native date
               controls carry an intrinsic minimum width, and without `min-w-0`
               the pair forces the whole page wider on a phone. */}
@@ -334,6 +379,9 @@ export function OnlineOrdersPage() {
           <p className="text-xs font-semibold text-stone-600">
             {t("online.orders.resultCount", { count: num(orders.length, 0) })}
             {activeFilters > 0 ? ` · ${t("online.orders.activeFilters", { count: activeFilters })}` : ""}
+            {filter.limit === ONLINE_QUEUE_PAGE_SIZE
+              ? ` · ${t("online.orders.recentWindow", { count: ONLINE_QUEUE_PAGE_SIZE })}`
+              : ""}
             {mode === "demo" ? ` · ${t("online.orders.demoMode")}` : ""}
           </p>
           <div className="flex flex-wrap items-center gap-3">
@@ -367,6 +415,8 @@ export function OnlineOrdersPage() {
                   resetFilter();
                   setStatusDraft("all");
                   setPaymentDraft("all");
+                  setDeliveryDraft("all");
+                  setPaymentMethodDraft("all");
                   setSearchDraft("");
                 }}
               >
@@ -433,6 +483,7 @@ export function OnlineOrdersPage() {
                   <th className="px-4 py-3 text-start font-semibold">{t("export.col.orderNumber")}</th>
                   <th className="px-3 py-3 text-start font-semibold">{t("export.col.customer")}</th>
                   <th className="px-3 py-3 text-start font-semibold">{t("pos.cols.date")}</th>
+                  <th className="px-3 py-3 text-start font-semibold">{t("online.orders.age")}</th>
                   <th className="px-3 py-3 text-end font-semibold">{t("export.col.itemsCount")}</th>
                   <th className="px-3 py-3 text-end font-semibold">{t("export.col.total")}</th>
                   <th className="px-3 py-3 text-start font-semibold">{t("export.col.paymentMethod")}</th>
@@ -471,6 +522,12 @@ export function OnlineOrdersPage() {
                     <td className="px-3 py-3 text-xs text-stone-500" dir="ltr">
                       {date(order.created_at)}
                     </td>
+                    <td className="px-3 py-3 text-xs font-semibold tabular-nums text-stone-600">
+                      {(() => {
+                        const age = queueAgeOf(order.created_at);
+                        return age ? t(`online.orders.age${age.unit[0].toUpperCase()}${age.unit.slice(1)}` as Parameters<typeof t>[0], { count: age.value }) : "—";
+                      })()}
+                    </td>
                     <td className="px-3 py-3 text-end text-xs tabular-nums">
                       {num(order.items.reduce((sum, item) => sum + item.quantity, 0), 0)}
                       {/* Phase 43: the queue names the shelf without a click —
@@ -504,10 +561,15 @@ export function OnlineOrdersPage() {
                       </Badge>
                       <span className="mt-1 block text-[10px] font-semibold text-stone-500">
                         {t(`online.deliveryType.${order.delivery_type}`)}
+                        {order.delivery_zone_name_ar || order.delivery_zone_name_en
+                          ? ` · ${pick(order.delivery_zone_name_ar ?? "", order.delivery_zone_name_en ?? "")}`
+                          : ""}
                       </span>
                     </td>
                     <td className="px-3 py-3 text-xs">
-                      <Badge tone={STATUS_TONE[order.status]}>{t(`online.status.${order.status}`)}</Badge>
+                      <Badge tone={STATUS_TONE[order.status]}>
+                        {t(operationalStageLabelKey(operationalStageOf(order)))}
+                      </Badge>
                     </td>
                     <td className="px-3 py-3 text-xs">
                       <Badge tone={PAYMENT_TONE[order.payment_status]}>
@@ -544,11 +606,17 @@ export function OnlineOrdersPage() {
                   <span className="break-words font-mono text-xs font-bold text-[#9a7a49]" dir="ltr">
                     {order.order_number}
                   </span>
-                  <Badge tone={STATUS_TONE[order.status]}>{t(`online.status.${order.status}`)}</Badge>
+                  <Badge tone={STATUS_TONE[order.status]}>
+                    {t(operationalStageLabelKey(operationalStageOf(order)))}
+                  </Badge>
                 </div>
                 <p className="break-words text-sm font-semibold text-stone-900">{order.customer_name}</p>
                 <p className="break-words text-xs text-stone-500" dir="ltr">
                   {order.customer_phone} · {date(order.created_at)}
+                  {(() => {
+                    const age = queueAgeOf(order.created_at);
+                    return age ? ` · ${t(`online.orders.age${age.unit[0].toUpperCase()}${age.unit.slice(1)}` as Parameters<typeof t>[0], { count: age.value })}` : "";
+                  })()}
                 </p>
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-xs text-stone-600">

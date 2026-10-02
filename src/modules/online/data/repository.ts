@@ -21,6 +21,7 @@ import type {
   Coupon,
   CustomerAddress,
   DeliveryType,
+  OnlinePaymentMethod,
   DeliveryZone,
   OnlineOrder,
   OnlineOrderStatus,
@@ -442,9 +443,15 @@ export interface PlaceOrderResult {
   duplicate: boolean;
 }
 
+/** A deliberately bounded operational window; history is reached through filters/search. */
+export const ONLINE_QUEUE_PAGE_SIZE = 100;
+
 export interface OnlineOrderFilter {
   status: OnlineOrderStatus | "all";
   paymentStatus: OnlinePaymentStatus | "all";
+  /** Pickup vs delivery is a persisted fulfilment choice, so this stays server-side. */
+  deliveryType: DeliveryType | "all";
+  paymentMethod: OnlinePaymentMethod | "all";
   /** Order number, customer name or phone. */
   search: string;
   /** ISO date bounds on `created_at`, inclusive. */
@@ -456,10 +463,15 @@ export interface OnlineOrderFilter {
 export const EMPTY_ORDER_FILTER: OnlineOrderFilter = {
   status: "all",
   paymentStatus: "all",
+  deliveryType: "all",
+  paymentMethod: "all",
   search: "",
   from: null,
   to: null,
-  limit: null,
+  // The shell mounts this provider on more than the queue screen. Keeping the
+  // operational window bounded prevents a dashboard visit from downloading a
+  // shop's complete order history just to render a handful of recent rows.
+  limit: ONLINE_QUEUE_PAGE_SIZE,
 };
 
 /**
@@ -475,6 +487,8 @@ export function isEmptyOrderFilter(filter: Partial<OnlineOrderFilter> | null | u
   return (
     (filter.status ?? "all") === EMPTY_ORDER_FILTER.status &&
     (filter.paymentStatus ?? "all") === EMPTY_ORDER_FILTER.paymentStatus &&
+    (filter.deliveryType ?? "all") === EMPTY_ORDER_FILTER.deliveryType &&
+    (filter.paymentMethod ?? "all") === EMPTY_ORDER_FILTER.paymentMethod &&
     !(filter.search ?? "").trim() &&
     !filter.from &&
     !filter.to &&
@@ -509,11 +523,23 @@ export const EMPTY_ORDER_COUNTS: OrderCounts = {
   open_value: 0,
 };
 
+/** A tiny identity-only read for the notification safety net. */
+export interface PendingOrderAlert {
+  id: string;
+  orderNumber: string;
+  createdAt: string;
+}
+
 export interface OnlineOrdersRepository {
   readonly kind: OnlineMode;
 
   // Staff side
   listOrders(filter?: Partial<OnlineOrderFilter>): Promise<OnlineOrder[]>;
+  /**
+   * Current pending identities without fetching their items or timeline. The
+   * notifier uses this to deduplicate a realtime event and its polling backup.
+   */
+  listPendingOrderAlerts(limit?: number): Promise<PendingOrderAlert[]>;
   getOrder(id: string): Promise<OnlineOrder>;
   /**
    * The website order that became this POS sale, if any. Returns uses it to
