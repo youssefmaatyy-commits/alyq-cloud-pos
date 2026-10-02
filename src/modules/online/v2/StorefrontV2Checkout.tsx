@@ -1,13 +1,13 @@
 /** Customer-facing V2 checkout. It presents the EXISTING cart/checkout
  * provider and its placeOrder() abstraction; prices and stock remain advisory
  * until the existing authoritative place_online_order path accepts the order. */
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { useStoreCart, type CheckoutInput } from "../hooks/StoreCartProvider";
 import { useStoreAccount } from "../hooks/StoreAccountProvider";
 import { useStorefront } from "../hooks/StorefrontProvider";
-import { deliveryAreasOf } from "../services/pricing";
+import { deliveryAreaSupported, deliveryAreasOf } from "../services/pricing";
 import { externalHref, safeImageField } from "../services/settingsDefaults";
 import { applyDocumentMeta, clearDocumentMeta } from "../services/seo";
 import type { CustomerAddress, DeliveryZone } from "../types";
@@ -97,7 +97,7 @@ export function StorefrontV2Checkout() {
   const cart = useStoreCart();
   const { entries, lines, totals, preview, isEmpty, problems, placing, checkout, checkoutError,
     prunedCount, acknowledgePruned, clearCheckoutError, deliveryType, setDeliveryType, paymentMethod, setPaymentMethod,
-    deliveryZoneId, setDeliveryZoneId, couponCode } = cart;
+    deliveryZoneId, setDeliveryZoneId, setDeliveryLocation, deliveryQuoteReady, couponCode } = cart;
   // Same stale-preview guard the cart totals use: the debounced preview keeps
   // describing the previous coupon state for a moment after a code is applied
   // or removed, and that older breakdown still carries the automatic
@@ -156,6 +156,26 @@ export function StorefrontV2Checkout() {
   useEffect(() => {
     if (deliveryZoneId && !zones.some((zone) => zone.id === deliveryZoneId)) setDeliveryZoneId(null);
   }, [deliveryZoneId, setDeliveryZoneId, zones]);
+  // Cart totals do not own the address form. Publish a quote-ready marker only
+  // when this checkout has every required contact/location field and (where the
+  // merchant configured zones) a selected enabled zone. Any edit clears the
+  // old fee until the debounced advisory pricing run completes again.
+  useLayoutEffect(() => {
+    if (deliveryType !== "delivery") {
+      setDeliveryLocation(null);
+      return;
+    }
+    setDeliveryLocation({
+      customer_name: name,
+      customer_phone: phone,
+      city: address.city,
+      area: address.area,
+      street: address.street,
+      zone_ready: zones.length > 0
+        ? Boolean(deliveryZoneId && zones.some((zone) => zone.id === deliveryZoneId))
+        : deliveryAreaSupported(settings.delivery, address.city, address.area),
+    });
+  }, [address.area, address.city, address.street, deliveryType, deliveryZoneId, name, phone, setDeliveryLocation, settings.delivery, zones]);
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -259,6 +279,7 @@ export function StorefrontV2Checkout() {
             </div>
             {showErrors && issues.address ? <p className="v2-field-error" role="alert">{t("store.checkout.addressRequired")}</p> : null}
             {issues.area ? <p className="v2-field-error" role="alert">{t("store.checkout.areaNotServed")}</p> : null}
+            {!deliveryQuoteReady && !issues.area ? <p className="v2-small" role="status">{t("store.cart.deliveryCalculatedAtCheckout")}</p> : null}
             {issues.shortfall > 0 ? <p className="v2-alert" role="status">{t("store.checkout.minimumOrder", {
               amount: money(issues.minimum), remaining: money(issues.shortfall) })}</p> : null}
             {pick(copy.delivery_note_ar, copy.delivery_note_en) ? <p className="v2-small">

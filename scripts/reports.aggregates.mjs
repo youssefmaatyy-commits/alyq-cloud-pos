@@ -340,7 +340,7 @@ for (let i = 0; i < SALE_COUNT; i += 1) {
   const tender = saleMethod === "cash" ? `${total},0` : "null,null";
   saleRows.push(
     `('${id}','DIFF-${i}','diff-ref-${i}','${status}','${at.toISOString()}'::timestamptz,'${discountType}',` +
-      `${discountValue},${discountAmount},${subtotal},${total},'${staff.id}','${esc(staff.name)}',` +
+      `${discountValue},${discountAmount},${discountAmount},${subtotal},${total},'${staff.id}','${esc(staff.name)}',` +
       `'${saleMethod}','${salePayStatus}',${tender})`,
   );
   for (const line of lines) {
@@ -364,7 +364,7 @@ await tx(async () => {
   await claim(ADMIN.id);
   await db.exec(`insert into public.sales
     (id, sale_number, client_ref, status, created_at, discount_type, discount_value,
-     discount_amount, subtotal, total, user_id, user_name, payment_method, payment_status,
+     discount_amount, total_discount_amount, subtotal, total, user_id, user_name, payment_method, payment_status,
      amount_received, "change")
     values ${saleRows.join(",")}`);
   await db.exec(`insert into public.sale_items

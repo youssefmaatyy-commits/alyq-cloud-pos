@@ -69,7 +69,6 @@ import {
   resolveSettings,
 } from "../services/settingsDefaults";
 import {
-  checkPromoCode,
   customerKeyFor,
   deliveryAreaSupported,
   evaluateCartPricing,
@@ -539,6 +538,18 @@ export class DemoOnlineRepository
       this.seeded = true;
     }
     return products;
+  }
+
+  /**
+   * Marketing is editable in another tab. Unlike catalogue state, coupon
+   * eligibility is checked on demand, so re-read its three shared sources
+   * before each pricing/validation call rather than accepting a stale singleton.
+   */
+  private refreshCouponSources(): void {
+    this.coupons = readArray<Coupon>(KEYS.coupons).map(normalizeCoupon);
+    this.promotions = readArray<Promotion>(KEYS.promotions);
+    this.promotionTargets = readArray<PromotionTarget>(KEYS.promotionTargets);
+    this.promoUsages = readArray<PromoCodeUsage>(KEYS.promoUsages);
   }
 
   private persistOrders(): void {
@@ -1771,6 +1782,9 @@ export class DemoOnlineRepository
 
   async getSnapshot(): Promise<WebsiteSnapshot> {
     await this.ensureSeeded();
+    // BroadcastChannel causes StorefrontProvider to reload this snapshot after
+    // an admin write in another tab; refresh the shared marketing sources then.
+    this.refreshCouponSources();
     // No coupons here: a visitor never sees the code list, in either mode.
     return delay({
       settings: this.settings(),
@@ -1806,44 +1820,66 @@ export class DemoOnlineRepository
 
   async checkCoupon(input: CouponCheckInput): Promise<CouponCheckResult> {
     await this.ensureSeeded();
+    this.refreshCouponSources();
     const code = normalizeCouponCode(input.code);
     if (!code) return { valid: false, reason: "not_found" };
-    const coupon = this.coupons.find((candidate) => candidate.code === code) ?? null;
-    if (!coupon) return { valid: false, reason: "not_found" };
 
-    const check = checkPromoCode(
-      coupon,
-      {
-        subtotal: round2(Math.max(input.subtotal, 0)),
-        lines: input.productIds.map((productId, index) => ({
-          product_id: productId,
-          category_id: input.categoryIds[index] ?? null,
-          line_total: 0,
-        })),
-      },
-      this.usageSummary(coupon.id, input.customerKey ?? null),
-    );
-    if (!check.ok) {
-      // The local vocabulary is finer than the storefront's; both mean "no".
-      const reason: CouponCheckReason =
-        check.reason === "inactive" || check.reason === "not_found"
-          ? "invalid"
-          : (check.reason as CouponCheckReason);
+    const lines =
+      input.lines ??
+      (input.productIds ?? []).map((product_id) => ({ product_id, qty: 1, variant_id: null }));
+    try {
+      // Use the exact same evaluator as the demo checkout preview. This is the
+      // central-promotion fix: never look only in legacy `coupons` here.
+      const preview = await this.previewPricing({
+        lines,
+        couponCode: code,
+        customerKey: input.customerKey ?? null,
+        deliveryType: "pickup",
+      });
+      const promotion = this.promotions.find(
+        (candidate) =>
+          candidate.mode === "coupon" &&
+          candidate.code &&
+          normalizeCouponCode(candidate.code) === code,
+      );
+      const coupon = promotion
+        ? null
+        : this.coupons.find((candidate) => normalizeCouponCode(candidate.code) === code) ?? null;
+      if (!promotion && !coupon) return { valid: false, reason: "not_found" };
+      return {
+        valid: true,
+        code,
+        discount: preview.promoDiscount,
+        discountType: (promotion?.discount_type ?? coupon?.discount_type ?? "percent") as "percent" | "fixed" | "free_shipping",
+        value: promotion?.value ?? coupon?.value ?? 0,
+        stackable: promotion?.stackable ?? coupon?.stackable ?? false,
+        ...(preview.promoFreeShipping ? { freeShipping: true as const } : {}),
+      };
+    } catch (error) {
+      const online = toOnlineError(error);
+      const reasonByCode: Partial<Record<OnlineError["code"], CouponCheckReason>> = {
+        coupon_invalid: "invalid",
+        coupon_not_started: "not_started",
+        coupon_expired: "expired",
+        coupon_limit_reached: "exhausted",
+        coupon_min_subtotal: "min_subtotal",
+        coupon_not_applicable: "not_applicable",
+      };
+      const promotion = this.promotions.find(
+        (candidate) => candidate.mode === "coupon" && candidate.code && normalizeCouponCode(candidate.code) === code,
+      );
+      const coupon = promotion ? null : this.coupons.find((candidate) => normalizeCouponCode(candidate.code) === code) ?? null;
+      const reason: CouponCheckReason = !promotion && !coupon
+        ? "not_found"
+        : (reasonByCode[online.code] ?? "invalid");
       return {
         valid: false,
         reason,
-        ...(reason === "min_subtotal" ? { minSubtotal: coupon.min_subtotal } : {}),
+        ...(reason === "min_subtotal"
+          ? { minSubtotal: promotion?.minimum_order_amount ?? coupon?.min_subtotal ?? 0 }
+          : {}),
       };
     }
-    return {
-      valid: true,
-      code: coupon.code,
-      discount: check.discount,
-      discountType: coupon.discount_type,
-      value: coupon.value,
-      stackable: coupon.stackable,
-      ...(check.freeShipping ? { freeShipping: true as const } : {}),
-    };
   }
 
   /**
@@ -2443,8 +2479,14 @@ export class DemoOnlineRepository
     const existing = draft.id
       ? (this.promotions.find((promotion) => promotion.id === draft.id) ?? null)
       : null;
-    const startsAt = draft.starts_at ?? existing?.starts_at ?? null;
-    const endsAt = draft.ends_at ?? existing?.ends_at ?? null;
+    // An admin edit may deliberately clear a schedule. `??` would silently
+    // retain the old timestamp and make a just-reactivated coupon look stale.
+    const startsAt = Object.prototype.hasOwnProperty.call(draft, "starts_at")
+      ? (draft.starts_at ?? null)
+      : (existing?.starts_at ?? null);
+    const endsAt = Object.prototype.hasOwnProperty.call(draft, "ends_at")
+      ? (draft.ends_at ?? null)
+      : (existing?.ends_at ?? null);
     if (startsAt && endsAt && Date.parse(endsAt) < Date.parse(startsAt)) {
       throw new OnlineError("db", "A promotion must end after it starts", { field: "ends_at" });
     }

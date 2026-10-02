@@ -57,6 +57,8 @@ export interface ReturnItem {
 
 export interface SalesReturn {
   id: string;
+  /** Client retry key in demo mode; live return idempotency stays database-owned. */
+  client_ref?: string | null;
   return_number: string;
   sale_id: string;
   sale_number: string;
@@ -100,6 +102,8 @@ export interface ReturnItemInput {
 }
 
 export interface CreateReturnInput {
+  /** Stable per-submit retry key. Demo uses it to make a retry a no-op. */
+  client_ref?: string;
   sale_id: string;
   reason: string;
   refund_method: RefundMethod;

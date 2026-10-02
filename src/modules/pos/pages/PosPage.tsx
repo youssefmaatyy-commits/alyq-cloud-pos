@@ -11,16 +11,16 @@ import { useBarcodeScanner } from "../hooks/useBarcodeScanner";
 import { PosSearchPanel } from "../components/PosSearchPanel";
 import { CartPanel } from "../components/CartPanel";
 import { SaleCompletedModal } from "../components/SaleCompletedModal";
+import { TransactionLookupModal } from "../components/TransactionLookupModal";
 import { CustomerSearchSelect } from "@/modules/customers/components/CustomerSearchSelect";
 
 /**
  * POS register screen.
  *
- * Layout: a scan/search-first workspace (~35%) beside ONE Current Sale card
- * (~65%) on desktop — the card holds the fixed header, the scrolling cart
- * line table and the fixed totals/payment footer. There is no browsable
- * product grid, so the left column never scrolls a catalogue. Below lg the
- * search fills the page and checkout moves into the mobile cart sheet.
+ * Layout: a broad catalog/scan workspace (~56%) beside ONE dense Current Sale
+ * card (~44%) on desktop. The product surface is card-oriented for touch and
+ * laptop browsing; the sale card keeps the fixed header, scrolling lines and
+ * payment footer. Below lg checkout moves into the existing mobile cart sheet.
  *
  * Barcode scanners work anywhere on this page (see `useBarcodeScanner`):
  * their rapid keystrokes are detected and added to the cart directly. A scan
@@ -35,6 +35,7 @@ export function PosPage() {
   // the origin named by VITE_STOREFRONT_URL when the shop is hosted separately.
   const storefront = useMemo(() => resolveStorefrontTarget(), []);
   const configWarningShown = useRef(false);
+  const [lookupOpen, setLookupOpen] = useState(false);
 
   // Re-read the catalog every time the till is opened so stock numbers are
   // fresh (a reset, inventory adjustment or new product is reflected).
@@ -74,6 +75,10 @@ export function PosPage() {
   const headerActions = useMemo(
     () => (
       <span className="inline-flex items-center gap-2">
+        <button type="button" onClick={() => setLookupOpen(true)} data-testid="pos-transaction-lookup"
+          className="inline-flex h-8 items-center rounded-xl bg-stone-900 px-3 text-xs font-bold text-white hover:bg-stone-700">
+          <span aria-hidden className="me-1.5">⌕</span>{t("pos.lookup")}
+        </button>
         <span className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-600">
           <span aria-hidden>📷</span>
           {t("pos.scanHint")}
@@ -157,7 +162,7 @@ export function PosPage() {
           minmax(0,1fr) sizes the row from the shell-derived grid height —
           floored at 0 so a long cart can never inflate it — giving both
           columns a definite height to resolve against. */}
-      <div className="grid min-w-0 flex-1 gap-4 lg:min-h-0 lg:grid-rows-[minmax(0,1fr)] lg:grid-cols-[minmax(0,35fr)_minmax(0,65fr)] lg:rtl:grid-cols-[minmax(0,65fr)_minmax(0,35fr)] lg:items-start">
+      <div className="grid min-w-0 flex-1 gap-4 lg:min-h-0 lg:grid-rows-[minmax(0,1fr)] lg:grid-cols-[minmax(0,56fr)_minmax(22rem,44fr)] lg:rtl:grid-cols-[minmax(22rem,44fr)_minmax(0,56fr)] lg:items-start">
         {/* A zero-minimum track and item stop the search column's intrinsic
             width from pushing the fixed-width checkout off screen. The search
             column holds one input and a compact result dropdown — it never
@@ -187,6 +192,7 @@ export function PosPage() {
       <MobileCartSheet />
 
       <SaleCompletedModal />
+      {lookupOpen ? <TransactionLookupModal onClose={() => setLookupOpen(false)} /> : null}
     </div>
   );
 }

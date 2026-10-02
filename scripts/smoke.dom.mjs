@@ -1075,9 +1075,9 @@ async function main() {
   await navigate("#/pos");
   assert.ok(bodyText().includes("Register"), "POS screen renders");
   assert.ok(posScanBox(), "scan/search box renders");
-  assert.ok(document.querySelector('[data-testid="pos-search-empty"]'), "idle hint renders, not a catalogue");
-  assert.ok(!document.querySelector('[data-testid="pos-grid"]'), "no product-card grid");
-  assert.equal(document.querySelectorAll('[data-testid^="pos-product-"]').length, 0, "no product cards");
+  assert.ok(document.querySelector('[data-testid="pos-catalog"]'), "catalog renders, with a browseable catalogue");
+  assert.ok(!document.querySelector('[data-testid="pos-grid"]'), "no legacy product grid");
+  assert.ok(document.querySelectorAll('[data-testid^="pos-catalog-product-"]').length > 0, "catalogue cards");
   console.log("  ✓ POS screen loads scan-first: one search box, no grid");
 
   // Search by name / SKU / barcode
@@ -1173,7 +1173,7 @@ async function main() {
   await sleep(300);
   assert.equal(printedDocs.length, beforeReceiptPrints + 1, "receipt document opened");
   const receipt = printedDocs[printedDocs.length - 1];
-  assert.ok(receipt.includes('src="/alyq-logo.png"'), "receipt embeds official logo");
+  assert.ok(!receipt.includes('<img class="logo"'), "receipt omits the large official logo image");
   assert.ok(receipt.includes("ALYQ | أَلِــيْـــق"), "receipt has boutique wordmark");
   // Assembled from parts so the retired slogan appears nowhere in the tree,
   // not even in the assertion that forbids it.
@@ -1373,14 +1373,16 @@ async function main() {
   // register at every width (jsdom has no CSS geometry; Chromium checks
   // pixels separately). There is no product grid left to be responsive.
   await navigate("#/pos");
+  setField('[data-testid="pos-scan-search"]', "");
+  await sleep(80);
   const posResponsive = [...document.querySelectorAll("main *")].some((el) =>
     [...el.classList].some((c) => c.startsWith("sm:") || c.startsWith("lg:")),
   );
   assert.ok(posResponsive, "POS uses responsive breakpoints");
   assert.ok(posScanBox(), "the scan/search box owns the register's product column");
   assert.ok(document.querySelector('[data-testid="pos-checkout-panel"]'), "the checkout owns the sale column");
-  assert.ok(!document.querySelector('[data-testid="pos-grid"]'), "no product-card grid renders");
-  assert.equal(document.querySelectorAll('[data-testid^="pos-product-"]').length, 0, "no product cards");
+  assert.ok(!document.querySelector('[data-testid="pos-grid"]'), "no legacy product grid renders");
+  await waitFor(() => document.querySelectorAll('[data-testid^="pos-catalog-product-"]').length > 0, { label: "catalogue cards" });
   console.log("  ✓ POS responsive layout contract");
 
   // ── Phase 7 · Customers + Returns + Refunds ──
@@ -1639,7 +1641,7 @@ async function main() {
     returnReceipt.includes("0599111222"),
     "return receipt shows the customer phone (inherited from the invoice)",
   );
-  assert.ok(returnReceipt.includes('src="/alyq-logo.png"'), "return receipt embeds the official logo");
+  assert.ok(!returnReceipt.includes('<img class="logo"'), "return receipt omits the large official logo image");
   assert.ok(returnReceipt.includes("ALYQ | أَلِــيْـــق"), "return receipt has the boutique wordmark");
   assert.ok(returnReceipt.includes("<svg"), "return receipt embeds the return barcode");
   assert.ok(/ALYQ-\d{4}/.test(returnReceipt), "return receipt lists the returned item SKU");

@@ -163,18 +163,16 @@ await waitFor(() => searchBox(), { label: "the scan/search box" });
 await waitFor(() => document.activeElement === searchBox(), { label: "the box to take focus" });
 assert.equal(searchBox().getAttribute("aria-label"), "Scan or search");
 assert.equal(searchBox().getAttribute("placeholder"), "Scan barcode or search by name or code...");
-assert.ok(testid("pos-search-empty"), "the idle hint renders, not a catalogue");
+assert.ok(testid("pos-catalog"), "the catalog renders, with a browseable catalogue");
 assert.ok(!resultsBox(), "no result list before the cashier types");
-assert.ok(!testid("pos-grid"), "the product-card grid is gone");
-assert.equal(
-  document.querySelectorAll('[data-testid^="pos-product-"]').length,
-  0,
-  "no product cards render",
+assert.ok(!testid("pos-grid"), "the catalogue cards render");
+assert.ok(
+  document.querySelectorAll('[data-testid^="pos-catalog-product-"]').length > 0,
+  "catalogue cards render",
 );
-assert.equal(
-  document.querySelectorAll('[data-testid^="pos-category-chip-"]').length,
-  0,
-  "no category chips render",
+assert.ok(
+  document.querySelectorAll('[role="tab"]').length > 0,
+  "category chips render",
 );
 await waitFor(() => testid("cash-input"), { label: "the sale panel's cash field" });
 await waitFor(() => buttons().some((b) => (b.textContent ?? "").includes("Complete sale")), {
@@ -249,7 +247,7 @@ await sleep(200);
 assert.ok(!resultsBox(), "Escape closes the result list");
 assert.equal(searchBox().value, "ALYQ-10", "Escape keeps the typed query");
 await searchFor("");
-await waitFor(() => testid("pos-search-empty"), { label: "the idle hint" });
+await waitFor(() => testid("pos-catalog"), { label: "the catalog" });
 clickEl(testid("pos-clear-cart"));
 await waitFor(() => testid("pos-mobile-cart-open") === null || [...document.querySelectorAll('[data-testid^="cart-line-"]')].length === 0, {
   label: "the cart to empty",

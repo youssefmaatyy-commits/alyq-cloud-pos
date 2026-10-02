@@ -12,6 +12,7 @@ import type { ReturnRepository } from "./repository";
 
 interface ReturnRow {
   id: string;
+  client_ref?: string | null;
   return_number: string;
   sale_id: string;
   sale_number: string;
@@ -73,6 +74,7 @@ function toNumber(value: number | string | null | undefined): number {
 function mapReturn(row: ReturnRow, items: ReturnItemRow[] = []): SalesReturn {
   return {
     id: row.id,
+    client_ref: row.client_ref ?? null,
     return_number: row.return_number,
     sale_id: row.sale_id,
     sale_number: row.sale_number,
@@ -198,6 +200,10 @@ export class SupabaseReturnRepository implements ReturnRepository {
       const client = this.require();
       const { data, error } = await client.rpc("pos_process_return", {
         p_payload: {
+          // The current live RPC remains authoritative for idempotency/lifecycle;
+          // retaining this key in the payload keeps future server replay support
+          // compatible with the demo retry contract.
+          client_ref: input.client_ref ?? null,
           sale_id: input.sale_id,
           reason: input.reason.trim(),
           refund_method: input.refund_method,

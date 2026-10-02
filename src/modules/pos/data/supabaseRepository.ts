@@ -75,6 +75,7 @@ interface SaleItemRow {
   unit_price: number | string;
   quantity: number;
   line_total: number | string;
+  refundable_total?: number | string | null;
   gross_total?: number | string | null;
   discount_type?: SaleItem["discount_type"] | null;
   discount_value?: number | string | null;
@@ -147,6 +148,7 @@ function mapSale(row: SaleRow, items: SaleItemRow[] = [], payments: SalePaymentR
       quantity: i.quantity,
       gross_total: i.gross_total == null ? undefined : toNumber(i.gross_total),
       line_total: toNumber(i.line_total),
+      refundable_total: i.refundable_total == null ? null : toNumber(i.refundable_total),
       discount_type: i.discount_type ?? "none",
       discount_value: i.discount_value == null ? 0 : toNumber(i.discount_value),
       discount_amount: i.discount_amount == null ? 0 : toNumber(i.discount_amount),

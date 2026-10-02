@@ -64,6 +64,8 @@ export interface SaleItem {
   /** Gross line total before manual item discount. */
   gross_total?: number;
   line_total: number;
+  /** Exact refund ceiling persisted by the live database after migration 0065. */
+  refundable_total?: number | null;
   discount_type?: DiscountType;
   discount_value?: number;
   discount_amount?: number;
@@ -162,6 +164,10 @@ export interface Sale {
    * `null` for online-channel sales and for rows before the column existed.
    */
   shift_id?: string | null;
+  /** Client-only sync state for a cash sale accepted while the till was offline. */
+  offline_sync_status?: "pending" | "syncing" | "synced" | "error";
+  offline_last_error?: string | null;
+  offline_last_error_kind?: "network" | "conflict" | "rejected" | null;
 }
 
 /** Payload the cart sends to complete a sale. */

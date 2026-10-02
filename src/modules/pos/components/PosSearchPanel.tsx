@@ -9,11 +9,12 @@ import { ProductThumb } from "./ProductThumb";
 import { POS_SEARCH_RESULT_CAP, matchPosProducts } from "../services/posSearch";
 
 /**
- * Scan/search-first register workspace — the left side of the till.
+ * Catalog + scan register workspace — the product side of the till.
  *
- * The browsable product-card grid is gone on purpose: the cashier scans a
- * barcode or types a name, SKU or product code, picks the exact row and the
- * item lands in the cart. One prominent input, one compact result list.
+ * A cashier can still scan/type a name, SKU or product code with the same
+ * keyboard flow, while the empty search state exposes category chips and
+ * dense product cards for touch/laptop browsing. Both paths call the existing
+ * add/variant APIs; this component is presentation, not a second POS engine.
  *
  * The rules it keeps from the grid era:
  *
@@ -34,9 +35,10 @@ import { POS_SEARCH_RESULT_CAP, matchPosProducts } from "../services/posSearch";
 export function PosSearchPanel() {
   const { t, pick, lang } = useI18n();
   const toast = useToast();
-  const { products, variants, addLine, addBySku, lines, variantsOf } = usePos();
+  const { products, categories, variants, addLine, addBySku, lines, variantsOf } = usePos();
 
   const [query, setQuery] = useState("");
+  const [activeCategoryId, setActiveCategoryId] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
   // The product whose combinations the cashier is choosing between, if any.
@@ -53,6 +55,16 @@ export function PosSearchPanel() {
   const remainder = hits.length - shown.length;
   const trimmed = query.trim();
   const listVisible = open && trimmed.length > 0;
+  const visibleCategories = useMemo(
+    () => categories.filter((category) => products.some((product) => product.category_id === category.id)),
+    [categories, products],
+  );
+  const browseProducts = useMemo(
+    () => products
+      .filter((product) => !activeCategoryId || product.category_id === activeCategoryId)
+      .slice(0, 80),
+    [activeCategoryId, products],
+  );
 
   // The highlight follows the list: typing resets it, arrows move it, and the
   // row it lands on is scrolled into view inside the dropdown only.
@@ -325,15 +337,61 @@ export function PosSearchPanel() {
           </div>
         )
       ) : (
-        <div
-          data-testid="pos-search-empty"
-          className="flex min-h-48 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-stone-300 bg-white/60 px-6 py-10 text-center"
-        >
-          <span aria-hidden className="text-4xl">
-            📷
-          </span>
-          <p className="max-w-md text-sm font-semibold text-stone-600">{t("pos.scanSearchHint")}</p>
-        </div>
+        <section data-testid="pos-catalog" className="min-h-0 rounded-2xl border border-stone-200 bg-stone-50/70 p-3 shadow-sm lg:flex lg:flex-1 lg:flex-col">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-black text-stone-900">{t("pos.catalog")}</h2>
+              <p className="text-xs font-medium text-stone-500">{t("pos.scanSearchHint")}</p>
+            </div>
+            <span className="rounded-full bg-white px-2.5 py-1 text-xs font-bold tabular-nums text-stone-600 ring-1 ring-stone-200">
+              {browseProducts.length}
+            </span>
+          </div>
+          {visibleCategories.length ? <div className="mb-3 flex gap-2 overflow-x-auto pb-1" role="tablist" aria-label={t("pos.catalog")}>
+            <button type="button" role="tab" aria-selected={activeCategoryId === null}
+              onClick={() => setActiveCategoryId(null)}
+              className={`shrink-0 rounded-xl px-3 py-2 text-xs font-bold transition ${activeCategoryId === null ? "bg-stone-900 text-[#f3ede1]" : "bg-white text-stone-600 ring-1 ring-stone-200 hover:bg-stone-100"}`}>
+              {t("pos.allCategories")}
+            </button>
+            {visibleCategories.map((category) => <button key={category.id} type="button" role="tab"
+              aria-selected={activeCategoryId === category.id} onClick={() => setActiveCategoryId(category.id)}
+              className={`shrink-0 rounded-xl px-3 py-2 text-xs font-bold transition ${activeCategoryId === category.id ? "bg-stone-900 text-[#f3ede1]" : "bg-white text-stone-600 ring-1 ring-stone-200 hover:bg-stone-100"}`}>
+              {pick(category.name_ar, category.name_en)}
+            </button>)}
+          </div> : null}
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4 lg:min-h-0 lg:flex-1 lg:content-start lg:overflow-y-auto lg:pe-1">
+            {browseProducts.map((product) => {
+              const combinations = variantsOf(product.id);
+              const activeCombos = combinations.filter((variant) => variant.active);
+              const sellable = activeCombos.filter((variant) => variant.stock_quantity > 0);
+              const sellsByVariant = product.variants_enabled;
+              const out = sellsByVariant ? sellable.length === 0 : product.stock_quantity <= 0;
+              const stock = sellsByVariant ? activeCombos.reduce((sum, variant) => sum + variant.stock_quantity, 0) : product.stock_quantity;
+              const price = sellsByVariant && sellable[0]?.price_override != null
+                ? variantPrice(sellable[0], product) : product.selling_price;
+              const count = inSale(product.id);
+              return <article key={product.id} className={`group relative min-w-0 overflow-hidden rounded-xl border bg-white ${out ? "border-stone-200 opacity-55" : "border-stone-200 shadow-sm"}`}>
+                <button type="button" disabled={out} onClick={() => activate(product)}
+                  data-testid={`pos-catalog-product-${product.id}`}
+                  className="flex h-full w-full min-w-0 flex-col text-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-stone-900">
+                  <div className="relative aspect-[4/3] w-full overflow-hidden bg-stone-100">
+                    {product.image_url ? <img src={product.image_url} alt="" className="h-full w-full object-cover" /> : <div className="grid h-full place-items-center text-3xl text-stone-300" aria-hidden>◇</div>}
+                    {count > 0 ? <span className="absolute end-2 top-2 grid h-6 min-w-6 place-items-center rounded-full bg-stone-900 px-1 text-xs font-bold text-white">{count}</span> : null}
+                    {out ? <span className="absolute inset-x-2 bottom-2 rounded-md bg-stone-900/80 px-1.5 py-1 text-center text-[10px] font-bold text-white">{t("inventory.status.out")}</span> : null}
+                  </div>
+                  <span className="flex min-w-0 flex-1 flex-col p-2.5">
+                    <strong className="line-clamp-2 text-xs leading-5 text-stone-900">{pick(product.name_ar, product.name_en)}</strong>
+                    <span className="mt-1 truncate font-mono text-[10px] text-stone-500">{product.sku}</span>
+                    <span className="mt-auto flex items-end justify-between gap-1 pt-2">
+                      <bdi dir="ltr" className="text-sm font-black tabular-nums text-stone-900">{price.toFixed(2)}</bdi>
+                      <span className="text-[10px] font-bold text-stone-500">{sellsByVariant ? `${sellable.length}/${activeCombos.length}` : stock}</span>
+                    </span>
+                  </span>
+                </button>
+              </article>;
+            })}
+          </div>
+        </section>
       )}
 
       {pickingProduct ? (

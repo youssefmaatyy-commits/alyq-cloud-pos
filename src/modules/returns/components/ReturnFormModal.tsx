@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { useToast } from "@/components/ui";
 import {
@@ -51,6 +51,9 @@ export function ReturnFormModal({
   const [itemQuantities, setItemQuantities] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const [submitAttempted, setSubmitAttempted] = useState(false);
+  // Retained across a failed/retried submit; demo treats it exactly like the
+  // live client request identity and never restores stock twice.
+  const returnClientRef = useRef<string | null>(null);
 
   // Search & filter state for sales invoices
   const [searchQuery, setSearchQuery] = useState("");
@@ -232,7 +235,12 @@ export function ReturnFormModal({
       const user = getCurrentUser();
       const activeItems = itemsInput.filter((i) => i.quantity > 0);
 
+      const client_ref =
+        returnClientRef.current ??
+        `return-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      returnClientRef.current = client_ref;
       const res = await createReturn({
+        client_ref,
         sale_id: selectedSale.id,
         reason: reason.trim(),
         refund_method: refundMethod,
@@ -253,6 +261,7 @@ export function ReturnFormModal({
         toast.success(t("returns.createdToast"));
       }
       await refreshCatalog();
+      returnClientRef.current = null;
       onClose();
       if (onSuccess) onSuccess(res.returnRecord.id);
     } catch (err) {

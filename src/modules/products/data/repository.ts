@@ -101,10 +101,24 @@ export class AppError extends Error {
   }
 }
 
+/** Convert Supabase/fetch's often plain-object failures into a useful message. */
+export function readableErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object") {
+    const value = error as { name?: unknown; message?: unknown };
+    const message = typeof value.message === "string" ? value.message : "";
+    const name = typeof value.name === "string" ? value.name : "";
+    if (name && message) return `${name}: ${message}`;
+    if (message) return message;
+    if (name) return name;
+  }
+  return String(error);
+}
+
 /** Map any thrown value into an AppError. */
 export function toAppError(error: unknown): AppError {
   if (error instanceof AppError) return error;
-  const message = error instanceof Error ? error.message : String(error);
+  const message = readableErrorMessage(error);
   if (message === "SUPABASE_NOT_CONFIGURED") {
     return new AppError("NOT_CONFIGURED", message);
   }

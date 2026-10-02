@@ -67,15 +67,14 @@ await navigate("#/pos");
 await waitFor(() => searchBox(), { label: "the scan/search box" });
 assert.equal(searchBox().getAttribute("placeholder"), "Scan barcode or search by name or code...");
 assert.equal(searchBox().getAttribute("aria-label"), "Scan or search");
-assert.ok(testid("pos-search-empty"), "the idle hint renders instead of a catalogue");
+assert.ok(testid("pos-catalog"), "the catalog renders with the catalogue");
 
 // ── the grid is gone, even with a crowded catalogue ─────────────────────────
-assert.ok(!testid("pos-grid"), "no product-card grid renders");
-assert.equal(document.querySelectorAll('[data-testid^="pos-product-"]').length, 0, "no product cards render");
-assert.equal(
-  document.querySelectorAll('[data-testid^="pos-category-chip-"]').length,
-  0,
-  "no category chips render",
+assert.ok(!testid("pos-grid"), "no legacy product grid renders");
+assert.ok(document.querySelectorAll('[data-testid^="pos-catalog-product-"]').length > 0, "catalogue cards render");
+assert.ok(
+  document.querySelectorAll('[role="tab"]').length > 0,
+  "category chips render",
 );
 const checkout = testid("pos-checkout-panel");
 assert.ok(checkout?.contains(testid("pos-cart")), "checkout holds the cart beside the search column");
@@ -98,8 +97,8 @@ assert.ok(
 );
 const searchColumn = testid("pos-search-column");
 const desktopRow = checkout.parentElement;
-assert.ok(desktopRow.classList.contains("lg:grid-cols-[minmax(0,35fr)_minmax(0,65fr)]"), "desktop tracks give search 35% and checkout 65%");
-assert.ok(desktopRow.classList.contains("lg:rtl:grid-cols-[minmax(0,65fr)_minmax(0,35fr)]"), "RTL mirrors the desktop tracks");
+assert.ok(desktopRow.classList.contains("lg:grid-cols-[minmax(0,56fr)_minmax(22rem,44fr)]"), "desktop tracks give catalog 56% and checkout 44%");
+assert.ok(desktopRow.classList.contains("lg:rtl:grid-cols-[minmax(22rem,44fr)_minmax(0,56fr)]"), "RTL mirrors the desktop tracks");
 assert.ok(searchColumn.classList.contains("lg:order-1") && searchColumn.classList.contains("lg:rtl:order-2"), "LTR search order is first and RTL search order is second");
 assert.ok(checkout.classList.contains("lg:order-2") && checkout.classList.contains("lg:rtl:order-1"), "LTR checkout order is second and RTL checkout order is first");
 assert.ok(!desktopRow.className.includes("_380px") && !desktopRow.className.includes("minmax(21rem,24rem)"), "old narrow and widened rails stay absent");
@@ -353,10 +352,10 @@ await waitFor(
 );
 assert.equal(testid("pos-checkout-panel"), checkout);
 await searchFor("");
-await waitFor(() => testid("pos-search-empty"), { label: "the Arabic idle hint" });
+await waitFor(() => testid("pos-catalog"), { label: "the Arabic catalog" });
 assert.ok(
-  (testid("pos-search-empty").textContent ?? "").includes("امسح باركود أو اكتب الاسم أو الكود"),
-  "the idle hint is translated",
+  (testid("pos-catalog").textContent ?? "").includes("كتالوج المنتجات"),
+  "the catalog heading is translated",
 );
 console.log("  ✓ RTL search, price, exact-code add and translated hint without moving checkout");
 

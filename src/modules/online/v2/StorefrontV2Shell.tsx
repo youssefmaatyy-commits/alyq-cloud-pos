@@ -176,15 +176,18 @@ export function StorefrontV2Shell({ children }: { children: ReactNode }) {
                 aria-expanded={searchOpen} onClick={() => setSearchOpen((value) => !value)}><Icon name="search" /></button>
             ) : null}
           </div>
-          {/* Issue #1 (6th follow-up round): the storefront header branding is
-             a text wordmark only, never a logo image — the merchant asked
-             for the boxed image gone entirely and replaced with the shop's
-             own gold "ALYQ | أَلِــيْـــق"-style bilingual wordmark. Only the
-             admin's own settings-studio preview (StorefrontV2DraftPreview)
-             still shows an uploaded image, so admins can see what they're
-             about to publish; the live public shell below never reads
-             headerLogoUrl/mobileLogoUrl again. */}
-          <Link to="/store" className="v2-logo" aria-label={storeName}>{wordmark}</Link>
+          {/* A text wordmark is the safe fallback. When the merchant configured
+             a real V2 logo, expose a responsive picture: the saved mobile
+             asset is part of the public shell after a fresh boot, not only the
+             Studio preview. */}
+          <Link to="/store" className="v2-logo" aria-label={storeName}>
+            {appearance.headerLogoUrl || appearance.mobileLogoUrl ? (
+              <picture>
+                <source media="(max-width: 767px)" srcSet={appearance.mobileLogoUrl ?? appearance.headerLogoUrl ?? ""} />
+                <img src={appearance.headerLogoUrl ?? appearance.mobileLogoUrl ?? ""} alt={storeName} />
+              </picture>
+            ) : wordmark}
+          </Link>
           <div className="v2-header-end">
             {appearance.showLanguage ? <button type="button" className="v2-language-button v2-desktop-only" onClick={toggleLang}
               aria-label={t("store.nav.changeLanguage")}>{lang === "ar" ? "EN" : "عربي"}</button> : null}

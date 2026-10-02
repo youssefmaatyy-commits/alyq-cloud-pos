@@ -39,9 +39,18 @@ export function CartPanel() {
   const {
     lines, totals, discount, setDiscount, increase, decrease, removeLine,
     setLineDiscount, clearCart, canDiscount, selectedCustomer, setSelectedCustomer,
+    heldCarts, holdCurrentCart, restoreHeldCart, cancelHeldCart,
+    couponInput, setCouponInput, appliedCouponCode, couponDiscountAmount, couponError, applyingCoupon, applyCoupon, removeCoupon,
+    connectivity, workingFromCache, syncPendingCount, syncErrorCount, syncConflictCount, retrySync,
   } = usePos();
   const discountError = validateDiscount(discount.type, discount.value);
   const count = lines.reduce((sum, line) => sum + line.qty, 0);
+  const automaticPromotionDiscount = Math.max(0, (totals.promoDiscountAmount ?? 0) - couponDiscountAmount);
+  const syncLabel = syncConflictCount > 0
+    ? `${t("pos.syncConflict")} (${syncConflictCount})`
+    : syncErrorCount > 0
+      ? `${t("pos.syncFailed")} (${syncErrorCount})`
+      : syncPendingCount > 0 ? `${t("pos.syncPending")} (${syncPendingCount})` : t("pos.synced");
 
   return (
     <div
@@ -60,17 +69,37 @@ export function CartPanel() {
               {count}
             </span>
           </p>
-          {lines.length > 0 && (
-            <button
-              type="button"
-              onClick={clearCart}
-              className="text-xs font-semibold text-stone-600 underline-offset-2 hover:text-rose-700 hover:underline"
-              data-testid="pos-clear-cart"
-            >
-              {t("pos.clearCart")}
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            {lines.length > 0 && (
+              <button
+                type="button"
+                onClick={() => { void holdCurrentCart(); }}
+                className="text-xs font-semibold text-amber-800 underline-offset-2 hover:underline"
+                data-testid="pos-hold-cart"
+              >
+                {t("pos.holdCart")}
+              </button>
+            )}
+            {lines.length > 0 && (
+              <button
+                type="button"
+                onClick={clearCart}
+                className="text-xs font-semibold text-stone-600 underline-offset-2 hover:text-rose-700 hover:underline"
+                data-testid="pos-clear-cart"
+              >
+                {t("pos.clearCart")}
+              </button>
+            )}
+          </div>
         </div>
+        {(connectivity === "offline" || syncPendingCount + syncErrorCount + syncConflictCount > 0) && (
+          <div className={`mt-2 flex items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-[11px] font-semibold ${connectivity === "offline" ? "bg-amber-50 text-amber-900" : "bg-stone-100 text-stone-700"}`} data-testid="pos-sync-status">
+            <span>{connectivity === "offline" ? t("pos.offline") : syncLabel}{workingFromCache ? ` · ${t("pos.cachedCatalog")}` : ""}</span>
+            {connectivity === "online" && (
+              <button type="button" onClick={() => { void retrySync(); }} className="underline">{t("pos.retrySync")}</button>
+            )}
+          </div>
+        )}
         {/* Customer selector + quick-add + walk-in clear, in the fixed header:
             adding many products never pushes it away. */}
         <div className="mt-2">
@@ -79,6 +108,30 @@ export function CartPanel() {
             onSelect={(customer) => setSelectedCustomer(customer)}
           />
         </div>
+        {heldCarts.length > 0 && (
+          <div className="mt-2 flex flex-wrap items-center gap-1.5" data-testid="pos-held-carts">
+            <span className="text-[11px] font-bold text-stone-500">{t("pos.heldCarts")}</span>
+            {heldCarts.map((held) => (
+              <span key={held.id} className="inline-flex items-center gap-1 rounded-lg bg-amber-50 px-1.5 py-1 text-[11px] font-semibold text-amber-900 ring-1 ring-inset ring-amber-200">
+                <button
+                  type="button"
+                  onClick={() => { void restoreHeldCart(held.id); }}
+                  disabled={lines.length > 0}
+                  className="disabled:cursor-not-allowed disabled:opacity-50"
+                  title={held.customer?.name ?? held.created_at}
+                >
+                  {t("pos.restoreCart")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { void cancelHeldCart(held.id); }}
+                  aria-label={t("pos.cancelHeldCart")}
+                  className="text-rose-700"
+                >×</button>
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       {lines.length === 0 ? (
@@ -134,14 +187,39 @@ export function CartPanel() {
             <span>{t("pos.subtotal")}</span>
             <span className="tabular-nums" dir="ltr">{num(totals.subtotal, 2)}</span>
           </div>
-          {totals.promoDiscountAmount > 0 && (
+          {automaticPromotionDiscount > 0 && (
             <div className="mt-0.5 flex items-center justify-between text-emerald-700">
               <span className="flex items-center gap-1 font-medium">
                 <span className="text-xs">🏷️</span> {t("online.promos.title")}
               </span>
-              <span className="tabular-nums" dir="ltr">−{num(totals.promoDiscountAmount, 2)}</span>
+              <span className="tabular-nums" dir="ltr">−{num(automaticPromotionDiscount, 2)}</span>
             </div>
           )}
+          <div className="mt-2 rounded-lg border border-stone-200 bg-stone-50 p-2" data-testid="pos-coupon-control">
+            {appliedCouponCode ? (
+              <div className="flex items-center justify-between gap-2 text-xs">
+                <span className="font-semibold text-emerald-800">{t("pos.couponApplied")} <b dir="ltr">{appliedCouponCode}</b> · −{num(couponDiscountAmount, 2)}</span>
+                <button type="button" onClick={removeCoupon} className="font-bold text-stone-600 underline hover:text-stone-900">{t("pos.removeCoupon")}</button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5">
+                <TextInput
+                  dir="ltr"
+                  autoComplete="off"
+                  value={couponInput}
+                  onChange={(event) => setCouponInput(event.target.value.toUpperCase())}
+                  onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void applyCoupon(); } }}
+                  placeholder={t("pos.couponPlaceholder")}
+                  aria-label={t("pos.coupon")}
+                  className="h-8 min-w-0 flex-1 py-0.5 text-xs uppercase"
+                />
+                <button type="button" disabled={applyingCoupon || !couponInput.trim() || lines.length === 0} onClick={() => { void applyCoupon(); }} className="h-8 rounded-md bg-stone-900 px-2 text-xs font-bold text-white disabled:opacity-50">
+                  {applyingCoupon ? t("common.loading") : t("pos.applyCoupon")}
+                </button>
+              </div>
+            )}
+            {couponError && <p className="mt-1 text-[11px] font-medium text-rose-700" role="alert">{couponError}</p>}
+          </div>
           {totals.itemDiscountAmount > 0 && (
             <div className="mt-0.5 flex items-center justify-between text-stone-600">
               <span>{t("pos.itemDiscountsTotal")}</span>
