@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
+import { can } from "@/lib/permissions/enforce";
 import { PageHeader } from "@/components/layout/AppShell";
 import {
   Badge,
@@ -59,6 +60,7 @@ export function ExpensesPage() {
   const canAdd = canAddExpense();
   const canEdit = canEditExpense();
   const canDelete = canDeleteExpense();
+  const canViewReports = can("reports.view");
 
   async function confirmDelete() {
     if (!pendingDelete) return;
@@ -90,16 +92,17 @@ export function ExpensesPage() {
             <Button variant="secondary" onClick={() => void refresh()} title={t("common.retry")}>
               ⟳
             </Button>
-            <Button
-              onClick={() => {
-                setEditing(null);
-                setFormOpen(true);
-              }}
-              disabled={!canAdd}
-            >
-              <PlusIcon />
-              {t("expenses.add")}
-            </Button>
+            {canAdd ? (
+              <Button
+                onClick={() => {
+                  setEditing(null);
+                  setFormOpen(true);
+                }}
+              >
+                <PlusIcon />
+                {t("expenses.add")}
+              </Button>
+            ) : null}
           </>
         }
       />
@@ -175,15 +178,17 @@ export function ExpensesPage() {
           />
         </div>
 
-        <p className="mt-3 text-xs font-medium text-slate-600">
-          <Link
-            to="/reports/advanced"
-            className="font-semibold text-indigo-600 hover:text-indigo-700"
-          >
-            {t("expenses.advancedLink")} →
-          </Link>{" "}
-          {t("expenses.advancedHint")}
-        </p>
+        {canViewReports ? (
+          <p className="mt-3 text-xs font-medium text-slate-600">
+            <Link
+              to="/reports/advanced"
+              className="font-semibold text-indigo-600 hover:text-indigo-700"
+            >
+              {t("expenses.advancedLink")} →
+            </Link>{" "}
+            {t("expenses.advancedHint")}
+          </p>
+        ) : null}
       </Card>
 
       {error ? (
@@ -204,15 +209,17 @@ export function ExpensesPage() {
             title={t("expenses.empty")}
             description={t("expenses.emptyHint")}
             action={
-              <Button
-                onClick={() => {
-                  setEditing(null);
-                  setFormOpen(true);
-                }}
-              >
-                <PlusIcon />
-                {t("expenses.add")}
-              </Button>
+              canAdd ? (
+                <Button
+                  onClick={() => {
+                    setEditing(null);
+                    setFormOpen(true);
+                  }}
+                >
+                  <PlusIcon />
+                  {t("expenses.add")}
+                </Button>
+              ) : undefined
             }
           />
         </Card>
@@ -229,7 +236,9 @@ export function ExpensesPage() {
                 <th className="px-3 py-3 text-start font-semibold">{t("expenses.date")}</th>
                 <th className="px-3 py-3 text-start font-semibold">{t("expenses.user")}</th>
                 <th className="px-3 py-3 text-start font-semibold">{t("expenses.shift")}</th>
-                <th className="px-4 py-3 text-end font-semibold">{t("common.actions")}</th>
+                {canEdit || canDelete ? (
+                  <th className="px-4 py-3 text-end font-semibold">{t("common.actions")}</th>
+                ) : null}
               </tr>
             </thead>
             <tbody>
@@ -286,30 +295,34 @@ export function ExpensesPage() {
                       <span className="text-slate-400">{t("expenses.noShift")}</span>
                     )}
                   </td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center justify-end gap-1">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        disabled={!canEdit}
-                        onClick={() => {
-                          setEditing(expense);
-                          setFormOpen(true);
-                        }}
-                      >
-                        {t("common.edit")}
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        disabled={!canDelete}
-                        className="text-rose-600 hover:bg-rose-50"
-                        onClick={() => setPendingDelete(expense)}
-                      >
-                        {t("common.delete")}
-                      </Button>
-                    </div>
-                  </td>
+                  {canEdit || canDelete ? (
+                    <td className="px-4 py-3">
+                      <div className="flex items-center justify-end gap-1">
+                        {canEdit ? (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              setEditing(expense);
+                              setFormOpen(true);
+                            }}
+                          >
+                            {t("common.edit")}
+                          </Button>
+                        ) : null}
+                        {canDelete ? (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-rose-600 hover:bg-rose-50"
+                            onClick={() => setPendingDelete(expense)}
+                          >
+                            {t("common.delete")}
+                          </Button>
+                        ) : null}
+                      </div>
+                    </td>
+                  ) : null}
                 </tr>
               ))}
             </tbody>

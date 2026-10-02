@@ -152,9 +152,11 @@ export function StocktakePage() {
         subtitle={t("inventory.stocktake.subtitle")}
         actions={
           <div className="flex flex-wrap gap-2">
-            <Button onClick={() => void start()} disabled={!canAdjust || busy || session?.status === "review" || session?.status === "finalized"} loading={busy && !session}>
-              {t("inventory.stocktake.new")}
-            </Button>
+            {canAdjust ? (
+              <Button onClick={() => void start()} disabled={busy || session?.status === "review" || session?.status === "finalized"} loading={busy && !session}>
+                {t("inventory.stocktake.new")}
+              </Button>
+            ) : null}
             {session?.status === "counting" || session?.status === "draft" ? (
               <Button variant="secondary" onClick={() => void review()} disabled={busy}>{t("inventory.stocktake.review")}</Button>
             ) : null}

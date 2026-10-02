@@ -70,7 +70,7 @@ import {
   type AppRole,
   type Capability,
 } from "../roles";
-import { ROUTE_CAPABILITIES, capabilityForPath } from "../routes";
+import { ROUTE_CAPABILITIES, capabilityForPath, pathAdmits } from "../routes";
 import { assertCanViewReports, mayViewReports } from "@/modules/reports/services/reportAccess";
 
 import { resetDemoUserRepository } from "@/lib/auth/data/demoRepository";
@@ -486,10 +486,10 @@ test("preview: screens follow the route table, and the partition is total", () =
     assert.deepEqual(ids, PREVIEW_SCREENS.map((screen) => screen.path).sort(), "same screens, partitioned");
     const held = capabilitiesOf(role);
     for (const screen of visible) {
-      assert.ok(!screen.capability || held.includes(screen.capability), `${role} may see ${screen.path}`);
+      assert.ok(pathAdmits(screen.path, (capability) => held.includes(capability)), `${role} may see ${screen.path}`);
     }
     for (const screen of hidden) {
-      assert.ok(screen.capability && !held.includes(screen.capability), `${role} may not see ${screen.path}`);
+      assert.equal(pathAdmits(screen.path, (capability) => held.includes(capability)), false, `${role} may not see ${screen.path}`);
     }
   }
 

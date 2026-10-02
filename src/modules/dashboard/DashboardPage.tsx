@@ -22,8 +22,8 @@ import {
   WarehouseIcon,
 } from "@/components/ui";
 import { cn } from "@/utils/cn";
-import { canAct } from "@/lib/permissions/enforce";
-import { pathAdmits } from "@/lib/permissions/routes";
+import { can } from "@/lib/permissions/enforce";
+import { pathPermits } from "@/lib/permissions/routes";
 import { useOptionalApprovals } from "@/modules/approvals";
 import { ReservationSummaryCard, useOnlineOrders } from "@/modules/online";
 import { mayViewReports } from "@/modules/reports/services/reportAccess";
@@ -108,8 +108,10 @@ export function DashboardPage() {
   const approvals = useOptionalApprovals();
   const { orders: onlineOrders, counts: onlineCounts, canManage: canManageOnline } = useOnlineOrders();
   const maySeePerformance = mayViewReports();
-  const maySeeCost = canAct("view_cost");
-  const canSeeWebsite = canManageOnline || (canActWebsite());
+  const maySeeCost = can("products.view_cost");
+  const canSeeWebsite = canManageOnline || canActWebsite();
+  const maySell = can("pos.sell");
+  const mayAddProducts = can("products.create");
   const mayOpenSales = canActRoute("/pos/sales");
   const mayOpenProducts = canActRoute("/products");
   const mayOpenInventory = canActRoute("/inventory");
@@ -294,14 +296,14 @@ export function DashboardPage() {
 
       {/* ── Quick actions — each routes to a real operation ─────────────────── */}
       <div className="mb-4 flex flex-wrap gap-2" data-testid="dash-quick-actions">
-        {mayOpenSales ? (
+        {maySell ? (
           <Link to="/pos">
             <Button variant="primary" size="sm" data-testid="dash-qa-new-sale">
               <ShoppingCartIcon /> {t("dashboard.qaNewSale")}
             </Button>
           </Link>
         ) : null}
-        {mayOpenProducts ? (
+        {mayAddProducts ? (
           <Link to="/products/new">
             <Button variant="secondary" size="sm" data-testid="dash-qa-add-product">
               <BoxIcon /> {t("dashboard.qaAddProduct")}
@@ -326,91 +328,109 @@ export function DashboardPage() {
 
       {/* ── Today — the five numbers the day is judged by ──────────────────── */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5" data-testid="dash-kpi-row">
-        <KpiTile
-          label={t("dashboard.todayRevenue")}
-          value={money(todayRevenue)}
-          tone="primary"
-          featured
-          icon={<WalletIcon />}
-          hint={t("dashboard.todayInvoicesAov", {
-            count: num(todayInvoices, 0),
-            average: money(todayAov),
-          })}
-          to={mayOpenSales ? "/pos/sales?today=1" : undefined}
-          testId="kpi-today-sales"
-        />
-        <KpiTile
-          label={t("dashboard.webOrdersToday")}
-          value={String(onlineKpis.ordersToday)}
-          tone="info"
-          icon={<GlobeIcon />}
-          hint={canSeeWebsite ? money(onlineKpis.salesToday) : undefined}
-          to={mayOpenOrders ? "/online/orders" : undefined}
-          testId="kpi-web-orders"
-        />
-        <KpiTile
-          label={t("dashboard.lowStock")}
-          value={String(inventoryAlerts.lowCount)}
-          tone="warning"
-          icon={<WarehouseIcon />}
-          hint={`${inventoryAlerts.outCount} ${t("dashboard.outOfStock").toLowerCase()}`}
-          to={mayOpenInventory ? "/inventory/stock?status=low" : undefined}
-          testId="kpi-low-stock"
-        />
-        <KpiTile
-          label={t("dashboard.returnsToday")}
-          value={String(snapshot.returns.todayCount)}
-          tone="neutral"
-          icon={<RotateCcwIcon />}
-          hint={t("dashboard.todayRefunded", { amount: money(todayRefunded) })}
-          to={mayOpenReturns ? "/returns" : undefined}
-          testId="kpi-returns"
-        />
-        <KpiTile
-          label={t("dashboard.openShift")}
-          value={snapshot.openShift ? t("dashboard.shiftOpen") : t("dashboard.shiftClosed")}
-          tone={snapshot.openShift ? "success" : "neutral"}
-          icon={<ClockIcon />}
-          hint={
-            snapshot.shiftSummary
-              ? `${money(snapshot.shiftSummary.cash_sales)} · ${snapshot.shiftSummary.sales_count}`
-              : t("dashboard.noOpenShift")
-          }
-          to={mayOpenShifts ? "/shifts" : undefined}
-          testId="kpi-open-shift"
-        />
+        {mayOpenSales ? (
+          <KpiTile
+            label={t("dashboard.todayRevenue")}
+            value={money(todayRevenue)}
+            tone="primary"
+            featured
+            icon={<WalletIcon />}
+            hint={t("dashboard.todayInvoicesAov", {
+              count: num(todayInvoices, 0),
+              average: money(todayAov),
+            })}
+            to="/pos/sales?today=1"
+            testId="kpi-today-sales"
+          />
+        ) : null}
+        {mayOpenOrders ? (
+          <KpiTile
+            label={t("dashboard.webOrdersToday")}
+            value={String(onlineKpis.ordersToday)}
+            tone="info"
+            icon={<GlobeIcon />}
+            hint={money(onlineKpis.salesToday)}
+            to="/online/orders"
+            testId="kpi-web-orders"
+          />
+        ) : null}
+        {mayOpenInventory ? (
+          <KpiTile
+            label={t("dashboard.lowStock")}
+            value={String(inventoryAlerts.lowCount)}
+            tone="warning"
+            icon={<WarehouseIcon />}
+            hint={`${inventoryAlerts.outCount} ${t("dashboard.outOfStock").toLowerCase()}`}
+            to="/inventory/stock?status=low"
+            testId="kpi-low-stock"
+          />
+        ) : null}
+        {mayOpenReturns ? (
+          <KpiTile
+            label={t("dashboard.returnsToday")}
+            value={String(snapshot.returns.todayCount)}
+            tone="neutral"
+            icon={<RotateCcwIcon />}
+            hint={t("dashboard.todayRefunded", { amount: money(todayRefunded) })}
+            to="/returns"
+            testId="kpi-returns"
+          />
+        ) : null}
+        {mayOpenShifts ? (
+          <KpiTile
+            label={t("dashboard.openShift")}
+            value={snapshot.openShift ? t("dashboard.shiftOpen") : t("dashboard.shiftClosed")}
+            tone={snapshot.openShift ? "success" : "neutral"}
+            icon={<ClockIcon />}
+            hint={
+              snapshot.shiftSummary
+                ? `${money(snapshot.shiftSummary.cash_sales)} · ${snapshot.shiftSummary.sales_count}`
+                : t("dashboard.noOpenShift")
+            }
+            to="/shifts"
+            testId="kpi-open-shift"
+          />
+        ) : null}
       </div>
 
       {/* ── Business KPIs ──────────────────────────────────────────────────── */}
       <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatTile
-          label={t("dashboard.totalRevenue")}
-          value={money(snapshot.sales.totalRevenue)}
-          tone="success"
-          icon={<ShoppingCartIcon />}
-          hint={`${snapshot.sales.totalCount} ${t("dashboard.totalSales").toLowerCase()}`}
-        />
-        <StatTile
-          label={t("dashboard.pendingSales")}
-          value={money(snapshot.sales.pendingTotal)}
-          tone="warning"
-          hint={`${snapshot.sales.pendingCount} ${t("common.results")}`}
-        />
-        <KpiTile
-          label={t("dashboard.customers")}
-          value={String(snapshot.customerCount)}
-          tone="info"
-          icon={<UsersIcon />}
-          to={mayOpenCustomers ? "/customers" : undefined}
-          hint={mayOpenCustomers ? t("dashboard.customersHint") : undefined}
-        />
-        <StatTile
-          label={t("dashboard.expensesToday")}
-          value={money(snapshot.expenses.todayTotal)}
-          tone="neutral"
-          icon={<ClockIcon />}
-          hint={`${snapshot.expenses.todayCount} ${t("common.results")}`}
-        />
+        {mayOpenSales ? (
+          <>
+            <StatTile
+              label={t("dashboard.totalRevenue")}
+              value={money(snapshot.sales.totalRevenue)}
+              tone="success"
+              icon={<ShoppingCartIcon />}
+              hint={`${snapshot.sales.totalCount} ${t("dashboard.totalSales").toLowerCase()}`}
+            />
+            <StatTile
+              label={t("dashboard.pendingSales")}
+              value={money(snapshot.sales.pendingTotal)}
+              tone="warning"
+              hint={`${snapshot.sales.pendingCount} ${t("common.results")}`}
+            />
+          </>
+        ) : null}
+        {mayOpenCustomers ? (
+          <KpiTile
+            label={t("dashboard.customers")}
+            value={String(snapshot.customerCount)}
+            tone="info"
+            icon={<UsersIcon />}
+            to="/customers"
+            hint={t("dashboard.customersHint")}
+          />
+        ) : null}
+        {mayOpenShifts ? (
+          <StatTile
+            label={t("dashboard.expensesToday")}
+            value={money(snapshot.expenses.todayTotal)}
+            tone="neutral"
+            icon={<ClockIcon />}
+            hint={`${snapshot.expenses.todayCount} ${t("common.results")}`}
+          />
+        ) : null}
       </div>
 
       {/* ── Today's financial controls — aggregate-backed, never a full-history sum ── */}
@@ -870,7 +890,7 @@ export function DashboardPage() {
       ) : null}
 
       {/* ── Open shift summary ────────────────────────────────────────────── */}
-      {snapshot.openShift && snapshot.shiftSummary ? (
+      {mayOpenShifts ? snapshot.openShift && snapshot.shiftSummary ? (
         <Card className="mt-4" testId="dash-open-shift">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -916,9 +936,10 @@ export function DashboardPage() {
         <Card className="mt-4" testId="dash-no-open-shift">
           <p className="text-sm font-medium text-stone-500">{t("dashboard.noOpenShift")}</p>
         </Card>
-      )}
+      ) : null}
 
       {/* ── Recent sales ──────────────────────────────────────────────────── */}
+      {mayOpenSales ? (
       <Card className="mt-4" testId="dash-recent-orders">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-base font-black text-stone-900">{t("dashboard.recentSales")}</h2>
@@ -972,6 +993,7 @@ export function DashboardPage() {
           </div>
         )}
       </Card>
+      ) : null}
     </div>
   );
 }
@@ -980,8 +1002,8 @@ export function DashboardPage() {
 
 // Local capability checks — kept in one place so the KPI row reads cleanly.
 function canActRoute(path: string): boolean {
-  return pathAdmits(path, (capability) => canAct(capability));
+  return pathPermits(path, (permission) => can(permission));
 }
 function canActWebsite(): boolean {
-  return canAct("manage_website");
+  return can("website.manage");
 }

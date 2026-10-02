@@ -6767,10 +6767,12 @@ declare
   v_out jsonb;
   v_refunds numeric;
 begin
+  -- Catalogue reads are permission-gated from 0070 onward; establish the
+  -- administrator identity before reading the fixture category.
+  perform pg_temp.become(v_admin, 'authenticated');
   select id into v_category from public.categories order by id limit 1;
   if v_category is null then raise exception '0065 fixture needs a category'; end if;
 
-  perform pg_temp.become(v_admin, 'authenticated');
   insert into public.products (
     id, sku, name_ar, name_en, category_id, selling_price, cost_price,
     stock_quantity, low_stock_level, active, show_on_website, stock_tracking_enabled
@@ -6928,3 +6930,48 @@ begin
   raise notice '0065/0066/0067 — paid ceilings persist, rounded partials sum to paid money, direct returns cannot exceed quantity/net payment, central coupons validate through pricing authority, and identical return retries write no second financial or stock effect';
 end
 $phase65_66$;
+
+-- ─── 0070 · explicit module reads are assignable and enforced by RLS ──────
+do $phase70$
+declare
+  v_admin uuid := '00000000-0000-4000-8000-0000000000a1';
+  v_viewer uuid := '00000000-0000-4000-8000-0000000000e1';
+  v_role_id uuid;
+  v_n bigint;
+begin
+  perform pg_temp.become(v_admin, 'authenticated');
+  select r.id into v_role_id
+    from public.admin_create_custom_role(
+      'scn_dashboard_only', 'Dashboard only', 'لوحة التحكم فقط', null, null,
+      'viewer'::public.app_role, array['view_dashboard']::text[]
+    ) as r;
+  perform public.admin_set_custom_role(v_viewer, v_role_id);
+
+  perform pg_temp.become(v_viewer);
+  if not public.can('view_dashboard')
+     or public.can('view_products')
+     or public.can('view_sales') then
+    raise exception '0070 custom role did not decide the three explicit reads';
+  end if;
+
+  select count(*) into v_n from public.products;
+  if v_n <> 0 then raise exception '0070 dashboard-only role read products'; end if;
+  select count(*) into v_n from public.categories;
+  if v_n <> 0 then raise exception '0070 dashboard-only role read categories'; end if;
+  select count(*) into v_n from public.sales;
+  if v_n <> 0 then raise exception '0070 dashboard-only role read sales'; end if;
+  select count(*) into v_n from public.sale_items;
+  if v_n <> 0 then raise exception '0070 dashboard-only role read sale items'; end if;
+  select count(*) into v_n from public.sale_payments;
+  if v_n <> 0 then raise exception '0070 dashboard-only role read sale payments'; end if;
+
+  perform pg_temp.become(v_admin);
+  perform public.admin_set_custom_role(v_viewer, null);
+  perform public.admin_set_custom_role_active(v_role_id, false);
+  perform public.admin_upsert_staff_profile(
+    v_viewer, 'viewer', 'Vera Viewer', null, null, 'viewer'::public.app_role, true
+  );
+
+  raise notice '0070 — dashboard, catalogue and sales-history reads are independently assignable; direct catalogue/invoice queries obey the custom-role overlay';
+end
+$phase70$;

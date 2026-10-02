@@ -459,14 +459,15 @@ function InventoryStockTable({
                     <StockStatusBadge status={status} />
                   </td>
                   <td className="px-4 py-3 text-end">
-                    <Button
-                      variant="primary"
-                      size="sm"
-                      disabled={!canAdjust || !product.stock_tracking_enabled}
-                      onClick={() => onAdjust(product.id)}
-                    >
-                      {t("inventory.adjust")}
-                    </Button>
+                    {canAdjust && product.stock_tracking_enabled ? (
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        onClick={() => onAdjust(product.id)}
+                      >
+                        {t("inventory.adjust")}
+                      </Button>
+                    ) : null}
                   </td>
                 </tr>
                 {/* The breakdown: one row per combination, its OWN shelf. The
@@ -561,17 +562,18 @@ function InventoryStockTable({
                   </p>
                 </div>
               </div>
-              <div className="mt-3">
-                <Button
-                  variant="primary"
-                  size="sm"
-                  className="w-full"
-                  disabled={!canAdjust || !product.stock_tracking_enabled}
-                  onClick={() => onAdjust(product.id)}
-                >
-                  {t("inventory.adjust")}
-                </Button>
-              </div>
+              {canAdjust && product.stock_tracking_enabled ? (
+                <div className="mt-3">
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    className="w-full"
+                    onClick={() => onAdjust(product.id)}
+                  >
+                    {t("inventory.adjust")}
+                  </Button>
+                </div>
+              ) : null}
             </div>
           );
         })}

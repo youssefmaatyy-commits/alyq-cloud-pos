@@ -716,10 +716,17 @@ async function main() {
   );
   clickAria("View", cancelRow);
   await waitFor(() => Boolean(dialog()), { label: "the order detail" });
-  clickExact("Cancel order", dialog());
+  const cancelControl = [...dialog().querySelectorAll("button")].find((button) =>
+    ["Cancel order", "Reject order"].includes((button.textContent ?? "").trim()),
+  );
+  if (!cancelControl) throw new Error("the order detail offers no cancel/reject action");
+  cancelControl.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
   await waitFor(() => dialogs().length === 2, { label: "the cancellation prompt" });
   const prompt = topDialog();
-  assert.ok((prompt.textContent ?? "").includes("Cancel order"), "the prompt says what it is about");
+  assert.ok(
+    ["Cancel order", "Reject order"].some((label) => (prompt.textContent ?? "").includes(label)),
+    "the prompt says what it is about",
+  );
   assert.ok(
     (prompt.textContent ?? "").includes("stock"),
     "and warns what cancelling does to the stock and the sale",

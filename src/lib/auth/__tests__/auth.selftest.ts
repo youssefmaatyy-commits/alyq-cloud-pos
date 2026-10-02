@@ -294,15 +294,15 @@ test("each screen maps to the capability it needs", () => {
   // it; a custom role may decline it, and the till's picker declines with it.
   assert.equal(capabilityForPath("/customers"), "view_customers");
   assert.equal(capabilityForPath("/customers/C-1"), "view_customers", "a customer's page inherits the book");
-  // Read-only screens need a session but no particular capability.
-  for (const open of ["/", "/products", "/categories", "/pos/sales"]) {
-    if (open === "/pos/sales") continue; // sales history sits under the till
-    assert.equal(capabilityForPath(open), null, `${open} only needs a session`);
-  }
+  // Formerly implicit read-only screens are now assignable to custom roles.
+  assert.equal(capabilityForPath("/"), "view_dashboard");
+  assert.equal(capabilityForPath("/products"), "view_products");
+  assert.equal(capabilityForPath("/categories"), "view_products");
+  assert.equal(capabilityForPath("/pos/sales"), "view_sales");
 });
 
 test("the longest matching prefix wins, including detail routes", () => {
-  assert.equal(capabilityForPath("/pos/sales"), "sell", "/pos/sales is not / returns process_return");
+  assert.equal(capabilityForPath("/pos/sales"), "view_sales", "/pos/sales uses the dedicated history read");
   assert.equal(capabilityForPath("/inventory/movements"), "view_inventory");
   assert.equal(capabilityForPath("/shifts/history"), "view_shifts");
   assert.equal(capabilityForPath("/returns/RET-000001"), "process_return", "detail routes inherit the list");

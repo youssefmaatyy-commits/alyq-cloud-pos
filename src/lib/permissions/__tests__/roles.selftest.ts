@@ -217,7 +217,9 @@ test("read-only role can read but never mutate", () => {
     "export_reports",
     "view_cost",
     "view_customers",
+    "view_dashboard",
     "view_inventory",
+    "view_products",
     "view_reports",
     "view_shifts",
   ]);

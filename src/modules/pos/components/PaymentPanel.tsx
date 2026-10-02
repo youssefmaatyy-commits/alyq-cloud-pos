@@ -351,26 +351,22 @@ export function PaymentPanel() {
         </div>
       ) : null}
 
-      <Button
-        className="mt-1 w-full"
-        size="lg"
-        loading={completing}
-        disabled={!canComplete}
-        onClick={onComplete}
-      >
-        {completing ? t("pos.completing") : `✓ ${t("pos.complete")}`}
-      </Button>
+      {canSell ? (
+        <Button
+          className="mt-1 w-full"
+          size="lg"
+          loading={completing}
+          disabled={!canComplete}
+          onClick={onComplete}
+        >
+          {completing ? t("pos.completing") : `✓ ${t("pos.complete")}`}
+        </Button>
+      ) : null}
       {failure ? (
         <p className="mt-1.5 rounded-lg bg-rose-50 px-2.5 py-1.5 text-[11px] font-semibold text-rose-700">
           {failure}
         </p>
       ) : null}
-      {!canSell ? (
-        <p className="mt-1 text-center text-[11px] font-semibold text-rose-600">
-          {t("pos.discountLocked")}
-        </p>
-      ) : null}
-
       {/* Phase 12: the discount is above the cap this seat may apply alone. The
           sale was not written — send it for approval, or lower the discount and
           ring it up now. */}

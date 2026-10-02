@@ -123,7 +123,7 @@ export function CatalogHome({ embedded = false }: { embedded?: boolean }) {
         {
           key: "content",
           to: "/online/website?tab=productContent",
-          capability: "manage_website",
+          permission: "website.manage",
           icon: <EditIcon />,
           title: t("online.ws.productContent"),
           description: t("home.catalog.content.desc"),
@@ -132,13 +132,13 @@ export function CatalogHome({ embedded = false }: { embedded?: boolean }) {
           ? [{
               key: "import",
               to: "/products/import",
-              capability: "import_data" as const,
+              permission: "data.import" as const,
               icon: <PlusCircleIcon />,
               title: t("nav.importExport"),
               description: t("home.catalog.import.desc"),
             }]
           : []),
-        { key: "media", to: "/online/website?tab=productContent", icon: <EditIcon />, title: t("home.management.media"), description: t("home.management.media.desc") },
+        { key: "media", to: "/online/website?tab=productContent", permission: "website.manage", icon: <EditIcon />, title: t("home.management.media"), description: t("home.management.media.desc") },
       ]}
     />
   );
@@ -191,7 +191,7 @@ export function InventoryHome({ embedded = false }: { embedded?: boolean }) {
           title: t("inventory.stocktake.title"),
           description: t("inventory.stocktake.subtitle"),
         },
-        { key: "adjustments", to: "/inventory/stock", capability: "adjust_stock", icon: <EditIcon />, title: t("inventory.adjust"), description: t("home.management.adjustments") },
+        { key: "adjustments", to: "/inventory/stock", permission: "inventory.adjust", icon: <EditIcon />, title: t("inventory.adjust"), description: t("home.management.adjustments") },
         { key: "suppliers", to: "/reports?section=suppliers", icon: <ClipboardIcon />, title: t("reports.suppliersTitle"), description: t("reports.suppliersHint") },
       ]}
     />
@@ -210,7 +210,7 @@ export function OnlineHome() {
         {
           key: "orders",
           to: "/online/orders",
-          capability: "manage_online_orders",
+          permission: "orders.view",
           icon: <GlobeIcon />,
           title: t("nav.onlineOrders"),
           description: t("home.online.orders.desc"),
@@ -223,7 +223,7 @@ export function OnlineHome() {
         {
           key: "holds",
           to: "/online/reservations",
-          capability: "manage_online_orders",
+          permission: "orders.view",
           icon: <LayersIcon />,
           title: t("nav.stockHolds"),
           description: t("home.online.holds.desc"),
@@ -233,7 +233,7 @@ export function OnlineHome() {
         {
           key: "website",
           to: "/online/website",
-          capability: "manage_website",
+          permission: "website.manage",
           icon: <EditIcon />,
           title: t("nav.websiteSettings"),
           description: t("home.online.website.desc"),
@@ -241,7 +241,7 @@ export function OnlineHome() {
         {
           key: "marketing",
           to: "/online/marketing",
-          capability: "manage_website",
+          permission: "website.manage",
           icon: <PlusCircleIcon />,
           title: t("nav.marketing"),
           description: t("home.online.marketing.desc"),
@@ -249,7 +249,7 @@ export function OnlineHome() {
         {
           key: "content",
           to: "/online/content",
-          capability: "manage_website",
+          permission: "website.manage",
           icon: <ClipboardIcon />,
           title: t("nav.websiteContent"),
           description: t("home.online.content.desc"),
@@ -257,7 +257,7 @@ export function OnlineHome() {
         {
           key: "delivery",
           to: "/online/website?tab=delivery",
-          capability: "manage_website",
+          permission: "website.manage",
           icon: <WalletIcon />,
           title: t("online.ws.delivery"),
           description: t("home.online.delivery.desc"),
@@ -265,7 +265,7 @@ export function OnlineHome() {
         {
           key: "zones",
           to: "/online/zones",
-          capability: "manage_website",
+          permission: "website.manage",
           icon: <GlobeIcon />,
           title: t("online.zones.title"),
           description: t("home.online.zones.desc"),
@@ -273,7 +273,7 @@ export function OnlineHome() {
         {
           key: "discounts",
           to: "/online/discounts",
-          capability: "manage_website",
+          permission: "website.manage",
           icon: <PlusCircleIcon />,
           title: t("online.promos.title"),
           description: t("home.online.discounts.desc"),
@@ -281,7 +281,7 @@ export function OnlineHome() {
         {
           key: "promocodes",
           to: "/online/marketing",
-          capability: "manage_website",
+          permission: "website.manage",
           icon: <EditIcon />,
           title: t("online.marketing.promoCodes"),
           description: t("home.online.promocodes.desc"),
@@ -289,13 +289,13 @@ export function OnlineHome() {
         {
           key: "reports",
           to: "/online/reports",
-          capability: "manage_online_orders",
+          permission: "orders.view",
           icon: <ReportIcon />,
           title: t("nav.onlineReports"),
           description: t("home.online.reports.desc"),
         },
         ...(["social", "checkout", "confirmation"] as const).map((tab) => ({
-          key: tab, to: `/online/website?tab=${tab}`, capability: "manage_website" as const,
+          key: tab, to: `/online/website?tab=${tab}`, permission: "website.manage" as const,
           icon: <EditIcon />, title: t(`online.ws.${tab}`), description: t("home.online.configure"),
         })),
         { key: "verification", to: "/online/orders", icon: <WalletIcon />, title: t("home.online.verification"), description: t("home.online.verification.desc") },

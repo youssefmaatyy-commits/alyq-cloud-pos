@@ -41,7 +41,8 @@ test("operations opens on health or settings, and capabilityForPath stays one ca
   assert.equal(pathAdmits("/settings/operations", can(["manage_settings"])), true);
   assert.equal(pathAdmits("/settings/operations", can(["view_reports"])), false);
   assert.equal(pathAdmits("/pos", can([])), false);
-  assert.equal(pathAdmits("/", can([])), true, "an unguarded path is not a denial");
+  assert.equal(pathAdmits("/", can([])), false, "dashboard read is explicit");
+  assert.equal(pathAdmits("/", can(["view_dashboard"])), true);
 
   assert.deepEqual(operationsAccess(can(["run_health_check"])), { view: true, cleanup: false });
   assert.deepEqual(operationsAccess(can(["manage_settings"])), { view: true, cleanup: true });

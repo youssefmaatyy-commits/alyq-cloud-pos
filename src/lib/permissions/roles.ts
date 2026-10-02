@@ -73,6 +73,12 @@ export function isAppRole(raw: string | null | undefined): raw is AppRole {
 
 /** Every action the app gates on a role. */
 export const CAPABILITIES = [
+  /** Open the operational dashboard and its permission-filtered widgets. */
+  "view_dashboard",
+  /** Browse products, categories and product details without editing them. */
+  "view_products",
+  /** Browse completed sales and invoice details without running the register. */
+  "view_sales",
   /** Read stock levels + the movement ledger. */
   "view_inventory",
   /** Create stock movements (manual adjustments). */
@@ -318,6 +324,9 @@ export const ROLE_CAPABILITIES: Record<AppRole, readonly Capability[]> = {
   // Danger Zone: clearing operational data or factory-resetting the
   // installation is the one act reserved to the admin role alone.
   manager: [
+    "view_dashboard",
+    "view_products",
+    "view_sales",
     "view_inventory",
     "adjust_stock",
     "sell",
@@ -366,6 +375,9 @@ export const ROLE_CAPABILITIES: Record<AppRole, readonly Capability[]> = {
     "run_health_check",
   ],
   cashier: [
+    "view_dashboard",
+    "view_products",
+    "view_sales",
     "view_inventory",
     "sell",
     "confirm_payment",
@@ -399,6 +411,9 @@ export const ROLE_CAPABILITIES: Record<AppRole, readonly Capability[]> = {
     "change_cost",
   ],
   inventory_clerk: [
+    "view_dashboard",
+    "view_products",
+    "view_sales",
     "view_inventory",
     "adjust_stock",
     "sell",
@@ -436,6 +451,8 @@ export const ROLE_CAPABILITIES: Record<AppRole, readonly Capability[]> = {
   // add, edit and delete a customer. That is the one deliberate tightening in
   // this release, and the role-model self-test pins both halves of it.
   viewer: [
+    "view_dashboard",
+    "view_products",
     "view_inventory",
     "view_shifts",
     "export_data",

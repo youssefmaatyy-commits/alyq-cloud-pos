@@ -417,8 +417,8 @@ async function main() {
   assert.ok(!testid("web-section"), "no website block without the capability");
   assert.ok(!testid("dash-qa-website"), "no website quick action");
   assert.ok(!testid("web-kpi-pending"), "no pending-review tile");
-  assert.ok(testid("kpi-today-sales"), "the day's revenue still shows (reports-readable)");
-  assert.ok(testid("kpi-today-sales").tagName !== "A", "but the till deep link is gone");
+  assert.ok(!testid("kpi-today-sales"), "sales-history KPIs are hidden without sales.view");
+  assert.ok(bodyText().includes("Business performance"), "the separately-authorized reports section remains visible");
   assert.ok(testid("kpi-low-stock"), "the inventory view they own still renders");
   assert.ok(!document.querySelector('a[href="#/online/website"]'), "no website-builder link in the sidebar");
   assert.ok(!document.querySelector('a[href="#/settings/branding"]'), "no Branding link in the sidebar");

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
+import { can } from "@/lib/permissions/enforce";
 import { PageHeader } from "@/components/layout/AppShell";
 import {
   Badge,
@@ -193,6 +194,8 @@ export function SaleDetailPage() {
     sale.status !== "voided" &&
     sale.payments.some((p) => p.method === "instapay" && p.status === "pending");
   const canConfirm = canConfirmPayment() && awaitingInstaPay;
+  const canReturn = can("returns.process");
+  const canViewCustomers = can("customers.view");
 
   return (
     <div>
@@ -209,7 +212,7 @@ export function SaleDetailPage() {
                 ✓ {t("pos.confirmPayment")}
               </Button>
             ) : null}
-            {sale.status !== "voided" ? (
+            {canReturn && sale.status !== "voided" ? (
               <Button variant="secondary" onClick={() => setReturnOpen(true)}>
                 ↩ {t("returns.newReturn")}
               </Button>
@@ -224,7 +227,7 @@ export function SaleDetailPage() {
         }
       />
 
-      {sale.customer_id || sale.customer_name ? (
+      {canViewCustomers && (sale.customer_id || sale.customer_name) ? (
         <Link
           to={sale.customer_id ? `/customers/${sale.customer_id}` : "/customers"}
           className="alyq-card mb-4 flex items-center justify-between gap-3 p-4 transition hover:border-indigo-300"

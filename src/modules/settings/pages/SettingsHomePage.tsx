@@ -17,15 +17,15 @@
 import { Link } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import type { TranslationKey } from "@/lib/i18n/dictionary";
-import { useAuth } from "@/lib/auth";
-import { canActAs } from "@/lib/permissions/enforce";
-import { pathAdmits } from "@/lib/permissions/routes";
+import { can } from "@/lib/permissions/enforce";
+import { pathPermits } from "@/lib/permissions/routes";
+import type { Permission } from "@/lib/permissions/catalog";
 import { PageHeader } from "@/components/layout/AppShell";
 import { Card, EmptyState } from "@/components/ui";
 
 interface GroupCard {
   to: string;
-  capability: Parameters<typeof canActAs>[1] | null;
+  permission: Permission | null;
   icon: string;
   titleKey: TranslationKey;
   descKey: TranslationKey;
@@ -40,7 +40,6 @@ interface SettingsGroup {
 
 export function SettingsHomePage() {
   const { t } = useI18n();
-  const { user } = useAuth();
 
   // Phase 49: the directory groups follow the real destinations — General
   // (the workflow thresholds), Users & roles, Branding, Online store, Backup
@@ -53,7 +52,7 @@ export function SettingsHomePage() {
       cards: [
         {
           to: "/online/website?tab=general",
-          capability: "manage_website",
+          permission: "website.manage",
           icon: "🛍",
           titleKey: "online.ws.general",
           descKey: "admin.settings.card.online.desc",
@@ -61,7 +60,7 @@ export function SettingsHomePage() {
         },
         {
           to: "/settings/approvals",
-          capability: "manage_settings",
+          permission: "settings.manage",
           icon: "✓",
           titleKey: "admin.settings.card.approvals.title",
           descKey: "admin.settings.card.approvals.desc",
@@ -75,7 +74,7 @@ export function SettingsHomePage() {
       cards: [
         {
           to: "/settings/users",
-          capability: "manage_users",
+          permission: "users.manage",
           icon: "👥",
           titleKey: "admin.settings.card.users.title",
           descKey: "admin.settings.card.users.desc",
@@ -83,7 +82,7 @@ export function SettingsHomePage() {
         },
         {
           to: "/settings/roles",
-          capability: "manage_roles",
+          permission: "roles.manage",
           icon: "🛡",
           titleKey: "admin.settings.permissions",
           descKey: "admin.settings.card.roles.desc",
@@ -97,7 +96,7 @@ export function SettingsHomePage() {
       cards: [
         {
           to: "/settings/branding",
-          capability: "manage_website",
+          permission: "website.manage",
           icon: "◆",
           titleKey: "admin.settings.card.branding.title",
           descKey: "admin.settings.card.branding.desc",
@@ -111,7 +110,7 @@ export function SettingsHomePage() {
       cards: [
         {
           to: "/settings/backup",
-          capability: "view_backups",
+          permission: "backups.view",
           icon: "⬇",
           titleKey: "admin.settings.card.backup.title",
           descKey: "admin.settings.card.backup.desc",
@@ -125,7 +124,7 @@ export function SettingsHomePage() {
       cards: [
         {
           to: "/audit",
-          capability: "view_audit_log",
+          permission: "audit.view",
           icon: "☰",
           titleKey: "admin.settings.card.audit.title",
           descKey: "admin.settings.card.audit.desc",
@@ -139,7 +138,7 @@ export function SettingsHomePage() {
       cards: [
         {
           to: "/settings/operations",
-          capability: "run_health_check",
+          permission: "system.health_check",
           icon: "◎",
           titleKey: "admin.settings.card.operations.title",
           descKey: "admin.settings.card.operations.desc",
@@ -149,7 +148,7 @@ export function SettingsHomePage() {
           // Phase 47: the Danger Zone lives last and reads differently on
           // purpose — a card for the acts you must never reach by accident.
           to: "/settings/system",
-          capability: "manage_system_reset",
+          permission: "system.reset",
           icon: "⚠",
           titleKey: "admin.settings.card.system.title",
           descKey: "admin.settings.card.system.desc",
@@ -163,8 +162,8 @@ export function SettingsHomePage() {
     .map((group) => ({
       ...group,
       cards: group.cards.filter((card) => {
-        if (pathAdmits(card.to, (capability) => canActAs(user, capability))) return true;
-        return card.capability !== null && canActAs(user, card.capability);
+        if (pathPermits(card.to, (permission) => can(permission))) return true;
+        return card.permission !== null && can(card.permission);
       }),
     }))
     .filter((group) => group.cards.length > 0);

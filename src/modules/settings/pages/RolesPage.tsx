@@ -16,7 +16,7 @@ import {
   useToast,
 } from "@/components/ui";
 import { useI18n } from "@/lib/i18n/I18nProvider";
-import { canAct } from "@/lib/permissions/enforce";
+import { can } from "@/lib/permissions/enforce";
 import { capabilityLabelKey, capabilityGroupLabelKey, groupOfCapability } from "@/lib/permissions/catalog";
 import { actionTally } from "@/lib/permissions/preview";
 import { CAPABILITIES } from "@/lib/permissions/roles";
@@ -66,7 +66,7 @@ export function RolesPage() {
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const canManage = canAct("manage_roles");
+  const canManage = can("roles.manage");
 
   // Search matches the permissions a role holds as well as its names, so "which
   // role can approve a refund?" is answered from this screen.
@@ -170,17 +170,18 @@ export function RolesPage() {
               👁
               {t("settings.preview.open")}
             </Button>
-            <Button
-              disabled={!canManage}
-              onClick={() => {
-                setEditing(null);
-                setDuplicateOf(null);
-                setFormOpen(true);
-              }}
-            >
-              <PlusIcon />
-              {t("settings.roles.add")}
-            </Button>
+            {canManage ? (
+              <Button
+                onClick={() => {
+                  setEditing(null);
+                  setDuplicateOf(null);
+                  setFormOpen(true);
+                }}
+              >
+                <PlusIcon />
+                {t("settings.roles.add")}
+              </Button>
+            ) : null}
           </>
         }
       />
@@ -303,36 +304,41 @@ export function RolesPage() {
                     >
                       👁
                     </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={!canManage}
-                      title={t("settings.roles.duplicate")}
-                      onClick={() => openDuplicate(role)}
-                    >
-                      ⧉
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={!canManage || role.is_system}
-                      title={t("settings.roles.edit")}
-                      onClick={() => {
-                        setEditing(role);
-                        setDuplicateOf(null);
-                        setFormOpen(true);
-                      }}
-                    >
-                      <EditIcon />
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant={role.active ? "ghost" : "subtle"}
-                      disabled={!canManage || role.is_system}
-                      onClick={() => setPendingToggle(role)}
-                    >
-                      {role.active ? t("common.deactivate") : t("common.activate")}
-                    </Button>
+                    {canManage ? (
+                      <>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          title={t("settings.roles.duplicate")}
+                          onClick={() => openDuplicate(role)}
+                        >
+                          ⧉
+                        </Button>
+                        {!role.is_system ? (
+                          <>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              title={t("settings.roles.edit")}
+                              onClick={() => {
+                                setEditing(role);
+                                setDuplicateOf(null);
+                                setFormOpen(true);
+                              }}
+                            >
+                              <EditIcon />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant={role.active ? "ghost" : "subtle"}
+                              onClick={() => setPendingToggle(role)}
+                            >
+                              {role.active ? t("common.deactivate") : t("common.activate")}
+                            </Button>
+                          </>
+                        ) : null}
+                      </>
+                    ) : null}
                   </div>
                 </div>
 

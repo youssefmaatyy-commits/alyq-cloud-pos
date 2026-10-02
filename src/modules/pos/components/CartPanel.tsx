@@ -228,12 +228,13 @@ export function CartPanel() {
           )}
           {/* Invoice-level discount: a separate control from خصم القطعة; both
               feed the same existing pricing engine and never overwrite each other. */}
+          {canDiscount ? (
+            <>
           <div className="mt-1.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
             <span className="flex min-w-0 flex-wrap items-center gap-1.5">
               <span className="text-xs font-bold text-stone-700">{t("pos.invoiceDiscount")}</span>
               <select
                 aria-label={t("pos.invoiceDiscount")}
-                disabled={!canDiscount}
                 value={discount.type}
                 onChange={(event) => setDiscount({ ...discount, type: event.target.value as typeof discount.type })}
                 className="h-8 rounded-lg border border-stone-200 bg-white px-1.5 text-xs font-semibold text-stone-800 focus:border-stone-400"
@@ -246,8 +247,7 @@ export function CartPanel() {
                 <TextInput
                   dir="ltr"
                   inputMode="decimal"
-                  disabled={!canDiscount}
-                  value={String(discount.value)}
+                    value={String(discount.value)}
                   invalid={Boolean(discountError)}
                   onChange={(event) => setDiscount({ ...discount, value: Number(event.target.value) })}
                   placeholder={t("pos.discountValue")}
@@ -267,7 +267,8 @@ export function CartPanel() {
               {t(discountError === "tooHigh" ? "pos.discountTooHigh" : "pos.discountInvalid")}
             </p>
           )}
-          {!canDiscount && <p className="mt-1 text-xs text-stone-600">{t("pos.discountLocked")}</p>}
+          </>
+          ) : null}
           <div className="mt-1.5 flex items-center justify-between border-t border-stone-200 pt-1.5 text-base font-extrabold text-stone-900">
             <span>{t("pos.total")}</span>
             <span className="tabular-nums" dir="ltr">{num(totals.total, 2)}</span>
@@ -375,10 +376,10 @@ function CartRow({
         </div>
 
         {/* خصم القطعة — بدون / % / مبلغ ثابت, on the existing engine */}
+        {canDiscount ? (
         <div className="flex min-w-0 items-center gap-1">
           <select
             aria-label={t("pos.lineDiscount")}
-            disabled={!canDiscount}
             value={type}
             onChange={(event) =>
               onDiscount(key, {
@@ -399,7 +400,6 @@ function CartRow({
                 type="number"
                 min="0"
                 max={type === "percent" ? 100 : undefined}
-                disabled={!canDiscount}
                 value={line.item_discount?.value ?? 0}
                 onChange={(event) =>
                   onDiscount(key, { type: type as "percent" | "fixed", value: Number(event.target.value) })
@@ -410,7 +410,6 @@ function CartRow({
               <button
                 type="button"
                 onClick={() => onDiscount(key, { type: "none", value: 0 })}
-                disabled={!canDiscount}
                 aria-label={t("pos.itemDiscountReset")}
                 title={t("pos.itemDiscountReset")}
                 className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-xs font-bold text-stone-400 transition hover:bg-stone-100 hover:text-stone-700"
@@ -420,6 +419,7 @@ function CartRow({
             </>
           )}
         </div>
+        ) : null}
       </div>
 
       {/* الكمية + الإجمالي + حذف (mobile row 2) → grid columns 4–6 on desktop */}

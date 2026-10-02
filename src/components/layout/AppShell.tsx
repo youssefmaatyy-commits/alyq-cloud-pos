@@ -5,9 +5,9 @@ import { useCatalog } from "@/modules/products/hooks/CatalogProvider";
 import { useInventory } from "@/modules/inventory/hooks/InventoryProvider";
 import { useAuth } from "@/lib/auth";
 import { ROLE_LABELS } from "@/lib/permissions/roles";
-import { canAct } from "@/lib/permissions/enforce";
+import { can } from "@/lib/permissions/enforce";
 import { openStorefrontRoute } from "@/lib/storefront/storefrontLink";
-import { pathAdmits } from "@/lib/permissions/routes";
+import { pathPermits } from "@/lib/permissions/routes";
 import { useOnlineNotificationState } from "@/modules/online/hooks/OnlineNotificationsProvider";
 import { useOptionalApprovals } from "@/modules/approvals";
 import { normalizeText } from "@/modules/products/services/productQuery";
@@ -157,12 +157,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const canOpen = (path: string) =>
     // Same answer as the route guard, alternates included. A module door that
     // has no open child is hidden by the callers below — not by a role name.
-    pathAdmits(path, (capability) => canAct(capability));
-  const canManageOnline = canAct("manage_online_orders");
-  const canManageWebsite = canAct("manage_website");
-  const canManageUsers = canAct("manage_users");
-  const canManageRoles = canAct("manage_roles");
-  const canManageSettings = canAct("manage_settings");
+    pathPermits(path, (permission) => can(permission));
+  const canManageOnline = can("orders.view");
+  const canManageWebsite = can("website.manage");
+  const canManageUsers = can("users.manage");
+  const canManageRoles = can("roles.manage");
+  const canManageSettings = can("settings.manage");
+  const canSearchProducts = can("products.view");
   // Approval limits (Phase 12): the badge is the inbox's pending count, read
   // from the provider the shell is mounted inside. `useOptional` because the
   // storefront and the login screen render without it.
@@ -252,7 +253,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     const needle = query.trim();
     if (!needle) return;
     setSearchOpen(false);
-    navigate(`/products?q=${encodeURIComponent(needle)}`);
+    navigate(
+      canSearchProducts
+        ? `/products?q=${encodeURIComponent(needle)}`
+        : `/online/orders?search=${encodeURIComponent(needle)}`,
+    );
   };
 
   const notificationTotal = pendingApprovals + online.counts.pending;
@@ -344,7 +349,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           collapsed={navCollapsed}
         />
         <NavItem to="/reports" icon={<ReportIcon />} label={t("nav.reports")} visible={canOpen("/reports")} collapsed={navCollapsed} />
-        {canManageUsers || canManageRoles || canManageSettings || canOpen("/settings/backup") || canOpen("/settings/operations") || canOpen("/audit") || canAct("manage_system_reset") || canManageWebsite ? (
+        {canManageUsers || canManageRoles || canManageSettings || canOpen("/settings/backup") || canOpen("/settings/operations") || canOpen("/audit") || can("system.reset") || canManageWebsite ? (
           <NavItem
             to="/settings"
             icon={<ArchiveIcon />}
@@ -491,7 +496,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <MenuIcon />
           </button>
 
-          {/* Global search — real entities only (see above). */}
+          {/* Global search — only modules this identity may open contribute results. */}
+          {canSearchProducts || canManageOnline ? (
           <div ref={searchRef} className="relative min-w-0 flex-1 max-w-md">
             <div className="flex items-center gap-2 rounded-xl border border-stone-200 bg-white px-3 shadow-sm focus-within:border-stone-400">
               <span aria-hidden className="text-stone-400">
@@ -529,7 +535,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 className="absolute inset-x-0 top-11 z-40 overflow-hidden rounded-xl border border-stone-200 bg-white shadow-xl"
                 data-testid="global-search-panel"
               >
-                {productMatches.length > 0 ? (
+                {canSearchProducts && productMatches.length > 0 ? (
                   productMatches.map((product) => (
                     <Link
                       key={product.id}
@@ -546,11 +552,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                       </span>
                     </Link>
                   ))
-                ) : (
+                ) : canSearchProducts ? (
                   <p className="px-3 py-2 text-xs font-medium text-stone-400">
                     {t("admin.shell.searchNoProducts")}
                   </p>
-                )}
+                ) : null}
                 {canOpen("/online/orders") && (canManageOnline || canManageWebsite) ? (
                   <button
                     type="button"
@@ -567,6 +573,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </div>
             ) : null}
           </div>
+          ) : <div className="flex-1" />}
 
           {/* Notifications — one menu for the two inboxes the sidebar badges
               already count. A viewer with neither inbox sees no button at all
