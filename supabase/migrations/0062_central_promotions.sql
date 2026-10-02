@@ -84,13 +84,26 @@ alter table public.online_order_items
   add column if not exists rewarded_qty integer not null default 0,
   add column if not exists promotion_rule_type text default null;
 
+-- Upgrade compatibility: <=0061 invoices stored their real discount in the
+-- established subtotal/total facts (and, after 0051, may have item discounts),
+-- while this new column starts at its DEFAULT 0. Backfill only that new summary
+-- field; do not rewrite invoices, payments or sale-item history. Constraints
+-- are deliberately NOT VALID: an actually anomalous historical row is surfaced
+-- for review instead of preventing every valid legacy discounted sale from
+-- reaching the remaining migrations.
+update public.sales
+   set total_discount_amount = round(greatest(subtotal - total, 0)::numeric, 2)
+ where coalesce(total_discount_amount, 0) = 0
+   and subtotal >= total
+   and round(greatest(subtotal - total, 0)::numeric, 2) > 0;
+
 alter table public.sales drop constraint if exists sales_total_matches;
 alter table public.sales add constraint sales_total_matches
-  check (total = round((subtotal - coalesce(total_discount_amount, discount_amount))::numeric, 2));
+  check (total = round((subtotal - coalesce(total_discount_amount, discount_amount))::numeric, 2)) not valid;
 
 alter table public.sales drop constraint if exists sales_discount_le_subtotal;
 alter table public.sales add constraint sales_discount_le_subtotal
-  check (coalesce(total_discount_amount, discount_amount) <= subtotal);
+  check (coalesce(total_discount_amount, discount_amount) <= subtotal) not valid;
 
 alter table public.promotions drop constraint if exists promotions_mode_valid;
 alter table public.promotions add constraint promotions_mode_valid
