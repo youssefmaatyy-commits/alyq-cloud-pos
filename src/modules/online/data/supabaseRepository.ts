@@ -1160,11 +1160,18 @@ export class SupabaseOnlineRepository
       const code = normalizeCouponCode(input.code);
       if (!code) return { valid: false, reason: "not_found" };
 
-      const { data, error } = await client.rpc("check_storefront_coupon", {
+      // This is intentionally the pricing-authority wrapper, not legacy
+      // `check_storefront_coupon`: Admin coupon-mode promotions live in
+      // `promotions`, and only the shared preview/order evaluator knows every
+      // target, channel, date, usage and stacking rule.
+      const { data, error } = await client.rpc("check_storefront_coupon_pricing", {
         p_code: code,
-        p_subtotal: Math.max(input.subtotal, 0),
-        p_product_ids: input.productIds,
-        p_category_ids: input.categoryIds,
+        p_lines: (input.lines ?? []).map((line) => ({
+          product_id: line.product_id,
+          variant_id: line.variant_id ?? null,
+          qty: line.qty,
+        })),
+        p_customer_key: input.customerKey ?? null,
       });
       if (error) throw toOnlineError(error);
 
@@ -1177,6 +1184,7 @@ export class SupabaseOnlineRepository
         value?: Numeric;
         min_subtotal?: Numeric;
         stackable?: boolean;
+        free_shipping?: boolean;
       } | null;
 
       if (!result?.valid) {
@@ -1196,6 +1204,7 @@ export class SupabaseOnlineRepository
         discountType: result.discount_type ?? "percent",
         value: toNumber(result.value ?? 0),
         stackable: result.stackable ?? false,
+        ...(result.free_shipping ? { freeShipping: true as const } : {}),
       };
     } catch (error) {
       throw toOnlineError(error);

@@ -54,6 +54,8 @@ import { salesReceiptStrings, returnReceiptStrings } from "../services/receiptSt
 import { en, ar } from "@/lib/i18n/dictionary";
 import { lineKey, type CartLine, type SalePaymentInput } from "../types";
 import { addCartLine, changeCartQuantity, discountCartLine, removeCartLine } from "../services/cartOperations";
+import { computeShiftSummary } from "@/modules/shifts/services/shiftCalculations";
+import { getDemoShiftRepository } from "@/modules/shifts/data/demoRepository";
 
 function money2(value: number): string {
   return value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -93,6 +95,11 @@ const cash = (amount: number, tendered?: number): SalePaymentInput => ({
 });
 const insta = (amount: number, status: "paid" | "pending" = "paid"): SalePaymentInput => ({
   method: "instapay",
+  amount,
+  status,
+});
+const visa = (amount: number, status: "paid" | "pending" = "pending"): SalePaymentInput => ({
+  method: "visa",
   amount,
   status,
 });
@@ -531,6 +538,67 @@ test("InstaPay-only sale can be marked pending", async () => {
   assert.equal(sale.amount_received, null);
   assert.equal(sale.change, null);
   assert.equal(sale.paid_at, null);
+});
+
+test("Visa-only sale is paid immediately and its receipt records Visa", async () => {
+  const ring = await bySku("ALYQ-1002");
+  const sale = await repo.completeSale({
+    client_ref: `visa-only-${Date.now()}`,
+    lines: [{ product_id: ring.id, qty: 1 }],
+    discount_type: "none",
+    discount_value: 0,
+    // A stale client may send pending; the terminal card payment is paid,
+    // matching the live pos_complete_sale RPC.
+    payments: [visa(ring.selling_price, "pending")],
+    user_id: "u1",
+    user_name: "Tester",
+  });
+  assert.equal(sale.status, "completed");
+  assert.equal(sale.payment_status, "paid");
+  assert.deepEqual(sale.payments.map((payment) => [payment.method, payment.status, payment.amount]), [["visa", "paid", ring.selling_price]]);
+  assert.equal(sale.amount_received, null, "Visa must not masquerade as drawer cash");
+  assert.equal(sale.change, null);
+  const html = buildReceiptHtml({
+    sale,
+    direction: "ltr",
+    strings: salesReceiptStrings(((key: string) => (en as Record<string, string>)[key] ?? key) as never),
+  });
+  assert.ok(html.includes("Visa"), "receipt names the card method");
+  const shift = (await getDemoShiftRepository().listShifts()).find((entry) => entry.id === sale.shift_id);
+  assert.ok(shift, "the Visa sale is assigned to the active till");
+  const summary = computeShiftSummary(shift!, { sales: [sale], returns: [], refunds: [], expenses: [] });
+  assert.equal(summary.visa_sales, sale.total, "Visa is reported as card takings");
+  assert.equal(summary.cash_sales, 0, "Visa-only never inflates the drawer");
+  assert.equal(summary.expected_cash, shift!.opening_cash);
+});
+
+test("Cash + Visa is a completed split payment with exact payment records", async () => {
+  const ring = await bySku("ALYQ-1002");
+  const sale = await repo.completeSale({
+    client_ref: `cash-visa-${Date.now()}`,
+    lines: [{ product_id: ring.id, qty: 2 }],
+    discount_type: "none",
+    discount_value: 0,
+    payments: [cash(10), visa(ring.selling_price * 2 - 10)],
+    user_id: "u1",
+    user_name: "Tester",
+  });
+  assert.equal(sale.total, ring.selling_price * 2);
+  assert.equal(sale.status, "completed");
+  assert.equal(sale.payment_status, "paid");
+  assert.equal(sumPayments(sale.payments), sale.total);
+  assert.deepEqual(sale.payments.map((payment) => [payment.method, payment.status, payment.amount]), [
+    ["cash", "paid", 10],
+    ["visa", "paid", ring.selling_price * 2 - 10],
+  ]);
+  assert.equal(sale.amount_received, 10);
+  assert.equal(sale.change, 0);
+  const shift = (await getDemoShiftRepository().listShifts()).find((entry) => entry.id === sale.shift_id);
+  assert.ok(shift);
+  const summary = computeShiftSummary(shift!, { sales: [sale], returns: [], refunds: [], expenses: [] });
+  assert.equal(summary.cash_sales, 10, "only the cash leg enters the drawer");
+  assert.equal(summary.visa_sales, sale.total - 10, "the Visa leg is reported separately");
+  assert.equal(summary.expected_cash, shift!.opening_cash + 10);
 });
 
 test("mixed Cash + InstaPay split payment", async () => {

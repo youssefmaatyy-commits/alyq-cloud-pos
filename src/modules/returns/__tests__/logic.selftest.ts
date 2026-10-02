@@ -667,6 +667,85 @@ test("rejection releases the quantity, writes the goods back out, and a genuine 
   void second;
 });
 
+test("demo variant returns restore and reverse the exact sold shelf, with idempotent retry", async () => {
+  const categories = await catalog.listCategories();
+  const category = categories.find((entry) => entry.active) ?? null;
+  assert.ok(category);
+  const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  const product = await catalog.createProduct({
+    sku: `RET-VAR-${stamp}`,
+    barcode: null,
+    name_ar: "خاتم استرجاع",
+    name_en: "Return variant ring",
+    description_ar: null,
+    description_en: null,
+    category_id: category!.id,
+    product_type: "physical",
+    selling_price: 10,
+    cost_price: 4,
+    tax_rate: 0,
+    stock_tracking_enabled: true,
+    stock_quantity: 4,
+    low_stock_level: 1,
+    show_on_website: false,
+    is_featured: false,
+    active: true,
+    image_url: null,
+    images: [],
+  });
+  const gold = await catalog.createVariant({
+    product_id: product.id, sku: `RET-VAR-G-${stamp}`, barcode: null,
+    color_ar: "ذهبي", color_en: "Gold", color_hex: null, size: 17, size_label: null,
+    image_url: null, price_override: null, cost_override: null,
+    stock_quantity: 0, low_stock_level: 1, active: true, sort_order: 1,
+  });
+  const silver = await catalog.createVariant({
+    product_id: product.id, sku: `RET-VAR-S-${stamp}`, barcode: null,
+    color_ar: "فضي", color_en: "Silver", color_hex: null, size: 17, size_label: null,
+    image_url: null, price_override: null, cost_override: null,
+    stock_quantity: 0, low_stock_level: 1, active: true, sort_order: 2,
+  });
+  await catalog.enableProductVariants(product.id, [
+    { variantId: gold.id, quantity: 2 },
+    { variantId: silver.id, quantity: 2 },
+  ], { userId: "u1", userName: "Tester" });
+
+  const sale = await salesRepo.completeSale({
+    client_ref: `ret-var-sale-${stamp}`,
+    lines: [{ product_id: product.id, variant_id: gold.id, qty: 1 }],
+    discount_type: "none", discount_value: 0,
+    payments: [{ method: "cash", amount: 10, tendered: 10, status: "paid" }],
+    user_id: "u1", user_name: "Tester",
+  });
+  const line = sale.items[0];
+  let shelves = await catalog.listVariants();
+  assert.equal(shelves.find((entry) => entry.id === gold.id)?.stock_quantity, 1);
+  assert.equal(shelves.find((entry) => entry.id === silver.id)?.stock_quantity, 2);
+
+  const input = {
+    client_ref: `ret-var-retry-${stamp}`,
+    sale_id: sale.id, reason: "Variant regression", refund_method: "cash" as const,
+    refund_status: "pending" as const,
+    items: [{ sale_item_id: line.id, product_id: product.id, quantity: 1 }],
+    user_id: "u1", user_name: "Tester",
+  };
+  const first = await returnsRepo.createReturn(input);
+  const replay = await returnsRepo.createReturn(input);
+  assert.equal(replay.returnRecord.id, first.returnRecord.id, "same retry key does not create or restore twice");
+  shelves = await catalog.listVariants();
+  assert.equal(shelves.find((entry) => entry.id === gold.id)?.stock_quantity, 2);
+  assert.equal(shelves.find((entry) => entry.id === silver.id)?.stock_quantity, 2, "sibling shelf never changes");
+
+  await returnsRepo.settleRefund(first.refundRecord.id, {
+    decision: "rejected", reason: "Rejected test", user_id: "u9", user_name: "Manager",
+  });
+  shelves = await catalog.listVariants();
+  assert.equal(shelves.find((entry) => entry.id === gold.id)?.stock_quantity, 1, "rejection reverses Gold, not parent/sibling");
+  assert.equal(shelves.find((entry) => entry.id === silver.id)?.stock_quantity, 2);
+  const rolledUp = (await catalog.listProducts()).find((entry) => entry.id === product.id);
+  assert.equal(rolledUp?.stock_quantity, 3, "parent rollup follows exact variant shelves");
+});
+
 test("the pure rules: rejected rows hold neither quantity nor refundable balance", () => {
   const sale: Sale = {
     id: "s1",

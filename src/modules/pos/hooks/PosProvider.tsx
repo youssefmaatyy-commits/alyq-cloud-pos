@@ -40,12 +40,23 @@ import {
 import type { Customer } from "@/modules/customers/types";
 import { EMPTY_DISCOUNT, newClientRef } from "../types";
 import { getWebsiteRepository } from "@/modules/online/data";
-import { selectAutomaticPromotion, type PromotionCartLine } from "@/modules/online/services/pricing";
+import { evaluateCartPricing, normalizeCouponCode, selectAutomaticPromotion, type PromotionCartLine } from "@/modules/online/services/pricing";
 import type { Promotion, PromotionTarget } from "@/modules/online/types";
+import { holdCart as persistHeldCart, listHeldCarts, removeHeldCart, type HeldCartRecord } from "../offline/heldCarts";
+import { cacheCatalogSnapshot, planOfflineInventory, readCachedCatalog } from "../offline/catalogCache";
+import { getConnectivityStatus, reportNetworkResult, subscribeConnectivity, type ConnectivityStatus } from "../offline/connectivity";
+import { enqueueOfflineSale, getOfflineSaleDisplay, getSyncSummary, processOutbox } from "../offline/outbox";
 
 export interface PosContextValue {
   mode: "supabase" | "demo";
   repository: SalesRepository;
+  /** Last-known connectivity; server remains final authority at sync/payment. */
+  connectivity: ConnectivityStatus;
+  workingFromCache: boolean;
+  syncPendingCount: number;
+  syncErrorCount: number;
+  syncConflictCount: number;
+  retrySync: () => Promise<void>;
   // catalog snapshot (re-used from products module load)
   products: Product[];
   /**
@@ -82,6 +93,20 @@ export interface PosContextValue {
   setLineDiscount: (key: string, discount: CartDiscount) => void;
   setDiscount: (discount: CartDiscount) => void;
   clearCart: () => void;
+  /** Explicit coupon state: no code is priced until the cashier applies it. */
+  couponInput: string;
+  appliedCouponCode: string | null;
+  couponDiscountAmount: number;
+  couponError: string | null;
+  applyingCoupon: boolean;
+  setCouponInput: (value: string) => void;
+  applyCoupon: (rawCode?: string) => Promise<boolean>;
+  removeCoupon: () => void;
+  /** Durable local suspended-sale drafts. Holding a sale never reserves stock. */
+  heldCarts: HeldCartRecord[];
+  holdCurrentCart: (notes?: string | null) => Promise<HeldCartRecord | null>;
+  restoreHeldCart: (id: string) => Promise<boolean>;
+  cancelHeldCart: (id: string) => Promise<void>;
   // completion
   completing: boolean;
   completedSale: SaleModel | null;
@@ -134,6 +159,11 @@ export function PosProvider({ children }: { children: ReactNode }) {
   const [promotionTargets, setPromotionTargets] = useState<PromotionTarget[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<AppError | null>(null);
+  const [connectivity, setConnectivity] = useState<ConnectivityStatus>(() => getConnectivityStatus());
+  const [workingFromCache, setWorkingFromCache] = useState(false);
+  const [syncPendingCount, setSyncPendingCount] = useState(0);
+  const [syncErrorCount, setSyncErrorCount] = useState(0);
+  const [syncConflictCount, setSyncConflictCount] = useState(0);
   const [lines, setLines] = useState<CartLine[]>([]);
   // React may defer/replay a state updater. A scanner and a picker must know
   // *synchronously* whether their exact line was added, even for two scans in
@@ -141,7 +171,36 @@ export function PosProvider({ children }: { children: ReactNode }) {
   // separate sale state and is never coupled to a cart-line transition.
   const linesRef = useRef<CartLine[]>([]);
   const [discount, setDiscountValue] = useState<CartDiscount>(EMPTY_DISCOUNT);
+  const [couponInput, setCouponInput] = useState("");
+  const [appliedCouponCode, setAppliedCouponCode] = useState<string | null>(null);
+  const [couponDiscountAmount, setCouponDiscountAmount] = useState(0);
+  /** Server/demo pricing's combined automatic + coupon goods discount. */
+  const [couponPromotionTotal, setCouponPromotionTotal] = useState<number | null>(null);
+  /** Exact server preview total (including manual/invoice rules) when online. */
+  const [couponPreviewTotal, setCouponPreviewTotal] = useState<number | null>(null);
+  const [couponError, setCouponError] = useState<string | null>(null);
+  const [applyingCoupon, setApplyingCoupon] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const couponCartKey = useMemo(
+    // A server preview also depends on manual item and invoice discounts: they
+    // participate in the promotion-stacking contract. Any edit therefore
+    // invalidates the prior preview and requires an explicit re-apply before
+    // payment, just like changing a product, quantity or customer does.
+    () => JSON.stringify({
+      customer: selectedCustomer?.id ?? null,
+      lines: lines.map((line) => [
+        line.product_id,
+        line.variant_id,
+        line.qty,
+        line.item_discount?.type ?? "none",
+        line.item_discount?.value ?? 0,
+      ]),
+      invoiceDiscount: [discount.type, discount.value],
+    }),
+    [discount.type, discount.value, lines, selectedCustomer?.id],
+  );
+  const appliedCouponCartKeyRef = useRef<string | null>(null);
+  const [heldCarts, setHeldCarts] = useState<HeldCartRecord[]>([]);
   const [completing, setCompleting] = useState(false);
   const [completedSale, setCompletedSale] = useState<SaleModel | null>(null);
   // Set when the discount cap refused a sale (Phase 12): the rule that fired and
@@ -174,16 +233,33 @@ export function PosProvider({ children }: { children: ReactNode }) {
       isSupabaseConfigured && getSupabaseClient()
         ? getSupabaseRepository()
         : getDemoRepository();
-    const [list, combinations, website] = await Promise.all([
-      repo.listProducts(),
-      repo.listVariants(),
-      getWebsiteRepository().getSnapshot().catch(() => null),
-    ]);
-    setProducts(list);
-    setVariants([...combinations].sort(compareVariants));
-    setPromotions(website?.promotions ?? []);
-    setPromotionTargets(website?.promotionTargets ?? []);
-    return list;
+    try {
+      const [list, combinations, website] = await Promise.all([
+        repo.listProducts(),
+        repo.listVariants(),
+        getWebsiteRepository().getSnapshot().catch(() => null),
+      ]);
+      setProducts(list);
+      setVariants([...combinations].sort(compareVariants));
+      setPromotions(website?.promotions ?? []);
+      setPromotionTargets(website?.promotionTargets ?? []);
+      setWorkingFromCache(false);
+      reportNetworkResult("success");
+      // Cache only the exact catalog the POS actually used; no invented variants
+      // or prices can leak into an offline checkout.
+      void cacheCatalogSnapshot(list, combinations).catch(() => undefined);
+      return list;
+    } catch (caught) {
+      const problem = caught instanceof AppError ? caught : new AppError("DB", String(caught));
+      if (problem.code !== "NETWORK") throw problem;
+      reportNetworkResult("network-error");
+      const cached = await readCachedCatalog();
+      if (cached.products.length === 0) throw problem;
+      setProducts(cached.products);
+      setVariants([...cached.variants].sort(compareVariants));
+      setWorkingFromCache(true);
+      return cached.products;
+    }
   }, []);
 
   useEffect(() => {
@@ -201,6 +277,38 @@ export function PosProvider({ children }: { children: ReactNode }) {
       cancelled = true;
     };
   }, [loadCatalog]);
+
+  // Suspended drafts are local cashier work, not server sales. Load them once;
+  // no draft affects stock, price authority or the sales ledger until payment.
+  useEffect(() => {
+    void listHeldCarts().then(setHeldCarts).catch(() => setHeldCarts([]));
+  }, []);
+
+  const refreshSyncSummary = useCallback(async () => {
+    const summary = await getSyncSummary();
+    setSyncPendingCount(summary.pendingCount);
+    setSyncErrorCount(summary.errorCount);
+    setSyncConflictCount(summary.conflictCount);
+  }, []);
+
+  useEffect(() => {
+    void refreshSyncSummary();
+    return subscribeConnectivity((next) => setConnectivity(next));
+  }, [refreshSyncSummary]);
+
+  const retrySync = useCallback(async () => {
+    if (getConnectivityStatus() !== "online") return;
+    // A cashier retry may re-attempt network failures, never a stock/business
+    // conflict. Conflicts stay preserved for explicit business review.
+    await processOutbox((input) => completeSaleGuarded(input), { retryNetwork: true });
+    await refreshSyncSummary();
+    await loadCatalog().catch(() => undefined);
+  }, [loadCatalog, refreshSyncSummary]);
+
+  useEffect(() => {
+    if (connectivity !== "online") return;
+    void retrySync();
+  }, [connectivity, retrySync]);
 
   const refreshSales = useCallback(
     async (options: { silent?: boolean; from?: string; to?: string } = {}) => {
@@ -457,10 +565,202 @@ export function PosProvider({ children }: { children: ReactNode }) {
   const clearCart = useCallback(() => {
     updateLines(() => []);
     setDiscountValue(EMPTY_DISCOUNT);
+    setAppliedCouponCode(null);
+    setCouponDiscountAmount(0);
+    setCouponPromotionTotal(null);
+    setCouponPreviewTotal(null);
+    appliedCouponCartKeyRef.current = null;
+    setCouponError(null);
     // Clearing merchandise is not an explicit request to clear the customer.
   }, [updateLines]);
 
-  const totals = useMemo(() => cartTotals(lines, discount), [lines, discount]);
+  useEffect(() => {
+    // A preview is tied to exact products, variants, quantities and customer.
+    // Editing any of them deliberately requires a fresh explicit apply.
+    if (!appliedCouponCartKeyRef.current || appliedCouponCartKeyRef.current === couponCartKey) return;
+    appliedCouponCartKeyRef.current = null;
+    setAppliedCouponCode(null);
+    setCouponDiscountAmount(0);
+    setCouponPromotionTotal(null);
+    setCouponPreviewTotal(null);
+    setCouponError("Cart changed — apply the coupon again before payment.");
+  }, [couponCartKey]);
+
+  const removeCoupon = useCallback(() => {
+    setAppliedCouponCode(null);
+    setCouponDiscountAmount(0);
+    setCouponPromotionTotal(null);
+    setCouponPreviewTotal(null);
+    appliedCouponCartKeyRef.current = null;
+    setCouponError(null);
+  }, []);
+
+  const applyCoupon = useCallback(async (rawCode?: string): Promise<boolean> => {
+    const code = normalizeCouponCode(rawCode ?? couponInput);
+    if (!code) {
+      setCouponError("Coupon code is required");
+      return false;
+    }
+    if (linesRef.current.length === 0) {
+      setCouponError("Add an item before applying a coupon");
+      return false;
+    }
+    setApplyingCoupon(true);
+    setCouponError(null);
+    try {
+      let couponDiscount = 0;
+      let promotionTotal = 0;
+      let previewTotal: number | null = null;
+      if (mode === "supabase") {
+        const client = getSupabaseClient();
+        if (!client) throw new AppError("NETWORK", "Pricing service is unavailable");
+        const { data, error: rpcError } = await client.rpc("preview_pos_coupon_pricing", {
+          p_code: code,
+          p_lines: linesRef.current.map((line) => ({
+            product_id: line.product_id, variant_id: line.variant_id, qty: line.qty,
+            discount_type: line.item_discount?.type ?? "none", discount_value: line.item_discount?.value ?? 0,
+          })),
+          p_customer_key: selectedCustomer?.phone ?? null,
+          p_invoice_discount_type: discount.type,
+          p_invoice_discount_value: discount.value,
+        });
+        if (rpcError) throw new AppError("DB", rpcError.message);
+        const preview = data as { valid?: boolean; code?: string; coupon_discount?: number | string; total_discount?: number | string; promotion_discount?: number | string; total?: number | string; message?: string; reason?: string } | null;
+        if (!preview?.valid) {
+          setCouponError(preview?.message ?? `Coupon ${code} cannot be used for this sale (${preview?.reason ?? "invalid"}).`);
+          return false;
+        }
+        couponDiscount = Number(preview.coupon_discount ?? 0);
+        promotionTotal = Number(preview.promotion_discount ?? preview.total_discount ?? couponDiscount);
+        previewTotal = Number(preview.total ?? 0);
+      } else {
+        const preview = evaluateCartPricing({
+          lines: linesRef.current.map((line) => ({
+            product_id: line.product_id, variant_id: line.variant_id, category_id: products.find((product) => product.id === line.product_id)?.category_id ?? null,
+            qty: line.qty, unit_price: line.base_price ?? line.unit_price,
+            line_total: round2((line.base_price ?? line.unit_price) * line.qty),
+          })),
+          subtotal: linesRef.current.reduce((sum, line) => sum + (line.base_price ?? line.unit_price) * line.qty, 0),
+          promoCode: code,
+          coupons: [], promotions,
+          targetsByPromotion: posPromotionTargets,
+          usageFor: () => ({ customerUses: 0, hasPriorOrder: false }),
+          customerKey: selectedCustomer?.phone ?? null,
+          zone: null, legacy: { fee: 0, minimum: 0, threshold: 0 }, deliveryType: "pickup", channel: "pos",
+        });
+        if (!preview.ok) {
+          setCouponError(preview.message);
+          return false;
+        }
+        couponDiscount = preview.pricing.promoDiscount;
+        promotionTotal = preview.pricing.autoDiscount + preview.pricing.promoDiscount;
+      }
+      if (!Number.isFinite(couponDiscount) || couponDiscount <= 0) {
+        setCouponError(`Coupon ${code} does not discount this sale.`);
+        return false;
+      }
+      setCouponInput(code);
+      setAppliedCouponCode(code);
+      setCouponDiscountAmount(round2(couponDiscount));
+      setCouponPromotionTotal(round2(Math.max(promotionTotal, 0)));
+      setCouponPreviewTotal(previewTotal != null && Number.isFinite(previewTotal) ? round2(Math.max(previewTotal, 0)) : null);
+      appliedCouponCartKeyRef.current = couponCartKey;
+      return true;
+    } catch (caught) {
+      const message = caught instanceof AppError ? caught.message : "Coupon pricing could not be checked.";
+      setCouponError(message);
+      return false;
+    } finally {
+      setApplyingCoupon(false);
+    }
+  }, [couponCartKey, couponInput, discount, mode, products, promotions, posPromotionTargets, selectedCustomer]);
+
+  const holdCurrentCart = useCallback(async (notes: string | null = null): Promise<HeldCartRecord | null> => {
+    if (!canSell || linesRef.current.length === 0) return null;
+    const held = await persistHeldCart({
+      held_by_id: user.id,
+      held_by_name: user.name,
+      // The current POS domain has no branch selector in its cart state. Keep
+      // this nullable rather than inventing an assignment the cashier never made.
+      store: null,
+      shift_id: null,
+      customer: selectedCustomer,
+      lines: linesRef.current,
+      invoice_discount: discount,
+      coupon_code: appliedCouponCode,
+      notes: notes?.trim() || null,
+    });
+    setHeldCarts((current) => [held, ...current]);
+    updateLines(() => []);
+    setDiscountValue(EMPTY_DISCOUNT);
+    removeCoupon();
+    setSelectedCustomer(null);
+    return held;
+  }, [appliedCouponCode, canSell, discount, removeCoupon, selectedCustomer, updateLines, user]);
+
+  const restoreHeldCart = useCallback(async (id: string): Promise<boolean> => {
+    if (linesRef.current.length > 0) return false;
+    const held = heldCarts.find((entry) => entry.id === id);
+    if (!held) return false;
+    // A hold is not a reservation. Re-read every exact shelf before making it
+    // the active cart; payment still repeats authoritative server pricing/stock
+    // checks, including coupons and promotions.
+    for (const line of held.lines) {
+      const product = products.find((entry) => entry.id === line.product_id);
+      if (!product?.active || !product.stock_tracking_enabled) return false;
+      if (product.variants_enabled) {
+        const variant = variants.find((entry) => entry.id === line.variant_id && entry.product_id === product.id);
+        if (!variant?.active || variant.stock_quantity < line.qty) return false;
+      } else if (line.variant_id || product.stock_quantity < line.qty) {
+        return false;
+      }
+    }
+    // Recalculate from today's local catalogue/promotion snapshot. This removes
+    // stale display prices before the server has its final say at payment.
+    updateLines(() => held.lines.map((line) => ({ ...line })));
+    setDiscountValue(held.invoice_discount);
+    setSelectedCustomer(held.customer);
+    setCouponInput(held.coupon_code ?? "");
+    setAppliedCouponCode(null);
+    setCouponDiscountAmount(0);
+    setCouponPromotionTotal(null);
+    setCouponPreviewTotal(null);
+    appliedCouponCartKeyRef.current = null;
+    setCouponError(held.coupon_code ? "Held sale restored — apply its coupon again to revalidate live pricing." : null);
+    await removeHeldCart(id);
+    setHeldCarts((current) => current.filter((entry) => entry.id !== id));
+    return true;
+  }, [heldCarts, products, updateLines, variants]);
+
+  const cancelHeldCart = useCallback(async (id: string): Promise<void> => {
+    if (!canSell) throw new AppError("FORBIDDEN", "You cannot cancel held sales");
+    await removeHeldCart(id);
+    setHeldCarts((current) => current.filter((entry) => entry.id !== id));
+  }, [canSell]);
+
+  const totals = useMemo(() => {
+    const base = cartTotals(lines, discount);
+    // The coupon figure is only populated by the demo evaluator or the
+    // server-backed POS preview. pos_complete_sale recalculates this under a
+    // transaction, so this is a payment preview, never financial authority.
+    const coupon = Math.min(Math.max(round2(couponDiscountAmount), 0), base.subtotal);
+    const serverPromo = couponPromotionTotal == null
+      ? base.promoDiscountAmount
+      : Math.min(Math.max(round2(couponPromotionTotal), 0), base.subtotal);
+    const promotionDelta = round2(serverPromo - base.promoDiscountAmount);
+    const derivedTotal = round2(Math.max(base.total - promotionDelta, 0));
+    const total = couponPreviewTotal != null ? couponPreviewTotal : derivedTotal;
+    return {
+      ...base,
+      promoDiscountAmount: serverPromo,
+      couponDiscountAmount: coupon,
+      // When live preview includes manual/invoice rules, show the server's
+      // complete total and matching aggregate discount. Line breakdown remains
+      // advisory; completion locks and stores the same authority again.
+      discountAmount: couponPreviewTotal != null ? round2(Math.max(base.subtotal - total, 0)) : round2(base.discountAmount + promotionDelta),
+      total,
+    };
+  }, [lines, discount, couponDiscountAmount, couponPromotionTotal, couponPreviewTotal]);
   const isEmpty = lines.length === 0;
 
   // ── completion ──────────────────────────────────────────────────────────
@@ -487,23 +787,73 @@ export function PosProvider({ children }: { children: ReactNode }) {
             discount_value: l.item_discount?.value ?? 0,
           })),
           discount_type: discount.type,
-          discount_value: discount.value,
-          payments,
+        discount_value: discount.value,
+        coupon_code: appliedCouponCode,
+        promo_code: appliedCouponCode,
+        payments,
           customer_id: selectedCustomer?.id ?? null,
           customer_name: selectedCustomer?.name ?? null,
           customer_phone: selectedCustomer?.phone ?? null,
           user_id: user.id,
           user_name: user.name,
       };
+      const queueOfflineCashSale = async (): Promise<SaleModel> => {
+        if (payments.length !== 1 || payments[0]?.method !== "cash") {
+          throw new AppError("NETWORK", "Only cash sales can be captured while offline", "payment");
+        }
+        if (appliedCouponCode) {
+          throw new AppError("VALIDATION", "Coupons require an online price check and cannot be used offline", "coupon");
+        }
+        // Last-known inventory is a local safety check only. The queued payload
+        // is replayed unchanged and the server re-checks exact shelf, price,
+        // shift and permissions before it becomes a financial sale.
+        const inventory = planOfflineInventory(products, variants, input.lines, null);
+        const record = await enqueueOfflineSale(
+          input,
+          lines.map((line) => ({
+            product_id: line.product_id,
+            variant_id: line.variant_id,
+            qty: line.qty,
+            discount_type: line.item_discount?.type ?? "none",
+            discount_value: line.item_discount?.value ?? 0,
+            name_en: line.name_en,
+            name_ar: line.name_ar,
+            sku: line.sku,
+            unit_price: line.unit_price,
+          })),
+          { subtotal: totals.subtotal, discount_amount: totals.discountAmount, total: totals.total },
+          inventory.writes,
+        );
+        const display = await getOfflineSaleDisplay(record.id);
+        if (!display) throw new AppError("DB", "Offline sale was not saved");
+        setProducts(inventory.products);
+        setVariants(inventory.variants);
+        setCompletedSale(display);
+        updateLines(() => []);
+        setDiscountValue(EMPTY_DISCOUNT);
+        removeCoupon();
+        await refreshSyncSummary();
+        return display;
+      };
+
       try {
+        if (getConnectivityStatus() === "offline") return await queueOfflineCashSale();
         const sale = await completeSaleGuarded(input);
+        reportNetworkResult("success");
         await loadCatalog();
         setCompletedSale(sale);
         updateLines(() => []);
         setDiscountValue(EMPTY_DISCOUNT);
+        removeCoupon();
         void refreshSales();
         return sale;
       } catch (err) {
+        const network = err instanceof AppError && err.code === "NETWORK";
+        if (network) {
+          reportNetworkResult("network-error");
+          return await queueOfflineCashSale();
+        }
+        reportNetworkResult("other-error");
         // Over the discount cap: nothing was written, and the cart stays exactly
         // as it is so the cashier can either send it for approval or lower the
         // discount and sell now. The draft carried here is what an approval
@@ -517,7 +867,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
         setCompleting(false);
       }
     },
-    [canSell, completing, lines, discount, refreshSales, loadCatalog, selectedCustomer, user, updateLines],
+    [appliedCouponCode, canSell, completing, lines, discount, products, variants, totals, refreshSales, refreshSyncSummary, loadCatalog, removeCoupon, selectedCustomer, user, updateLines],
   );
 
   const dismissCompleted = useCallback(() => setCompletedSale(null), []);
@@ -528,6 +878,12 @@ export function PosProvider({ children }: { children: ReactNode }) {
     () => ({
       mode,
       repository,
+      connectivity,
+      workingFromCache,
+      syncPendingCount,
+      syncErrorCount,
+      syncConflictCount,
+      retrySync,
       products,
       variants,
       loading,
@@ -547,6 +903,18 @@ export function PosProvider({ children }: { children: ReactNode }) {
       setLineDiscount,
       setDiscount,
       clearCart,
+      couponInput,
+      appliedCouponCode,
+      couponDiscountAmount,
+      couponError,
+      applyingCoupon,
+      setCouponInput,
+      applyCoupon,
+      removeCoupon,
+      heldCarts,
+      holdCurrentCart,
+      restoreHeldCart,
+      cancelHeldCart,
       completing,
       completedSale,
       completeSale,
@@ -565,6 +933,12 @@ export function PosProvider({ children }: { children: ReactNode }) {
     [
       mode,
       repository,
+      connectivity,
+      workingFromCache,
+      syncPendingCount,
+      syncErrorCount,
+      syncConflictCount,
+      retrySync,
       products,
       variants,
       loading,
@@ -583,6 +957,17 @@ export function PosProvider({ children }: { children: ReactNode }) {
       setLineDiscount,
       setDiscount,
       clearCart,
+      couponInput,
+      appliedCouponCode,
+      couponDiscountAmount,
+      couponError,
+      applyingCoupon,
+      applyCoupon,
+      removeCoupon,
+      heldCarts,
+      holdCurrentCart,
+      restoreHeldCart,
+      cancelHeldCart,
       completing,
       completedSale,
       completeSale,

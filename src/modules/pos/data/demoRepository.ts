@@ -11,7 +11,7 @@ import { getDemoRepository } from "@/modules/products/data/demoRepository";
 import { applyDemoAdjustment } from "@/modules/inventory/data/demoRepository";
 import { variantCost, variantLabel } from "@/modules/products/variants";
 import { getWebsiteRepository } from "@/modules/online/data";
-import { selectAutomaticPromotion } from "@/modules/online/services/pricing";
+import { evaluateCartPricing } from "@/modules/online/services/pricing";
 import { getDemoShiftRepository } from "@/modules/shifts/data/demoRepository";
 import { safeStorage } from "@/modules/products/data/demoSeed";
 import { round2, validateDiscount } from "../services/posMath";
@@ -227,8 +227,11 @@ export class DemoSalesRepository implements SalesRepository {
         });
       }
 
-      // Recalculate automatic promotions across the entire cart
-      let autoPromoResult: any = null;
+      // Demo follows the same combined promotion/coupon evaluator as the
+      // storefront preview: coupon mode is explicit (only input code applies),
+      // a goods coupon replaces a non-stackable automatic offer, and two
+      // stackable offers remain stackable. The live RPC repeats this under lock.
+      let autoPromoResult: { promotion: NonNullable<typeof promotionSnapshot>["promotions"][number]; discount: number; evaluation: { lineDiscounts: number[]; lineRewardedQty: number[]; reward_qty: number | null; rewardedUnits: unknown[] } } | null = null;
       if (promotionSnapshot) {
         const subtotalGross = round2(items.reduce((sum, item) => sum + (item.gross_total ?? 0), 0));
         const pricingLines = items.map((item) => {
@@ -243,14 +246,36 @@ export class DemoSalesRepository implements SalesRepository {
             line_total: item.gross_total ?? 0,
           };
         });
-        autoPromoResult = selectAutomaticPromotion(
-          promotionSnapshot.promotions,
-          promotionTargets,
-          pricingLines,
-          subtotalGross,
-          new Date(),
-          "pos",
-        );
+        const pricing = evaluateCartPricing({
+          lines: pricingLines,
+          subtotal: subtotalGross,
+          promoCode: input.coupon_code ?? input.promo_code ?? null,
+          coupons: [],
+          promotions: promotionSnapshot.promotions,
+          targetsByPromotion: promotionTargets,
+          usageFor: () => ({ customerUses: 0, hasPriorOrder: false }),
+          customerKey: input.customer_phone ?? null,
+          zone: null,
+          legacy: { fee: 0, minimum: 0, threshold: 0 },
+          deliveryType: "pickup",
+          channel: "pos",
+        });
+        if (!pricing.ok) throw new AppError("VALIDATION", pricing.message, "coupon");
+        const winner = pricing.pricing.winningPromotionId
+          ? promotionSnapshot.promotions.find((promotion) => promotion.id === pricing.pricing.winningPromotionId) ?? null
+          : null;
+        if (winner) {
+          autoPromoResult = {
+            promotion: winner,
+            discount: pricing.pricing.totalDiscount,
+            evaluation: {
+              lineDiscounts: pricing.pricing.lines.map((line) => line.discount_amount ?? 0),
+              lineRewardedQty: pricing.pricing.lines.map((line) => line.rewarded_qty ?? 0),
+              reward_qty: pricing.pricing.winningRewardQty ?? null,
+              rewardedUnits: pricing.pricing.autoPromotionRewardedUnits ?? pricing.pricing.couponPromotionRewardedUnits ?? [],
+            },
+          };
+        }
       }
 
       for (let idx = 0; idx < items.length; idx++) {
@@ -339,23 +364,30 @@ export class DemoSalesRepository implements SalesRepository {
       // cash-change summary; it is not persisted on the payment record.
       const cashTendered: number[] = [];
       const payments: Sale["payments"] = input.payments.map((p, i) => {
-        // The till takes cash and InstaPay. Cash on delivery is only ever
+        // The till takes cash, Visa and InstaPay. Cash on delivery is only ever
         // attached to a sale an approved website order created, and only this
         // flow sets `source`, so the till's behaviour is unchanged.
         if (p.method === "cod" && input.source !== "online") {
           throw new AppError("VALIDATION", `Invalid payment method: ${p.method}`, "payment");
         }
-        if (p.method !== "cash" && p.method !== "instapay" && p.method !== "cod") {
+        if (p.method !== "cash" && p.method !== "visa" && p.method !== "instapay" && p.method !== "cod") {
           throw new AppError("VALIDATION", `Invalid payment method: ${p.method}`, "payment");
         }
         const amount = round2(p.amount);
         if (!Number.isFinite(amount) || amount <= 0) {
           throw new AppError("VALIDATION", "Payment amount must be greater than zero", "payment");
         }
-        // Cash is always paid; cash on delivery never is (the money has not been
-        // collected — it arrives with the courier); InstaPay may be either.
+        // Cash and an approved card terminal receipt are paid at the till;
+        // cash-on-delivery never is (the courier collects it), while InstaPay
+        // may still await confirmation. This matches the live RPC exactly.
         const status =
-          p.method === "cash" ? "paid" : p.method === "cod" ? "pending" : p.status === "paid" ? "paid" : "pending";
+          p.method === "cash" || p.method === "visa"
+            ? "paid"
+            : p.method === "cod"
+              ? "pending"
+              : p.status === "paid"
+                ? "paid"
+                : "pending";
         if (p.method === "cash") {
           const t = round2(p.tendered ?? amount);
           if (!Number.isFinite(t) || t < amount) {

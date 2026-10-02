@@ -117,6 +117,11 @@ export function SaleCompletedModal() {
               </span>
             ))}
           </div>
+          {completedSale.offline_sync_status && completedSale.offline_sync_status !== "synced" ? (
+            <p className="mt-2 rounded-lg bg-amber-50 px-2 py-1 text-xs font-bold text-amber-900" data-testid="offline-sale-pending">
+              {t("pos.localReceiptPending")}
+            </p>
+          ) : null}
           {completedSale.change != null ? (
             <p className="mt-1 text-xs font-semibold text-stone-500">
               {t("pos.change")}: {num(completedSale.change, 2)}

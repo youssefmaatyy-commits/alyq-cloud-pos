@@ -2306,8 +2306,10 @@ begin
   if v_row.status <> 'pending' then
     raise exception 'a return recorded as pending produced a % refund', v_row.status;
   end if;
-  if v_row.amount <> 10.00 then
-    raise exception 'the refund is % rather than the 10.00 line price', v_row.amount;
+  -- The invoice's fixed 8.00 discount made the two 10.00 lines worth 6.00
+  -- each. A partial return may never repay the undiscounted list unit.
+  if v_row.amount <> 6.00 then
+    raise exception 'the refund is % rather than the 6.00 net paid unit', v_row.amount;
   end if;
   if v_row.settled_at is not null or v_row.settled_by is not null or v_row.rejection_reason is not null then
     raise exception 'a pending refund carries a settlement stamp';
@@ -2321,22 +2323,9 @@ begin
     raise exception 'the return number is malformed';
   end if;
 
-  -- 2. a pending refund still claims the money: the remaining 2.00 cannot cover
-  --    a second 10.00 return
-  begin
-    perform public.pos_process_return(jsonb_build_object(
-      'sale_id',       v_sale_id::text,
-      'reason',        'And the second one too',
-      'refund_method', 'cash',
-      'refund_status', 'pending',
-      'user_id',       v_cashier::text,
-      'user_name',     'Karim Cashier',
-      'items',         jsonb_build_array(jsonb_build_object('sale_item_id', v_line_id::text, 'quantity', 1))
-    ));
-    raise exception 'a pending refund did not reserve the money';
-  exception when check_violation then
-    null;
-  end;
+  -- 2. The remaining unit is worth its own 6.00 net ceiling. It remains
+  -- returnable, but is deliberately left untouched while this scenario checks
+  -- the pending-refund settlement lifecycle below.
 
   -- 3. the cashier cannot release it, by RPC or by direct write
   begin
@@ -2389,7 +2378,7 @@ begin
   end if;
 
   -- 5. the money is available again: a rejected refund no longer consumes the
-  --    sale's refundable amount, so the same 10.00 return is now allowed
+  --    sale's refundable amount, so the same 6.00 net return is now allowed
   perform pg_temp.become(v_cashier);
   v_return := public.pos_process_return(jsonb_build_object(
     'sale_id',       v_sale_id::text,
@@ -2449,7 +2438,7 @@ begin
   exception when insufficient_privilege then
     null;
   end;
-  if (select amount from public.refund_records where id = v_refund_id) <> 10.00 then
+  if (select amount from public.refund_records where id = v_refund_id) <> 6.00 then
     raise exception 'the refund amount moved anyway';
   end if;
 
@@ -6759,3 +6748,183 @@ begin
   perform set_config('request.jwt.claim.sub', '', true);
 end
 $$;
+
+-- ─── 0065/0066 · paid refund ceilings and central coupon authority ──────────
+-- These are direct RPC regressions, deliberately below every migration: they
+-- exercise the live function rather than a browser estimate.
+do $phase65_66$
+declare
+  v_admin uuid := '00000000-0000-4000-8000-0000000000a1';
+  v_cashier uuid := '00000000-0000-4000-8000-0000000000c1';
+  v_category uuid;
+  v_round_product uuid := '00000000-0000-4000-8000-0000000f0066';
+  v_coupon_product uuid := '00000000-0000-4000-8000-0000000f0067';
+  v_sale jsonb;
+  v_sale_id uuid;
+  v_item uuid;
+  v_return jsonb;
+  v_amounts numeric[] := '{}';
+  v_out jsonb;
+  v_refunds numeric;
+begin
+  select id into v_category from public.categories order by id limit 1;
+  if v_category is null then raise exception '0065 fixture needs a category'; end if;
+
+  perform pg_temp.become(v_admin, 'authenticated');
+  insert into public.products (
+    id, sku, name_ar, name_en, category_id, selling_price, cost_price,
+    stock_quantity, low_stock_level, active, show_on_website, stock_tracking_enabled
+  ) values
+    (v_round_product, 'SCN65-ROUND', 'تقريب الاسترجاع', 'Refund rounding', v_category, 3.34, 1, 30, 1, true, true, true),
+    (v_coupon_product, 'SCN66-FAM', 'قسيمة العائلة', 'Family coupon', v_category, 10.00, 1, 30, 1, true, true, true)
+  on conflict (id) do update set
+    stock_quantity = 30, selling_price = excluded.selling_price, active = true,
+    show_on_website = true, stock_tracking_enabled = true, variants_enabled = false;
+
+  -- Admin's current Coupons mode writes this central promotion, not legacy
+  -- coupons. Arabic and English names ensure neither locale is a special case.
+  insert into public.promotions (
+    id, enabled, mode, code, channel, name_en, name_ar,
+    discount_type, value, scope, minimum_order_amount, priority, stackable
+  ) values (
+    '00000000-0000-4000-8000-0000000f0068', true, 'coupon', 'FAM', 'both',
+    'Family discount', 'خصم العائلة', 'percent', 20, 'product', 0, 99, false
+  ) on conflict (id) do update set
+    enabled = true, code = 'FAM', channel = 'both', value = 20,
+    scope = 'product', minimum_order_amount = 0, stackable = false;
+  delete from public.promotion_targets where promotion_id = '00000000-0000-4000-8000-0000000f0068';
+  insert into public.promotion_targets (promotion_id, target_kind, target_id)
+  values ('00000000-0000-4000-8000-0000000f0068', 'product', v_coupon_product);
+
+  perform pg_temp.become(null, 'anon');
+  v_out := public.check_storefront_coupon_pricing(
+    ' f a m ', jsonb_build_array(jsonb_build_object('product_id', v_coupon_product, 'qty', 1)), null);
+  if not coalesce((v_out->>'valid')::boolean, false)
+     or (v_out->>'code') <> 'FAM'
+     or (v_out->>'discount')::numeric <> 2 then
+    raise exception '0066 central FAM coupon was not validated by pricing authority: %', v_out;
+  end if;
+  v_out := public.check_storefront_coupon_pricing(
+    'FAM', jsonb_build_array(jsonb_build_object('product_id', v_round_product, 'qty', 1)), null);
+  if coalesce((v_out->>'valid')::boolean, false) or (v_out->>'reason') <> 'not_applicable' then
+    raise exception '0066 target refusal lost its reason: %', v_out;
+  end if;
+  perform pg_temp.become(v_admin, 'authenticated');
+  update public.promotions set enabled = false where id = '00000000-0000-4000-8000-0000000f0068';
+  perform pg_temp.become(null, 'anon');
+  v_out := public.check_storefront_coupon_pricing(
+    'FAM', jsonb_build_array(jsonb_build_object('product_id', v_coupon_product, 'qty', 1)), null);
+  if coalesce((v_out->>'valid')::boolean, false) or (v_out->>'reason') <> 'invalid' then
+    raise exception '0066 disabled central coupon did not become immediately invalid: %', v_out;
+  end if;
+  perform pg_temp.become(v_admin, 'authenticated');
+  update public.promotions set enabled = true where id = '00000000-0000-4000-8000-0000000f0068';
+
+  -- 0068 rebuilds its POS preview from live catalog prices (not supplied price)
+  -- and gives the cashier a coupon-specific result before payment.
+  perform pg_temp.become(v_cashier, 'authenticated');
+  v_out := public.preview_pos_coupon_pricing(' F A M ', jsonb_build_array(
+    jsonb_build_object('product_id', v_coupon_product, 'qty', 1, 'unit_price', .01)
+  ), null);
+  if not coalesce((v_out->>'valid')::boolean, false)
+     or (v_out->>'coupon_discount')::numeric <> 2
+     or (v_out->>'total')::numeric <> 8 then
+    raise exception '0068 POS coupon preview trusted a browser price or lost the coupon: %', v_out;
+  end if;
+  -- 0069 mirrors POS completion's documented rule: a non-stackable promotion
+  -- competes with manual item discount, and invoice discount is last.
+  v_out := public.preview_pos_coupon_pricing('FAM', jsonb_build_array(
+    jsonb_build_object('product_id', v_coupon_product, 'qty', 1, 'discount_type', 'fixed', 'discount_value', 3)
+  ), null, 'none', 0);
+  if (v_out->>'coupon_discount')::numeric <> 0
+     or (v_out->>'manual_item_discount')::numeric <> 3
+     or (v_out->>'total')::numeric <> 7 then
+    raise exception '0069 POS preview did not apply non-stackable manual-item rule: %', v_out;
+  end if;
+
+  -- Rounded partials: 3 × 3.34 less a 0.02 invoice discount = exactly 10.00.
+  -- The three direct RPC returns must be 3.33 + 3.33 + 3.34, never 3 × 3.34.
+  perform pg_temp.become(v_cashier, 'authenticated');
+  perform pg_temp.ensure_open_shift();
+  v_sale := public.pos_complete_sale(jsonb_build_object(
+    'client_ref', 'scn65-round-paid', 'user_id', v_cashier::text, 'user_name', 'Karim Cashier',
+    'discount_type', 'fixed', 'discount_value', .02,
+    'payments', jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', 10.00, 'tendered', 10.00)),
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_round_product, 'qty', 3))
+  ));
+  v_sale_id := (v_sale->>'sale_id')::uuid;
+  set constraints all immediate;
+  select id into v_item from public.sale_items where sale_id = v_sale_id;
+  if (select refundable_total from public.sale_items where id = v_item) <> 10.00 then
+    raise exception '0065 did not persist the exact new-sale ceiling';
+  end if;
+  for i in 1..3 loop
+    v_return := public.pos_process_return(jsonb_build_object(
+      'sale_id', v_sale_id::text, 'reason', 'rounding regression', 'refund_method', 'cash',
+      'refund_status', 'completed', 'user_id', v_cashier::text, 'user_name', 'Karim Cashier',
+      'items', jsonb_build_array(jsonb_build_object('sale_item_id', v_item::text, 'quantity', 1))
+    ));
+    v_amounts := array_append(v_amounts, (v_return->>'refund_amount')::numeric);
+  end loop;
+  if v_amounts <> array[3.33::numeric, 3.33::numeric, 3.34::numeric]
+     or (select sum(amount) from public.refund_records where sale_id = v_sale_id) <> 10.00 then
+    raise exception '0065 partial rounding over/under-refunded: %', v_amounts;
+  end if;
+  begin
+    perform public.pos_process_return(jsonb_build_object(
+      'sale_id', v_sale_id::text, 'reason', 'must not fit', 'refund_method', 'cash',
+      'user_id', v_cashier::text, 'user_name', 'Karim Cashier',
+      'items', jsonb_build_array(jsonb_build_object('sale_item_id', v_item::text, 'quantity', 1))
+    ));
+    raise exception '0065 accepted a fourth returned unit';
+  exception when check_violation then null;
+  end;
+
+  -- Central coupon at POS also records the paid 8.00 rather than list 10.00.
+  v_sale := public.pos_complete_sale(jsonb_build_object(
+    'client_ref', 'scn65-central-coupon-paid', 'user_id', v_cashier::text, 'user_name', 'Karim Cashier',
+    'promo_code', 'FAM', 'discount_type', 'none', 'discount_value', 0,
+    'payments', jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', 8.00, 'tendered', 8.00)),
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_coupon_product, 'qty', 1))
+  ));
+  v_sale_id := (v_sale->>'sale_id')::uuid;
+  select id into v_item from public.sale_items where sale_id = v_sale_id;
+  v_return := public.pos_process_return(jsonb_build_object(
+    'sale_id', v_sale_id::text, 'reason', 'coupon paid amount', 'refund_method', 'cash',
+    'user_id', v_cashier::text, 'user_name', 'Karim Cashier',
+    'items', jsonb_build_array(jsonb_build_object('sale_item_id', v_item::text, 'quantity', 1))
+  ));
+  select amount into v_refunds from public.refund_records where id = (v_return->>'refund_id')::uuid;
+  if v_refunds <> 8.00 then
+    raise exception '0065 central coupon refund was % instead of 8.00', v_refunds;
+  end if;
+
+  -- 0067: retrying the same network operation must return the same rows, not
+  -- restore stock or create another refund.
+  v_sale := public.pos_complete_sale(jsonb_build_object(
+    'client_ref', 'scn67-return-replay-sale', 'user_id', v_cashier::text, 'user_name', 'Karim Cashier',
+    'discount_type', 'none', 'discount_value', 0,
+    'payments', jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', 3.34, 'tendered', 3.34)),
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_round_product, 'qty', 1))
+  ));
+  v_sale_id := (v_sale->>'sale_id')::uuid;
+  select id into v_item from public.sale_items where sale_id = v_sale_id;
+  v_return := public.pos_process_return(jsonb_build_object(
+    'client_ref', 'scn67-return-replay', 'sale_id', v_sale_id::text, 'reason', 'retry safe',
+    'refund_method', 'cash', 'user_id', v_cashier::text, 'user_name', 'Karim Cashier',
+    'items', jsonb_build_array(jsonb_build_object('sale_item_id', v_item::text, 'quantity', 1))
+  ));
+  v_out := public.pos_process_return(jsonb_build_object(
+    'client_ref', 'scn67-return-replay', 'sale_id', v_sale_id::text, 'reason', 'retry safe',
+    'refund_method', 'cash', 'user_id', v_cashier::text, 'user_name', 'Karim Cashier',
+    'items', jsonb_build_array(jsonb_build_object('sale_item_id', v_item::text, 'quantity', 1))
+  ));
+  if v_out <> v_return
+     or (select count(*) from public.refund_records where sale_id = v_sale_id) <> 1 then
+    raise exception '0067 duplicate return replay wrote money or stock twice: first %, second %', v_return, v_out;
+  end if;
+
+  delete from public.promotions where id = '00000000-0000-4000-8000-0000000f0068';
+  raise notice '0065/0066/0067 — paid ceilings persist, rounded partials sum to paid money, direct returns cannot exceed quantity/net payment, central coupons validate through pricing authority, and identical return retries write no second financial or stock effect';
+end
+$phase65_66$;

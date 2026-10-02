@@ -649,21 +649,23 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
   // ── coupons ───────────────────────────────────────────────────────────────
 
   /**
-   * Ask the authoritative side about one code, and apply the answer.
-   *
-   * The cart sends its own subtotal and product/category ids; the reply is
-   * advisory, because checkout recomputes everything from the catalogue. Keeping
-   * the check server-side is what stops a visitor reading the code list.
+   * Ask the pricing authority about one code and apply the answer. The complete
+   * cart identity (including variant and quantity) travels with this advisory
+   * check, so Admin's central coupon promotions and legacy coupons follow the
+   * same eligibility path as checkout.
    */
   const verifyCoupon = useCallback(
-    async (rawCode: string, currentSubtotal: number, currentEntries: CartEntry[]) => {
+    async (rawCode: string, currentEntries: CartEntry[]) => {
       const code = normalizeCouponCode(rawCode);
       if (!code) return { valid: false as const, reason: "not_found" as CouponCheckReason };
       const result = await verifyCode({
         code,
-        subtotal: round2(currentSubtotal),
-        productIds: currentEntries.map((entry) => entry.product.id),
-        categoryIds: currentEntries.map((entry) => entry.product.category_id ?? ""),
+        lines: currentEntries.map((entry) => ({
+          product_id: entry.product.id,
+          variant_id: entry.variant?.id ?? null,
+          qty: entry.quantity,
+        })),
+        customerKey: customer?.id ?? null,
       });
       if (result.valid) {
         setCouponCode(result.code);
@@ -678,7 +680,7 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
       }
       return result;
     },
-    [verifyCode],
+    [customer?.id, verifyCode],
   );
 
   const applyCoupon = useCallback(
@@ -695,7 +697,7 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
       setApplyingCoupon(true);
       setCouponError(null);
       try {
-        const result = await verifyCoupon(raw, subtotal, entries);
+        const result = await verifyCoupon(raw, entries);
         if (result.valid) setCouponInput(result.code);
         return result.valid;
       } catch (caught) {
@@ -707,7 +709,7 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
         setApplyingCoupon(false);
       }
     },
-    [couponInput, entries, isEmpty, subtotal, verifyCoupon],
+    [couponInput, entries, isEmpty, verifyCoupon],
   );
 
   const clearCoupon = useCallback(() => {
@@ -725,7 +727,7 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!couponCode || subtotal <= 0) return;
     const timer = window.setTimeout(() => {
-      recheck.current = verifyCoupon(couponCode, subtotal, entries).catch(() => null);
+      recheck.current = verifyCoupon(couponCode, entries).catch(() => null);
     }, 350);
     return () => window.clearTimeout(timer);
   }, [couponCode, entries, subtotal, verifyCoupon]);

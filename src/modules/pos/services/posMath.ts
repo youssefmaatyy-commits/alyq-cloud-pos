@@ -60,6 +60,8 @@ export interface CartTotals {
   itemDiscountAmount: number;
   /** Total manual invoice-level discount. */
   invoiceDiscountAmount: number;
+  /** Explicit coupon discount, populated only after a coupon preview is accepted. */
+  couponDiscountAmount?: number;
   /** Backward-compatible alias for total discount (promos + manual item + manual invoice). */
   discountAmount: number;
   total: number;

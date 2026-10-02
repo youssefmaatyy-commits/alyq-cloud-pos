@@ -20,8 +20,7 @@ import {
 } from "@/modules/approvals/services/approvalService";
 import { getCurrentUser } from "@/modules/inventory/permissions";
 import { getSalesRepository } from "@/modules/pos/data";
-import { getOnlineOrdersRepository } from "@/modules/online/data";
-import { paidUnitOfSale } from "../validation";
+import { getRemainingReturnableQuantities, refundAllocationForSale, refundAmountForQuantity } from "../validation";
 import { recordAudit } from "@/modules/audit";
 import { AppError } from "@/modules/products/data/repository";
 
@@ -119,30 +118,24 @@ async function estimateRefundAmount(input: CreateReturnInput): Promise<number> {
   try {
     const sale = await getSalesRepository().getSale(input.sale_id);
     if (!sale) return 0;
-    // An online-origin sale refunds at the snapshot's paid prices, like the
-    // write path does — otherwise the cap pre-check and the recorded refund
-    // would disagree about the same discounted line.
-    let paidPrices: { product_id: string; variant_id: string | null; discounted_unit_price: number | null }[] | null =
-      null;
-    if (sale.source === "online") {
-      try {
-        const origin = await getOnlineOrdersRepository().getOrderBySaleId(sale.id);
-        paidPrices =
-          origin?.items.map((item) => ({
-            product_id: item.product_id,
-            variant_id: item.variant_id ?? null,
-            discounted_unit_price: item.discounted_unit_price ?? null,
-          })) ?? null;
-      } catch {
-        paidPrices = null;
-      }
-    }
+    const existingReturns = await getReturnRepository().listReturns();
+    const returnable = getRemainingReturnableQuantities(sale, existingReturns);
+    const allocation = refundAllocationForSale(sale);
+    if (!allocation.available) return 0;
+    const seen = new Set<string>();
     return input.items.reduce((sum, item) => {
-      const line = sale.items.find((l) => l.id === item.sale_item_id);
+      if (seen.has(item.sale_item_id)) return sum;
+      seen.add(item.sale_item_id);
+      const line = sale.items.find((candidate) => candidate.id === item.sale_item_id);
       if (!line) return sum;
-      const unit = paidUnitOfSale(sale, line, paidPrices);
-      const qty = Math.max(0, Math.trunc(Number(item.quantity) || 0));
-      return sum + unit * qty;
+      const requested = Math.max(0, Math.trunc(Number(item.quantity) || 0));
+      const already = line.quantity - (returnable.get(line.id) ?? 0);
+      return sum + refundAmountForQuantity(
+        allocation.totals.get(line.id) ?? 0,
+        line.quantity,
+        already,
+        requested,
+      );
     }, 0);
   } catch {
     // A sale that cannot be read is the repository's problem to raise, not the

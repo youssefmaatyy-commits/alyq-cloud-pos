@@ -619,10 +619,15 @@ export type CouponCheckReason = (typeof COUPON_CHECK_REASONS)[number];
 
 export interface CouponCheckInput {
   code: string;
-  /** Merchandise total after campaign pricing, before any discount. */
-  subtotal: number;
-  productIds: string[];
-  categoryIds: string[];
+  /** Exact current cart identity; live validation prices these catalogue lines. */
+  lines?: { product_id: string; qty: number; variant_id?: string | null }[];
+  /**
+   * Deprecated compatibility fields for non-cart callers. StoreCart always
+   * passes `lines`, so target and quantity-aware rules use the pricing source.
+   */
+  subtotal?: number;
+  productIds?: string[];
+  categoryIds?: string[];
   /** Store account id, else `phone:<digits>` — for per-customer rules. Null skips them (advisory). */
   customerKey?: string | null;
 }

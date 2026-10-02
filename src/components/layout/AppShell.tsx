@@ -22,7 +22,6 @@ import {
   GlobeIcon,
   GridIcon,
   MenuIcon,
-  PlusCircleIcon,
   ShoppingCartIcon,
   ReportIcon,
 } from "@/components/ui";
@@ -342,14 +341,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               ? t("nav.onlineOrdersBadgePayment", { count: online.counts.needs_payment })
               : t("nav.onlineOrdersBadge", { count: online.counts.pending })
           }
-          collapsed={navCollapsed}
-        />
-        <NavItem
-          to="/online/discounts"
-          icon={<PlusCircleIcon />}
-          label={t("online.promos.title")}
-          visible={canOpen("/online/discounts")}
-          active={location.pathname === "/online/discounts" || location.pathname.startsWith("/online/discounts/")}
           collapsed={navCollapsed}
         />
         <NavItem to="/reports" icon={<ReportIcon />} label={t("nav.reports")} visible={canOpen("/reports")} collapsed={navCollapsed} />
