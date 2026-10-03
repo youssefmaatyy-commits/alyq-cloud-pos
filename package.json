@@ -24,7 +24,8 @@
     "mobile:sync": "cap sync",
     "mobile:android": "npm run mobile:build && cap open android",
     "mobile:ios": "npm run mobile:build && cap open ios",
-    "mobile:doctor": "cap doctor"
+    "mobile:doctor": "cap doctor",
+    "production:preflight": "node scripts/production-preflight.mjs"
   },
   "dependencies": {
     "@capacitor/app": "^8.0.1",

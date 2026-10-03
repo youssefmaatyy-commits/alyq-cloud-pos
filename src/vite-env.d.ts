@@ -6,6 +6,8 @@ interface ImportMetaEnv {
   readonly VITE_CURRENCY?: string;
   readonly VITE_STOREFRONT_URL?: string;
   readonly VITE_DEMO_SEED?: string;
+  readonly VITE_APP_VERSION?: string;
+  readonly VITE_BUILD_SHA?: string;
 }
 
 interface ImportMeta {
