@@ -19,12 +19,12 @@ interface State {
  * The last line of defence: a render error anywhere below this component shows
  * a screen instead of a blank page, and says what to do about it.
  *
- * What it does NOT show is the error. The message and the stack stay in the
- * console, where a developer can read them, because both are attacker-readable
- * here: a stack names the files and libraries in use, and a message can carry
- * whatever the failing call was holding — a Supabase URL, a query, a fragment of
- * a token. An earlier version of this screen printed `error.message` and
- * `error.stack` into a `<pre>` for anyone to read and copy.
+ * What it does NOT show is the error. Development builds keep the detail in the
+ * local console for diagnosis. Production builds emit only a fixed message:
+ * browser consoles and collected device logs are not trusted secret stores, and
+ * an exception may contain a URL, query, customer value or token fragment. An
+ * earlier version of this screen printed `error.message` and `error.stack` into
+ * a `<pre>` for anyone to read and copy.
  *
  * Both languages are on the screen at once rather than translated, because the
  * boundary has to work when the thing that broke is the i18n provider itself.
@@ -40,10 +40,14 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    // The one place the detail is allowed to go. Nothing here is sent anywhere:
-    // there is no error reporter in this project, and inventing one is not this
-    // component's business.
-    console.error("ErrorBoundary caught an error:", error, errorInfo);
+    // There is no error reporter in this project. Keep diagnostic detail local
+    // to development; production browser/device logs receive no exception
+    // object, stack, URL, query, customer value, or token fragment.
+    if (import.meta.env.DEV) {
+      console.error("ErrorBoundary caught an error:", error, errorInfo);
+    } else {
+      console.error("ErrorBoundary caught an error; details suppressed.");
+    }
   }
 
   render() {

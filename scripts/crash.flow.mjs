@@ -13,12 +13,11 @@
  *
  * ONE DELIBERATE DEPARTURE FROM THE OTHER SUITES: they fail on any
  * `console.error`, because in a healthy run nothing should log one. This suite
- * expects errors — sending the detail to the console and nowhere else is the
- * behaviour under test. So it asserts the console output is the EXPECTED output
- * rather than that it is empty, and it asserts the same detail is absent from
- * the DOM. Both halves matter: a boundary that logged nothing would be hiding
- * the crash from developers, and one that rendered the message would be handing
- * a token or a stack to whoever is at the screen.
+ * expects errors — React reports the deliberate crash and the boundary emits a
+ * fixed production-safe message. So it asserts the console output is expected,
+ * the boundary's own line contains no detail, and the same detail is absent from
+ * the DOM. Development builds retain full local diagnostics, while production
+ * browser/device logs are not treated as a secret store.
  *
  * Run it through the E2E runner (`npm run test:e2e crash`) or directly:
  *   node scripts/crash.flow.mjs
@@ -180,13 +179,18 @@ check(
   leaked.length === 0 ? `${afterCrash.length} visible characters, none of them the error` : `⚠ leaked: ${leaked.join(", ")}`,
 );
 
-// ── STEP 5 · but the detail does reach the console, the only place it may go
-const logged = consoleErrors.join("\n");
+// ── STEP 5 · production boundary logging is fixed and redacted ────────────
+// React's development runtime may independently report the deliberate thrown
+// error in this harness. The application-owned boundary line must never do so.
+const boundaryLogs = consoleErrors.filter((line) => /ErrorBoundary caught/.test(line));
+const boundaryLoggedDetail = boundaryLogs.some((line) =>
+  line.includes(mod.SECRET) || line.includes(mod.LOCATION) || /render failed/.test(line),
+);
 check(
   5,
-  "The detail is logged for a developer instead",
-  consoleErrors.length > 0 && logged.includes(mod.SECRET),
-  `${consoleErrors.length} console.error call(s) · secret present in the log: ${logged.includes(mod.SECRET)}`,
+  "Production boundary logging suppresses crash detail",
+  boundaryLogs.length > 0 && !boundaryLoggedDetail && boundaryLogs.every((line) => /details suppressed/.test(line)),
+  `${boundaryLogs.length} boundary log(s) · secret/detail present: ${boundaryLoggedDetail}`,
 );
 
 // ── STEP 6 · the reload button is wired to a real reload ──────────────────
