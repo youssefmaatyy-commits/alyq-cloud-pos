@@ -4,6 +4,11 @@ import { AppError, toAppError } from "@/modules/products/data/repository";
 import type { StockMovement } from "../types";
 import type { AdjustStockArgs, InventoryRepository } from "./repository";
 import { getSupabaseClient } from "@/lib/supabase/client";
+import {
+  readActiveBranchStock,
+  withActiveBranchProductStock,
+  withActiveBranchVariantStock,
+} from "./branchStock";
 
 interface MovementRow {
   id: string;
@@ -40,6 +45,8 @@ interface VariantRow {
   color_hex: string | null;
   size: number | string | null;
   size_label: string | null;
+  size_value: string | null;
+  size_sort_order: number | string | null;
   image_url: string | null;
   price_override: number | string | null;
   cost_override: number | string | null;
@@ -68,6 +75,8 @@ function mapVariant(row: VariantRow): ProductVariant {
     color_hex: row.color_hex ?? null,
     size: numberOrNull(row.size),
     size_label: row.size_label ?? null,
+    size_value: row.size_value ?? row.size_label ?? (row.size == null ? null : String(row.size)),
+    size_sort_order: toNumber(row.size_sort_order),
     image_url: row.image_url ?? null,
     price_override: numberOrNull(row.price_override),
     cost_override: numberOrNull(row.cost_override),
@@ -131,46 +140,40 @@ export class SupabaseInventoryRepository implements InventoryRepository {
   async listProducts(): Promise<Product[]> {
     const client = getSupabaseClient();
     if (!client) throw new AppError("NOT_CONFIGURED");
-    const { data, error } = await client.from("products").select(PRODUCTS_SELECT);
-    if (error) throw toAppError(error);
-    return (data as Product[] | null) ?? [];
+    const [catalogue, stock] = await Promise.all([
+      client.from("products").select(PRODUCTS_SELECT),
+      readActiveBranchStock(client),
+    ]);
+    if (catalogue.error) throw toAppError(catalogue.error);
+    return ((catalogue.data as Product[] | null) ?? [])
+      .map((product) => withActiveBranchProductStock(product, stock));
   }
 
-  async updateProductStock(productId: string, patch: ProductPatch): Promise<Product> {
-    const client = getSupabaseClient();
-    if (!client) throw new AppError("NOT_CONFIGURED");
-    const { data, error } = await client
-      .from("products")
-      .update(patch)
-      .eq("id", productId)
-      .select(PRODUCTS_SELECT)
-      .single();
-    if (error) throw toAppError(error);
-    return data as Product;
+  async updateProductStock(_productId: string, _patch: ProductPatch): Promise<Product> {
+    throw new AppError(
+      "VALIDATION",
+      "Live stock is branch-authoritative; use the atomic inventory adjustment operation",
+    );
   }
 
   async listVariants(): Promise<ProductVariant[]> {
     const client = getSupabaseClient();
     if (!client) throw new AppError("NOT_CONFIGURED");
-    const { data, error } = await client.from("product_variants").select(VARIANTS_SELECT);
-    if (error) throw toAppError(error);
-    return ((data as VariantRow[] | null) ?? []).map(mapVariant);
+    const [variants, stock] = await Promise.all([
+      client.from("product_variants").select(VARIANTS_SELECT),
+      readActiveBranchStock(client),
+    ]);
+    if (variants.error) throw toAppError(variants.error);
+    return ((variants.data as VariantRow[] | null) ?? [])
+      .map(mapVariant)
+      .map((variant) => withActiveBranchVariantStock(variant, stock));
   }
 
-  async updateVariantStock(variantId: string, quantity: number): Promise<ProductVariant> {
-    const client = getSupabaseClient();
-    if (!client) throw new AppError("NOT_CONFIGURED");
-    const { data, error } = await client
-      .from("product_variants")
-      // The rollup trigger on `product_variants` moves the product total; this
-      // statement must never touch `products.stock_quantity` itself, and the
-      // database would refuse it if it did.
-      .update({ stock_quantity: Math.max(0, Math.trunc(quantity)) })
-      .eq("id", variantId)
-      .select(VARIANTS_SELECT)
-      .single();
-    if (error) throw toAppError(error);
-    return mapVariant(data as VariantRow);
+  async updateVariantStock(_variantId: string, _quantity: number): Promise<ProductVariant> {
+    throw new AppError(
+      "VALIDATION",
+      "Live variant stock is branch-authoritative; use the atomic inventory adjustment operation",
+    );
   }
 
   async listMovements(): Promise<StockMovement[]> {

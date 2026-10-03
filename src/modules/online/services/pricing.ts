@@ -31,6 +31,7 @@ import type {
   PromotionChannel,
   PromotionOfferType,
 } from "../types";
+import { storeSizeLabel } from "./variantLabel";
 
 export function isCouponPromotion(
   promo: { mode?: string | null; code?: string | null } | null | undefined
@@ -208,6 +209,8 @@ export interface StoreVariant {
   color_hex: string | null;
   size: number | null;
   size_label: string | null;
+  size_value?: string | null;
+  size_sort_order?: number;
   image_url: string | null;
   /** Null → the product's own selling_price (campaigns may then apply). */
   price_override: number | null;
@@ -239,17 +242,19 @@ export function variantUnitPriceOf(
  * the catalogue's `compareVariants`, kept here because the customer side never
  * imports the catalogue's internals.
  */
-export function sortStoreVariants<T extends Pick<StoreVariant, "color_key" | "size" | "size_label" | "sort_order" | "sku">>(
+const storeSizeCollator = new Intl.Collator(undefined,{numeric:true,sensitivity:"base"});
+export const storeVariantSizeValue = (
+  variant: Pick<StoreVariant,"size"|"size_label"> & Partial<Pick<StoreVariant,"size_value">>,
+): string => (variant.size_value ?? storeSizeLabel(variant.size,variant.size_label)).trim();
+
+export function sortStoreVariants<T extends Pick<StoreVariant, "color_key" | "size" | "size_label" | "sort_order" | "sku"> & Partial<Pick<StoreVariant,"size_value"|"size_sort_order">>>(
   variants: readonly T[],
 ): T[] {
   return [...variants].sort((a, b) => {
     if (a.color_key !== b.color_key) return a.color_key.localeCompare(b.color_key);
-    if (a.size !== null && b.size !== null && a.size !== b.size) return a.size - b.size;
-    if (a.size === null && b.size !== null) return 1;
-    if (a.size !== null && b.size === null) return -1;
-    if ((a.size_label ?? "") !== (b.size_label ?? "")) {
-      return (a.size_label ?? "").localeCompare(b.size_label ?? "");
-    }
+    if ((a.size_sort_order ?? 0) !== (b.size_sort_order ?? 0)) return (a.size_sort_order ?? 0) - (b.size_sort_order ?? 0);
+    const sizeOrder=storeSizeCollator.compare(storeVariantSizeValue(a),storeVariantSizeValue(b));
+    if(sizeOrder!==0)return sizeOrder;
     if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
     return a.sku.localeCompare(b.sku);
   });

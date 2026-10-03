@@ -1,5 +1,5 @@
 /**
- * Product variants — colours, numeric sizes, and the exact combination's stock.
+ * Product variants — colours, flexible ordered sizes, and exact-combination stock.
  *
  * This module is the one place that knows what a variant IS: the shape of the
  * row, how a combination is identified, how sizes are ordered, and how a
@@ -15,9 +15,9 @@
  *    rewritten, so renaming "Gold" to "Yellow Gold" (in either language) leaves
  *    the identity, the uniqueness rule and the history untouched.
  *
- *  · Sizes are NUMBERS. `16, 16.5, 17, 17.5` sort numerically everywhere; the
- *    textual size (`size_label`) exists only for the "One Size" case, where
- *    there is no number to order by.
+ *  · A size is an ordered merchant string. Numeric, letter, kids, pants,
+ *    One Size, and future systems share `size_value`; `size_sort_order` is the
+ *    explicit merchant order and natural comparison is the stable fallback.
  *
  *  · Stock belongs to the exact combination. `stock_quantity` here is that
  *    combination's own shelf — never a share of the product's rollup, never
@@ -40,10 +40,14 @@ export interface ProductVariant {
   color_en: string | null;
   /** Optional swatch. Never required: the shop may just type "Rose Gold". */
   color_hex: string | null;
-  /** The numeric size — the primary model. Null only for a textual size. */
+  /** Legacy numeric projection, retained for old invoices and clients. */
   size: number | null;
-  /** Textual fallback, used only when `size` is null ("One Size"). */
+  /** Legacy display snapshot compatibility. */
   size_label: string | null;
+  /** Authoritative flexible size identity. */
+  size_value?: string | null;
+  /** Explicit merchant order for size options. */
+  size_sort_order?: number;
   image_url: string | null;
   /** Null → the product's own selling_price. */
   price_override: number | null;
@@ -58,11 +62,32 @@ export interface ProductVariant {
 }
 
 /** What a form submits. `color_key` is derived by the database when omitted. */
-export type NewProductVariant = Omit<ProductVariant, "id" | "color_key" | "created_at" | "updated_at"> & {
+export type NewProductVariant = Omit<ProductVariant, "id" | "color_key" | "size_value" | "size_sort_order" | "created_at" | "updated_at"> & {
   color_key?: string;
+  size_value?: string | null;
+  size_sort_order?: number;
 };
 
 export type ProductVariantPatch = Partial<NewProductVariant>;
+
+/** One ordered image reference shared by every size of a product colour. */
+export interface ProductColorImage {
+  id: string;
+  product_id: string;
+  color_key: string;
+  image_url: string;
+  alt_ar: string | null;
+  alt_en: string | null;
+  sort_order: number;
+  is_primary: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export type ProductColorImageInput = Pick<
+  ProductColorImage,
+  "color_key" | "image_url" | "alt_ar" | "alt_en" | "sort_order" | "is_primary"
+>;
 
 /**
  * The parts of a variant a sale/order/return line carries with it.
@@ -154,12 +179,9 @@ export function variantsByProduct(
  */
 export function compareVariants(a: ProductVariant, b: ProductVariant): number {
   if (a.color_key !== b.color_key) return a.color_key.localeCompare(b.color_key);
-  if (a.size !== null && b.size !== null && a.size !== b.size) return a.size - b.size;
-  if (a.size === null && b.size !== null) return 1;
-  if (a.size !== null && b.size === null) return -1;
-  if ((a.size_label ?? "") !== (b.size_label ?? "")) {
-    return (a.size_label ?? "").localeCompare(b.size_label ?? "");
-  }
+  if ((a.size_sort_order ?? 0) !== (b.size_sort_order ?? 0)) return (a.size_sort_order ?? 0) - (b.size_sort_order ?? 0);
+  const sizeOrder = naturalSizeCompare(variantSizeValue(a), variantSizeValue(b));
+  if (sizeOrder !== 0) return sizeOrder;
   if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
   return a.sku.localeCompare(b.sku);
 }
@@ -172,13 +194,41 @@ export function sizeLabelOf(size: number | null, fallback: string | null): strin
   return String(Math.round(size * 100) / 100);
 }
 
+/** Flexible size, with a compatibility fallback for rows created before 0079. */
+export function variantSizeValue(
+  variant: Pick<ProductVariant, "size" | "size_label"> & Partial<Pick<ProductVariant, "size_value">>,
+): string {
+  return (variant.size_value ?? sizeLabelOf(variant.size, variant.size_label)).trim();
+}
+
+const LETTER_SIZE_ORDER = new Map([
+  "XXXS", "XXS", "XS", "S", "M", "L", "XL", "XXL", "XXXL", "4XL", "5XL", "6XL",
+].map((value, index) => [value, index]));
+const naturalSizeCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+
+/** Natural fallback ordering across numeric, kids, pants and named systems. */
+export function naturalSizeCompare(a: string, b: string): number {
+  const left = a.trim();
+  const right = b.trim();
+  if (left.toLocaleLowerCase() === right.toLocaleLowerCase()) return 0;
+  const leftLetter = LETTER_SIZE_ORDER.get(left.toUpperCase());
+  const rightLetter = LETTER_SIZE_ORDER.get(right.toUpperCase());
+  if (leftLetter !== undefined && rightLetter !== undefined) return leftLetter - rightLetter;
+  if (leftLetter !== undefined) return -1;
+  if (rightLetter !== undefined) return 1;
+  const leftOne = /^(one[ -]?size|free[ -]?size|مقاس واحد)$/iu.test(left);
+  const rightOne = /^(one[ -]?size|free[ -]?size|مقاس واحد)$/iu.test(right);
+  if (leftOne !== rightOne) return leftOne ? 1 : -1;
+  return naturalSizeCollator.compare(left, right);
+}
+
 /** "Gold / 17" — the colour first, then the size, in the reader's language. */
 export function variantLabel(
-  variant: Pick<ProductVariant, "color_en" | "color_ar" | "size" | "size_label">,
+  variant: Pick<ProductVariant, "color_en" | "color_ar" | "size" | "size_label"> & Partial<Pick<ProductVariant, "size_value">>,
   lang: "ar" | "en" = "en",
 ): string {
   const color = (lang === "ar" ? variant.color_ar || variant.color_en : variant.color_en || variant.color_ar) ?? "";
-  const size = sizeLabelOf(variant.size, variant.size_label);
+  const size = variantSizeValue(variant);
   return [color.trim(), size].filter(Boolean).join(" / ");
 }
 
@@ -224,72 +274,78 @@ export interface VariantColorDraft {
  * not a positive number is dropped rather than guessed, and the result is
  * de-duplicated and sorted ascending: 16 → 16.5 → 17.
  */
-export function parseSizes(raw: string): number[] {
-  if (!raw) return [];
-  const parts = raw
-    .replace(/[\u066B]/g, ".") // ٫ Arabic decimal separator
-    .replace(/[\u060C\u066C,;]/g, " ") // Arabic comma, Arabic thousands, comma, semicolon
-    .split(/\s+/);
-  const seen = new Set<number>();
-  for (const part of parts) {
-    if (!part) continue;
-    const value = Number(part);
-    if (!Number.isFinite(value) || value <= 0) continue;
-    seen.add(Math.round(value * 100) / 100);
+export function parseSizes(raw: string): string[] {
+  if (!raw.trim()) return [];
+  const normalized = raw.replace(/[\u060C;]/g, ",").replace(/\r/g, "\n");
+  let parts = normalized.split(/[,\n]+/).map((value) => value.trim()).filter(Boolean);
+  // Preserve the familiar "16 17 18" shortcut only when every token is numeric.
+  if (parts.length === 1 && /^\d+(?:[.\u066B]\d+)?(?:\s+\d+(?:[.\u066B]\d+)?)+$/.test(parts[0])) {
+    parts = parts[0].split(/\s+/);
   }
-  return [...seen].sort((a, b) => a - b);
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const part of parts) {
+    const value = part.replace(/\u066B/g, ".").replace(/\s+/g, " ").trim();
+    if (!value || value.length > 80) continue;
+    const key = value.toLocaleLowerCase();
+    if (!seen.has(key)) { seen.add(key); result.push(value); }
+  }
+  return result.sort(naturalSizeCompare);
 }
 
-/** The size list back as text, for the input field. */
-export function formatSizes(sizes: readonly number[]): string {
-  return [...sizes].sort((a, b) => a - b).map((size) => sizeLabelOf(size, null)).join(", ");
+/** The ordered size list back as comma-separated text. */
+export function formatSizes(sizes: readonly string[]): string {
+  return sizes.join(", ");
 }
 
 export interface GeneratedCombination {
   color: VariantColorDraft | null;
+  /** Legacy numeric projection when the size is a simple positive number. */
   size: number | null;
+  /** Authoritative flexible size identity. */
+  size_value: string | null;
   /** Stable identity used to avoid duplicates and to suggest a SKU. */
   color_key: string;
+  /** Legacy display compatibility copy. */
   size_label: string | null;
+  size_sort_order: number;
 }
 
-/**
- * colours × sizes, in a stable order, with duplicates impossible.
- *
- * Passing an empty colour list generates the size-only variants; an empty size
- * list generates the colour-only ones. This is what the "generate combinations"
- * button calls.
- */
+const legacyNumericSize = (value: string | null): number | null => {
+  if (!value || !/^[0-9]+(?:\.[0-9]{1,2})?$/.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 && parsed < 1_000_000 ? parsed : null;
+};
+
+/** colours × flexible sizes, preserving explicit merchant size order. */
 export function generateCombinations(
   colors: readonly VariantColorDraft[],
-  sizes: readonly number[],
+  sizes: readonly string[],
 ): GeneratedCombination[] {
   const combinations: GeneratedCombination[] = [];
   const seen = new Set<string>();
-
-  const push = (color: VariantColorDraft | null, size: number | null, sizeLabel: string | null) => {
-    const key = `${color ? colorKeyOf(color) : ""}|${size === null ? `t:${sizeLabel ?? ""}` : size}`;
+  const push = (color: VariantColorDraft | null, sizeValue: string | null, sizeSortOrder: number) => {
+    const normalized = sizeValue?.trim() || null;
+    const key = `${color ? colorKeyOf(color) : ""}|${normalized?.toLocaleLowerCase() ?? ""}`;
     if (seen.has(key)) return;
     seen.add(key);
     combinations.push({
       color,
-      size,
+      size: legacyNumericSize(normalized),
+      size_value: normalized,
       color_key: color ? colorKeyOf(color) : "",
-      size_label: sizeLabel,
+      size_label: normalized,
+      size_sort_order: sizeSortOrder,
     });
   };
-
+  const orderedSizes = sizes.map((value) => value.trim()).filter(Boolean);
   if (colors.length === 0) {
-    for (const size of [...sizes].sort((a, b) => a - b)) push(null, size, null);
+    orderedSizes.forEach((size, index) => push(null, size, index));
     return combinations;
   }
-
   for (const color of colors) {
-    if (sizes.length === 0) {
-      push(color, null, null);
-      continue;
-    }
-    for (const size of [...sizes].sort((a, b) => a - b)) push(color, size, null);
+    if (orderedSizes.length === 0) push(color, null, 0);
+    else orderedSizes.forEach((size, index) => push(color, size, index));
   }
   return combinations;
 }
@@ -318,7 +374,7 @@ export function colorKeyOf(color: {
 export function suggestVariantSku(
   baseSku: string,
   color: { color_ar: string | null; color_en: string | null } | null,
-  size: number | null,
+  size: number | string | null,
   sizeLabel: string | null,
   taken: readonly string[] = [],
 ): string {
@@ -329,9 +385,8 @@ export function suggestVariantSku(
         .replace(/[^A-Z0-9]/g, "")
         .slice(0, 6)
     : "";
-  const sizePart = size !== null
-    ? String(Math.round(size * 100) / 100).replace(".", "D")
-    : (sizeLabel ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4);
+  const rawSize = size === null ? (sizeLabel ?? "") : String(size);
+  const sizePart = rawSize.toUpperCase().replace(/[^A-Z0-9]/g, "").replace(".", "D").slice(0, 8);
   const stem = [base, colorPart, sizePart].filter(Boolean).join("-").slice(0, 36);
 
   let candidate = stem;
@@ -380,8 +435,7 @@ export function variantByCode(
     variants.find(
       (variant) =>
         variant.sku.toUpperCase() === wanted ||
-        (variant.barcode ?? "").toUpperCase() === wanted ||
-        (variant.color_hex ?? "").toUpperCase() === wanted,
+        (variant.barcode ?? "").toUpperCase() === wanted,
     ) ?? null
   );
 }

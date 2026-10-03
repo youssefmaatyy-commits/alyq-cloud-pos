@@ -36,10 +36,12 @@ import type { Product } from "../types";
 import {
   colorKeyOf,
   compareVariants,
-  sizeLabelOf,
   summarizeVariants,
   variantLabel,
+  variantSizeValue,
   type NewProductVariant,
+  type ProductColorImage,
+  type ProductColorImageInput,
   type ProductVariant,
   type ProductVariantPatch,
   type VariantColorDraft,
@@ -98,6 +100,18 @@ export async function listVariants(): Promise<ProductVariant[]> {
 
 export async function listVariantReferences(): Promise<Record<string, number>> {
   return getCatalogRepository().listVariantReferences();
+}
+
+export async function listColorImages(productId?: string): Promise<ProductColorImage[]> {
+  return getCatalogRepository().listColorImages(productId);
+}
+
+export async function replaceColorImages(
+  productId: string,
+  images: readonly ProductColorImageInput[],
+): Promise<ProductColorImage[]> {
+  assertCanEditVariant();
+  return getCatalogRepository().replaceColorImages(productId, images);
 }
 
 /** Variants grouped by product, in display order — the shape screens render. */
@@ -168,9 +182,8 @@ export async function saveVariant({
     const twin = others.find(
       (v) =>
         v.color_key === colorKey &&
-        (v.size ?? null) === (values.size ?? null) &&
-        (values.size !== null ||
-          (v.size_label ?? "").trim() === (values.size_label ?? "").trim()),
+        variantSizeValue(v).toLocaleLowerCase() ===
+          (values.size_value ?? values.size_label ?? (values.size == null ? "" : String(values.size))).trim().toLocaleLowerCase(),
     );
     if (twin) {
       throw new AppError(
@@ -215,7 +228,7 @@ export async function saveVariant({
         variant_id: variant.id,
         sku: variant.sku,
         color: variant.color_en ?? variant.color_ar ?? null,
-        size: variant.size ?? variant.size_label ?? null,
+        size: variantSizeValue(variant) || null,
         price_override: variant.price_override,
         cost_override: variant.cost_override,
       },
@@ -235,6 +248,8 @@ export interface GenerateVariantRow {
   color: VariantColorDraft | null;
   size: number | null;
   size_label: string | null;
+  size_value: string | null;
+  size_sort_order: number;
   /** Pre-filled from the suggested SKU; the admin can overtype it. */
   sku: string;
   /** Unchecked rows are simply not created. */
@@ -266,9 +281,7 @@ export async function generateVariants({
     const twin = [...siblings, ...created].some(
       (v) =>
         v.color_key === colorKey &&
-        (v.size ?? null) === (row.size ?? null) &&
-        (row.size !== null ||
-          (v.size_label ?? "").trim() === (row.size_label ?? "").trim()),
+        variantSizeValue(v).toLocaleLowerCase() === (row.size_value ?? "").toLocaleLowerCase(),
     );
     if (twin) continue;
 
@@ -283,6 +296,8 @@ export async function generateVariants({
       color_hex: row.color?.color_hex ?? null,
       size: row.size,
       size_label: row.size_label,
+      size_value: row.size_value,
+      size_sort_order: row.size_sort_order,
       image_url: null,
       price_override: null,
       cost_override: null,
@@ -304,7 +319,7 @@ export async function generateVariants({
           variant_id: variant.id,
           sku: variant.sku,
           color: variant.color_en ?? variant.color_ar ?? null,
-          size: variant.size ?? variant.size_label ?? null,
+          size: variantSizeValue(variant) || null,
           generated: true,
         },
       });
@@ -338,7 +353,7 @@ export async function setVariantActive(id: string, active: boolean): Promise<Pro
         variant_id: variant.id,
         sku: variant.sku,
         color: variant.color_en ?? variant.color_ar ?? null,
-        size: variant.size ?? variant.size_label ?? null,
+        size: variantSizeValue(variant) || null,
         previous: !active,
         next: active,
       },
@@ -364,7 +379,7 @@ export async function deleteVariant(id: string): Promise<void> {
         variant_id: variant.id,
         sku: variant.sku,
         color: variant.color_en ?? variant.color_ar ?? null,
-        size: variant.size ?? variant.size_label ?? null,
+        size: variantSizeValue(variant) || null,
       },
     });
   }
@@ -539,8 +554,8 @@ export function labelOf(variant: ProductVariant, lang: "ar" | "en" = "en"): stri
 }
 
 /** "17" — the numeric size without trailing zeros, or the textual fallback. */
-export function sizeOf(variant: Pick<ProductVariant, "size" | "size_label">): string {
-  return sizeLabelOf(variant.size, variant.size_label);
+export function sizeOf(variant: Pick<ProductVariant, "size" | "size_label"> & Partial<Pick<ProductVariant,"size_value">>): string {
+  return variantSizeValue(variant);
 }
 
 export type { ProductVariant, VariantSummary };

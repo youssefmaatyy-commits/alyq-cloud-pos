@@ -6,7 +6,13 @@ import type {
   Product,
   ProductPatch,
 } from "../types";
-import type { NewProductVariant, ProductVariant, ProductVariantPatch } from "../variants";
+import type {
+  NewProductVariant,
+  ProductColorImage,
+  ProductColorImageInput,
+  ProductVariant,
+  ProductVariantPatch,
+} from "../variants";
 
 /** Machine-readable failure codes the UI can react to. */
 export type AppErrorCode =
@@ -225,6 +231,10 @@ export interface CatalogRepository {
   deleteVariant(id: string): Promise<void>;
   /** variant id → referenced-row count, so the screen can explain a refusal. */
   listVariantReferences(): Promise<VariantReferenceMap>;
+  /** Ordered image references shared by all sizes of each product colour. */
+  listColorImages(productId?: string): Promise<ProductColorImage[]>;
+  /** Atomically replaces one product's colour galleries; URLs reuse existing storage objects. */
+  replaceColorImages(productId: string, images: readonly ProductColorImageInput[]): Promise<ProductColorImage[]>;
   /**
    * Switch a product to variant stock, distributing what it already holds.
    * Refused with `VARIANTS_STOCK_MISMATCH` unless the opening sums to exactly

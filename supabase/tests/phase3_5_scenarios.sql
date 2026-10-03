@@ -271,3 +271,70 @@ $phase35_exact_variant$;
 
 reset role;
 
+-- ── Flexible size strings, Arabic-only colours and shared colour galleries ──
+do $phase35_flexible_catalogue$
+declare
+  v_admin uuid := '00000000-0000-4000-8000-0000000000a1';
+  v_main uuid := '00000000-0000-4000-8000-0000000000b1';
+  v_category uuid := '00000000-0000-4000-8000-0000000035c1';
+  v_product uuid := '00000000-0000-4000-8000-0000000035d3';
+  v_xs uuid := '00000000-0000-4000-8000-0000000035f3';
+  v_pants uuid := '00000000-0000-4000-8000-0000000035f4';
+  v_one uuid := '00000000-0000-4000-8000-0000000035f5';
+  v_images jsonb;
+begin
+  perform pg_temp.become(v_admin,'authenticated');
+  perform public.switch_active_branch_with_audit(v_main);
+  insert into public.products(id,sku,name_ar,name_en,category_id,selling_price,stock_quantity,active,show_on_website,stock_tracking_enabled)
+  values(v_product,'P35-FLEX','مقاسات مرنة','Flexible sizes',v_category,50,0,true,true,true);
+  insert into public.product_variants(
+    id,product_id,sku,barcode,color_ar,color_en,color_hex,size_value,size_sort_order,stock_quantity,active
+  ) values
+    (v_xs,v_product,'P35-FLEX-XS','P35FLEXXS','أحمر',null,null,'XS',0,0,true),
+    (v_pants,v_product,'P35-FLEX-2830','P35FLEX2830','أحمر',null,null,'28x30',1,0,true),
+    (v_one,v_product,'P35-FLEX-ONE','P35FLEXONE','أحمر',null,null,'One Size',2,0,true);
+  perform public.enable_product_variants(
+    v_product,jsonb_build_object(v_xs::text,0,v_pants::text,0,v_one::text,0),v_admin::text,'Amina Admin'
+  );
+  if (select size_value from public.product_variants where id=v_xs)<>'XS'
+     or (select size from public.product_variants where id=v_xs) is not null
+     or (select size_value from public.product_variants where id=v_pants)<>'28x30'
+     or (select size_sort_order from public.product_variants where id=v_one)<>2 then
+    raise exception 'flexible size strings or explicit ordering were not preserved';
+  end if;
+  begin
+    insert into public.product_variants(product_id,sku,color_ar,size_value,stock_quantity)
+    values(v_product,'P35-FLEX-DUP','أحمر','xs',0);
+    raise exception 'case-only duplicate Color × Size identity was accepted';
+  exception when unique_violation then null;
+  end;
+
+  v_images:=jsonb_build_array(
+    jsonb_build_object('color_key','أحمر','image_url','https://cdn.example/red-front.webp','is_primary',true),
+    jsonb_build_object('color_key','أحمر','image_url','https://cdn.example/red-side.webp','is_primary',false)
+  );
+  perform public.replace_product_color_images(v_product,v_images);
+  if (select count(*) from public.product_color_images where product_id=v_product and color_key='أحمر')<>2
+     or (select count(*) from public.product_color_images where product_id=v_product and color_key='أحمر' and is_primary)<>1 then
+    raise exception 'shared colour gallery did not retain two ordered URLs and one primary';
+  end if;
+  if exists(
+    select image_url from public.product_variants where product_id=v_product and image_url is not null
+  ) then raise exception 'colour gallery duplicated URLs onto each size'; end if;
+
+  perform pg_temp.become(null,'anon');
+  if (select count(*) from public.storefront_color_images() where product_id=v_product)<>2 then
+    raise exception 'published colour gallery was not available through the bounded storefront read';
+  end if;
+  begin
+    perform public.replace_product_color_images(v_product,'[]'::jsonb);
+    raise exception 'anonymous visitor replaced a colour gallery';
+  exception when insufficient_privilege then null;
+  end;
+
+  raise notice 'Phase 3.5 catalogue dimensions — letter, pants and One Size strings retain explicit order, Arabic-only colours work without HEX, case-only duplicate combinations fail, two colour images share one gallery with one primary instead of per-size copies, bounded storefront read works, and anonymous writes fail';
+end
+$phase35_flexible_catalogue$;
+
+reset role;
+

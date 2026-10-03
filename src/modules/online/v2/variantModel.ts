@@ -2,14 +2,12 @@
  * inferred size matrix, fixed clothing-size list or alternate stock ledger.
  */
 import type { StoreVariant } from "../services/pricing";
-import { colorGroupsOf, sortStoreVariants } from "../services/pricing";
-import { storeSizeLabel } from "../services/variantLabel";
+import { colorGroupsOf, sortStoreVariants, storeVariantSizeValue } from "../services/pricing";
 import { variantAvailableToPromise } from "../services/availability";
 
-export function sizeKeyOf(variant: Pick<StoreVariant, "size" | "size_label">): string {
-  if (variant.size !== null) return `number:${variant.size}`;
-  const label = variant.size_label?.trim();
-  return label ? `label:${label.toLocaleLowerCase()}` : "";
+export function sizeKeyOf(variant: Pick<StoreVariant, "size" | "size_label"> & Partial<Pick<StoreVariant,"size_value">>): string {
+  const value=storeVariantSizeValue(variant);
+  return value ? `size:${value.toLocaleLowerCase()}` : "";
 }
 
 export function variantModel(
@@ -52,7 +50,7 @@ export function variantModel(
       return groups.find((group) => group.color_key === (colorKey ?? ""))?.variants.map((variant) => ({
         variant,
         key: sizeKeyOf(variant),
-        label: storeSizeLabel(variant.size, variant.size_label),
+        label: storeVariantSizeValue(variant),
         available: remaining(variant),
       })) ?? [];
     },

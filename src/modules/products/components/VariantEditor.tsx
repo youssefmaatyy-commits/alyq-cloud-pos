@@ -24,7 +24,6 @@ import {
   Button,
   Field,
   Modal,
-  SelectInput,
   TextArea,
   TextInput,
   ToggleSwitch,
@@ -37,7 +36,9 @@ import {
   enableVariants,
   generateVariants,
   listVariants,
+  listColorImages,
   labelOf,
+  replaceColorImages,
   saveVariant,
   setVariantActive,
   type GenerateVariantRow,
@@ -47,9 +48,10 @@ import {
   formatSizes,
   generateCombinations,
   parseSizes,
-  sizeLabelOf,
   suggestVariantSku,
   variantLabel,
+  variantSizeValue,
+  type ProductColorImage,
   type ProductVariant,
   type VariantColorDraft,
 } from "../variants";
@@ -148,9 +150,9 @@ function VariantFormModal({
             color_ar: current.color_ar ?? "",
             color_en: current.color_en ?? "",
             color_hex: current.color_hex ?? "",
-            size_mode: current.size !== null ? "number" : "label",
-            size: current.size !== null ? sizeLabelOf(current.size, null) : "",
-            size_label: current.size_label ?? "",
+            size_mode: "label",
+            size: variantSizeValue(current),
+            size_label: variantSizeValue(current),
             sku: current.sku,
             barcode: current.barcode ?? "",
             price_override: current.price_override !== null ? String(current.price_override) : "",
@@ -178,14 +180,10 @@ function VariantFormModal({
           color_ar: values.color_ar.trim() || null,
           color_en: values.color_en.trim() || null,
           color_hex: values.color_hex.trim() || null,
-          size:
-            values.size_mode === "number" && values.size.trim() !== ""
-              ? Number(values.size.replace(",", "."))
-              : null,
-          size_label:
-            values.size_mode === "label" && values.size_label.trim() !== ""
-              ? values.size_label.trim()
-              : null,
+          size: /^[0-9]+(?:\.[0-9]{1,2})?$/.test(values.size.trim()) ? Number(values.size.trim()) : null,
+          size_label: values.size.trim() || null,
+          size_value: values.size.trim() || null,
+          size_sort_order: current?.size_sort_order ?? current?.sort_order ?? siblings.length + 1,
           image_url: values.image_url.trim() || null,
           // New combinations start empty: the shelf is filled by the inventory
           // screen, never by a form field.
@@ -214,9 +212,7 @@ function VariantFormModal({
 
   const combinationLabel = [
     values.color_en.trim() || values.color_ar.trim(),
-    values.size_mode === "number"
-      ? sizeLabelOf(values.size.trim() === "" ? null : Number(values.size.replace(",", ".")), null)
-      : values.size_label.trim(),
+    values.size.trim(),
   ]
     .filter(Boolean)
     .join(" / ");
@@ -272,37 +268,15 @@ function VariantFormModal({
             disabled={!allowed}
           />
         </Field>
-        <Field label={t("products.variants.sizeKind")}>
-          <SelectInput
-            value={values.size_mode}
-            onChange={(e) => set("size_mode", e.target.value as "number" | "label")}
-            disabled={!allowed}
-          >
-            <option value="number">{t("products.variants.sizeKindNumber")}</option>
-            <option value="label">{t("products.variants.sizeKindLabel")}</option>
-          </SelectInput>
+        <Field label={t("products.variants.sizeLabel")} hint={t("products.variants.sizeLabelHint")}>
+          <TextInput
+            dir="auto"
+            value={values.size}
+            onChange={(e) => set("size", e.target.value)}
+            placeholder="XS · 42 · 28x30 · 3-4Y · One Size"
+            disabled={!allowed || Boolean(current)}
+          />
         </Field>
-        {values.size_mode === "number" ? (
-          <Field label={t("products.variants.size")} hint={t("products.variants.sizeHint")}>
-            <TextInput
-              dir="ltr"
-              inputMode="decimal"
-              value={values.size}
-              onChange={(e) => set("size", e.target.value)}
-              placeholder="17.5"
-              disabled={!allowed}
-            />
-          </Field>
-        ) : (
-          <Field label={t("products.variants.sizeLabel")} hint={t("products.variants.sizeLabelHint")}>
-            <TextInput
-              value={values.size_label}
-              onChange={(e) => set("size_label", e.target.value)}
-              placeholder={t("products.variants.oneSize")}
-              disabled={!allowed}
-            />
-          </Field>
-        )}
         <Field label={t("products.sku")} required>
           <TextInput
             dir="ltr"
@@ -313,10 +287,8 @@ function VariantFormModal({
               values.color_en.trim() || values.color_ar.trim()
                 ? { color_ar: values.color_ar || null, color_en: values.color_en || null }
                 : null,
-              values.size_mode === "number" && values.size.trim() !== ""
-                ? Number(values.size.replace(",", "."))
-                : null,
-              values.size_mode === "label" ? values.size_label : null,
+              values.size.trim() || null,
+              values.size.trim() || null,
               siblings.map((v) => v.sku),
             )}
             disabled={!allowed}
@@ -412,6 +384,7 @@ function VariantGeneratorModal({
   const [colorsText, setColorsText] = useState("");
   const [sizesText, setSizesText] = useState("");
   const [lowStock, setLowStock] = useState("0");
+  const [disabledCombinations,setDisabledCombinations]=useState<Set<string>>(()=>new Set());
   const [saving, setSaving] = useState(false);
 
   // One colour per line: "English | العربية | #hex" — the hex optional, the
@@ -441,10 +414,12 @@ function VariantGeneratorModal({
       color: combination.color,
       size: combination.size,
       size_label: combination.size_label,
+      size_value: combination.size_value,
+      size_sort_order: combination.size_sort_order,
       sku: suggestVariantSku(product.sku, combination.color, combination.size, combination.size_label, taken),
-      enabled: true,
+      enabled: !disabledCombinations.has(`${combination.color_key}|${combination.size_value ?? ""}`),
     }));
-  }, [colors, product.sku, siblings, sizes]);
+  }, [colors, product.sku, siblings, sizes,disabledCombinations]);
 
   const generate = async () => {
     if (!allowed || saving) return;
@@ -480,9 +455,9 @@ function VariantGeneratorModal({
           <Button
             onClick={() => void generate()}
             loading={saving}
-            disabled={!allowed || rows.length === 0}
+            disabled={!allowed || rows.every((row)=>!row.enabled)}
           >
-            {t("products.variants.generateCta", { count: rows.length })}
+            {t("products.variants.generateCta", { count: rows.filter((row)=>row.enabled).length })}
           </Button>
         </>
       }
@@ -528,7 +503,11 @@ function VariantGeneratorModal({
         </p>
         <ul className="max-h-52 divide-y divide-slate-50 overflow-y-auto">
           {rows.map((row) => (
-            <li key={row.sku} className="flex items-center justify-between gap-2 px-3 py-1.5 text-xs">
+            <li key={row.sku} className={`flex items-center justify-between gap-2 px-3 py-1.5 text-xs ${row.enabled ? "" : "opacity-50"}`}>
+              <input type="checkbox" checked={row.enabled} aria-label={`Include ${row.sku}`} onChange={(event)=>{
+                const key=`${row.color ? colorKeyOf(row.color) : ""}|${row.size_value ?? ""}`;
+                setDisabledCombinations((current)=>{const next=new Set(current);if(event.target.checked)next.delete(key);else next.add(key);return next;});
+              }}/>
               <span className="flex items-center gap-1.5 font-semibold text-slate-800">
                 <Swatch hex={row.color?.color_hex ?? null} />
                 {variantLabel({
@@ -536,6 +515,7 @@ function VariantGeneratorModal({
                   color_ar: row.color?.color_ar ?? null,
                   size: row.size,
                   size_label: row.size_label,
+                  size_value: row.size_value,
                 })}
               </span>
               <span className="font-mono text-[11px] text-slate-500">{row.sku}</span>
@@ -575,7 +555,7 @@ export function VariantEditor({
     if (!variant.barcode?.trim()) { toast.error(t("barcode.needsValue")); return; }
     const html = buildBarcodeLabelHtml({
       nameAr: product.name_ar, nameEn: product.name_en, sku: variant.sku, barcode: variant.barcode,
-      color: pick(variant.color_ar, variant.color_en), size: sizeLabelOf(variant.size, variant.size_label),
+      color: pick(variant.color_ar, variant.color_en), size: variantSizeValue(variant),
       price: `${num(variant.price_override ?? product.selling_price, 2)} EGP`, direction: isRTL ? "rtl" : "ltr",
     }, { documentTitle: t("barcode.printTitle"), skuLabel: t("products.sku"), priceLabel: t("products.sellingPrice"), printAction: t("barcode.print"), unsupported: t("barcode.unsupported") });
     const win = window.open("", "_blank", "width=720,height=640");
@@ -590,20 +570,26 @@ export function VariantEditor({
   const [editing, setEditing] = useState<ProductVariant | null>(null);
   const [generatorOpen, setGeneratorOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [colorImages,setColorImages]=useState<ProductColorImage[]>([]);
   const [simple, setSimple] = useState(() => variantDraftFromSaved(variants));
-  const sourceSignature = JSON.stringify(variants);
+  const sourceSignature = JSON.stringify([variants,colorImages]);
   const previousSource = useRef(sourceSignature);
   const locallyEdited = useRef(false);
+  useEffect(()=>{
+    let cancelled=false;
+    void listColorImages(product.id).then((images)=>{if(!cancelled)setColorImages(images);}).catch(()=>{});
+    return ()=>{cancelled=true;};
+  },[product.id,variants.length]);
   useEffect(() => {
     if (sourceSignature === previousSource.current) return;
-    if (!locallyEdited.current) setSimple(variantDraftFromSaved(variants));
+    if (!locallyEdited.current) setSimple(variantDraftFromSaved(variants,colorImages));
     previousSource.current = sourceSignature;
-  }, [sourceSignature, variants]);
+  }, [sourceSignature, variants,colorImages]);
   const changeSimple = (next: typeof simple) => { locallyEdited.current = true; setSimple(next); };
   const canStock = canAct("adjust_stock");
   const canCreate = canAct("add_product");
   const simpleError = validateVariantDraft(simple, product.sku, product.barcode ?? "");
-  const simpleDirty = JSON.stringify(simple) !== JSON.stringify(variantDraftFromSaved(variants));
+  const simpleDirty = JSON.stringify(simple) !== JSON.stringify(variantDraftFromSaved(variants,colorImages));
 
   // ── enable flow ──
   const [enabling, setEnabling] = useState(false);
@@ -675,8 +661,7 @@ export function VariantEditor({
         // A retry after a partial network failure must not create a duplicate.
         const twin = before ?? (!row.persistedId ? siblings.find((entry) =>
           entry.color_key === (row.color_key || (color ? colorKeyOf(color) : "")) &&
-          entry.size === (row.size ? Number(row.size) : null) &&
-          (row.size || (entry.size_label ?? "") === row.size_label),
+          variantSizeValue(entry).toLocaleLowerCase() === row.size.trim().toLocaleLowerCase(),
         ) : null);
         const previous = before ?? twin ?? null;
         const desired = {
@@ -684,9 +669,11 @@ export function VariantEditor({
           color_key: (previous?.color_key ?? row.color_key) || undefined,
           color_ar: row.color_ar.trim() || null, color_en: row.color_en.trim() || null,
           color_hex: row.color_hex.trim() || null,
-          size: previous?.size ?? (row.size ? Number(row.size) : null),
-          size_label: previous?.size_label ?? (row.size ? null : row.size_label.trim() || null),
-          image_url: row.image_url.trim() || (previous ? null : color?.image_url || null),
+          size: previous?.size ?? (/^[0-9]+(?:\.[0-9]{1,2})?$/.test(row.size.trim()) ? Number(row.size.trim()) : null),
+          size_label: previous?.size_label ?? (row.size.trim() || null),
+          size_value: previous ? variantSizeValue(previous) : (row.size.trim() || null),
+          size_sort_order: row.size_sort_order,
+          image_url: row.image_url.trim() || null,
           price_override: row.price_override.trim() ? Number(row.price_override) : null,
           cost_override: canAct("change_cost")
             ? (row.cost_override.trim() ? Number(row.cost_override) : null)
@@ -702,6 +689,7 @@ export function VariantEditor({
             previous.sku === desired.sku && previous.barcode === desired.barcode &&
             previous.color_ar === desired.color_ar && previous.color_en === desired.color_en &&
             previous.color_hex === desired.color_hex && previous.image_url === desired.image_url &&
+            (previous.size_sort_order ?? 0) === desired.size_sort_order &&
             previous.price_override === desired.price_override && previous.cost_override === desired.cost_override &&
             previous.low_stock_level === desired.low_stock_level) continue;
 
@@ -716,10 +704,20 @@ export function VariantEditor({
             notes: `Opening stock for new combination ${saved.variant.sku}` });
         }
       }
+      await replaceColorImages(product.id,simple.colors.flatMap((color)=>{
+        const colorKey=color.id && !color.id.startsWith("color:") ? color.id : colorKeyOf(color);
+        return color.image_urls.map((image_url,index)=>({color_key:colorKey,image_url,
+          alt_ar:color.color_ar.trim()||null,alt_en:color.color_en.trim()||null,
+          sort_order:index,is_primary:index===0}));
+      }));
       toast.success(t("products.simple.saved"));
       locallyEdited.current = false;
-      const fresh = (await listVariants()).filter((row) => row.product_id === product.id);
-      setSimple(variantDraftFromSaved(fresh));
+      const [fresh,freshImages] = await Promise.all([
+        listVariants().then((rows)=>rows.filter((row)=>row.product_id===product.id)),
+        listColorImages(product.id),
+      ]);
+      setColorImages(freshImages);
+      setSimple(variantDraftFromSaved(fresh,freshImages));
       previousSource.current = JSON.stringify(fresh);
       await onChanged();
     } catch (err) {
@@ -923,7 +921,7 @@ export function VariantEditor({
                         <Swatch hex={variant.color_hex} />
                         {pick(variant.color_ar, variant.color_en) || t("store.variants.defaultColor")}
                         <span className="font-black text-slate-500">/</span>
-                        <span className="tabular-nums">{sizeLabelOf(variant.size, variant.size_label)}</span>
+                        <span className="tabular-nums">{variantSizeValue(variant)}</span>
                       </span>
                     </td>
                     <td className="px-3 py-2 font-mono text-[11px] text-slate-600">{variant.sku}</td>

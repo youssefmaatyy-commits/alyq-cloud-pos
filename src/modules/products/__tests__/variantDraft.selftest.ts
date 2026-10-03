@@ -35,16 +35,16 @@ async function test(name: string, run: () => void | Promise<void>) {
   count += 1;
   console.log(`  ✓ ${name}`);
 }
-const color = (id: string, name: string) => ({ id, color_ar: "", color_en: name, color_hex: "", image_url: "" });
+const color = (id: string, name: string) => ({ id, color_ar: "", color_en: name, color_hex: "", image_urls: [], image_url: "" });
 
 await test("auto-generated colour × size rows keep independent stock and preserve edits across chip changes", () => {
   let draft = reconcileVariantDraft({ ...EMPTY_PRODUCT_VARIANT_FORM, mode: "colors_sizes",
-    colors: [color("color:gold", "Gold"), color("color:silver", "Silver")], sizes: [17, 18], rows: [] }, "RING");
+    colors: [color("color:gold", "Gold"), color("color:silver", "Silver")], sizes: ["17", "18"], rows: [] }, "RING");
   assert.deepEqual(draft.rows.map((r) => `${r.color_en}/${r.size}`), ["Gold/17", "Gold/18", "Silver/17", "Silver/18"]);
   assert.equal(new Set(draft.rows.map((r) => r.sku)).size, 4);
   draft = { ...draft, rows: draft.rows.map((row) => row.size === "17" && row.color_en === "Gold"
     ? { ...row, stock_quantity: "2", barcode: "G17" } : row) };
-  draft = reconcileVariantDraft({ ...draft, sizes: [17, 18, 19] }, "RING");
+  draft = reconcileVariantDraft({ ...draft, sizes: ["17", "18", "19"] }, "RING");
   assert.equal(draft.rows.length, 6);
   assert.equal(draft.rows[0].barcode, "G17");
   assert.equal(variantDraftTotal(draft.rows), 2);
@@ -64,8 +64,9 @@ await test("no variants, colour-only and size-only modes generate only the reque
     [["Gold", "", ""], ["Silver", "", ""]]);
   assert.equal(validateVariantDraft(colors, "RING"), null);
   const sizes = reconcileVariantDraft({ ...EMPTY_PRODUCT_VARIANT_FORM, mode: "sizes",
-    sizes: [18, 17], rows: [] }, "RING");
-  assert.deepEqual(sizes.rows.map((row) => [row.color_en, row.size]), [["", "17"], ["", "18"]]);
+    sizes: ["18", "17"], rows: [] }, "RING");
+  assert.deepEqual(sizes.rows.map((row) => [row.color_en, row.size]), [["", "18"], ["", "17"]],
+    "explicit merchant size order is preserved instead of silently re-sorting");
   assert.equal(validateVariantDraft(sizes, "RING"), null);
   const none = reconcileVariantDraft({ ...colors, mode: "none" }, "RING");
   assert.equal(none.rows.length, 2, "switching off variants hides, but does not erase, an unsaved draft");
@@ -87,7 +88,7 @@ await test("a saved colour rename + new size keeps the original colour key, SKU,
   let draft = variantDraftFromSaved([original]);
   assert.equal(draft.mode, "colors_sizes");
   draft = reconcileVariantDraft({ ...draft,
-    colors: [{ ...draft.colors[0], color_en: "Yellow Gold" }], sizes: [17, 18] }, "RING");
+    colors: [{ ...draft.colors[0], color_en: "Yellow Gold" }], sizes: ["17", "18"] }, "RING");
   const first = draft.rows.find((row) => row.persistedId)!;
   const second = draft.rows.find((row) => !row.persistedId)!;
   assert.deepEqual([first.id, first.color_key, first.sku, first.stock_quantity],
