@@ -60,6 +60,7 @@ const SHIM_FILE = path.join(ROOT, "supabase", "tests", "supabase-shim.sql");
 const SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "scenarios.sql");
 const PHASE2_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "phase2_scenarios.sql");
 const PHASE3_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "phase3_scenarios.sql");
+const PHASE35_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "phase3_5_scenarios.sql");
 const SEED_FILE = path.join(ROOT, "supabase", "seed.sql");
 const SRC_DIR = path.join(ROOT, "src");
 
@@ -330,6 +331,22 @@ if (!VERIFY_ONLY) {
   // verified the way the migrations are: it must apply, it must be idempotent,
   // and its own contract block must pass. Same guard as the scenarios — it
   // creates staff accounts, which nobody should do to a server by accident.
+  if (failures.length === 0 && runScenarios) {
+    console.log(c.bold("\nPhase 3.5 focused scenarios (branch stock + atomic transfers)"));
+    try {
+      const sql = fs.readFileSync(PHASE35_SCENARIOS_FILE, "utf8");
+      await driver.exec(sql, "phase3_5_scenarios.sql");
+      console.log(`  ${c.green("✓")} every focused Phase 3.5 scenario passed`);
+      for (const notice of sql.matchAll(/raise notice '([^']+)'/g)) {
+        console.log(c.dim(`      ${notice[1]}`));
+      }
+    } catch (error) {
+      console.log(`  ${c.red("✗")} a focused Phase 3.5 scenario failed`);
+      if (error?.stack) console.log(c.dim(error.stack));
+      failures.push({ name: "Phase 3.5 scenarios", phase: "scenario", error: String(error.message) });
+    }
+  }
+
   if (failures.length === 0 && runScenarios) {
     console.log(c.bold("\nDevelopment seed (supabase/seed.sql)"));
     for (const pass of ["apply", "re-apply (idempotency)"]) {

@@ -85,6 +85,7 @@ export const AUDIT_ACTIONS = [
   "category.products_moved",
   "stock.adjusted",
   "stock.corrected",
+  "stock.transferred",
   // Approval limits (Phase 12, requirement 2). Live mode writes these from
   // `submit_approval_request` / `decide_approval_request` / `mark_approval_applied`
   // / `set_approval_rules` (migration 0023); demo mode writes the same five from
@@ -225,6 +226,8 @@ export const AUDIT_ENTITIES = [
   "category",
   /** A stock level and the movement that changed it (`stock_movements`). */
   "stock",
+  /** A completed atomic branch-to-branch transfer (`stock_transfers`). */
+  "stock_transfer",
   /** An over-limit act waiting for a decision (`approval_requests`). */
   "approval_request",
   /** The threshold document itself (`approval_rules`, one row). */
