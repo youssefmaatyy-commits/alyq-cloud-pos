@@ -18,9 +18,11 @@ begin
      or v_result::text like '%'||v_token||'%' then
     raise exception 'mobile registration returned unsafe or incorrect identity';
   end if;
-  if exists(select 1 from public.mobile_installations) then
+  begin
+    perform 1 from public.mobile_installations limit 1;
     raise exception 'authenticated caller read token-custody table';
-  end if;
+  exception when insufficient_privilege then null;
+  end;
 
   perform pg_temp.become(v_cashier,'authenticated');
   perform public.switch_active_branch_with_audit(v_main);
@@ -46,6 +48,7 @@ begin
   if (select branch_id from public.mobile_installations where installation_id=v_install)<>v_main then
     raise exception 'registration did not preserve authoritative branch context';
   end if;
+  perform pg_temp.become(null,'postgres');
   if (select count(*) from public.audit_log where entity_id=v_install::text and action in('mobile.installation_registered','mobile.installation_deactivated'))<>2 then
     raise exception 'mobile installation lifecycle audit missing';
   end if;

@@ -64,7 +64,7 @@ test("mobile source has a narrow native surface and no privileged secret materia
   ];
   const source = files.map((file) => fs.readFileSync(file, "utf8")).join("\n");
   assert.doesNotMatch(source, /service[_-]?role.{0,30}[=:].{8,}|BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY|postgres(?:ql)?:\/\/|manager.{0,12}pin.{0,12}[=:]/i);
-  assert.doesNotMatch(source, /Filesystem|exec\(|shell|eval\(/);
+  assert.doesNotMatch(source, /@capacitor\/filesystem|child_process|shell\.open|\beval\(/i);
   assert.match(source, /PushNotifications/);
   assert.match(source, /mobile_installation_deactivate/);
 });

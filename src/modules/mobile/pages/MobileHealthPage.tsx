@@ -15,7 +15,11 @@ export function MobileHealthPage() {
   const mobile = useMobile();
   const [probe, setProbe] = useState<BackendHealthProbe | null>(null);
   const [loading, setLoading] = useState(true);
-  const refresh = async () => { setLoading(true); await mobile.refreshNetwork(); setProbe(await probeSystemBackend()); setLoading(false); };
+  const refresh = async () => {
+    setLoading(true);
+    try { await mobile.refreshNetwork(); setProbe(await probeSystemBackend()); }
+    finally { setLoading(false); }
+  };
   useEffect(() => { void refresh(); }, [branch.current?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   return <MobilePage title="Mobile Health" subtitle="Existing ALYQ health contract" actions={<button type="button" className="mobile-action" onClick={() => void refresh()}>Refresh</button>}>
     {loading && !probe ? <MobileState kind="loading" title="Checking status…" /> : null}
