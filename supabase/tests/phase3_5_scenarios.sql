@@ -338,3 +338,229 @@ $phase35_flexible_catalogue$;
 
 reset role;
 
+-- ── Concrete ALYQ-01 Black / 42 sale → invoice → return chain ─────────────
+do $phase35_complete_chain$
+declare
+  v_admin uuid := '00000000-0000-4000-8000-0000000000a1';
+  v_main uuid := '00000000-0000-4000-8000-0000000000b1';
+  v_destination uuid := '00000000-0000-4000-8000-0000000035b2';
+  v_category uuid := '00000000-0000-4000-8000-0000000035c1';
+  v_product uuid := '00000000-0000-4000-8000-0000000035a1';
+  v_40 uuid := '00000000-0000-4000-8000-000000003540';
+  v_41 uuid := '00000000-0000-4000-8000-000000003541';
+  v_42 uuid := '00000000-0000-4000-8000-000000003542';
+  v_43 uuid := '00000000-0000-4000-8000-000000003543';
+  v_sale jsonb;
+  v_sale_id uuid;
+  v_sale_item uuid;
+  v_return jsonb;
+  v_return_id uuid;
+begin
+  perform pg_temp.become(v_admin,'authenticated');
+  perform public.switch_active_branch_with_audit(v_main);
+
+  insert into public.products(
+    id,sku,name_ar,name_en,category_id,selling_price,cost_price,stock_quantity,
+    active,show_on_website,stock_tracking_enabled
+  ) values(
+    v_product,'ALYQ-01','حذاء أليق 01','ALYQ Shoe 01',v_category,100,60,10,
+    true,true,true
+  );
+  insert into public.product_variants(
+    id,product_id,sku,barcode,color_en,color_ar,color_hex,
+    size_value,size_sort_order,stock_quantity,active,sort_order
+  ) values
+    (v_40,v_product,'ALYQ-01-BLK-40','629ALYQ0140','Black','أسود','#000000','40',0,0,true,0),
+    (v_41,v_product,'ALYQ-01-BLK-41','629ALYQ0141','Black','أسود','#000000','41',1,0,true,1),
+    (v_42,v_product,'ALYQ-01-BLK-42','629ALYQ0142','Black','أسود','#000000','42',2,0,true,2),
+    (v_43,v_product,'ALYQ-01-BLK-43','629ALYQ0143','Black','أسود','#000000','43',3,0,true,3);
+  perform public.enable_product_variants(
+    v_product,
+    jsonb_build_object(v_40::text,0,v_41::text,0,v_42::text,10,v_43::text,0),
+    v_admin::text,'Amina Admin'
+  );
+
+  if (select quantity from public.branch_stock_balances where branch_id=v_main and variant_id=v_42)<>10
+     or exists(select 1 from public.branch_stock_balances where branch_id=v_destination and variant_id=v_42 and quantity<>0)
+     or (select count(distinct barcode) from public.product_variants where product_id=v_product)<>4
+     or (select count(distinct sku) from public.product_variants where product_id=v_product)<>4 then
+    raise exception 'ALYQ-01 exact identifiers or initial Branch A Black / 42 stock are wrong';
+  end if;
+
+  perform public.inventory_transfer_stock(
+    'alyq-01-black-42-a-to-b',v_destination,v_product,v_42,3,'Concrete Phase 3.5 transfer'
+  );
+  if (select quantity from public.branch_stock_balances where branch_id=v_main and variant_id=v_42)<>7
+     or (select quantity from public.branch_stock_balances where branch_id=v_destination and variant_id=v_42)<>3 then
+    raise exception 'ALYQ-01 Black / 42 transfer was not 10 → 7 and 0 → 3';
+  end if;
+  perform public.inventory_transfer_stock(
+    'alyq-01-black-42-a-to-b',v_destination,v_product,v_42,3,'Concrete Phase 3.5 transfer'
+  );
+  if (select quantity from public.branch_stock_balances where branch_id=v_main and variant_id=v_42)<>7
+     or (select quantity from public.branch_stock_balances where branch_id=v_destination and variant_id=v_42)<>3 then
+    raise exception 'ALYQ-01 transfer retry moved another three units';
+  end if;
+
+  -- This payload is exactly what an exact barcode scan resolves to in the POS:
+  -- the parent product id plus Black / 42's authoritative variant id.
+  v_sale:=public.pos_complete_sale(jsonb_build_object(
+    'client_ref','phase35-alyq-black-42-sale',
+    'source','online',
+    'user_id',v_admin::text,
+    'user_name','Amina Admin',
+    'payments',jsonb_build_array(jsonb_build_object('method','cod','amount',100,'status','pending')),
+    'lines',jsonb_build_array(jsonb_build_object('product_id',v_product::text,'variant_id',v_42::text,'qty',1))
+  ));
+  v_sale_id:=(v_sale->>'sale_id')::uuid;
+  select id into v_sale_item from public.sale_items where sale_id=v_sale_id and variant_id=v_42;
+  if v_sale_item is null
+     or not exists(select 1 from public.sale_items where id=v_sale_item and sku='ALYQ-01-BLK-42' and barcode='629ALYQ0142')
+     or not exists(select 1 from public.sales where id=v_sale_id and branch_id=v_main)
+     or (select quantity from public.branch_stock_balances where branch_id=v_main and variant_id=v_42)<>6
+     or (select quantity from public.branch_stock_balances where branch_id=v_destination and variant_id=v_42)<>3
+     or (select quantity from public.branch_stock_balances where branch_id=v_main and variant_id=v_41)<>0 then
+    raise exception 'POS sale did not freeze and deduct only Branch A Black / 42';
+  end if;
+  perform public.pos_complete_sale(jsonb_build_object(
+    'client_ref','phase35-alyq-black-42-sale','source','online',
+    'user_id',v_admin::text,'user_name','Amina Admin',
+    'payments',jsonb_build_array(jsonb_build_object('method','cod','amount',100,'status','pending')),
+    'lines',jsonb_build_array(jsonb_build_object('product_id',v_product::text,'variant_id',v_42::text,'qty',1))
+  ));
+  if (select quantity from public.branch_stock_balances where branch_id=v_main and variant_id=v_42)<>6 then
+    raise exception 'POS retry deducted Black / 42 twice';
+  end if;
+  if (select stock_quantity from public.storefront_branch_product_variants() where id=v_42)<>6 then
+    raise exception 'storefront did not publish truthful default-branch Black / 42 availability';
+  end if;
+
+  v_return:=public.pos_process_return(jsonb_build_object(
+    'client_ref','phase35-alyq-black-42-return',
+    'sale_id',v_sale_id::text,
+    'reason','Exact size returned',
+    'refund_method','visa',
+    'refund_status','completed',
+    'user_id',v_admin::text,
+    'user_name','Amina Admin',
+    'items',jsonb_build_array(jsonb_build_object('sale_item_id',v_sale_item::text,'quantity',1))
+  ));
+  v_return_id:=(v_return->>'return_id')::uuid;
+  if not exists(
+      select 1 from public.return_items
+       where return_id=v_return_id and sale_item_id=v_sale_item and variant_id=v_42
+         and sku='ALYQ-01-BLK-42' and barcode='629ALYQ0142'
+     )
+     or not exists(select 1 from public.sales_returns where id=v_return_id and branch_id=v_main)
+     or (select quantity from public.branch_stock_balances where branch_id=v_main and variant_id=v_42)<>7
+     or (select quantity from public.branch_stock_balances where branch_id=v_destination and variant_id=v_42)<>3
+     or (select quantity from public.branch_stock_balances where branch_id=v_main and variant_id=v_41)<>0 then
+    raise exception 'return did not restore exact Black / 42 to its originating Branch A shelf';
+  end if;
+  perform public.pos_process_return(jsonb_build_object(
+    'client_ref','phase35-alyq-black-42-return','sale_id',v_sale_id::text,
+    'reason','Exact size returned','refund_method','visa','refund_status','completed',
+    'user_id',v_admin::text,'user_name','Amina Admin',
+    'items',jsonb_build_array(jsonb_build_object('sale_item_id',v_sale_item::text,'quantity',1))
+  ));
+  if (select quantity from public.branch_stock_balances where branch_id=v_main and variant_id=v_42)<>7 then
+    raise exception 'return retry restored Black / 42 twice';
+  end if;
+
+  raise notice 'Phase 3.5 complete chain — ALYQ-01 Black / 42 has unique SKU/barcode/id and branch shelves; 10 transfers to 7+3 once, Branch A sale decrements only exact 42, invoice freezes it, storefront reports it, and idempotent return restores exact Branch A Black / 42';
+end
+$phase35_complete_chain$;
+
+reset role;
+
+-- ── Stocktake snapshots and finalizes the active branch only ──────────────
+do $phase35_branch_stocktake$
+declare
+  v_admin uuid := '00000000-0000-4000-8000-0000000000a1';
+  v_main uuid := '00000000-0000-4000-8000-0000000000b1';
+  v_destination uuid := '00000000-0000-4000-8000-0000000035b2';
+  v_42 uuid := '00000000-0000-4000-8000-000000003542';
+  v_result jsonb;
+  v_stocktake uuid;
+  v_counts jsonb;
+begin
+  perform pg_temp.become(v_admin,'authenticated');
+  perform public.switch_active_branch_with_audit(v_destination);
+  v_result:=public.stocktake_create(false,'Phase 3.5 destination count');
+  v_stocktake:=(v_result->'session'->>'id')::uuid;
+  if not exists(
+    select 1 from public.stocktake_lines
+     where stocktake_id=v_stocktake and variant_id=v_42 and expected_quantity=3
+  ) then raise exception 'destination stocktake did not snapshot Branch B Black / 42 = 3'; end if;
+
+  select jsonb_agg(jsonb_build_object(
+    'line_id',id,
+    'physical_quantity',case when variant_id=v_42 then expected_quantity-1 else expected_quantity end
+  )) into v_counts
+  from public.stocktake_lines where stocktake_id=v_stocktake;
+  perform public.stocktake_save_counts(v_stocktake,v_counts,'review',true);
+  v_result:=public.stocktake_finalize(v_stocktake);
+  if not (v_result->>'ok')::boolean
+     or (select quantity from public.branch_stock_balances where branch_id=v_destination and variant_id=v_42)<>2
+     or (select quantity from public.branch_stock_balances where branch_id=v_main and variant_id=v_42)<>7
+     or not exists(
+       select 1 from public.stock_movements
+        where source_type='stocktake' and source_id=v_stocktake and branch_id=v_destination
+          and variant_id=v_42 and quantity_before=3 and quantity_after=2
+     ) then
+    raise exception 'stocktake did not correct only the active Branch B Black / 42 shelf';
+  end if;
+  v_result:=public.stocktake_finalize(v_stocktake);
+  if v_result->>'code'<>'STOCKTAKE_FINALIZED'
+     or (select quantity from public.branch_stock_balances where branch_id=v_destination and variant_id=v_42)<>2 then
+    raise exception 'stocktake retry was not idempotent';
+  end if;
+
+  raise notice 'Phase 3.5 stocktake — Branch B snapshots exact Black / 42 = 3, finalizes it to 2 without touching Branch A = 7, writes branch/variant movement evidence, and refuses duplicate finalization';
+end
+$phase35_branch_stocktake$;
+
+reset role;
+
+-- ── Leaving variant mode preserves each branch instead of collapsing stock ─
+do $phase35_variant_consolidation$
+declare
+  v_admin uuid := '00000000-0000-4000-8000-0000000000a1';
+  v_main uuid := '00000000-0000-4000-8000-0000000000b1';
+  v_destination uuid := '00000000-0000-4000-8000-0000000035b2';
+  v_category uuid := '00000000-0000-4000-8000-0000000035c1';
+  v_product uuid := '00000000-0000-4000-8000-0000000035a2';
+  v_variant uuid := '00000000-0000-4000-8000-0000000035a3';
+begin
+  perform pg_temp.become(v_admin,'authenticated');
+  perform public.switch_active_branch_with_audit(v_main);
+  insert into public.products(id,sku,name_ar,name_en,category_id,selling_price,stock_quantity,active,stock_tracking_enabled)
+  values(v_product,'P35-CONSOLIDATE','دمج الفروع','Branch consolidation',v_category,20,5,true,true);
+  insert into public.product_variants(id,product_id,sku,barcode,color_en,color_ar,size_value,stock_quantity,active)
+  values(v_variant,v_product,'P35-CONSOLIDATE-ONE','P35CONSOLIDATE1','Black','أسود','One Size',0,true);
+  perform public.enable_product_variants(v_product,jsonb_build_object(v_variant::text,5),v_admin::text,'Amina Admin');
+
+  -- Simulate independent physical placement without a business movement so the
+  -- lifecycle RPC remains allowed (any historical variant reference would make
+  -- it archive-only by design).
+  perform pg_temp.become(null,'postgres');
+  update public.branch_stock_balances set quantity=2 where branch_id=v_main and variant_id=v_variant;
+  insert into public.branch_stock_balances(branch_id,product_id,variant_id,quantity,reorder_level)
+  values(v_destination,v_product,v_variant,3,1)
+  on conflict(branch_id,variant_id) where variant_id is not null do update set quantity=excluded.quantity;
+  perform pg_temp.become(v_admin,'authenticated');
+  perform public.disable_product_variants(v_product,5,v_admin::text,'Amina Admin');
+
+  if (select variants_enabled from public.products where id=v_product)
+     or exists(select 1 from public.product_variants where product_id=v_product)
+     or (select quantity from public.branch_stock_balances where branch_id=v_main and product_id=v_product and variant_id is null)<>2
+     or (select quantity from public.branch_stock_balances where branch_id=v_destination and product_id=v_product and variant_id is null)<>3
+     or (select stock_quantity from public.products where id=v_product)<>5 then
+    raise exception 'variant consolidation collapsed, duplicated, or lost per-branch balances';
+  end if;
+
+  raise notice 'Phase 3.5 variant consolidation — leaving variant mode preserves Branch A = 2 and Branch B = 3 as parent shelves exactly once while compatibility total remains 5';
+end
+$phase35_variant_consolidation$;
+
+reset role;
