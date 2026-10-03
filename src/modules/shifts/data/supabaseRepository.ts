@@ -3,6 +3,7 @@ import { AppError, toAppError } from "@/modules/products/data/repository";
 import { roundMoney } from "@/modules/expenses/validation";
 import type { CloseShiftInput, NewShift, Shift, ShiftSummary } from "../types";
 import type { ShiftRepository } from "./repository";
+import { getRegisterCredential } from "@/modules/registers/services/registerService";
 
 interface ShiftRow {
   id: string;
@@ -10,6 +11,7 @@ interface ShiftRow {
   branch: string;
   branch_id: string;
   register: string;
+  register_id?: string | null;
   status: string;
   opening_cash: number;
   opening_at: string;
@@ -35,6 +37,7 @@ function mapShift(row: ShiftRow): Shift {
     branch: row.branch,
     branch_id: row.branch_id,
     register: row.register,
+    register_id: row.register_id ?? null,
     status: row.status === "closed" ? "closed" : "open",
     opening_cash: Number(row.opening_cash),
     opening_at: row.opening_at,
@@ -107,7 +110,18 @@ export class SupabaseShiftRepository implements ShiftRepository {
 
   async openShift(input: NewShift): Promise<Shift> {
     try {
-      const { data, error } = await this.require()
+      const client = this.require();
+      const register = await getRegisterCredential();
+      if (register) {
+        const { data, error } = await client.rpc("open_registered_shift", {
+          p_opening_cash: roundMoney(input.opening_cash),
+          p_installation_id: register.installation_id,
+          p_credential: register.credential,
+        });
+        if (error) throw toAppError(error);
+        return mapShift(data as ShiftRow);
+      }
+      const { data, error } = await client
         .from("shifts")
         .insert({
           branch: input.branch,

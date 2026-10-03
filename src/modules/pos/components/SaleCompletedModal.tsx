@@ -1,7 +1,9 @@
+import { useEffect } from "react";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { Button, Modal, useToast } from "@/components/ui";
 import { usePos } from "../hooks/PosProvider";
-import { buildReceiptHtml, customerInfoIssue, printHtmlDocument } from "../services/receipt";
+import { buildReceiptHtml, customerInfoIssue } from "../services/receipt";
+import { autoPrintReceiptDocument, isAutomaticReceiptPrintingEnabled, openDrawerAfterCashSale, printReceiptDocument } from "../services/hardware";
 import { salesReceiptStrings } from "../services/receiptStrings";
 import { loadBrand } from "@/lib/branding/brand";
 
@@ -15,6 +17,43 @@ export function SaleCompletedModal() {
   const { t, num } = useI18n();
   const { completedSale, dismissCompleted } = usePos();
   const toast = useToast();
+
+  useEffect(() => {
+    if (!completedSale) return;
+    let current = true;
+    void openDrawerAfterCashSale(completedSale).then((outcome) => {
+      if (current && outcome === "failed") toast.error(t("pos.drawerFailed"));
+    });
+    return () => { current = false; };
+  }, [completedSale, t, toast]);
+
+  useEffect(() => {
+    if (!completedSale?.sale_number || !completedSale.items?.length) return;
+    if (customerInfoIssue(completedSale.customer_name, completedSale.customer_phone)) return;
+    let current = true;
+    void (async () => {
+      try {
+        if (!(await isAutomaticReceiptPrintingEnabled())) return;
+        const brand = await loadBrand();
+        const html = buildReceiptHtml({
+          sale: completedSale,
+          direction: document.documentElement.getAttribute("dir") === "rtl" ? "rtl" : "ltr",
+          strings: salesReceiptStrings(t),
+          logo_url: brand.receiptLogoEnabled ? brand.logoUrl : null,
+        });
+        const outcome = await autoPrintReceiptDocument(html, completedSale.sale_number);
+        if (current && outcome === "native-failed") toast.error(t("pos.printFailed"));
+        else if (current && outcome === "submitted") toast.success(t("pos.printSubmitted"));
+      } catch (error) {
+        console.error("[desktop-auto-print] receipt build failed", {
+          sale_number: completedSale.sale_number,
+          error: error instanceof Error ? error.message : error,
+        });
+        if (current) toast.error(t("pos.printFailed"));
+      }
+    })();
+    return () => { current = false; };
+  }, [completedSale, t, toast]);
 
   if (!completedSale) return null;
 
@@ -70,8 +109,12 @@ export function SaleCompletedModal() {
       return;
     }
 
-    const outcome = printHtmlDocument(html, completedSale.sale_number);
-    if (outcome === "embedded-blocked") {
+    const outcome = await printReceiptDocument(html, completedSale.sale_number);
+    if (outcome === "submitted") {
+      toast.success(t("pos.printSubmitted"));
+    } else if (outcome === "native-failed") {
+      toast.error(t("pos.printFailed"));
+    } else if (outcome === "embedded-blocked") {
       toast.error(t("pos.printEmbedded"));
     } else if (outcome === "failed") {
       toast.error(t("barcode.printBlocked"));

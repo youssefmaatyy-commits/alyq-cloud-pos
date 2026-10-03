@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { Button, Field, Modal, SelectInput, TextInput, useToast } from "@/components/ui";
 import { getCurrentUser } from "@/modules/inventory/permissions";
+import { useBranch } from "@/lib/branch";
+import { useRegister } from "@/modules/registers";
 import { useShifts } from "../hooks/ShiftProvider";
 import { EMPTY_SHIFT_FORM, SHIFT_REGISTERS, type ShiftFormValues } from "../types";
 import { parseMoney, validateShiftDraft } from "../validation";
@@ -15,6 +17,8 @@ export function OpenShiftModal({ open, onClose }: OpenShiftModalProps) {
   const { t } = useI18n();
   const toast = useToast();
   const { openShiftAction, canOpen } = useShifts();
+  const branch = useBranch();
+  const registerContext = useRegister();
   const user = getCurrentUser();
 
   const [values, setValues] = useState<ShiftFormValues>(EMPTY_SHIFT_FORM);
@@ -24,12 +28,17 @@ export function OpenShiftModal({ open, onClose }: OpenShiftModalProps) {
 
   useEffect(() => {
     if (open) {
-      setValues(EMPTY_SHIFT_FORM);
+      setValues({
+        ...EMPTY_SHIFT_FORM,
+        branch: branch.current?.name_en ?? "",
+        register: registerContext.state.register?.name ?? EMPTY_SHIFT_FORM.register,
+      });
       setAttempted(false);
       setFormError(null);
     }
-  }, [open]);
+  }, [branch.current?.name_en, open, registerContext.state.register?.name]);
 
+  const registerAllowsOpen = registerContext.state.kind === "web" || registerContext.state.kind === "desktop-ready";
   const errors = attempted ? validateShiftDraft(values) : {};
   const fieldError = (key: keyof ShiftFormValues): string | undefined =>
     errors[key] ? t(errors[key] as Parameters<typeof t>[0]) : undefined;
@@ -65,7 +74,7 @@ export function OpenShiftModal({ open, onClose }: OpenShiftModalProps) {
           <Button variant="secondary" onClick={onClose} disabled={submitting}>
             {t("common.cancel")}
           </Button>
-          <Button onClick={() => void submit()} disabled={submitting || !canOpen}>
+          <Button onClick={() => void submit()} disabled={submitting || !canOpen || !registerAllowsOpen}>
             {submitting ? t("common.saving") : t("shifts.open")}
           </Button>
         </>
@@ -87,21 +96,24 @@ export function OpenShiftModal({ open, onClose }: OpenShiftModalProps) {
             onChange={(e) => setValues((v) => ({ ...v, branch: e.target.value }))}
             placeholder={t("shifts.branchPlaceholder")}
             maxLength={80}
+            readOnly={Boolean(branch.current)}
           />
         </Field>
 
         <Field label={t("shifts.register")} required error={fieldError("register")}>
-          <SelectInput
-            value={values.register}
-            invalid={Boolean(errors.register)}
-            onChange={(e) => setValues((v) => ({ ...v, register: e.target.value }))}
-          >
-            {SHIFT_REGISTERS.map((register) => (
-              <option key={register} value={register}>
-                {register}
-              </option>
-            ))}
-          </SelectInput>
+          {registerContext.state.kind === "web" ? (
+            <SelectInput
+              value={values.register}
+              invalid={Boolean(errors.register)}
+              onChange={(e) => setValues((v) => ({ ...v, register: e.target.value }))}
+            >
+              {SHIFT_REGISTERS.map((register) => (
+                <option key={register} value={register}>{register}</option>
+              ))}
+            </SelectInput>
+          ) : (
+            <TextInput value={registerContext.state.register?.name ?? registerContext.state.reason ?? ""} readOnly disabled />
+          )}
         </Field>
 
         <Field

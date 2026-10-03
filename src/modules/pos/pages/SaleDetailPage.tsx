@@ -20,7 +20,8 @@ import { usePos } from "../hooks/PosProvider";
 import { canVoidSale, canConfirmPayment } from "../permissions";
 import type { Sale } from "../types";
 import type { RefundRecord, SalesReturn } from "@/modules/returns/types";
-import { buildReceiptHtml, customerInfoIssue, printHtmlDocument } from "../services/receipt";
+import { buildReceiptHtml, customerInfoIssue } from "../services/receipt";
+import { printReceiptDocument } from "../services/hardware";
 import { salesReceiptStrings } from "../services/receiptStrings";
 import { loadBrand } from "@/lib/branding/brand";
 import { getSalesRepository } from "../data";
@@ -135,12 +136,11 @@ export function SaleDetailPage() {
       return;
     }
 
-    const outcome = printHtmlDocument(html, sale.sale_number);
-    if (outcome === "embedded-blocked") {
-      toast.error(t("pos.printEmbedded"));
-    } else if (outcome === "failed") {
-      toast.error(t("barcode.printBlocked"));
-    }
+    const outcome = await printReceiptDocument(html, sale.sale_number);
+    if (outcome === "submitted") toast.success(t("pos.printSubmitted"));
+    else if (outcome === "native-failed") toast.error(t("pos.printFailed"));
+    else if (outcome === "embedded-blocked") toast.error(t("pos.printEmbedded"));
+    else if (outcome === "failed") toast.error(t("barcode.printBlocked"));
   }, [sale, isRTL, t, toast]);
 
   const voidSale = useCallback(async () => {

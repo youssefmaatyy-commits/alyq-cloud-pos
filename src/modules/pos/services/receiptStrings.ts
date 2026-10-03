@@ -18,6 +18,8 @@ export function salesReceiptStrings(t: Translate): ReceiptStrings {
     saleLabel: t("receipt.saleLabel"),
     dateLabel: t("receipt.dateLabel"),
     cashierLabel: t("receipt.cashierLabel"),
+    branchLabel: t("receipt.branchLabel"),
+    registerLabel: t("receipt.registerLabel"),
     itemLabel: t("receipt.itemLabel"),
     qtyLabel: t("receipt.qtyLabel"),
     priceLabel: t("receipt.priceLabel"),

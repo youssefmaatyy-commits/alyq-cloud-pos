@@ -66,6 +66,22 @@ export function SettingsHomePage() {
           descKey: "admin.settings.card.approvals.desc",
           testId: "settings-card-approvals",
         },
+        {
+          to: "/settings/registers",
+          permission: "registers.manage",
+          icon: "▣",
+          titleKey: "admin.settings.card.registers.title",
+          descKey: "admin.settings.card.registers.desc",
+          testId: "settings-card-registers",
+        },
+        {
+          to: "/settings/hardware",
+          permission: "hardware.configure",
+          icon: "⌁",
+          titleKey: "admin.settings.card.hardware.title",
+          descKey: "admin.settings.card.hardware.desc",
+          testId: "settings-card-hardware",
+        },
       ],
     },
     {

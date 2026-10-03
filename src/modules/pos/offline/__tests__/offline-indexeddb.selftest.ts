@@ -25,6 +25,9 @@ const stores = [
 ] as const;
 const exactVariantUuid = "123e4567-e89b-42d3-a456-426614174000";
 const clientRef = "pos-indexeddb-stable-client-ref";
+const branchId = "223e4567-e89b-42d3-a456-426614174001";
+const registerId = "323e4567-e89b-42d3-a456-426614174002";
+const installationId = "423e4567-e89b-42d3-a456-426614174003";
 
 const db = getOfflineDb();
 for (const store of stores) await db.clear(store);
@@ -60,6 +63,9 @@ const input: CompleteSaleInput = {
   customer_phone: null,
   user_id: "cashier-1",
   user_name: "Cashier One",
+  register_id: registerId,
+  installation_id: installationId,
+  register_name: "Front Till",
 };
 const inventory = planOfflineInventory([cachedProduct], [cachedVariant], input.lines, new Date().toISOString());
 const started = performance.now();
@@ -70,7 +76,7 @@ const record = await enqueueOfflineSale(
     discount_type: "none", discount_value: 0,
     name_en: "Exact Variant", name_ar: "النوع المحدد", sku: "EXACT-UUID", unit_price: 500,
   }],
-  { subtotal: 500, discount_amount: 0, total: 500 },
+  { subtotal: 500, discount_amount: 0, total: 500, branch_id: branchId },
   inventory.writes,
 );
 const localCompletionMs = performance.now() - started;
@@ -88,6 +94,11 @@ const persistedLines = await reopened.getAll<OfflineSaleLine>("offline_sale_line
 assert.ok(persisted, "offline sale survives IndexedDB reopen");
 assert.equal(persisted!.input.client_ref, clientRef);
 assert.equal(persisted!.input.lines[0].variant_id, exactVariantUuid);
+assert.equal(persisted!.branch_id, branchId);
+assert.equal(persisted!.register_id, registerId, "original register survives desktop restart");
+assert.equal(persisted!.installation_id, installationId, "original installation survives desktop restart");
+assert.equal(persisted!.input.offline_evidence?.register_id, registerId);
+assert.equal(persisted!.input.offline_evidence?.installation_id, installationId);
 assert.equal(persistedLines.find((line) => line.local_sale_id === record.id)?.variant_id, exactVariantUuid);
 const reopenedCatalog = await readCachedCatalog();
 assert.equal(reopenedCatalog.products[0].stock_quantity, 9, "product stock remains 9 after reopen");
@@ -109,6 +120,7 @@ await retrySyncNow(complete);
 assert.equal(serverCalls, 1, "reconnect/retry cannot create a duplicate server sale");
 assert.equal(simulatedServerStock, 9, "server-side sale mutation decrements stock exactly once");
 assert.deepEqual(seenRefs, [clientRef], "sync replays the original idempotency key unchanged");
+assert.equal(persisted!.input.register_id, registerId, "replay retains original register evidence");
 summary = await getSyncSummary();
 assert.equal(summary.pendingCount + summary.errorCount + summary.conflictCount, 0, "Pending Sync decreases after success");
 const audit = await reopened.get<OfflineSaleRecord>("offline_sales", record.id);

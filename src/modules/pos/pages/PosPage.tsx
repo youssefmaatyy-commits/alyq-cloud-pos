@@ -16,6 +16,7 @@ import { CustomerSearchSelect } from "@/modules/customers/components/CustomerSea
 import { useBranch } from "@/lib/branch/BranchProvider";
 import { useInventory } from "@/modules/inventory/hooks/InventoryProvider";
 import { useShifts } from "@/modules/shifts";
+import { useRegister } from "@/modules/registers";
 
 /**
  * POS register screen.
@@ -35,6 +36,7 @@ export function PosPage() {
   const { current: branch } = useBranch();
   const { user } = useInventory();
   const { openShift, loading: shiftsLoading } = useShifts();
+  const { state: registerContext } = useRegister();
   const toast = useToast();
 
   // Where "Open website" goes: the shop built into this bundle by default, or
@@ -66,6 +68,26 @@ export function PosPage() {
     }
   };
   useBarcodeScanner(onScan);
+
+  // Explicit modifier/function-key shortcuts improve till throughput without
+  // putting payment, hold, return or other state changes behind unsafe single
+  // printable keys. They only focus/open; they never submit a transaction.
+  useEffect(() => {
+    const onShortcut = (event: KeyboardEvent) => {
+      if (event.key === "F2") {
+        event.preventDefault();
+        document.querySelector<HTMLInputElement>('input[data-testid="pos-scan-search"]')?.focus();
+      } else if (event.ctrlKey && event.altKey && event.key.toLowerCase() === "p") {
+        event.preventDefault();
+        document.querySelector<HTMLInputElement>('input[data-testid="cash-input"]')?.focus();
+      } else if (event.ctrlKey && event.altKey && event.key.toLowerCase() === "i") {
+        event.preventDefault();
+        setLookupOpen(true);
+      }
+    };
+    document.addEventListener("keydown", onShortcut);
+    return () => document.removeEventListener("keydown", onShortcut);
+  }, []);
 
   // A storefront URL that was configured but cannot be used is reported once,
   // not swallowed: the control still opens the built-in shop, and the operator
@@ -171,6 +193,13 @@ export function PosPage() {
             {branch ? pick(branch.name_ar, branch.name_en) : t("pos.branchUnavailable")}
           </span>
           {branch?.code ? <span className="font-mono text-[10px] text-stone-400">{branch.code}</span> : null}
+        </span>
+        <span className="inline-flex min-w-0 items-center gap-1.5 rounded-lg bg-stone-50 px-2 py-1" data-testid="pos-register-identity">
+          <span aria-hidden>▣</span>
+          <span>{t("pos.registerLabel")}</span>
+          <strong className="max-w-36 truncate text-stone-900">
+            {registerContext?.register?.name ?? (registerContext.kind === "desktop-invalid" ? t("pos.registerUnavailable") : t("pos.webRegister"))}
+          </strong>
         </span>
         <span className="inline-flex items-center gap-1.5 rounded-lg bg-stone-50 px-2 py-1">
           <span aria-hidden>●</span>

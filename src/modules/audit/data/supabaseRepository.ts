@@ -16,6 +16,7 @@ interface AuditRow {
   approver_name: string | null;
   branch_id: string | null;
   branch_name: string | null;
+  register_id: string | null;
   module: string | null;
   correlation_id: string | null;
   before_state: Record<string, AuditJsonValue> | null;
@@ -38,6 +39,7 @@ function mapEntry(row: AuditRow): AuditLogEntry {
     approver_name: row.approver_name,
     branch_id: row.branch_id,
     branch_name: row.branch_name,
+    register_id: row.register_id,
     module: row.module,
     correlation_id: row.correlation_id,
     before_state: row.before_state,
@@ -86,6 +88,7 @@ export class SupabaseAuditRepository implements AuditRepository {
           approver_id: input.approver_id ?? null,
           approver_name: input.approver_name ?? null,
           branch_id: input.branch_id ?? null,
+          register_id: input.register_id ?? null,
           module: input.module ?? null,
           correlation_id: input.correlation_id ?? null,
           before_state: input.before_state ?? null,

@@ -15,7 +15,9 @@ export interface DesktopAppContext {
 export interface DesktopHardwareConfig {
   printerName: string | null;
   paperWidthMm: DesktopPaperWidth;
+  copies: number;
   silentPrint: boolean;
+  autoPrintAfterSale: boolean;
   drawerMode: DesktopDrawerMode;
   autoOpenCashDrawer: boolean;
 }

@@ -128,6 +128,8 @@ export const ROUTE_PERMISSIONS: ReadonlyArray<readonly [string, Permission]> = [
   // `manage_website`, not a new one. The screen re-checks it itself.
   ["/settings/branding", "website.manage"],
   ["/settings/branches", "users.manage"],
+  ["/settings/registers", "registers.manage"],
+  ["/settings/hardware", "hardware.configure"],
   // Phase 47: the Danger Zone — the strongest gate in the table, and the only
   // one an ordinary oversight role is deliberately denied.
   ["/settings/system", "system.preview_cleanup"],

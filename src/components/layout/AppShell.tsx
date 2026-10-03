@@ -6,6 +6,9 @@ import { useInventory } from "@/modules/inventory/hooks/InventoryProvider";
 import { usePos } from "@/modules/pos/hooks/PosProvider";
 import { useAuth } from "@/lib/auth";
 import { useBranch } from "@/lib/branch";
+import { desktopApi, getDesktopConfig } from "@/lib/desktop/bridge";
+import { useRegister } from "@/modules/registers";
+import { sendRegisterHeartbeat } from "@/modules/registers/services/registerService";
 import { ROLE_LABELS } from "@/lib/permissions/roles";
 import { can } from "@/lib/permissions/enforce";
 import { openStorefrontRoute } from "@/lib/storefront/storefrontLink";
@@ -155,6 +158,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { user } = useInventory();
   const { signOut, signOutEverywhere, endReason, user: sessionUser } = useAuth();
   const branch = useBranch();
+  const registerContext = useRegister();
   const pos = usePos();
   const navigate = useNavigate();
   const brand = useBrand();
@@ -182,6 +186,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const online = useOnlineNotificationState();
   const location = useLocation();
   const [open, setOpen] = useState(false);
+  const [desktopFullscreen, setDesktopFullscreen] = useState<boolean | null>(null);
   const [collapsed, setCollapsed] = useState(() => {
     try {
       return window.localStorage.getItem(COLLAPSE_KEY) === "1";
@@ -193,6 +198,50 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     setOpen(false);
   }, [location.pathname]);
+
+  useEffect(() => {
+    const api = desktopApi();
+    if (!api) return;
+    void api.getContext().then((context) => setDesktopFullscreen(context.fullscreen));
+    return api.onFullscreenChanged((enabled) => setDesktopFullscreen(enabled));
+  }, []);
+
+  // Desktop closure warnings and register heartbeats reuse the durable outbox
+  // facts. No payload, customer detail, credential or printer name leaves the
+  // process in diagnostics/metadata.
+  useEffect(() => {
+    const api = desktopApi();
+    if (!api) return;
+    void api.setRuntimeState({
+      pending: pos.syncPendingCount + pos.syncErrorCount + pos.syncDeferredCount,
+      conflicts: pos.syncConflictCount,
+    });
+  }, [pos.syncConflictCount, pos.syncDeferredCount, pos.syncErrorCount, pos.syncPendingCount]);
+
+  useEffect(() => {
+    if (registerContext.state.kind !== "desktop-ready") return;
+    let stopped = false;
+    const report = async () => {
+      try {
+        const config = await getDesktopConfig();
+        if (!config || stopped) return;
+        await sendRegisterHeartbeat({
+          pending: pos.syncPendingCount + pos.syncErrorCount + pos.syncDeferredCount,
+          conflicts: pos.syncConflictCount,
+          hardware: {
+            printer_configured: Boolean(config.hardware.printerName),
+            paper_width_mm: config.hardware.paperWidthMm,
+            drawer_mode: config.hardware.drawerMode,
+          },
+        });
+      } catch {
+        // Heartbeat is operational metadata, never a reason to stop the till.
+      }
+    };
+    void report();
+    const timer = window.setInterval(() => { void report(); }, 60_000);
+    return () => { stopped = true; window.clearInterval(timer); };
+  }, [registerContext.state.kind, pos.syncConflictCount, pos.syncDeferredCount, pos.syncErrorCount, pos.syncPendingCount]);
 
   const toggleCollapsed = () => {
     setCollapsed((current) => {
@@ -578,6 +627,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             ) : null}
           </div>
           ) : <div className="flex-1" />}
+
+          {desktopFullscreen !== null && location.pathname === "/pos" ? (
+            <button
+              type="button"
+              data-testid="cashier-fullscreen"
+              title={desktopFullscreen ? "Exit cashier full screen" : "Cashier full screen"}
+              aria-label={desktopFullscreen ? "Exit cashier full screen" : "Cashier full screen"}
+              onClick={() => {
+                const api = desktopApi();
+                if (!api) return;
+                void api.setFullscreen(!desktopFullscreen).then((result) => setDesktopFullscreen(result.fullscreen));
+              }}
+              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-stone-200 bg-white text-sm font-black text-stone-700 shadow-sm"
+            >⛶</button>
+          ) : null}
 
           {/* One application-wide connectivity model. A compact dot remains on
               small screens; the state and queue count link to safe detail. */}

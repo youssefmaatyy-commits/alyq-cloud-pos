@@ -159,6 +159,8 @@ export interface Sale {
   paid_by_name: string | null;
   /** Originating branch frozen on the invoice and used by return tenancy. */
   branch_id?: string | null;
+  /** Human branch label frozen on new sales for historical receipts. */
+  branch_name?: string | null;
   /** `pos` unless an approved online order created it. */
   source?: SaleSource;
   /**
@@ -166,6 +168,9 @@ export interface Sale {
    * `null` for online-channel sales and for rows before the column existed.
    */
   shift_id?: string | null;
+  /** Immutable desktop register evidence; legacy/web sales remain null. */
+  register_id?: string | null;
+  register_name?: string | null;
   /** Cashier note frozen with the transaction; never recomputed on reprint. */
   notes?: string | null;
   /** Client-only sync state for a cash sale accepted while the till was offline. */
@@ -182,6 +187,9 @@ export interface Sale {
 export interface OfflinePricingEvidence {
   schema_version: 1;
   branch_id: string;
+  /** Original desktop identity. The server verifies both against its credential. */
+  register_id?: string | null;
+  installation_id?: string | null;
   captured_at: string;
   subtotal: number;
   discount_amount: number;
@@ -227,6 +235,10 @@ export interface CompleteSaleInput {
   notes?: string | null;
   user_id: string;
   user_name: string;
+  /** Original desktop binding evidence; authority is credential-resolved server-side. */
+  register_id?: string | null;
+  installation_id?: string | null;
+  register_name?: string | null;
   /** Present only on durable offline cash sales; see `pos_sync_offline_sale`. */
   offline_evidence?: OfflinePricingEvidence;
   /** Omitted by the till; set to `online` when an order approval creates it. */

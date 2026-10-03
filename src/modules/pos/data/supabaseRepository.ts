@@ -11,6 +11,7 @@ import type {
 } from "../types";
 import type { SaleListQuery, SalesRepository } from "./repository";
 import { SALES_ROW_CAP } from "./repository";
+import { getRegisterCredential } from "@/modules/registers/services/registerService";
 
 interface SaleRow {
   id: string;
@@ -49,10 +50,13 @@ interface SaleRow {
   paid_by_name: string | null;
   /** Frozen originating branch (migration 0071). */
   branch_id?: string | null;
+  branch_name?: string | null;
   /** Present from migration 0017 onward; older rows simply lack it. */
   source?: Sale["source"] | null;
   /** The open shift the till sale was completed under (migration 0040). */
   shift_id?: string | null;
+  register_id?: string | null;
+  register_name?: string | null;
   notes?: string | null;
 }
 
@@ -185,8 +189,11 @@ function mapSale(row: SaleRow, items: SaleItemRow[] = [], payments: SalePaymentR
     paid_by: row.paid_by ?? null,
     paid_by_name: row.paid_by_name ?? null,
     branch_id: row.branch_id ?? null,
+    branch_name: row.branch_name ?? null,
     source: row.source ?? "pos",
     shift_id: row.shift_id ?? null,
+    register_id: row.register_id ?? null,
+    register_name: row.register_name ?? null,
     notes: row.notes ?? null,
   };
 }
@@ -235,18 +242,46 @@ export class SupabaseSalesRepository implements SalesRepository {
         user_name: input.user_name,
         source: input.source ?? "pos",
       };
+      const register = await getRegisterCredential();
+      const carriesRegister = Boolean(input.register_id || input.installation_id);
+      if (carriesRegister && !register) {
+        throw new AppError("FORBIDDEN", "The original desktop register binding is unavailable");
+      }
+      if (register && (
+        !input.register_id || !input.installation_id
+        || input.register_id !== register.register_id
+        || input.installation_id !== register.installation_id
+      )) {
+        throw new AppError("FORBIDDEN", "Sale register evidence does not match this installation");
+      }
       const { data, error } = input.offline_evidence
-        ? await client.rpc("pos_sync_offline_sale", {
-            p_payload: payload,
-            p_evidence: input.offline_evidence,
-          })
-        : await client.rpc("pos_complete_sale", {
-            // Migration 0035: an over-limit discount is refused unless a real,
-            // approved, unspent request stands behind it. Validated in the database,
-            // spent in the same transaction as the sale it produced.
-            p_approval_request_id: approvalRequestId ?? null,
-            p_payload: payload,
-          });
+        ? register
+          ? await client.rpc("pos_sync_registered_offline_sale", {
+              p_payload: payload,
+              p_evidence: input.offline_evidence,
+              p_installation_id: register.installation_id,
+              p_credential: register.credential,
+              p_register_id: register.register_id,
+            })
+          : await client.rpc("pos_sync_offline_sale", {
+              p_payload: payload,
+              p_evidence: input.offline_evidence,
+            })
+        : register
+          ? await client.rpc("pos_complete_registered_sale", {
+              p_payload: payload,
+              p_approval_request_id: approvalRequestId ?? null,
+              p_installation_id: register.installation_id,
+              p_credential: register.credential,
+              p_register_id: register.register_id,
+            })
+          : await client.rpc("pos_complete_sale", {
+              // Migration 0035: an over-limit discount is refused unless a real,
+              // approved, unspent request stands behind it. Validated in the database,
+              // spent in the same transaction as the sale it produced.
+              p_approval_request_id: approvalRequestId ?? null,
+              p_payload: payload,
+            });
       if (error) throw toAppError(error);
       const saleId = (data as { sale_id?: string } | null)?.sale_id;
       if (!saleId) throw new AppError("DB", "Sale id missing from response");

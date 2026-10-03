@@ -32,7 +32,9 @@ let allowedAppUrl = null;
 const defaultHardware = Object.freeze({
   printerName: null,
   paperWidthMm: 80,
+  copies: 1,
   silentPrint: true,
+  autoPrintAfterSale: false,
   drawerMode: "none",
   autoOpenCashDrawer: false,
 });
@@ -54,19 +56,24 @@ function text(value, max, nullable = false) {
 function sanitizeHardware(value) {
   if (!isRecord(value)) throw new Error("Invalid hardware configuration");
   const paperWidthMm = Number(value.paperWidthMm);
+  const copies = value.copies == null ? 1 : Number(value.copies);
   const drawerMode = String(value.drawerMode ?? "none");
-  if (!PAPER_WIDTHS.includes(paperWidthMm) || !DRAWER_MODES.includes(drawerMode)) {
+  if (!PAPER_WIDTHS.includes(paperWidthMm) || !Number.isInteger(copies) || copies < 1 || copies > 5 || !DRAWER_MODES.includes(drawerMode)) {
     throw new Error("Unsupported hardware configuration");
   }
   const printerName = text(value.printerName, 180, true);
   const autoOpenCashDrawer = value.autoOpenCashDrawer === true;
+  const autoPrintAfterSale = value.autoPrintAfterSale === true;
   if ((drawerMode === "printer-driver" && !printerName) || (autoOpenCashDrawer && drawerMode === "none")) {
     throw new Error("Cash drawer configuration requires a printer-driver");
   }
+  if (autoPrintAfterSale && !printerName) throw new Error("Auto-print requires a configured printer");
   return {
     printerName,
     paperWidthMm,
+    copies,
     silentPrint: value.silentPrint !== false,
+    autoPrintAfterSale,
     drawerMode,
     autoOpenCashDrawer,
   };
@@ -222,6 +229,7 @@ async function printHtml(html, reference, purpose) {
       printWindow.webContents.print({
         silent: Boolean(printerName) && config.hardware.silentPrint,
         printBackground: true,
+        copies: purpose === "receipt" ? config.hardware.copies : 1,
         deviceName: printerName ?? undefined,
         margins: { marginType: "none" },
         pageSize: {

@@ -11,6 +11,7 @@ import {
 } from "@/lib/auth";
 import { ToastProvider } from "@/components/ui";
 import { BranchProvider } from "@/lib/branch";
+import { RegisterProvider } from "@/modules/registers";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { AppShell } from "@/components/layout/AppShell";
 import { CatalogProvider } from "@/modules/products";
@@ -62,6 +63,8 @@ import { BrandingPage } from "@/modules/settings/pages/BrandingPage";
 import { SettingsHomePage } from "@/modules/settings/pages/SettingsHomePage";
 import { SystemSettingsPage } from "@/modules/settings/pages/SystemSettingsPage";
 import { BranchesPage } from "@/modules/settings/pages/BranchesPage";
+import { RegistersPage } from "@/modules/registers/pages/RegistersPage";
+import { DesktopHardwarePage } from "@/modules/registers/pages/DesktopHardwarePage";
 import { OperationsCenterPage } from "@/modules/operations/pages/OperationsCenterPage";
 import { ImportCenterPage } from "@/modules/import/pages/ImportCenterPage";
 import { StoreManagementHome, SalesHome, CatalogHome, InventoryHome, OnlineHome } from "./components/layout/moduleHomes";
@@ -249,6 +252,7 @@ function AuthenticatedApp() {
   return (
     <RequireAuth>
       <BranchProvider>
+      <RegisterProvider>
       <CatalogProvider>
         <ApprovalProvider>
         <InventoryProvider>
@@ -363,6 +367,7 @@ function AuthenticatedApp() {
         </InventoryProvider>
         </ApprovalProvider>
       </CatalogProvider>
+      </RegisterProvider>
       </BranchProvider>
     </RequireAuth>
   );
@@ -385,6 +390,8 @@ function SettingsArea() {
         <Route index element={<SettingsHomePage />} />
         <Route path="users" element={<UsersPage />} />
         <Route path="branches" element={<BranchesPage />} />
+        <Route path="registers" element={<RegistersPage />} />
+        <Route path="hardware" element={<DesktopHardwarePage />} />
         <Route path="roles" element={<RolesPage />} />
         {/* Approval thresholds live under Settings because changing them is
             `manage_settings` work — the same capability that owns the rest of

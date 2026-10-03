@@ -9,7 +9,7 @@ const probe: BackendHealthProbe = {
   latencyMs: 42,
   authenticated: true,
   schemaStatus: "compatible",
-  serverMigration: "0081_offline_sync_health.sql",
+  serverMigration: "0082_desktop_registers_and_hardware.sql",
   serverMigrationCount: 81,
   activeBranchId: "branch-a",
   branchContextValid: true,
@@ -22,7 +22,7 @@ const facts = buildOperationalHealth({
   authenticated: true,
   realtime: "live",
   queue: { pending: 0, failed: 0, deferred: 0, conflicts: 0, lastSync: null },
-  storage: { persistent: true, businessVersion: 3, expectedBusinessVersion: 3, catalogVersion: 2, expectedCatalogVersion: 2, compatible: true, migrated: false, detail: "current" },
+  storage: { persistent: true, businessVersion: 4, expectedBusinessVersion: 4, catalogVersion: 2, expectedCatalogVersion: 2, compatible: true, migrated: false, detail: "current" },
   branch: { id: "branch-a", error: null, backendValid: true },
 });
 assert.ok(facts.every((fact) => fact.state === "healthy"), "verified inputs report healthy");
@@ -33,7 +33,7 @@ const unhealthy = buildOperationalHealth({
   authenticated: false,
   realtime: "error",
   queue: { pending: 1, failed: 1, deferred: 1, conflicts: 1, lastSync: null },
-  storage: { persistent: true, businessVersion: 99, expectedBusinessVersion: 3, catalogVersion: 2, expectedCatalogVersion: 2, compatible: false, migrated: false, detail: "newer_than_app" },
+  storage: { persistent: true, businessVersion: 99, expectedBusinessVersion: 4, catalogVersion: 2, expectedCatalogVersion: 2, compatible: false, migrated: false, detail: "newer_than_app" },
   branch: { id: null, error: "No accessible branch", backendValid: false },
 });
 assert.equal(unhealthy.find((fact) => fact.key === "application")?.state, "unavailable");
@@ -51,7 +51,7 @@ const uncertain = buildOperationalHealth({
   authenticated: true,
   realtime: "unavailable",
   queue: { pending: 2, failed: 0, deferred: 1, conflicts: 0, lastSync: null },
-  storage: { persistent: false, businessVersion: 3, expectedBusinessVersion: 3, catalogVersion: 2, expectedCatalogVersion: 2, compatible: true, migrated: false, detail: "current" },
+  storage: { persistent: false, businessVersion: 4, expectedBusinessVersion: 4, catalogVersion: 2, expectedCatalogVersion: 2, compatible: true, migrated: false, detail: "current" },
   branch: { id: "branch-a", error: null, backendValid: null },
 });
 assert.equal(uncertain.find((fact) => fact.key === "application")?.state, "warning");
@@ -64,7 +64,7 @@ assert.equal(uncertain.find((fact) => fact.key === "branch")?.state, "unknown");
 const conflictQueue = buildOperationalHealth({
   connectivity: "sync_error", backend: probe, authenticated: true, realtime: "live",
   queue: { pending: 0, failed: 1, deferred: 0, conflicts: 1, lastSync: null },
-  storage: { persistent: true, businessVersion: 3, expectedBusinessVersion: 3, catalogVersion: 2, expectedCatalogVersion: 2, compatible: true, migrated: false, detail: "current" },
+  storage: { persistent: true, businessVersion: 4, expectedBusinessVersion: 4, catalogVersion: 2, expectedCatalogVersion: 2, compatible: true, migrated: false, detail: "current" },
   branch: { id: "branch-a", error: null, backendValid: true },
 });
 assert.equal(conflictQueue.find((fact) => fact.key === "offline_queue")?.state, "warning", "failed/conflict queue is visible");

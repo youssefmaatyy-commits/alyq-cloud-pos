@@ -80,6 +80,8 @@ export interface ReceiptStrings {
   saleLabel: string;
   dateLabel: string;
   cashierLabel: string;
+  branchLabel?: string;
+  registerLabel?: string;
   itemLabel: string;
   qtyLabel: string;
   priceLabel: string;
@@ -314,6 +316,8 @@ export function buildReceiptHtml({ sale, strings, direction }: ReceiptData): str
     <div class="headline"><span class="k">${escapeXml(strings.saleLabel)}</span><span>${escapeXml(sale.sale_number)}</span></div>
     <div class="headline"><span class="k">${escapeXml(strings.dateLabel)}</span><span dir="ltr">${escapeXml(dateStr)}</span></div>
     <div class="headline"><span class="k">${escapeXml(strings.cashierLabel)}</span><span>${escapeXml(sale.user_name)}</span></div>
+    ${sale.branch_name ? `<div class="headline"><span class="k">${escapeXml(strings.branchLabel ?? "Branch")}</span><span>${escapeXml(sale.branch_name)}</span></div>` : ""}
+    ${sale.register_name ? `<div class="headline"><span class="k">${escapeXml(strings.registerLabel ?? "Register")}</span><span>${escapeXml(sale.register_name)}</span></div>` : ""}
     ${sale.customer_name ? `<div class="headline"><span class="k">${escapeXml(strings.customerLabel)}</span><span>${escapeXml(sale.customer_name)}</span></div>` : ""}
     ${sale.customer_phone ? `<div class="headline"><span class="k">${escapeXml(strings.customerPhoneLabel)}</span><bdi dir="ltr">${escapeXml(sale.customer_phone)}</bdi></div>` : ""}
     ${sale.notes ? `<div class="headline"><span class="k">${escapeXml(strings.noteLabel ?? "Note")}</span><span>${escapeXml(sale.notes)}</span></div>` : ""}

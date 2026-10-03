@@ -102,6 +102,9 @@ export const PERMISSION_CATALOG = {
   "system.health_check": { module: "system", action: "health_check", capability: "run_health_check" },
   "system.preview_cleanup": { module: "system", action: "preview_cleanup", capability: "preview_data_cleanup" },
   "system.execute_cleanup": { module: "system", action: "execute_cleanup", capability: "execute_data_cleanup" },
+  "registers.manage": { module: "registers", action: "manage", capability: "manage_registers" },
+  "hardware.configure": { module: "hardware", action: "configure", capability: "configure_hardware" },
+  "hardware.open_drawer": { module: "hardware", action: "open_drawer", capability: "open_cash_drawer" },
 } as const satisfies Readonly<Record<string, PermissionDefinition>>;
 
 /** A known module.action identifier. */
@@ -180,6 +183,7 @@ export interface CapabilityGroup {
     | "online"
     | "approvals"
     | "settings"
+    | "registers"
     /** Backup, restore and data health (Phase 18). */
     | "data_safety";
   capabilities: Capability[];
@@ -259,6 +263,10 @@ export const CAPABILITY_GROUPS: readonly CapabilityGroup[] = [
   {
     key: "settings",
     capabilities: ["manage_users", "manage_roles", "manage_settings", "view_audit_log"],
+  },
+  {
+    key: "registers",
+    capabilities: ["manage_registers", "configure_hardware", "open_cash_drawer"],
   },
   {
     // Backup & recovery (Phase 18). Its own group rather than a corner of
@@ -473,6 +481,9 @@ export const CAPABILITY_ACTIONS: Record<Capability, PermissionAction> = {
   restore_backup: "manage",
   export_backup: "export",
   run_health_check: "view",
+  manage_registers: "manage",
+  configure_hardware: "manage",
+  open_cash_drawer: "approve",
 };
 
 /** `permissions.action.approve` — the verb's own label, EN and AR. */

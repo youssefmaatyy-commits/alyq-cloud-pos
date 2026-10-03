@@ -207,6 +207,15 @@ export const AUDIT_ACTIONS = [
   "cleanup.previewed",
   "cleanup.executed",
   "cleanup.refused",
+  // Desktop register and hardware authority (0082).
+  "register.created",
+  "register.activated",
+  "register.deactivated",
+  "register.renamed",
+  "register.reassigned",
+  "hardware.configured",
+  "hardware.printer_tested",
+  "drawer.open_authorized",
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -264,6 +273,8 @@ export const AUDIT_ENTITIES = [
   "cash_movement",
   "cleanup_preview",
   "cleanup_execution",
+  "register",
+  "hardware",
 ] as const;
 export type AuditEntity = (typeof AUDIT_ENTITIES)[number];
 
@@ -291,6 +302,7 @@ export interface AuditLogEntry {
   approver_name?: string | null;
   branch_id?: string | null;
   branch_name?: string | null;
+  register_id?: string | null;
   module?: string | null;
   correlation_id?: string | null;
   before_state?: Record<string, AuditJsonValue> | null;
@@ -313,6 +325,7 @@ export interface NewAuditLogEntry {
   approver_name?: string | null;
   branch_id?: string | null;
   branch_name?: string | null;
+  register_id?: string | null;
   module?: string | null;
   correlation_id?: string | null;
   before_state?: Record<string, AuditJsonValue> | null;

@@ -309,6 +309,12 @@ export const CAPABILITIES = [
    * problem and points at the tool that already fixes it.
    */
   "run_health_check",
+  /** Create, activate, deactivate, rename and reassign branch-bound registers. */
+  "manage_registers",
+  /** Select local printer/paper/drawer configuration and submit test jobs. */
+  "configure_hardware",
+  /** Authorize an audited manual drawer-open command on the bound register. */
+  "open_cash_drawer",
 ] as const;
 export type Capability = (typeof CAPABILITIES)[number];
 
@@ -384,6 +390,9 @@ export const ROLE_CAPABILITIES: Record<AppRole, readonly Capability[]> = {
     "create_backup",
     "run_health_check",
     "preview_data_cleanup",
+    "manage_registers",
+    "configure_hardware",
+    "open_cash_drawer",
   ],
   cashier: [
     "view_dashboard",

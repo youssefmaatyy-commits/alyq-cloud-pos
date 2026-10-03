@@ -60,6 +60,8 @@ import {
 } from "../offline/connectivity";
 import { enqueueOfflineSale, getLastSyncedAt, getOfflineSaleDisplay, getSyncSummary, processOutbox } from "../offline/outbox";
 import { probeSystemBackend } from "@/modules/system/services/healthService";
+import { useRegister } from "@/modules/registers";
+import { getRegisterSaleEvidence } from "@/modules/registers/services/registerService";
 
 export interface PosContextValue {
   mode: "supabase" | "demo";
@@ -262,7 +264,10 @@ export function PosProvider({ children }: { children: ReactNode }) {
   // Use the live user from the inventory module so role changes (the
   // inventory role switcher, future auth) take effect on the till immediately.
   const { user } = useInventory();
-  const canSell = canCompleteSale(user);
+  const registerContext = useRegister();
+  const registerAllowsSale =
+    registerContext.state.kind === "web" || registerContext.state.kind === "desktop-ready";
+  const canSell = canCompleteSale(user) && !registerContext.loading && registerAllowsSale;
   const canDiscount = canApplyDiscount(user);
 
   // Catalog load — extracted so the POS page can refresh after catalog
@@ -882,6 +887,10 @@ export function PosProvider({ children }: { children: ReactNode }) {
       if (completing) throw new AppError("VALIDATION", "A sale is already being processed");
       if (lines.length === 0) throw new AppError("VALIDATION", "Cart is empty");
 
+      // The desktop binding is checked before the draft is frozen. These ids are
+      // retained in IndexedDB as original evidence; Postgres still derives
+      // authority from the installation credential, never from these fields.
+      const registerEvidence = await getRegisterSaleEvidence(activeBranchId);
       setCompleting(true);
       // Built outside the try so the catch can offer the very draft that was
       // refused: an approval replays it byte for byte, `client_ref` included,
@@ -908,6 +917,9 @@ export function PosProvider({ children }: { children: ReactNode }) {
           notes: saleNote.trim() || null,
           user_id: user.id,
           user_name: user.name,
+          register_id: registerEvidence?.register_id ?? null,
+          installation_id: registerEvidence?.installation_id ?? null,
+          register_name: registerEvidence?.register_name ?? null,
       };
       const queueOfflineCashSale = async (): Promise<SaleModel> => {
         if (payments.length !== 1 || payments[0]?.method !== "cash") {
@@ -951,6 +963,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
             discount_amount: totals.discountAmount,
             total: totals.total,
             branch_id: activeBranchId,
+            branch_name: currentBranch?.name_en ?? null,
           },
           inventory.writes,
         );
@@ -999,7 +1012,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
         setCompleting(false);
       }
     },
-    [activeBranchId, appliedCouponCode, canSell, completing, lines, discount, products, variants, totals, refreshSales, refreshSyncSummary, loadCatalog, removeCoupon, saleNote, selectedCustomer, user, updateLines],
+    [activeBranchId, currentBranch, appliedCouponCode, canSell, completing, lines, discount, products, variants, totals, refreshSales, refreshSyncSummary, loadCatalog, removeCoupon, saleNote, selectedCustomer, user, updateLines],
   );
 
   const dismissCompleted = useCallback(() => setCompletedSale(null), []);

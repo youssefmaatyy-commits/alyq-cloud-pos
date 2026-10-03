@@ -69,6 +69,8 @@ export interface EnqueueOfflineSaleMeta {
   total: number;
   /** Server-resolved active branch whose cached shelves were used. */
   branch_id?: string | null;
+  /** Display evidence only; branch_id remains authoritative. */
+  branch_name?: string | null;
 }
 
 /** Write a completed-while-offline sale locally and queue it for sync. */
@@ -90,6 +92,8 @@ export async function enqueueOfflineSale(
         offline_evidence: input.offline_evidence ?? {
           schema_version: 1,
           branch_id: branchId,
+          register_id: input.register_id ?? null,
+          installation_id: input.installation_id ?? null,
           captured_at: createdAt,
           subtotal: meta.subtotal,
           discount_amount: meta.discount_amount,
@@ -114,6 +118,9 @@ export async function enqueueOfflineSale(
     client_ref: input.client_ref,
     created_at: createdAt,
     branch_id: branchId,
+    branch_name: meta.branch_name ?? null,
+    register_id: input.register_id ?? null,
+    installation_id: input.installation_id ?? null,
     input: queuedInput,
     subtotal: meta.subtotal,
     discount_amount: meta.discount_amount,
@@ -155,6 +162,8 @@ export async function enqueueOfflineSale(
     client_ref: input.client_ref,
     local_sale_id: localId,
     branch_id: branchId,
+    register_id: input.register_id ?? null,
+    installation_id: input.installation_id ?? null,
     created_at: createdAt,
     operation_type: "sale.complete",
     schema_version: OFFLINE_BUSINESS_SCHEMA_VERSION,
@@ -409,6 +418,7 @@ export async function listSafeSyncOperations(activeBranchId: string | null = nul
         local_sale_id: record.id,
         operation_type: entry?.operation_type ?? "sale.complete",
         branch_id: record.branch_id ?? entry?.branch_id ?? null,
+        register_id: record.register_id ?? entry?.register_id ?? null,
         user_name: record.user_name,
         created_at: record.created_at,
         attempts: entry?.attempts ?? record.sync_attempts ?? 0,

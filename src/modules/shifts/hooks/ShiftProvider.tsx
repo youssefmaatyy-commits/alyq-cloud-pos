@@ -163,8 +163,10 @@ export function ShiftProvider({ children }: { children: ReactNode }) {
         details: {
           branch: created.branch,
           register: created.register,
+          register_id: created.register_id ?? null,
           opening_cash: created.opening_cash,
         },
+        register_id: created.register_id ?? null,
         user_id: user.id,
         user_name: user.name,
       });

@@ -89,6 +89,8 @@ export interface Shift {
   /** Trusted branch identity in live mode; legacy/demo shifts may omit it. */
   branch_id?: string | null;
   register: string;
+  /** Authoritative desktop register; null for legacy/web shifts. */
+  register_id?: string | null;
   status: ShiftStatus;
   opening_cash: number;
   opening_at: string;

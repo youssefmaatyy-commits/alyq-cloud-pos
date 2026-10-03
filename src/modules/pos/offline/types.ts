@@ -69,7 +69,7 @@ export interface OfflineSaleLine {
   unit_price: number;
 }
 
-export const OFFLINE_BUSINESS_SCHEMA_VERSION = 3;
+export const OFFLINE_BUSINESS_SCHEMA_VERSION = 4;
 export const OFFLINE_CATALOG_SCHEMA_VERSION = 2;
 
 /** One normalized lifecycle shared by the queue, history, status indicator and support UI. */
@@ -93,6 +93,11 @@ export interface OfflineSaleRecord {
   created_at: string;
   /** Active branch at capture time; the outbox only replays in this branch. */
   branch_id?: string | null;
+  /** Frozen human branch label for the local receipt while awaiting replay. */
+  branch_name?: string | null;
+  /** Original desktop register identity (credential remains outside IndexedDB). */
+  register_id?: string | null;
+  installation_id?: string | null;
   input: CompleteSaleInput;
   /** Precomputed for display — the exact numbers the cashier saw at the till. */
   subtotal: number;
@@ -131,6 +136,8 @@ export interface SyncOutboxEntry {
   local_sale_id: string;
   /** Prevents a queued Branch A sale from replaying after a switch to Branch B. */
   branch_id?: string | null;
+  register_id?: string | null;
+  installation_id?: string | null;
   created_at: string;
   /** Currently only cash sale completion is supported offline. */
   operation_type?: "sale.complete";
@@ -150,6 +157,7 @@ export interface SafeSyncOperation {
   local_sale_id: string;
   operation_type: "sale.complete";
   branch_id: string | null;
+  register_id: string | null;
   /** Captured staff display name only; no auth/session identifier or customer PII. */
   user_name: string;
   created_at: string;
@@ -276,6 +284,9 @@ export function offlineSaleToDisplaySale(record: OfflineSaleRecord, lines: Offli
     paid_by: null,
     paid_by_name: null,
     branch_id: record.branch_id ?? null,
+    branch_name: record.branch_name ?? null,
+    register_id: record.register_id ?? record.input.register_id ?? null,
+    register_name: record.input.register_name ?? null,
     source: "pos",
     shift_id: null,
     offline_sync_status: record.sync_status,

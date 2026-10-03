@@ -64,6 +64,8 @@ export async function ensureOfflineSchema(): Promise<OfflineSchemaHealth> {
           value: {
             ...sale,
             schema_version: OFFLINE_BUSINESS_SCHEMA_VERSION,
+            register_id: sale.register_id ?? sale.input?.register_id ?? null,
+            installation_id: sale.installation_id ?? sale.input?.installation_id ?? null,
             sync_attempts: sale.sync_attempts ?? entries.find((entry) => entry.local_sale_id === sale.id)?.attempts ?? 0,
             last_attempt_at: sale.last_attempt_at ?? entries.find((entry) => entry.local_sale_id === sale.id)?.last_attempt_at ?? null,
             sync_status: sale.sync_status === "error"
@@ -77,6 +79,8 @@ export async function ensureOfflineSchema(): Promise<OfflineSchemaHealth> {
             ...entry,
             operation_type: "sale.complete" as const,
             schema_version: OFFLINE_BUSINESS_SCHEMA_VERSION,
+            register_id: entry.register_id ?? sales.find((sale) => sale.id === entry.local_sale_id)?.input?.register_id ?? null,
+            installation_id: entry.installation_id ?? sales.find((sale) => sale.id === entry.local_sale_id)?.input?.installation_id ?? null,
             status: entry.status === "error"
               ? (entry.last_error_kind === "conflict" ? "conflict" : "failed")
               : (entry.status ?? "pending"),
