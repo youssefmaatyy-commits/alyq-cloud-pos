@@ -3,6 +3,7 @@ import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { useCatalog } from "@/modules/products/hooks/CatalogProvider";
 import { useInventory } from "@/modules/inventory/hooks/InventoryProvider";
+import { usePos } from "@/modules/pos/hooks/PosProvider";
 import { useAuth } from "@/lib/auth";
 import { useBranch } from "@/lib/branch";
 import { ROLE_LABELS } from "@/lib/permissions/roles";
@@ -154,6 +155,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { user } = useInventory();
   const { signOut, signOutEverywhere, endReason, user: sessionUser } = useAuth();
   const branch = useBranch();
+  const pos = usePos();
   const navigate = useNavigate();
   const brand = useBrand();
   const canOpen = (path: string) =>
@@ -577,6 +579,28 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
           ) : <div className="flex-1" />}
 
+          {/* One application-wide connectivity model. A compact dot remains on
+              small screens; the state and queue count link to safe detail. */}
+          {canOpen("/sync") ? (
+            <Link
+              to="/sync"
+              data-testid="operational-status"
+              aria-label={`${pos.connectivityState}; ${pos.syncPendingCount} pending sync operations`}
+              className={cn(
+                "inline-flex h-9 shrink-0 items-center gap-1.5 rounded-xl border px-2 text-[11px] font-black uppercase",
+                pos.connectivityState === "online" && "border-emerald-200 bg-emerald-50 text-emerald-800",
+                pos.connectivityState === "syncing" && "border-sky-200 bg-sky-50 text-sky-800",
+                pos.connectivityState === "offline" && "border-stone-300 bg-stone-100 text-stone-700",
+                pos.connectivityState === "degraded" && "border-amber-200 bg-amber-50 text-amber-800",
+                pos.connectivityState === "sync_error" && "border-rose-200 bg-rose-50 text-rose-800",
+              )}
+            >
+              <span className={cn("h-2 w-2 rounded-full", pos.connectivityState === "online" ? "bg-emerald-500" : pos.connectivityState === "syncing" ? "animate-pulse bg-sky-500" : pos.connectivityState === "sync_error" ? "bg-rose-500" : pos.connectivityState === "degraded" ? "bg-amber-500" : "bg-stone-500")} />
+              <span className="hidden sm:inline">{pos.connectivityState === "online" ? t("pos.online") : pos.connectivityState === "offline" ? t("pos.offline") : pos.connectivityState === "syncing" ? t("pos.syncing") : pos.connectivityState === "degraded" ? t("pos.degraded") : t("pos.syncError")}</span>
+              {pos.syncPendingCount + pos.syncErrorCount + pos.syncDeferredCount + pos.syncConflictCount > 0 ? <span className="rounded-full bg-white/80 px-1 tabular-nums">{pos.syncPendingCount + pos.syncErrorCount + pos.syncDeferredCount + pos.syncConflictCount}</span> : null}
+            </Link>
+          ) : null}
+
           {/* Branch is an authority boundary, not a cosmetic store filter. The
               RPC refuses unassigned ids; a successful switch remounts every
               business provider and refreshes the synchronous capability set. */}
@@ -586,7 +610,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <select
                 data-testid="branch-switcher"
                 value={branch.current.id}
-                disabled={branch.switching || branch.loading || branch.branches.length < 2}
+                disabled={branch.switching || branch.loading || branch.branches.length < 2 || pos.connectivitySnapshot.backend !== "reachable" || pos.connectivitySnapshot.session !== "usable"}
                 onChange={(event) => { void branch.switchBranch(event.target.value); }}
                 className="h-9 max-w-44 appearance-none truncate rounded-xl border border-stone-200 bg-white py-0 ps-3 pe-8 text-xs font-bold text-stone-700 outline-none hover:bg-stone-50 disabled:cursor-default disabled:opacity-80"
               >
@@ -671,6 +695,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </span>
           ) : null}
         </header>
+        {(pos.connectivityState === "offline" || pos.connectivityState === "degraded") ? (
+          <Link to={canOpen("/sync") ? "/sync" : location.pathname} className="block border-b border-amber-200 bg-amber-50 px-4 py-2 text-center text-xs font-bold text-amber-950" data-testid="offline-authority-banner">
+            {t("pos.offlineCashOnly")} · {t("pos.cachedCatalog")}
+          </Link>
+        ) : null}
 
         <main className="mx-auto w-full max-w-7xl px-3 py-4 sm:px-6 sm:py-6 lg:px-8">
           <RouteGuard>{children}</RouteGuard>

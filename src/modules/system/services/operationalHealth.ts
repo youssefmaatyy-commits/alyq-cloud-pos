@@ -11,7 +11,7 @@ export interface OperationalHealthFact { key: OperationalHealthKey; state: Opera
 export interface OperationalHealthInput {
   connectivity: ApplicationConnectivityState;
   backend: BackendHealthProbe | null;
-  authenticated: boolean;
+  authenticated: boolean | null;
   realtime: RealtimeStatus;
   queue: { pending: number; failed: number; deferred: number; conflicts: number; lastSync: string | null };
   storage: OfflineSchemaHealth | null;
@@ -33,10 +33,10 @@ export function buildOperationalHealth(input: OperationalHealthInput): Operation
       : input.backend.authenticated === false
         ? fact("backend", "warning", "Session was not accepted")
         : fact("backend", "healthy", input.backend.latencyMs === null ? null : `${input.backend.latencyMs} ms`);
-  const realtime = input.realtime === "live" || input.realtime === "idle"
+  const realtime = input.realtime === "live"
     ? fact("realtime", "healthy", input.realtime)
-    : input.realtime === "unavailable"
-      ? fact("realtime", "unknown", "No realtime channel is available")
+    : input.realtime === "unavailable" || input.realtime === "idle"
+      ? fact("realtime", "unknown", "No realtime channel has been verified")
       : input.realtime === "error"
         ? fact("realtime", "warning", "Requests may still work; realtime is unavailable")
         : fact("realtime", "warning", input.realtime);
@@ -74,7 +74,7 @@ export function buildOperationalHealth(input: OperationalHealthInput): Operation
   return [
     application,
     backend,
-    fact("authentication", input.authenticated ? "healthy" : "unavailable", input.authenticated ? "Session available" : "No usable session"),
+    fact("authentication", input.authenticated === null ? "unknown" : input.authenticated ? "healthy" : "unavailable", input.authenticated === null ? "Session has not been verified with the backend" : input.authenticated ? "Session verified" : "No usable session"),
     realtime,
     queue,
     storage,

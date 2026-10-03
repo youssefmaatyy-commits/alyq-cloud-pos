@@ -31,21 +31,23 @@ declare
   v_payment jsonb;
 begin
   if auth.uid() is null or v_branch is null or not public.can('sell')
-     or not public.can_access_branch(v_branch) then
-    raise exception 'Offline sale sync is not permitted in the active branch' using errcode='42501';
+     or not public.can_access_branch(v_branch)
+     or nullif(p_payload->>'user_id','')::uuid is distinct from auth.uid() then
+    raise exception 'Offline sale sync is not permitted for the original user in the active branch' using errcode='42501';
   end if;
   if v_ref is null then raise exception 'Offline sale client reference is required' using errcode='23514'; end if;
+  -- The branch evidence is checked before idempotent lookup: even a coincidental
+  -- client_ref in Branch B must never satisfy a Branch A replay.
+  if coalesce((p_evidence->>'schema_version')::integer,0)<>1
+     or nullif(p_evidence->>'branch_id','')::uuid is distinct from v_branch then
+    raise exception 'Offline schema or original branch conflict' using errcode='23514';
+  end if;
 
   -- Lost-response retry: authoritative completion wins before any later price
   -- change can turn an already-committed sale into a false conflict.
   select id into v_existing from public.sales where branch_id=v_branch and client_ref=v_ref;
   if v_existing is not null then
     return public.pos_complete_sale(p_payload,null);
-  end if;
-
-  if coalesce((p_evidence->>'schema_version')::integer,0)<>1
-     or nullif(p_evidence->>'branch_id','')::uuid is distinct from v_branch then
-    raise exception 'Offline schema or original branch conflict' using errcode='23514';
   end if;
   if coalesce(p_payload->>'source','pos')<>'pos'
      or nullif(btrim(coalesce(p_payload->>'coupon_code',p_payload->>'promo_code','')),'') is not null

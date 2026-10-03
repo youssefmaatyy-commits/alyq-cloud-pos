@@ -39,6 +39,10 @@ export const ROUTE_PERMISSIONS: ReadonlyArray<readonly [string, Permission]> = [
   ["/inventory", "inventory.view"],
   ["/pos/sales", "sales.view"],
   ["/pos", "pos.sell"],
+  // Local queue inspection is part of safely operating the till; system health
+  // is an operational/reporting view and never grants repair authority.
+  ["/sync", "pos.sell"],
+  ["/system-health", "reports.view"],
   // Phase 49: the Sales module landing opens with the same capability as the
   // invoice list it fronts — a module door must never be wider than its rooms.
   ["/sales", "sales.view"],
@@ -178,6 +182,11 @@ export function capabilityForPath(pathname: string): Capability | null {
 export const ROUTE_PERMISSION_ALTERNATES: ReadonlyArray<readonly [string, Permission]> = [
   ["/settings/system", "system.reset"],
   ["/settings/operations", "settings.manage"],
+  ["/sync", "reports.view"],
+  ["/sync", "settings.manage"],
+  ["/system-health", "settings.manage"],
+  ["/system-health", "audit.view"],
+  ["/system-health", "backups.view"],
   ["/online", "website.manage"],
   ["/sales", "returns.process"],
   ["/sales", "refunds.process"],

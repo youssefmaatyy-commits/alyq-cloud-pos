@@ -335,6 +335,7 @@ export function OperationsCenterPage() {
         title={t("operations.title")}
         subtitle={t("operations.subtitle")}
         crumbs={[{ label: t("nav.dashboard"), to: "/" }, { label: t("admin.settings.title"), to: "/settings" }, { label: t("operations.title") }]}
+        actions={<Link to="/system-health" className="inline-flex rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-bold text-stone-800">{t("admin.settings.card.health.title")}</Link>}
       />
       <div className="mb-4 flex flex-wrap gap-1">
         {TABS.filter((key) => access.cleanup || (key !== "storage" && key !== "cleanup" && key !== "retention")).map((key) => (

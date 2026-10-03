@@ -1,4 +1,4 @@
-const SECRET_KEY = /(token|authorization|cookie|password|passcode|pin|secret|service.?role|private.?key|credential)/i;
+const SECRET_KEY = /(token|authorization|cookie|password|passcode|pin|secret|service.?role|private.?key|api.?key|credential|raw.?payment|payment.?payload|card.?number|tender)/i;
 const JWT = /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g;
 
 /** Recursive support-export boundary. Unknown secret-shaped fields are removed. */
@@ -7,7 +7,9 @@ export function redactDiagnosticValue(value: unknown, key = ""): unknown {
   if (typeof value === "string") {
     return value
       .replace(JWT, "[redacted-token]")
-      .replace(/(bearer|token|password|cookie|pin|secret)\s*[:=]\s*[^\s,;]+/gi, "$1=[redacted]")
+      .replace(/(bearer|token|password|cookie|pin|secret|private[_ -]?key|api[_ -]?key|service[_ -]?role|card[_ -]?number)\s*[:=]\s*[^\s,;]+/gi, "$1=[redacted]")
+      .replace(/\b01[0125]\d{8}\b/g, "[redacted-phone]")
+      .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[redacted-email]")
       .slice(0, 500);
   }
   if (Array.isArray(value)) return value.slice(0, 50).map((entry) => redactDiagnosticValue(entry));

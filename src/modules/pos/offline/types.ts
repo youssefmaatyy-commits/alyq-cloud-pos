@@ -110,6 +110,9 @@ export interface OfflineSaleRecord {
   server_id: string | null;
   server_sale_number: string | null;
   synced_at: string | null;
+  /** Technical retry history retained after the outbox pointer is confirmed/deleted. */
+  sync_attempts?: number;
+  last_attempt_at?: string | null;
   /** Human-readable reason the last sync attempt failed, if it did. */
   last_error: string | null;
   /** Coarse classification of `last_error`, so the UI can react differently. */

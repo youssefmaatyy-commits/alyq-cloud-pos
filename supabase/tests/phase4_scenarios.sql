@@ -61,8 +61,10 @@ begin
   -- and never touches the Black / 42 shelf twice.
   v_second:=public.pos_sync_offline_sale(v_payload,v_evidence);
   if v_first->>'sale_id' is distinct from v_second->>'sale_id'
-     or (select count(*) from public.sales where branch_id=v_main and client_ref='phase4-offline-alyq01-black42')<>1 then
-    raise exception 'lost-response replay duplicated the sale';
+     or (select count(*) from public.sales where branch_id=v_main and client_ref='phase4-offline-alyq01-black42')<>1
+     or (select count(*) from public.sale_payments where sale_id=(v_first->>'sale_id')::uuid)<>1
+     or (select count(*) from public.stock_movements where branch_id=v_main and variant_id=v_variant and notes='Sale '||(v_first->>'sale_number'))<>1 then
+    raise exception 'lost-response replay duplicated the sale, payment, or stock movement';
   end if;
   select quantity into v_after from public.branch_stock_balances
    where branch_id=v_main and product_id=v_product and variant_id=v_variant;
@@ -76,10 +78,13 @@ begin
   perform pg_temp.become(v_admin,'authenticated');
   perform public.switch_active_branch_with_audit(v_other);
   begin
-    perform public.pos_sync_offline_sale(v_payload||jsonb_build_object('client_ref','phase4-wrong-branch'),v_evidence);
+    perform public.pos_sync_offline_sale(v_payload||jsonb_build_object('client_ref','phase4-wrong-branch','user_id',v_admin::text,'user_name','Amina Admin'),v_evidence);
     raise exception 'cross-branch offline replay was accepted';
   exception when check_violation then null;
   end;
+  if exists(select 1 from public.sales where client_ref='phase4-wrong-branch') then
+    raise exception 'cross-branch refusal still wrote a sale';
+  end if;
 
   -- Server pricing remains authoritative. Historical evidence is preserved as
   -- a conflict rather than silently re-priced after the variant changes.
@@ -91,6 +96,10 @@ begin
     raise exception 'changed catalogue price silently repriced offline history';
   exception when check_violation then null;
   end;
+  if exists(select 1 from public.sales where client_ref='phase4-price-conflict')
+     or (select quantity from public.branch_stock_balances where branch_id=v_main and variant_id=v_variant)<>v_after then
+    raise exception 'pricing conflict wrote a transaction or changed stock';
+  end if;
 
   -- Revoked/absent sale authority fails closed.
   perform pg_temp.become(v_viewer,'authenticated');
@@ -99,6 +108,9 @@ begin
     raise exception 'viewer synchronized an offline sale';
   exception when insufficient_privilege then null;
   end;
+  if exists(select 1 from public.sales where client_ref='phase4-revoked') then
+    raise exception 'revoked authority refusal still wrote a sale';
+  end if;
 
   -- Health proves the authenticated contract and exact schema compatibility;
   -- it does not mutate or expose credentials.

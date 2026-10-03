@@ -30,8 +30,8 @@ import { useShifts } from "@/modules/shifts";
  * typed into the focused search box is added by the box itself, exactly once.
  */
 export function PosPage() {
-  const { t, pick } = useI18n();
-  const { addBySku, loading, error, reloadCatalog, connectivity, workingFromCache, syncPendingCount } = usePos();
+  const { t, pick, date } = useI18n();
+  const { addBySku, loading, error, reloadCatalog, connectivityState, workingFromCache, cachedCatalogAt, syncPendingCount } = usePos();
   const { current: branch } = useBranch();
   const { user } = useInventory();
   const { openShift, loading: shiftsLoading } = useShifts();
@@ -181,10 +181,10 @@ export function PosPage() {
           <span className={`h-1.5 w-1.5 rounded-full ${openShift ? "bg-emerald-500" : "bg-amber-500"}`} aria-hidden />
           {shiftsLoading ? t("common.loading") : openShift ? `${t("pos.shiftOpen")} · ${openShift.shift_number}` : t("pos.shiftClosed")}
         </span>
-        <span className={`ms-auto inline-flex items-center gap-1.5 rounded-lg px-2 py-1 ${connectivity === "online" ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-900"}`}>
-          <span className={`h-1.5 w-1.5 rounded-full ${connectivity === "online" ? "bg-emerald-500" : "bg-amber-500"}`} aria-hidden />
-          {connectivity === "online" ? t("pos.online") : t("pos.offline")}
-          {workingFromCache ? ` · ${t("pos.cachedCatalog")}` : ""}
+        <span className={`ms-auto inline-flex items-center gap-1.5 rounded-lg px-2 py-1 ${connectivityState === "online" ? "bg-emerald-50 text-emerald-800" : connectivityState === "sync_error" ? "bg-rose-50 text-rose-800" : "bg-amber-50 text-amber-900"}`}>
+          <span className={`h-1.5 w-1.5 rounded-full ${connectivityState === "online" ? "bg-emerald-500" : connectivityState === "syncing" ? "animate-pulse bg-sky-500" : connectivityState === "sync_error" ? "bg-rose-500" : "bg-amber-500"}`} aria-hidden />
+          {connectivityState === "online" ? t("pos.online") : connectivityState === "offline" ? t("pos.offline") : connectivityState === "syncing" ? t("pos.syncing") : connectivityState === "sync_error" ? t("pos.syncError") : t("pos.degraded")}
+          {workingFromCache ? ` · ${t("pos.cachedCatalog")}${cachedCatalogAt ? ` (${date(cachedCatalogAt)})` : ""}` : ""}
           {syncPendingCount > 0 ? ` · ${t("pos.syncPending")} ${syncPendingCount}` : ""}
         </span>
       </div>

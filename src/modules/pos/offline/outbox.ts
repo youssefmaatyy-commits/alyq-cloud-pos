@@ -128,6 +128,8 @@ export async function enqueueOfflineSale(
     server_id: null,
     server_sale_number: null,
     synced_at: null,
+    sync_attempts: 0,
+    last_attempt_at: null,
     last_error: null,
     last_error_kind: null,
   };
@@ -221,8 +223,12 @@ export interface SyncSummary {
 }
 
 export async function getSyncSummary(activeBranchId: string | null = null): Promise<SyncSummary> {
+  const schema = await ensureOfflineSchema();
   const db = getOfflineDb();
   const entries = await db.getAll<SyncOutboxEntry>("sync_outbox");
+  if (!schema.compatible) {
+    return { pendingCount: 0, failedCount: 0, errorCount: 0, deferredCount: entries.length, conflictCount: 0, syncing: false, oldestPendingAt: entries.map((entry) => entry.created_at).sort()[0] ?? null };
+  }
   const deferredByBranch = (entry: SyncOutboxEntry) => Boolean(activeBranchId && (!entry.branch_id || entry.branch_id !== activeBranchId));
   const pending = entries.filter((entry) => entry.status === "pending" && !deferredByBranch(entry));
   const failedCount = entries.filter((entry) => entry.status === "failed").length;
@@ -245,8 +251,10 @@ export async function getSyncSummary(activeBranchId: string | null = null): Prom
 export function safeSyncErrorSummary(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error);
   return raw
-    .replace(/(bearer|access[_ -]?token|refresh[_ -]?token|service[_ -]?role|password|pin|cookie)\s*[:=]\s*[^\s,;]+/gi, "$1=[redacted]")
+    .replace(/(bearer|access[_ -]?token|refresh[_ -]?token|service[_ -]?role|private[_ -]?key|api[_ -]?key|password|pin|cookie|card[_ -]?number)\s*[:=]\s*[^\s,;]+/gi, "$1=[redacted]")
     .replace(/eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g, "[redacted-token]")
+    .replace(/\b01[0125]\d{8}\b/g, "[redacted-phone]")
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[redacted-email]")
     .slice(0, 240);
 }
 
@@ -312,6 +320,8 @@ async function attemptEntry(entry: SyncOutboxEntry, complete: CompleteSaleFn): P
       server_id: sale.id,
       server_sale_number: sale.sale_number,
       synced_at: new Date().toISOString(),
+      sync_attempts: entry.attempts + 1,
+      last_attempt_at: now,
       last_error: null,
       last_error_kind: null,
     });
@@ -340,6 +350,8 @@ async function attemptEntry(entry: SyncOutboxEntry, complete: CompleteSaleFn): P
     await db.put<OfflineSaleRecord>("offline_sales", {
       ...record,
       sync_status: status,
+      sync_attempts: attempts,
+      last_attempt_at: now,
       last_error: message,
       last_error_kind: kind,
     });
@@ -370,7 +382,8 @@ function retryable(entry: SyncOutboxEntry, activeBranchId: string | null): boole
 
 /** Safe, bounded queue/history projection; never exposes payment/customer/raw payload data. */
 export async function listSafeSyncOperations(activeBranchId: string | null = null, limit = SYNC_HISTORY_LIMIT): Promise<SafeSyncOperation[]> {
-  await ensureOfflineSchema();
+  const schema = await ensureOfflineSchema();
+  if (!schema.compatible) return [];
   const db = getOfflineDb();
   const [entries, records, lines] = await Promise.all([
     db.getAll<SyncOutboxEntry>("sync_outbox"),
@@ -378,9 +391,15 @@ export async function listSafeSyncOperations(activeBranchId: string | null = nul
     db.getAll<OfflineSaleLine>("offline_sale_lines"),
   ]);
   const entriesByRef = new Map(entries.map((entry) => [entry.client_ref, entry]));
-  return records
+  const ordered = records.sort((a, b) => b.created_at.localeCompare(a.created_at));
+  const active = ordered.filter((record) => record.sync_status !== "synced");
+  const history = ordered
+    .filter((record) => record.sync_status === "synced")
+    .slice(0, Math.max(1, Math.min(limit, SYNC_HISTORY_LIMIT)));
+  // Never hide an unsynced business operation merely to enforce the history
+  // bound. Only confirmed technical history is capped.
+  return [...active, ...history]
     .sort((a, b) => b.created_at.localeCompare(a.created_at))
-    .slice(0, Math.max(1, Math.min(limit, SYNC_HISTORY_LIMIT)))
     .map((record) => {
       const entry = entriesByRef.get(record.client_ref);
       const branchDeferred = Boolean(entry && activeBranchId && entry.branch_id !== activeBranchId);
@@ -392,8 +411,8 @@ export async function listSafeSyncOperations(activeBranchId: string | null = nul
         branch_id: record.branch_id ?? entry?.branch_id ?? null,
         user_name: record.user_name,
         created_at: record.created_at,
-        attempts: entry?.attempts ?? 0,
-        last_attempt_at: entry?.last_attempt_at ?? null,
+        attempts: entry?.attempts ?? record.sync_attempts ?? 0,
+        last_attempt_at: entry?.last_attempt_at ?? record.last_attempt_at ?? record.synced_at,
         next_attempt_at: entry?.next_attempt_at ?? null,
         status,
         error_kind: branchDeferred ? "branch" : (entry?.last_error_kind ?? record.last_error_kind),
@@ -437,17 +456,9 @@ async function processOutboxPass(complete: CompleteSaleFn, options: ProcessOutbo
   const db = getOfflineDb();
   const entries = await db.getAll<SyncOutboxEntry>("sync_outbox");
   if (!schema.compatible) {
-    for (const entry of entries) {
-      const message = "Offline queue schema requires a newer application";
-      await db.put<SyncOutboxEntry>("sync_outbox", {
-        ...entry,
-        status: "deferred",
-        last_error_kind: "schema",
-        last_error: message,
-      });
-      const record = await db.get<OfflineSaleRecord>("offline_sales", entry.local_sale_id);
-      if (record) await db.put<OfflineSaleRecord>("offline_sales", { ...record, sync_status: "deferred", last_error_kind: "schema", last_error: message });
-    }
+    // Fail closed without writing into a newer/unknown durable format. An older
+    // application may inspect health, but must not "normalize" business rows it
+    // does not understand.
     return { synced: [], failed: entries.map((entry) => entry.local_sale_id), conflicts: [] };
   }
 

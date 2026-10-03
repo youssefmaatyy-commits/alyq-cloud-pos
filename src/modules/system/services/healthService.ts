@@ -17,7 +17,7 @@ export interface BackendHealthProbe {
 
 function safeMessage(error: unknown): string {
   return readableErrorMessage(error)
-    .replace(/(bearer|token|password|cookie|service[_ -]?role|pin)\s*[:=]\s*[^\s,;]+/gi, "$1=[redacted]")
+    .replace(/(bearer|token|password|cookie|service[_ -]?role|private[_ -]?key|api[_ -]?key|pin)\s*[:=]\s*[^\s,;]+/gi, "$1=[redacted]")
     .slice(0, 180);
 }
 

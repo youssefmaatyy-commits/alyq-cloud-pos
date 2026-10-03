@@ -25,6 +25,7 @@ import {
   processOutbox,
   retrySyncNow,
   getLastSyncedAt,
+  listSafeSyncOperations,
   type CompleteSaleFn,
 } from "../outbox";
 import { offlineSaleToDisplaySale, type OfflineSaleLine, type OfflineSaleRecord } from "../types";
@@ -232,6 +233,18 @@ test("cache schema upgrade invalidates disposable catalog only and preserves uns
   assert.equal((await getSyncSummary()).pendingCount, 1);
 });
 
+test("a newer durable record schema fails closed even when metadata is missing", async () => {
+  freshEnv();
+  const record = await enqueueOne("cr-newer-schema");
+  const db = getOfflineDb();
+  await db.put("offline_sales", { ...record, schema_version: 99 });
+  await db.delete("sync_metadata", "offline_business_schema_version");
+  const health = await ensureOfflineSchema();
+  assert.equal(health.compatible, false);
+  assert.equal(health.detail, "newer_than_app");
+  assert.equal((await db.get<OfflineSaleRecord>("offline_sales", record.id))?.schema_version, 99, "newer business data is never rewritten by an older app");
+});
+
 test("known-offline exact-variant cash sale queues immediately and decrements cached stock once", async () => {
   freshEnv();
   const exactUuid = "123e4567-e89b-42d3-a456-426614174000";
@@ -300,6 +313,24 @@ test("a cash sale completed offline is queued with a stable client_ref and appea
   const summary = await getSyncSummary();
   assert.equal(summary.pendingCount, 1);
   assert.equal(summary.errorCount, 0);
+});
+
+test("safe Sync Center rows exclude customers, payments and raw payloads", async () => {
+  freshEnv();
+  await enqueueOne("cr-safe-projection", {
+    customer_id: "customer-secret-id",
+    customer_name: "Private Customer",
+    customer_phone: "01000000000",
+  });
+  const [safe] = await listSafeSyncOperations();
+  const text = JSON.stringify(safe);
+  assert.ok(safe);
+  assert.ok(!text.includes("Private Customer"));
+  assert.ok(!text.includes("01000000000"));
+  assert.ok(!text.includes("customer-secret-id"));
+  assert.ok(!text.includes("payments"));
+  assert.ok(!text.includes("tendered"));
+  assert.ok(!text.includes("input"));
 });
 
 test("offline outbox preserves exact variant and waits for its originating branch", async () => {

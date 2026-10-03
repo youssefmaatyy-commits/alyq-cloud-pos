@@ -145,6 +145,14 @@ export function SettingsHomePage() {
       labelKey: "admin.settings.group.system",
       cards: [
         {
+          to: "/system-health",
+          permission: "reports.view",
+          icon: "●",
+          titleKey: "admin.settings.card.health.title",
+          descKey: "admin.settings.card.health.desc",
+          testId: "settings-card-health",
+        },
+        {
           to: "/settings/operations",
           permission: "system.health_check",
           icon: "◎",

@@ -28,6 +28,8 @@ import {
   StocktakePage,
 } from "@/modules/inventory";
 import { PosPage, PosProvider, SaleDetailPage, SalesHistoryPage } from "@/modules/pos";
+import { SyncCenterPage } from "@/modules/pos/pages/SyncCenterPage";
+import { HealthCenterPage } from "@/modules/system/pages/HealthCenterPage";
 import {
   CustomerDetailPage,
   CustomerProvider,
@@ -285,6 +287,8 @@ function AuthenticatedApp() {
                                 <PosPage />
                               </ErrorBoundary>
                             } />
+                            <Route path="/sync" element={<SyncCenterPage />} />
+                            <Route path="/system-health" element={<HealthCenterPage />} />
                             {/* Phase 49: the Sales module landing — invoices,
                                 returns, refunds, shifts, expenses and the
                                 approvals inbox behind one door. */}

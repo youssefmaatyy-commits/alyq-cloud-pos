@@ -33,16 +33,20 @@ function versionOf(value: string | undefined): number | null {
 export async function ensureOfflineSchema(): Promise<OfflineSchemaHealth> {
   const db = getOfflineDb();
   try {
-    const [businessMeta, catalogMeta] = await Promise.all([
+    const [businessMeta, catalogMeta, sales, entries] = await Promise.all([
       db.get<{ key: string; value: string }>("sync_metadata", BUSINESS_VERSION_KEY),
       db.get<{ key: string; value: string }>("sync_metadata", CATALOG_VERSION_KEY),
+      db.getAll<Omit<OfflineSaleRecord, "sync_status"> & { sync_status?: string }>("offline_sales"),
+      db.getAll<Omit<SyncOutboxEntry, "status"> & { status?: string }>("sync_outbox"),
     ]);
     const businessVersion = versionOf(businessMeta?.value);
     const catalogVersion = versionOf(catalogMeta?.value);
-    if (businessVersion !== null && businessVersion > OFFLINE_BUSINESS_SCHEMA_VERSION) {
+    const recordVersion = Math.max(0, ...sales.map((sale) => sale.schema_version ?? 0), ...entries.map((entry) => entry.schema_version ?? 0));
+    const observedBusinessVersion = Math.max(businessVersion ?? 0, recordVersion);
+    if (observedBusinessVersion > OFFLINE_BUSINESS_SCHEMA_VERSION) {
       return {
         compatible: false,
-        businessVersion,
+        businessVersion: observedBusinessVersion,
         expectedBusinessVersion: OFFLINE_BUSINESS_SCHEMA_VERSION,
         catalogVersion,
         expectedCatalogVersion: OFFLINE_CATALOG_SCHEMA_VERSION,
@@ -54,16 +58,14 @@ export async function ensureOfflineSchema(): Promise<OfflineSchemaHealth> {
 
     let migrated = businessVersion !== OFFLINE_BUSINESS_SCHEMA_VERSION;
     if (migrated) {
-      const [sales, entries] = await Promise.all([
-        db.getAll<Omit<OfflineSaleRecord, "sync_status"> & { sync_status?: string }>("offline_sales"),
-        db.getAll<Omit<SyncOutboxEntry, "status"> & { status?: string }>("sync_outbox"),
-      ]);
       await db.putBatch([
         ...sales.map((sale) => ({
           store: "offline_sales" as const,
           value: {
             ...sale,
             schema_version: OFFLINE_BUSINESS_SCHEMA_VERSION,
+            sync_attempts: sale.sync_attempts ?? entries.find((entry) => entry.local_sale_id === sale.id)?.attempts ?? 0,
+            last_attempt_at: sale.last_attempt_at ?? entries.find((entry) => entry.local_sale_id === sale.id)?.last_attempt_at ?? null,
             sync_status: sale.sync_status === "error"
               ? (sale.last_error_kind === "conflict" ? "conflict" : "failed")
               : (sale.sync_status ?? "pending"),

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { buildOperationalHealth } from "../services/operationalHealth";
+import { buildOperationalHealth } from "@/modules/operations/services/health";
 import { redactDiagnosticValue, safeDiagnosticsJson } from "../services/diagnostics";
 import type { BackendHealthProbe } from "../services/healthService";
 
@@ -76,7 +76,10 @@ const diagnostic = safeDiagnosticsJson({
     pin_hash: "abc123",
     safe_error: "token=another-secret request failed",
     branch_id: "branch-a",
+    customer_phone: "01000000000",
+    customer_email: "private@example.com",
   },
+  payment_payload: { card_number: "4111111111111111", tendered: 500 },
   jwt: "eyJaaaaaaaaaaaa.bbbbbbbbbbbb.cccccccccccc",
 });
 assert.ok(!diagnostic.includes("top-secret"));
@@ -84,7 +87,11 @@ assert.ok(!diagnostic.includes("never-show"));
 assert.ok(!diagnostic.includes("abc123"));
 assert.ok(!diagnostic.includes("another-secret"));
 assert.ok(!diagnostic.includes("eyJaaaaaaaaaaaa"));
+assert.ok(!diagnostic.includes("01000000000"));
+assert.ok(!diagnostic.includes("private@example.com"));
+assert.ok(!diagnostic.includes("4111111111111111"));
+assert.ok(!diagnostic.includes("tendered"));
 assert.ok(diagnostic.includes("branch-a"), "operational context is retained");
 assert.equal(redactDiagnosticValue("password=oops", "message"), "password=[redacted]");
 
-console.log("23/23 system health and redaction tests passed");
+console.log("27/27 system health and redaction tests passed");

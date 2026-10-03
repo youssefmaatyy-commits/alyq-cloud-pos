@@ -76,6 +76,7 @@ export interface PosContextValue {
   syncConflictCount: number;
   lastSuccessfulSyncAt: string | null;
   retrySync: () => Promise<void>;
+  retrySyncItem: (clientRef: string) => Promise<void>;
   refreshSyncState: () => Promise<void>;
   // catalog snapshot (re-used from products module load)
   products: Product[];
@@ -358,7 +359,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
     };
   }, [refreshSyncSummary]);
 
-  const synchronizeAfterCheck = useCallback(async (manual: boolean) => {
+  const synchronizeAfterCheck = useCallback(async (manual: boolean, clientRef?: string) => {
     if (typeof navigator !== "undefined" && navigator.onLine === false) return;
     const probe = await probeSystemBackend();
     reportNetworkResult(probe.reachable ? "success" : "network-error");
@@ -382,6 +383,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       // conflict, permission/schema refusal, or rejected business rule.
       retryNetwork: manual,
       recovery: !manual,
+      clientRef,
       branchId: activeBranchId,
     });
     await refreshSyncSummary();
@@ -389,6 +391,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
   }, [activeBranchId, loadCatalog, mode, refreshBranches, refreshIdentity, refreshSyncSummary]);
 
   const retrySync = useCallback(() => synchronizeAfterCheck(true), [synchronizeAfterCheck]);
+  const retrySyncItem = useCallback((clientRef: string) => synchronizeAfterCheck(true, clientRef), [synchronizeAfterCheck]);
 
   useEffect(() => {
     if (connectivity !== "online") return;
@@ -1018,6 +1021,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       syncConflictCount,
       lastSuccessfulSyncAt,
       retrySync,
+      retrySyncItem,
       refreshSyncState: refreshSyncSummary,
       products,
       categories,
@@ -1082,6 +1086,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       syncConflictCount,
       lastSuccessfulSyncAt,
       retrySync,
+      retrySyncItem,
       refreshSyncSummary,
       products,
       categories,
