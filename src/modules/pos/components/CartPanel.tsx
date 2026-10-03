@@ -1,5 +1,6 @@
+import { useState } from "react";
 import { useI18n } from "@/lib/i18n/I18nProvider";
-import { Button, TextInput } from "@/components/ui";
+import { Button, ConfirmDialog, TextInput } from "@/components/ui";
 import { variantLabel } from "@/modules/products/variants";
 import { CustomerSearchSelect } from "@/modules/customers/components/CustomerSearchSelect";
 import { lineKey, type CartLine } from "../types";
@@ -37,12 +38,14 @@ const CART_COLS = "xl:grid-cols-[minmax(0,1fr)_5rem_10rem_7.5rem_6rem_2.25rem]";
 export function CartPanel() {
   const { t, num } = useI18n();
   const {
-    lines, totals, discount, setDiscount, increase, decrease, removeLine,
+    lines, totals, discount, setDiscount, increase, setQuantity, decrease, removeLine,
     setLineDiscount, clearCart, canDiscount, selectedCustomer, setSelectedCustomer,
-    heldCarts, holdCurrentCart, restoreHeldCart, cancelHeldCart,
+    heldCarts, holdCurrentCart, restoreHeldCart, cancelHeldCart, saleNote, setSaleNote,
     couponInput, setCouponInput, appliedCouponCode, couponDiscountAmount, couponError, applyingCoupon, applyCoupon, removeCoupon,
     connectivity, workingFromCache, syncPendingCount, syncErrorCount, syncConflictCount, retrySync,
   } = usePos();
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [noteOpen, setNoteOpen] = useState(false);
   const discountError = validateDiscount(discount.type, discount.value);
   const count = lines.reduce((sum, line) => sum + line.qty, 0);
   const automaticPromotionDiscount = Math.max(0, (totals.promoDiscountAmount ?? 0) - couponDiscountAmount);
@@ -83,7 +86,7 @@ export function CartPanel() {
             {lines.length > 0 && (
               <button
                 type="button"
-                onClick={clearCart}
+                onClick={() => setConfirmClear(true)}
                 className="text-xs font-semibold text-stone-600 underline-offset-2 hover:text-rose-700 hover:underline"
                 data-testid="pos-clear-cart"
               >
@@ -172,6 +175,7 @@ export function CartPanel() {
                 canDiscount={canDiscount}
                 onIncrease={increase}
                 onDecrease={decrease}
+                onQuantity={setQuantity}
                 onRemove={removeLine}
                 onDiscount={setLineDiscount}
               />
@@ -269,6 +273,26 @@ export function CartPanel() {
           )}
           </>
           ) : null}
+          <div className="mt-1.5" data-testid="pos-sale-note">
+            <button
+              type="button"
+              onClick={() => setNoteOpen((open) => !open)}
+              className="text-xs font-bold text-stone-600 underline-offset-2 hover:text-stone-900 hover:underline"
+              aria-expanded={noteOpen}
+            >
+              {saleNote ? `📝 ${t("pos.notesAdded")}` : `＋ ${t("pos.addNote")}`}
+            </button>
+            {noteOpen ? (
+              <TextInput
+                value={saleNote}
+                maxLength={500}
+                onChange={(event) => setSaleNote(event.target.value)}
+                placeholder={t("pos.notesPlaceholder")}
+                aria-label={t("pos.saleNote")}
+                className="mt-1 h-8 text-xs"
+              />
+            ) : null}
+          </div>
           <div className="mt-1.5 flex items-center justify-between border-t border-stone-200 pt-1.5 text-base font-extrabold text-stone-900">
             <span>{t("pos.total")}</span>
             <span className="tabular-nums" dir="ltr">{num(totals.total, 2)}</span>
@@ -279,6 +303,19 @@ export function CartPanel() {
             area — the cashier always sees how the sale is being settled. */}
         <PaymentPanel />
       </div>
+      <ConfirmDialog
+        open={confirmClear}
+        title={t("pos.clearCart")}
+        body={t("pos.clearCartConfirm")}
+        confirmLabel={t("pos.clearCart")}
+        cancelLabel={t("common.cancel")}
+        tone="danger"
+        onCancel={() => setConfirmClear(false)}
+        onConfirm={() => {
+          clearCart();
+          setConfirmClear(false);
+        }}
+      />
     </div>
   );
 }
@@ -293,6 +330,7 @@ function CartRow({
   canDiscount,
   onIncrease,
   onDecrease,
+  onQuantity,
   onRemove,
   onDiscount,
 }: {
@@ -300,6 +338,7 @@ function CartRow({
   canDiscount: boolean;
   onIncrease: (key: string) => void;
   onDecrease: (key: string) => void;
+  onQuantity: (key: string, quantity: number) => void;
   onRemove: (key: string) => void;
   onDiscount: (key: string, discount: { type: "none" | "percent" | "fixed"; value: number }) => void;
 }) {
@@ -440,9 +479,18 @@ function CartRow({
           >
             −
           </Button>
-          <span className="w-7 text-center text-sm font-bold tabular-nums text-stone-900" data-testid={`cart-quantity-${key}`}>
-            {line.qty}
-          </span>
+          <input
+            type="number"
+            inputMode="numeric"
+            min={1}
+            max={line.max_qty}
+            value={line.qty}
+            onChange={(event) => onQuantity(key, Number(event.target.value))}
+            onFocus={(event) => event.currentTarget.select()}
+            aria-label={`${name} · ${t("pos.quantity")}`}
+            className="h-9 w-11 rounded-lg border border-stone-200 bg-white text-center text-sm font-bold tabular-nums text-stone-900 outline-none focus:border-stone-500"
+            data-testid={`cart-quantity-${key}`}
+          />
           <Button
             type="button"
             variant="secondary"

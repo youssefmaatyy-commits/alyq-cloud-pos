@@ -75,6 +75,9 @@ export interface PosContextValue {
   discount: CartDiscount;
   isEmpty: boolean;
   selectedCustomer: Customer | null;
+  /** Cashier note stored with the held cart and authoritative sale. */
+  saleNote: string;
+  setSaleNote: (value: string) => void;
   setSelectedCustomer: (customer: Customer | null) => void;
   /**
    * Add one unit of a product, or of an exact combination.
@@ -90,6 +93,7 @@ export interface PosContextValue {
   /** Variants of one product, active first, in numeric size order. */
   variantsOf: (productId: string) => ProductVariant[];
   increase: (key: string) => void;
+  setQuantity: (key: string, quantity: number) => void;
   decrease: (key: string) => void;
   removeLine: (key: string) => void;
   setLineDiscount: (key: string, discount: CartDiscount) => void;
@@ -184,6 +188,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
   const [couponError, setCouponError] = useState<string | null>(null);
   const [applyingCoupon, setApplyingCoupon] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [saleNote, setSaleNoteValue] = useState("");
+  const setSaleNote = useCallback((value: string) => setSaleNoteValue(value.slice(0, 500)), []);
   const couponCartKey = useMemo(
     // A server preview also depends on manual item and invoice discounts: they
     // participate in the promotion-stacking contract. Any edit therefore
@@ -545,6 +551,15 @@ export function PosProvider({ children }: { children: ReactNode }) {
     updateLines((prev) => changeCartQuantity(prev, key, 1));
   }, [updateLines]);
 
+  const setQuantity = useCallback((key: string, quantity: number) => {
+    if (!Number.isFinite(quantity)) return;
+    updateLines((prev) => prev.flatMap((line) => {
+      if (`${line.product_id}::${line.variant_id ?? ""}` !== key) return [line];
+      const next = Math.max(0, Math.min(line.max_qty, Math.trunc(quantity)));
+      return next > 0 ? [{ ...line, qty: next }] : [];
+    }));
+  }, [updateLines]);
+
   const decrease = useCallback((key: string) => {
     updateLines((prev) => changeCartQuantity(prev, key, -1));
   }, [updateLines]);
@@ -579,6 +594,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
     setCouponPreviewTotal(null);
     appliedCouponCartKeyRef.current = null;
     setCouponError(null);
+    setSaleNoteValue("");
     // Clearing merchandise is not an explicit request to clear the customer.
   }, [updateLines]);
 
@@ -696,15 +712,16 @@ export function PosProvider({ children }: { children: ReactNode }) {
       lines: linesRef.current,
       invoice_discount: discount,
       coupon_code: appliedCouponCode,
-      notes: notes?.trim() || null,
+      notes: (notes ?? saleNote).trim() || null,
     });
     setHeldCarts((current) => [held, ...current]);
     updateLines(() => []);
     setDiscountValue(EMPTY_DISCOUNT);
     removeCoupon();
     setSelectedCustomer(null);
+    setSaleNoteValue("");
     return held;
-  }, [appliedCouponCode, canSell, discount, removeCoupon, selectedCustomer, updateLines, user]);
+  }, [appliedCouponCode, canSell, discount, removeCoupon, saleNote, selectedCustomer, updateLines, user]);
 
   const restoreHeldCart = useCallback(async (id: string): Promise<boolean> => {
     if (linesRef.current.length > 0) return false;
@@ -728,6 +745,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
     updateLines(() => held.lines.map((line) => ({ ...line })));
     setDiscountValue(held.invoice_discount);
     setSelectedCustomer(held.customer);
+    setSaleNoteValue(held.notes ?? "");
     setCouponInput(held.coupon_code ?? "");
     setAppliedCouponCode(null);
     setCouponDiscountAmount(0);
@@ -802,6 +820,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
           customer_id: selectedCustomer?.id ?? null,
           customer_name: selectedCustomer?.name ?? null,
           customer_phone: selectedCustomer?.phone ?? null,
+          notes: saleNote.trim() || null,
           user_id: user.id,
           user_name: user.name,
       };
@@ -839,6 +858,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
         setCompletedSale(display);
         updateLines(() => []);
         setDiscountValue(EMPTY_DISCOUNT);
+        setSaleNoteValue("");
         removeCoupon();
         await refreshSyncSummary();
         return display;
@@ -852,6 +872,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
         setCompletedSale(sale);
         updateLines(() => []);
         setDiscountValue(EMPTY_DISCOUNT);
+        setSaleNoteValue("");
         removeCoupon();
         void refreshSales();
         return sale;
@@ -875,7 +896,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
         setCompleting(false);
       }
     },
-    [appliedCouponCode, canSell, completing, lines, discount, products, variants, totals, refreshSales, refreshSyncSummary, loadCatalog, removeCoupon, selectedCustomer, user, updateLines],
+    [appliedCouponCode, canSell, completing, lines, discount, products, variants, totals, refreshSales, refreshSyncSummary, loadCatalog, removeCoupon, saleNote, selectedCustomer, user, updateLines],
   );
 
   const dismissCompleted = useCallback(() => setCompletedSale(null), []);
@@ -902,11 +923,14 @@ export function PosProvider({ children }: { children: ReactNode }) {
       discount,
       isEmpty,
       selectedCustomer,
+      saleNote,
+      setSaleNote,
       setSelectedCustomer,
       addLine,
       addBySku,
       variantsOf,
       increase,
+      setQuantity,
       decrease,
       removeLine,
       setLineDiscount,
@@ -958,10 +982,13 @@ export function PosProvider({ children }: { children: ReactNode }) {
       discount,
       isEmpty,
       selectedCustomer,
+      saleNote,
+      setSaleNote,
       addLine,
       addBySku,
       variantsOf,
       increase,
+      setQuantity,
       decrease,
       removeLine,
       setLineDiscount,

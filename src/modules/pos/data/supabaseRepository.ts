@@ -46,6 +46,7 @@ interface SaleRow {
   source?: Sale["source"] | null;
   /** The open shift the till sale was completed under (migration 0040). */
   shift_id?: string | null;
+  notes?: string | null;
 }
 
 interface SalePaymentRow {
@@ -169,6 +170,7 @@ function mapSale(row: SaleRow, items: SaleItemRow[] = [], payments: SalePaymentR
     paid_by_name: row.paid_by_name ?? null,
     source: row.source ?? "pos",
     shift_id: row.shift_id ?? null,
+    notes: row.notes ?? null,
   };
 }
 
@@ -216,6 +218,7 @@ export class SupabaseSalesRepository implements SalesRepository {
           customer_id: input.customer_id ?? null,
           customer_name: input.customer_name ?? null,
           customer_phone: input.customer_phone ?? null,
+          notes: input.notes?.trim() || null,
           user_id: input.user_id,
           user_name: input.user_name,
           source: input.source ?? "pos",

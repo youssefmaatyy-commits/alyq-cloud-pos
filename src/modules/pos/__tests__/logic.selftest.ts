@@ -875,6 +875,7 @@ test("full flow: sales + return receipt data matches the transaction records", a
     customer_id: "cust-verify",
     customer_name: "Test Customer",
     customer_phone: "Test Phone Number",
+    notes: "Gift wrap requested & confirmed",
     user_id: "u-verify",
     user_name: "Verify Cashier",
   });
@@ -892,6 +893,8 @@ test("full flow: sales + return receipt data matches the transaction records", a
   // customer name + phone
   assert.ok(salesHtml.includes("Test Customer"), "sales: customer name");
   assert.ok(salesHtml.includes("Test Phone Number"), "sales: customer phone");
+  assert.equal(sale.notes, "Gift wrap requested & confirmed", "sales: authoritative note snapshot");
+  assert.ok(salesHtml.includes("Gift wrap requested &amp; confirmed"), "sales: stored note is escaped on reprint");
   // items, quantities, prices, line totals
   const itemName = sale.items[0].name_en || sale.items[0].name_ar;
   assert.ok(salesHtml.includes(itemName), "sales: item name");

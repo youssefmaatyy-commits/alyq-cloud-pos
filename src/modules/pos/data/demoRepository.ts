@@ -456,6 +456,7 @@ export class DemoSalesRepository implements SalesRepository {
         customer_id: input.customer_id ?? null,
         customer_name: input.customer_name ?? null,
         customer_phone: input.customer_phone ?? null,
+        notes: input.notes?.trim().slice(0, 500) || null,
         created_at: now,
         shift_id: openShiftId,
         voided_at: null,

@@ -13,6 +13,9 @@ import { CartPanel } from "../components/CartPanel";
 import { SaleCompletedModal } from "../components/SaleCompletedModal";
 import { TransactionLookupModal } from "../components/TransactionLookupModal";
 import { CustomerSearchSelect } from "@/modules/customers/components/CustomerSearchSelect";
+import { useBranch } from "@/lib/branch/BranchProvider";
+import { useInventory } from "@/modules/inventory/hooks/InventoryProvider";
+import { useShifts } from "@/modules/shifts";
 
 /**
  * POS register screen.
@@ -27,8 +30,11 @@ import { CustomerSearchSelect } from "@/modules/customers/components/CustomerSea
  * typed into the focused search box is added by the box itself, exactly once.
  */
 export function PosPage() {
-  const { t } = useI18n();
-  const { addBySku, loading, error, reloadCatalog } = usePos();
+  const { t, pick } = useI18n();
+  const { addBySku, loading, error, reloadCatalog, connectivity, workingFromCache, syncPendingCount } = usePos();
+  const { current: branch } = useBranch();
+  const { user } = useInventory();
+  const { openShift, loading: shiftsLoading } = useShifts();
   const toast = useToast();
 
   // Where "Open website" goes: the shop built into this bundle by default, or
@@ -153,6 +159,34 @@ export function PosPage() {
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 pb-2 lg:pb-3">
         <h1 className="text-base font-black tracking-tight text-stone-900">{t("nav.register")}</h1>
         {headerActions}
+      </div>
+
+      <div
+        className="mb-2 flex min-w-0 flex-wrap items-center gap-1.5 rounded-xl border border-stone-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-stone-600 shadow-sm"
+        data-testid="pos-register-context"
+      >
+        <span className="inline-flex min-w-0 items-center gap-1.5 rounded-lg bg-stone-50 px-2 py-1">
+          <span aria-hidden>⌂</span>
+          <span className="truncate font-bold text-stone-900">
+            {branch ? pick(branch.name_ar, branch.name_en) : t("pos.branchUnavailable")}
+          </span>
+          {branch?.code ? <span className="font-mono text-[10px] text-stone-400">{branch.code}</span> : null}
+        </span>
+        <span className="inline-flex items-center gap-1.5 rounded-lg bg-stone-50 px-2 py-1">
+          <span aria-hidden>●</span>
+          <span>{t("pos.cashier")}</span>
+          <strong className="text-stone-900">{user.name}</strong>
+        </span>
+        <span className={`inline-flex items-center gap-1.5 rounded-lg px-2 py-1 ${openShift ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-900"}`}>
+          <span className={`h-1.5 w-1.5 rounded-full ${openShift ? "bg-emerald-500" : "bg-amber-500"}`} aria-hidden />
+          {shiftsLoading ? t("common.loading") : openShift ? `${t("pos.shiftOpen")} · ${openShift.shift_number}` : t("pos.shiftClosed")}
+        </span>
+        <span className={`ms-auto inline-flex items-center gap-1.5 rounded-lg px-2 py-1 ${connectivity === "online" ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-900"}`}>
+          <span className={`h-1.5 w-1.5 rounded-full ${connectivity === "online" ? "bg-emerald-500" : "bg-amber-500"}`} aria-hidden />
+          {connectivity === "online" ? t("pos.online") : t("pos.offline")}
+          {workingFromCache ? ` · ${t("pos.cachedCatalog")}` : ""}
+          {syncPendingCount > 0 ? ` · ${t("pos.syncPending")} ${syncPendingCount}` : ""}
+        </span>
       </div>
 
       {/* The single desktop row must be a definite track, not auto-sized:

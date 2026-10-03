@@ -29,6 +29,7 @@ export function salesReceiptStrings(t: Translate): ReceiptStrings {
     changeLabel: t("receipt.changeLabel"),
     customerLabel: t("receipt.customerLabel"),
     customerPhoneLabel: t("receipt.customerPhoneLabel"),
+    noteLabel: t("pos.saleNote"),
     paidLabel: t("pos.paid"),
     remainingLabel: t("pos.remaining"),
     statusLabel: t("receipt.statusLabel"),

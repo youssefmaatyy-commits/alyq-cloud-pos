@@ -252,6 +252,13 @@ export function SaleDetailPage() {
         </Link>
       ) : null}
 
+      {sale.notes ? (
+        <Card className="mb-4" data-testid="sale-note">
+          <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500">{t("pos.saleNote")}</p>
+          <p className="mt-1 whitespace-pre-wrap text-sm text-slate-800">{sale.notes}</p>
+        </Card>
+      ) : null}
+
       <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
         <Card>
           <SectionTitle>{t("pos.cols.items")}</SectionTitle>
@@ -272,6 +279,16 @@ export function SaleDetailPage() {
                       {isRTL ? item.name_ar || item.name_en : item.name_en || item.name_ar}
                     </p>
                     <p className="font-mono text-[10px] text-slate-500">{item.sku}</p>
+                    {item.variant_id ? (
+                      <p className="text-[10px] font-semibold text-slate-600" data-testid="sale-item-variant">
+                        {[isRTL ? item.variant_color_ar || item.variant_color_en : item.variant_color_en || item.variant_color_ar, item.variant_size_label || item.variant_size].filter(Boolean).join(" / ")}
+                      </p>
+                    ) : null}
+                    {item.automatic_promotion_name ? (
+                      <p className="mt-0.5 text-[10px] font-semibold text-emerald-700">
+                        🏷 {item.automatic_promotion_name} · −{num(item.automatic_discount_amount ?? 0, 2)}
+                      </p>
+                    ) : null}
                   </td>
                   <td className="py-2.5 text-center text-sm font-bold tabular-nums">{item.quantity}</td>
                   <td className="py-2.5 text-end text-xs tabular-nums text-slate-600">

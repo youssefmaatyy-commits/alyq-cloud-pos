@@ -164,6 +164,8 @@ export interface Sale {
    * `null` for online-channel sales and for rows before the column existed.
    */
   shift_id?: string | null;
+  /** Cashier note frozen with the transaction; never recomputed on reprint. */
+  notes?: string | null;
   /** Client-only sync state for a cash sale accepted while the till was offline. */
   offline_sync_status?: "pending" | "syncing" | "synced" | "error";
   offline_last_error?: string | null;
@@ -194,6 +196,8 @@ export interface CompleteSaleInput {
   customer_id?: string | null;
   customer_name?: string | null;
   customer_phone?: string | null;
+  /** Optional cashier note, trimmed and capped server-side. */
+  notes?: string | null;
   user_id: string;
   user_name: string;
   /** Omitted by the till; set to `online` when an order approval creates it. */

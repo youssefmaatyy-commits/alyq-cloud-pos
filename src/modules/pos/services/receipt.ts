@@ -93,6 +93,7 @@ export interface ReceiptStrings {
   remainingLabel: string;
   customerLabel: string;
   customerPhoneLabel: string;
+  noteLabel?: string;
   statusLabel: string;
   thankYou: string;
   voidedNotice: string;
@@ -315,6 +316,7 @@ export function buildReceiptHtml({ sale, strings, direction }: ReceiptData): str
     <div class="headline"><span class="k">${escapeXml(strings.cashierLabel)}</span><span>${escapeXml(sale.user_name)}</span></div>
     ${sale.customer_name ? `<div class="headline"><span class="k">${escapeXml(strings.customerLabel)}</span><span>${escapeXml(sale.customer_name)}</span></div>` : ""}
     ${sale.customer_phone ? `<div class="headline"><span class="k">${escapeXml(strings.customerPhoneLabel)}</span><bdi dir="ltr">${escapeXml(sale.customer_phone)}</bdi></div>` : ""}
+    ${sale.notes ? `<div class="headline"><span class="k">${escapeXml(strings.noteLabel ?? "Note")}</span><span>${escapeXml(sale.notes)}</span></div>` : ""}
     <div class="sep"></div>
     <table>
       <thead>
