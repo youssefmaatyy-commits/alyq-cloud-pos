@@ -136,6 +136,16 @@ export function ProductVariantsForm({
     const image_urls = color.image_urls.filter((image) => image !== url);
     updateColor(color.id, { image_urls, image_url: image_urls[0] ?? "" });
   };
+  const moveColorImage = (color: VariantColorRow, url: string, direction: -1 | 1) => {
+    const index = color.image_urls.indexOf(url);
+    const target = index + direction;
+    // Index zero is the explicit primary. Secondary images can be ordered
+    // independently; use "Make primary" when the primary itself must change.
+    if (index < 1 || target < 1 || target >= color.image_urls.length) return;
+    const image_urls = [...color.image_urls];
+    [image_urls[index], image_urls[target]] = [image_urls[target], image_urls[index]];
+    updateColor(color.id, { image_urls, image_url: image_urls[0] ?? "" });
+  };
 
   const targets = value.rows.filter((row) => !editing || !row.persistedId);
   const bulk = (field: "stock_quantity" | "low_stock_level", raw: string) => {
@@ -210,6 +220,12 @@ export function ProductVariantsForm({
                             <div key={url} className={`relative rounded-lg border p-1 ${imageIndex===0 ? "border-slate-900" : "border-slate-200"}`}>
                               <img src={url} className="h-12 w-12 rounded-md object-cover" alt="" />
                               <button type="button" disabled={structureLocked} onClick={()=>makePrimary(color,url)} className="block w-full text-[9px] font-bold text-slate-700">{imageIndex===0 ? "Primary" : "Make primary"}</button>
+                              {imageIndex > 0 ? (
+                                <div className="flex justify-center gap-2 text-[10px] font-bold text-slate-600">
+                                  <button type="button" disabled={structureLocked || imageIndex===1} onClick={()=>moveColorImage(color,url,-1)} aria-label={`Move image ${imageIndex + 1} earlier`}>←</button>
+                                  <button type="button" disabled={structureLocked || imageIndex===color.image_urls.length-1} onClick={()=>moveColorImage(color,url,1)} aria-label={`Move image ${imageIndex + 1} later`}>→</button>
+                                </div>
+                              ) : null}
                               <button type="button" disabled={structureLocked} onClick={()=>removeColorImage(color,url)} className="block w-full text-[9px] text-rose-700">{t("products.simple.removeColor")}</button>
                             </div>
                           ))}
