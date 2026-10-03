@@ -662,4 +662,3 @@ comment on function public.inventory_transfer_stock(text,uuid,uuid,uuid,integer,
   'Atomically moves one exact branch shelf between two authorized branches and replays by source-branch client_ref without one-sided completion.';
 
 commit;
-
