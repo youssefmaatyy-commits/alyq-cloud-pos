@@ -166,6 +166,40 @@ create trigger branch_stock_reserved_floor
 before update of quantity on public.branch_stock_balances
 for each row execute function public.branch_stock_reserved_floor();
 
+-- Legacy sale/return/refund cores still write movement snapshots from the
+-- compatibility rollup. Their branch is already derived by the Phase 3 branch
+-- wrappers; replace those before/after numbers with the authoritative shelf.
+create or replace function public.stock_movement_branch_snapshot()
+returns trigger
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $function$
+declare v_after integer;
+begin
+  -- Direct/manual ledger inserts can precede their stock write and carry the
+  -- caller's intended snapshot. Only modern sourced movements and the known
+  -- legacy sale/void/return cores run after their stock mutation.
+  if new.source_type is null
+     and new.reason<>'customer_return'
+     and coalesce(new.notes,'') not like 'Sale %'
+     and coalesce(new.notes,'') not like 'Online order %'
+     and coalesce(new.notes,'') not like 'Void of %' then
+    return new;
+  end if;
+  select quantity into v_after from public.branch_stock_balances
+   where branch_id=new.branch_id and product_id=new.product_id
+     and variant_id is not distinct from new.variant_id;
+  if v_after is null then return new; end if;
+  if new.type in ('issue','adjustment_out','transfer') then
+    new.quantity_after:=v_after; new.quantity_before:=v_after+new.delta;
+  elsif new.type in ('receive','adjustment_in') then
+    new.quantity_after:=v_after; new.quantity_before:=v_after-new.delta;
+  end if;
+  return new;
+end
+$function$;
+
 -- Wrap the latest POS implementation rather than rebuilding it. The wrapper
 -- locks and verifies every exact active-branch shelf first; the preserved RPC
 -- continues to own prices, promotions, payments, shifts, invoices and retries.

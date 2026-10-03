@@ -355,6 +355,8 @@ declare
   v_sale_item uuid;
   v_return jsonb;
   v_return_id uuid;
+  v_pending_refund uuid;
+  v_cross_branch_rejected boolean := false;
 begin
   perform pg_temp.become(v_admin,'authenticated');
   perform public.switch_active_branch_with_audit(v_main);
@@ -467,7 +469,54 @@ begin
     raise exception 'return retry restored Black / 42 twice';
   end if;
 
-  raise notice 'Phase 3.5 complete chain — ALYQ-01 Black / 42 has unique SKU/barcode/id and branch shelves; 10 transfers to 7+3 once, Branch A sale decrements only exact 42, invoice freezes it, storefront reports it, and idempotent return restores exact Branch A Black / 42';
+  -- A pending second return restores Branch A provisionally. Rejecting its
+  -- refund must reverse that exact originating shelf, even when an approver
+  -- first attempts the call while another branch is active.
+  v_sale:=public.pos_complete_sale(jsonb_build_object(
+    'client_ref','phase35-alyq-black-42-rejected-sale','source','online',
+    'user_id',v_admin::text,'user_name','Amina Admin',
+    'payments',jsonb_build_array(jsonb_build_object('method','cod','amount',100,'status','pending')),
+    'lines',jsonb_build_array(jsonb_build_object('product_id',v_product::text,'variant_id',v_42::text,'qty',1))
+  ));
+  v_sale_id:=(v_sale->>'sale_id')::uuid;
+  select id into v_sale_item from public.sale_items where sale_id=v_sale_id and variant_id=v_42;
+  v_return:=public.pos_process_return(jsonb_build_object(
+    'client_ref','phase35-alyq-black-42-pending-return','sale_id',v_sale_id::text,
+    'reason','Pending exact-size inspection','refund_method','visa','refund_status','pending',
+    'user_id',v_admin::text,'user_name','Amina Admin',
+    'items',jsonb_build_array(jsonb_build_object('sale_item_id',v_sale_item::text,'quantity',1))
+  ));
+  select id into v_pending_refund from public.refund_records where return_id=(v_return->>'return_id')::uuid;
+  if (select quantity from public.branch_stock_balances where branch_id=v_main and variant_id=v_42)<>7 then
+    raise exception 'pending return did not provisionally restore Branch A Black / 42';
+  end if;
+
+  perform public.switch_active_branch_with_audit(v_destination);
+  begin
+    perform public.pos_settle_refund(v_pending_refund,v_admin::text,'Amina Admin','rejected','Inspection failed');
+  exception when no_data_found then v_cross_branch_rejected:=true;
+  end;
+  if not v_cross_branch_rejected
+     or (select quantity from public.branch_stock_balances where branch_id=v_main and variant_id=v_42)<>7
+     or (select quantity from public.branch_stock_balances where branch_id=v_destination and variant_id=v_42)<>3 then
+    raise exception 'cross-branch refund rejection was not refused without moving either shelf';
+  end if;
+
+  perform public.switch_active_branch_with_audit(v_main);
+  perform public.pos_settle_refund(v_pending_refund,v_admin::text,'Amina Admin','rejected','Inspection failed');
+  perform public.pos_settle_refund(v_pending_refund,v_admin::text,'Amina Admin','rejected','Inspection failed');
+  if (select quantity from public.branch_stock_balances where branch_id=v_main and variant_id=v_42)<>6
+     or (select quantity from public.branch_stock_balances where branch_id=v_destination and variant_id=v_42)<>3
+     or (select refund_status from public.sales_returns where id=(v_return->>'return_id')::uuid)<>'rejected'
+     or not exists(
+       select 1 from public.stock_movements
+        where branch_id=v_main and variant_id=v_42 and reason='customer_return'
+          and type='adjustment_out' and quantity_before=7 and quantity_after=6
+     ) then
+    raise exception 'rejected refund did not reverse exact Branch A Black / 42 once with branch movement evidence';
+  end if;
+
+  raise notice 'Phase 3.5 complete chain — ALYQ-01 Black / 42 has unique SKU/barcode/id and branch shelves; 10 transfers to 7+3 once, Branch A sale decrements only exact 42, invoice freezes it, storefront reports it, completed return retry restores once, and rejected-refund retry reverses only originating Branch A';
 end
 $phase35_complete_chain$;
 
@@ -502,7 +551,7 @@ begin
   v_result:=public.stocktake_finalize(v_stocktake);
   if not (v_result->>'ok')::boolean
      or (select quantity from public.branch_stock_balances where branch_id=v_destination and variant_id=v_42)<>2
-     or (select quantity from public.branch_stock_balances where branch_id=v_main and variant_id=v_42)<>7
+     or (select quantity from public.branch_stock_balances where branch_id=v_main and variant_id=v_42)<>6
      or not exists(
        select 1 from public.stock_movements
         where source_type='stocktake' and source_id=v_stocktake and branch_id=v_destination
@@ -516,7 +565,7 @@ begin
     raise exception 'stocktake retry was not idempotent';
   end if;
 
-  raise notice 'Phase 3.5 stocktake — Branch B snapshots exact Black / 42 = 3, finalizes it to 2 without touching Branch A = 7, writes branch/variant movement evidence, and refuses duplicate finalization';
+  raise notice 'Phase 3.5 stocktake — Branch B snapshots exact Black / 42 = 3, finalizes it to 2 without touching Branch A = 6, writes branch/variant movement evidence, and refuses duplicate finalization';
 end
 $phase35_branch_stocktake$;
 
