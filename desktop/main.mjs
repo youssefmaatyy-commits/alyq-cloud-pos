@@ -1,3 +1,5 @@
+/* global Buffer, URL, console, process */
+/* eslint-disable no-control-regex -- native-bound text rejects C0 controls */
 import {
   app,
   BrowserWindow,

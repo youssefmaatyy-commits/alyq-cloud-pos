@@ -1756,12 +1756,12 @@ async function main() {
   // Empty submit is blocked.
   clickEl([...openDialog.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === "Open shift"));
   await sleep(250);
-  assert.ok(openDialog.textContent.includes("Branch is required"), "branch is required");
+  assert.ok(!openDialog.textContent.includes("Branch is required"), "active branch is supplied authoritatively");
   assert.ok(openDialog.textContent.includes("Enter the opening cash"), "opening cash is required");
 
   const dialogInputs = [...openDialog.querySelectorAll("input")];
-  const branchInput = dialogInputs.find((i) => !i.readOnly && i.type === "text");
-  typeInto(branchInput, "Main branch");
+  const branchInput = dialogInputs.find((i) => i.readOnly && i.type === "text" && /main/i.test(i.value));
+  assert.ok(branchInput, "active branch is shown read-only");
   const cashOpeningInput = dialogInputs.find((i) => i.inputMode === "decimal");
   typeInto(cashOpeningInput, "1000");
   await sleep(200);
