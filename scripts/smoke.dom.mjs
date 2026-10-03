@@ -983,6 +983,7 @@ async function main() {
   // ── Phase 4 · POS + Sales ──
   // Reset the catalog so the till sees the pristine seeded stock.
   await navigate("#/products");
+  await waitFor(() => [...document.querySelectorAll("button, a")].some((node) => (node.textContent ?? "").trim().includes("Reset")), { label: "products reset control" });
   click("Reset");
   await sleep(400);
 
