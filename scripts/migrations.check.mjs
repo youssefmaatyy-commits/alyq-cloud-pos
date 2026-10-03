@@ -64,6 +64,7 @@ const PHASE35_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "phase3_5_sc
 const PHASE4_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "phase4_scenarios.sql");
 const PROMPT5_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "prompt5_scenarios.sql");
 const PROMPT6_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "prompt6_scenarios.sql");
+const FINAL_STORE_QA_FILE = path.join(ROOT, "supabase", "tests", "final_store_qa.sql");
 const SEED_FILE = path.join(ROOT, "supabase", "seed.sql");
 const SRC_DIR = path.join(ROOT, "src");
 
@@ -389,6 +390,20 @@ if (!VERIFY_ONLY) {
       console.log(`  ${c.red("✗")} a focused Prompt 6 scenario failed`);
       if (error?.stack) console.log(c.dim(error.stack));
       failures.push({ name: "Prompt 6 scenarios", phase: "scenario", error: String(error.message) });
+    }
+  }
+
+  if (failures.length === 0 && runScenarios) {
+    console.log(c.bold("\nFinal Store Simulation QA (cross-prompt retail lifecycle)"));
+    try {
+      const sql = fs.readFileSync(FINAL_STORE_QA_FILE, "utf8");
+      await driver.exec(sql, "final_store_qa.sql");
+      console.log(`  ${c.green("✓")} final store simulation passed`);
+      for (const notice of sql.matchAll(/raise notice '([^']+)'/g)) console.log(c.dim(`      ${notice[1]}`));
+    } catch (error) {
+      console.log(`  ${c.red("✗")} final store simulation failed`);
+      if (error?.stack) console.log(c.dim(error.stack));
+      failures.push({ name: "Final Store QA", phase: "scenario", error: String(error.message) });
     }
   }
 
