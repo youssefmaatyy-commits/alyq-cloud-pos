@@ -209,7 +209,7 @@ export function ProductVariantsForm({
                     <Field label={t("products.variants.colorEn")}><TextInput dir="ltr" disabled={structureLocked} value={color.color_en} onChange={(event) => updateColorName(color,"color_en",event.target.value)} placeholder="Gold" data-testid={`variant-color-en-${index}`} /></Field>
                     <Field label={t("products.variants.colorHex")}>
                       <div className="flex items-center gap-2">
-                        <input type="color" disabled={structureLocked} className="h-10 w-14 shrink-0 cursor-pointer rounded-md border border-slate-200 bg-white p-1" aria-label={`${t("products.variants.colorHex")} ${index + 1}`} value={/^#[0-9a-fA-F]{6}$/.test(color.color_hex) ? color.color_hex : "#64748b"} onChange={(event) => updateColor(color.id, { color_hex: event.target.value })} />
+                        <input type="color" data-testid={`variant-color-hex-${index}`} disabled={structureLocked} className="h-10 w-14 shrink-0 cursor-pointer rounded-md border border-slate-200 bg-white p-1" aria-label={`${t("products.variants.colorHex")} ${index + 1}`} value={/^#[0-9a-fA-F]{6}$/.test(color.color_hex) ? color.color_hex : "#64748b"} onChange={(event) => updateColor(color.id, { color_hex: event.target.value })} />
                         {color.color_hex ? <button type="button" disabled={structureLocked} className="text-xs font-semibold text-rose-700" onClick={()=>updateColor(color.id,{color_hex:""})}>Clear</button> : <span className="text-xs text-slate-500">Optional</span>}
                       </div>
                     </Field>
