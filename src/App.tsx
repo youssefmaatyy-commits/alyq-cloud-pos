@@ -10,6 +10,7 @@ import {
   normalizeRecoveryUrl,
 } from "@/lib/auth";
 import { ToastProvider } from "@/components/ui";
+import { BranchProvider } from "@/lib/branch";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { AppShell } from "@/components/layout/AppShell";
 import { CatalogProvider } from "@/modules/products";
@@ -58,6 +59,7 @@ import { BackupPage } from "@/modules/backup";
 import { BrandingPage } from "@/modules/settings/pages/BrandingPage";
 import { SettingsHomePage } from "@/modules/settings/pages/SettingsHomePage";
 import { SystemSettingsPage } from "@/modules/settings/pages/SystemSettingsPage";
+import { BranchesPage } from "@/modules/settings/pages/BranchesPage";
 import { OperationsCenterPage } from "@/modules/operations/pages/OperationsCenterPage";
 import { ImportCenterPage } from "@/modules/import/pages/ImportCenterPage";
 import { StoreManagementHome, SalesHome, CatalogHome, InventoryHome, OnlineHome } from "./components/layout/moduleHomes";
@@ -244,6 +246,7 @@ export default function App() {
 function AuthenticatedApp() {
   return (
     <RequireAuth>
+      <BranchProvider>
       <CatalogProvider>
         <ApprovalProvider>
         <InventoryProvider>
@@ -356,6 +359,7 @@ function AuthenticatedApp() {
         </InventoryProvider>
         </ApprovalProvider>
       </CatalogProvider>
+      </BranchProvider>
     </RequireAuth>
   );
 }
@@ -376,6 +380,7 @@ function SettingsArea() {
       <Routes>
         <Route index element={<SettingsHomePage />} />
         <Route path="users" element={<UsersPage />} />
+        <Route path="branches" element={<BranchesPage />} />
         <Route path="roles" element={<RolesPage />} />
         {/* Approval thresholds live under Settings because changing them is
             `manage_settings` work — the same capability that owns the rest of

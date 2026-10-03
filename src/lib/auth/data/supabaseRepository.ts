@@ -29,6 +29,7 @@ import { recoveryMaterialConsumed, markRecoveryMaterialConsumed } from "../servi
 import { recoveryParams } from "../services/recoveryUrl";
 import { getCachedSession, readStoredSession } from "../services/sessionStore";
 import type { AuthUser, PasswordResetOutcome } from "../types";
+import { CAPABILITIES, type Capability } from "@/lib/permissions/roles";
 import type {
   AuthChangeEvent,
   AuthenticateResult,
@@ -53,6 +54,17 @@ interface ProfileRow {
   denied_capabilities: string[] | null;
   last_login_at: string | null;
   created_at: string | null;
+}
+
+interface ActiveBranchContextRow {
+  branch_id: string;
+  branch_code: string;
+  branch_name_en: string;
+  branch_name_ar: string;
+  role: string;
+  custom_role_id: string | null;
+  custom_role_name: string | null;
+  capabilities: string[];
 }
 
 interface CustomRoleRow {
@@ -129,16 +141,22 @@ export class SupabaseUserRepository implements UserRepository {
   /** Profile + overlay → `AuthUser`. Null when there is no usable profile. */
   private async identityFor(profile: ProfileRow | null, authId: string, fallbackName: string): Promise<AuthUser | null> {
     if (!profile) return null;
-    const custom = await this.loadCustomRole(profile.custom_role_id);
-    return buildAuthUser({
+    // Branch membership is the live authority. Profile-global fields remain a
+    // safe compatibility fallback only for installations in the middle of the
+    // forward migration; after 0071 this RPC always supplies the active branch.
+    const { data: branchData } = await this.client().rpc("get_active_branch_context");
+    const branch = (branchData as ActiveBranchContextRow | null) ?? null;
+    const customId = branch?.custom_role_id ?? profile.custom_role_id;
+    const custom = await this.loadCustomRole(customId);
+    const built = buildAuthUser({
       id: profile.id,
       username: profile.username ?? profile.email ?? authId,
       name: profile.name ?? fallbackName,
       email: profile.email,
       phone: profile.phone,
-      role: profile.role,
+      role: branch?.role ?? profile.role,
       active: profile.active !== false,
-      custom_role_id: profile.custom_role_id,
+      custom_role_id: customId,
       custom_role: custom
         ? {
             name_en: custom.name_en ?? custom.key,
@@ -147,13 +165,28 @@ export class SupabaseUserRepository implements UserRepository {
             active: custom.active !== false,
           }
         : null,
-      exceptions: {
+      // The RPC has already resolved membership grants and denials.
+      exceptions: branch ? { extra: null, denied: null } : {
         extra: profile.extra_capabilities,
         denied: profile.denied_capabilities,
       },
       last_login_at: profile.last_login_at,
       auth_id: authId,
     });
+    if (!built) return null;
+    return {
+      ...built,
+      capabilities: branch
+        ? branch.capabilities.filter((capability): capability is Capability =>
+            CAPABILITIES.includes(capability as Capability),
+          )
+        : built.capabilities,
+      custom_role_name: branch?.custom_role_name ?? built.custom_role_name,
+      active_branch_id: branch?.branch_id ?? null,
+      active_branch_code: branch?.branch_code ?? null,
+      active_branch_name_en: branch?.branch_name_en ?? null,
+      active_branch_name_ar: branch?.branch_name_ar ?? null,
+    };
   }
 
   async listUsers(): Promise<AuthUserSummary[]> {

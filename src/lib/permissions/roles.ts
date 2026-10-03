@@ -106,6 +106,10 @@ export const CAPABILITIES = [
   "open_shift",
   /** Close a cashier shift (count the drawer). */
   "close_shift",
+  /** Put genuine non-sale cash into the currently open drawer. */
+  "cash_in",
+  /** Take genuine non-sale cash from the drawer under the branch limit policy. */
+  "cash_out",
   /** Record an expense against the open shift. */
   "add_expense",
   /** Edit an existing expense. */
@@ -146,6 +150,10 @@ export const CAPABILITIES = [
   // It is deliberately NOT part of the Phase 10 granular set below — a custom
   // role cannot be handed the reset switch.
   "manage_system_reset",
+  /** Produce a real-count, dependency-aware selective-cleanup preview. */
+  "preview_data_cleanup",
+  /** Execute one exact, confirmed and non-replayable selective-cleanup preview. */
+  "execute_data_cleanup",
 
   // ── Phase 10: the granular permissions a custom role can be built from ──
   //
@@ -338,6 +346,8 @@ export const ROLE_CAPABILITIES: Record<AppRole, readonly Capability[]> = {
     "approve_refund",
     "open_shift",
     "close_shift",
+    "cash_in",
+    "cash_out",
     "add_expense",
     "edit_expense",
     "delete_expense",
@@ -373,6 +383,7 @@ export const ROLE_CAPABILITIES: Record<AppRole, readonly Capability[]> = {
     "view_backups",
     "create_backup",
     "run_health_check",
+    "preview_data_cleanup",
   ],
   cashier: [
     "view_dashboard",
@@ -385,6 +396,8 @@ export const ROLE_CAPABILITIES: Record<AppRole, readonly Capability[]> = {
     "process_refund",
     "open_shift",
     "close_shift",
+    "cash_in",
+    "cash_out",
     "add_expense",
     "view_shifts",
     // Works the online queue like the till; may not restyle the website.
@@ -422,6 +435,8 @@ export const ROLE_CAPABILITIES: Record<AppRole, readonly Capability[]> = {
     "process_refund",
     "open_shift",
     "close_shift",
+    "cash_in",
+    "cash_out",
     "add_expense",
     "view_shifts",
     "manage_online_orders",

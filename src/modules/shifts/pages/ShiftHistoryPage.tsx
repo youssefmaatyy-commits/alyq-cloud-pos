@@ -29,9 +29,10 @@ import { EMPTY_SHIFT_FILTERS, type Shift, type ShiftFiltersValue } from "../type
 import { buildShiftAnalyticsSheets } from "@/modules/reports/services/analyticsExport";
 import { OPEN_DATE_RANGE } from "@/modules/reports/services/financialExport";
 import { buildShiftDetailSheets } from "../services/eodExport";
+import { printShiftCloseReport } from "../services/shiftCloseReport";
 
 export function ShiftHistoryPage() {
-  const { t, date, num, money } = useI18n();
+  const { t, date, num, money, lang } = useI18n();
   const { filterShifts, summaryFor, expensesFor, loading, error, refresh, canApprove, approveAdjustment } =
     useShifts();
 
@@ -277,19 +278,26 @@ export function ShiftHistoryPage() {
               </Button>
             ) : null}
             {selected && selectedSummary ? (
-              <ExportButton
-                name={`shift-${selected.shift_number}`}
-                authority="report"
-                count={1}
-                build={() =>
-                  buildShiftDetailSheets({
-                    shift: selected,
-                    summary: selectedSummary,
-                    expenses: selectedExpenses,
-                    t,
-                  })
-                }
-              />
+              <>
+                {selected.status === "closed" ? (
+                  <Button variant="secondary" onClick={() => printShiftCloseReport({ shift: selected, summary: selectedSummary, lang, money, date })}>
+                    🖨 {t("pos.printReceipt")}
+                  </Button>
+                ) : null}
+                <ExportButton
+                  name={`shift-${selected.shift_number}`}
+                  authority="report"
+                  count={1}
+                  build={() =>
+                    buildShiftDetailSheets({
+                      shift: selected,
+                      summary: selectedSummary,
+                      expenses: selectedExpenses,
+                      t,
+                    })
+                  }
+                />
+              </>
             ) : null}
             <Button variant="secondary" onClick={() => setSelected(null)}>
               {t("common.close")}

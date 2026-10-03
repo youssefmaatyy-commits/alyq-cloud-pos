@@ -7,7 +7,8 @@
  * belongs to the shift and rolls into its Z-report summary.
  *
  * Design note — the summary is *derived*, never guessed:
- *   expected_cash = opening_cash + cash_sales − cash_refunds − cash_expenses
+ *   expected_cash = opening_cash + cash_sales + cash_in
+ *                   − cash_refunds − cash_out − legacy_cash_expenses
  * InstaPay / Visa never touch the drawer, so they are reported but excluded
  * from the expected-cash formula. The `summary` field is persisted on close
  * (a frozen snapshot for the Z-report) and recomputed live while open.
@@ -69,6 +70,9 @@ export interface ShiftSummary {
   cash_expenses: number;
   instapay_expenses: number;
   visa_expenses: number;
+  /** Dedicated authoritative drawer movements (live snapshots from 0072). */
+  cash_in?: number;
+  cash_out?: number;
 
   expected_cash: number;
   /** Only present once the cashier counted the drawer at close. */
@@ -82,6 +86,8 @@ export interface Shift {
   /** Human-readable sequential number, e.g. SH-000001. */
   shift_number: string;
   branch: string;
+  /** Trusted branch identity in live mode; legacy/demo shifts may omit it. */
+  branch_id?: string | null;
   register: string;
   status: ShiftStatus;
   opening_cash: number;

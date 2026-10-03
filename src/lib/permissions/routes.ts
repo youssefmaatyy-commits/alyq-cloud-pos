@@ -123,9 +123,10 @@ export const ROUTE_PERMISSIONS: ReadonlyArray<readonly [string, Permission]> = [
   // route asks for the same capability the write enforces through RLS —
   // `manage_website`, not a new one. The screen re-checks it itself.
   ["/settings/branding", "website.manage"],
+  ["/settings/branches", "users.manage"],
   // Phase 47: the Danger Zone — the strongest gate in the table, and the only
   // one an ordinary oversight role is deliberately denied.
-  ["/settings/system", "system.reset"],
+  ["/settings/system", "system.preview_cleanup"],
   // Approval thresholds: changing them is `manage_settings` work (the same
   // capability that has always owned system-wide configuration), so the child
   // names its own gate explicitly.
@@ -175,6 +176,7 @@ export function capabilityForPath(pathname: string): Capability | null {
 
 /** Alternate permissions that can also open a shared module door. */
 export const ROUTE_PERMISSION_ALTERNATES: ReadonlyArray<readonly [string, Permission]> = [
+  ["/settings/system", "system.reset"],
   ["/settings/operations", "settings.manage"],
   ["/online", "website.manage"],
   ["/sales", "returns.process"],

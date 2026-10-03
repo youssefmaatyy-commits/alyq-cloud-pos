@@ -397,7 +397,13 @@ await tx(async () => {
     values ${expenseRows.join(",")}`);
 
   // Returns and refunds, so the financial summary's refund columns are compared
-  // against something other than zero. Linked to real invoices.
+  // against something other than zero. Linked to real invoices. Phase 2 binds
+  // every completed cash refund to the authoritative open drawer in its branch,
+  // so the fixture opens one instead of bypassing the settlement trigger.
+  await db.exec(`insert into public.shifts
+    (branch, register, opening_cash, opened_by, opened_by_name, opening_at)
+    values ('Main', 'Aggregate fixture', 0, '${ADMIN.id}', '${esc(ADMIN.name)}',
+      '2025-01-01T00:00:00Z'::timestamptz)`);
   await db.query(`with picked as (
       select s.id, s.sale_number, s.total, s.created_at,
              row_number() over (order by s.created_at, s.id) as g

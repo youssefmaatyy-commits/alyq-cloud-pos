@@ -17,6 +17,7 @@ import { useShifts } from "../hooks/ShiftProvider";
 import { OpenShiftModal } from "../components/OpenShiftModal";
 import { CloseShiftModal } from "../components/CloseShiftModal";
 import { ShiftSummaryGrid } from "../components/ShiftSummaryGrid";
+import { CashMovementPanel } from "../components/CashMovementPanel";
 import { shiftWindowOf } from "../services/shiftCalculations";
 import { shiftDuration } from "../services/shiftService";
 import { canAddExpense } from "../permissions";
@@ -27,7 +28,7 @@ const GHOST_LINK =
 
 export function ShiftDashboardPage() {
   const { t, date, num, money } = useI18n();
-  const { openShift, currentSummary, loading, error, refresh, expensesFor, canOpen, canClose } = useShifts();
+  const { mode, openShift, currentSummary, loading, error, refresh, expensesFor, canOpen, canClose } = useShifts();
 
   const [openModal, setOpenModal] = useState(false);
   const [closeModal, setCloseModal] = useState(false);
@@ -144,6 +145,8 @@ export function ShiftDashboardPage() {
             </span>
             <span className="text-xs text-slate-500">{t("shifts.liveNotice")}</span>
           </div>
+
+          <CashMovementPanel shift={openShift} mode={mode} onChanged={() => { void refresh(); }} />
 
           <Card className="mb-4">
             <SectionTitle

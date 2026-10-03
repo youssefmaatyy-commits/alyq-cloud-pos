@@ -10,6 +10,7 @@
  */
 import assert from "node:assert/strict";
 import { computeShiftSummary, expectedCashOf, cashDifference, differenceTone } from "../services/shiftCalculations";
+import { buildShiftCloseReportHtml } from "../services/shiftCloseReport";
 import { validateShiftDraft, validateCloseDraft, parseMoney } from "../validation";
 import { EMPTY_SHIFT_FORM, EMPTY_CLOSE_SHIFT_FORM, type Shift } from "../types";
 import { getDemoShiftRepository, resetDemoShifts } from "../data/demoRepository";
@@ -213,6 +214,60 @@ test("acceptance scenario: 1000 opening + 500 cash + 300 InstaPay − 100 expens
   assert.equal(summary.expected_cash, 1400, "1000 + 500 − 100 = 1400");
   assert.equal(summary.actual_cash, null, "no count yet while the shift is open");
   assert.equal(summary.difference, null);
+});
+
+test("the bilingual printable close report shows the frozen reconciliation and over/short", () => {
+  const shift = baseShift({
+    status: "closed",
+    opening_cash: 100,
+    closing_cash: 108,
+    closed_at: "2026-03-01T12:00:00.000Z",
+    closed_by: "user-demo-manager",
+    closed_by_name: "Mona Manager",
+    notes: "Counted & verified <twice>",
+  });
+  const computed = computeShiftSummary(
+    shift,
+    {
+      sales: [sale({
+        id: "split-report",
+        total: 10,
+        payments: [
+          { method: "cash", amount: 4, status: "paid" },
+          { method: "visa", amount: 6, status: "paid" },
+        ],
+      })],
+      returns: [],
+      refunds: [],
+      expenses: [],
+    },
+    shift.closed_at!,
+  );
+  const summary = {
+    ...computed,
+    cash_in: 10,
+    cash_out: 5,
+    expected_cash: 109,
+    actual_cash: 108,
+    difference: -1,
+  };
+  const common = {
+    shift,
+    summary,
+    money: (value: number) => `EGP ${value.toFixed(2)}`,
+    date: (value: string) => value.slice(0, 10),
+  };
+  const en = buildShiftCloseReportHtml({ ...common, lang: "en" });
+  const ar = buildShiftCloseReportHtml({ ...common, lang: "ar" });
+
+  for (const evidence of ["Opening cash", "Cash sales", "Cash in", "Cash refunds", "Cash out", "Expected cash", "Actual cash", "Over / short", "cash", "visa", "EGP -1.00"]) {
+    assert.ok(en.includes(evidence), `English close report includes ${evidence}`);
+  }
+  for (const evidence of ["نقدية البداية", "المبيعات النقدية", "إدخال نقدي", "مستردات نقدية", "إخراج نقدي", "النقدية المتوقعة", "النقدية الفعلية", "الزيادة / العجز"]) {
+    assert.ok(ar.includes(evidence), `Arabic close report includes ${evidence}`);
+  }
+  assert.ok(en.includes("Counted &amp; verified &lt;twice&gt;"), "report escapes the close reason");
+  assert.ok(en.includes("EGP 100.00 + EGP 4.00 + EGP 10.00 − EGP 0.00 − EGP 5.00 − EGP 0.00 = EGP 109.00"));
 });
 
 test("non-cash expenses and InstaPay refunds do not move the drawer", () => {

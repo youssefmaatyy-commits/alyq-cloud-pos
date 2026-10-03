@@ -35,6 +35,12 @@ interface ApprovalRequestRow {
   decided_at: string | null;
   decision_note: string | null;
   result_entity_id: string | null;
+  operation_type: string | null;
+  correlation_id: string | null;
+  expires_at: string | null;
+  consumed_at: string | null;
+  approver_user_id: string | null;
+  approver_branch_id: string | null;
   created_at: string;
 }
 
@@ -79,6 +85,12 @@ function mapRequest(row: ApprovalRequestRow): ApprovalRequest {
     decided_at: row.decided_at ?? null,
     decision_note: row.decision_note ?? null,
     result_entity_id: row.result_entity_id ?? null,
+    operation_type: row.operation_type ?? null,
+    correlation_id: row.correlation_id ?? null,
+    expires_at: row.expires_at ?? null,
+    consumed_at: row.consumed_at ?? null,
+    approver_user_id: row.approver_user_id ?? null,
+    approver_branch_id: row.approver_branch_id ?? null,
     created_at: row.created_at,
   };
 }
@@ -237,6 +249,25 @@ export class SupabaseApprovalRepository implements ApprovalRepository {
 
   async cancelRequest(id: string): Promise<ApprovalRequest> {
     return (await this.decideRequest(id, "cancelled", null)).request;
+  }
+
+  async approveWithManagerPin(id: string, username: string, pin: string): Promise<ApprovalRequest> {
+    try {
+      const { data, error } = await this.require().rpc("approve_with_manager_pin", {
+        p_request_id: id,
+        p_manager_username: username.trim(),
+        p_pin: pin,
+      });
+      // The RPC returns refusals so failed-attempt rate limits and audit evidence
+      // commit. Convert that safe code to an app error without ever retaining PIN.
+      if (error) throw toAppError(error);
+      const result = (data ?? {}) as { ok?: boolean; code?: string };
+      if (!result.ok) throw new AppError("FORBIDDEN", result.code ?? "Approval refused");
+      return this.getRequest(id);
+    } catch (err) {
+      if (err instanceof AppError) throw err;
+      throw toAppError(err);
+    }
   }
 
   async markApplied(id: string, entityId: string): Promise<ApprovalRequest> {

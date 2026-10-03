@@ -669,10 +669,20 @@ test("the migration grants what the matrix grants, and names what the app can em
   assert.ok((AUDIT_ENTITIES as readonly string[]).includes("backup"), "a backup is a record type");
 });
 
-test("the six capabilities are grantable, labelled and grouped", () => {
-  // Phase 47 moves the Danger Zone into the same custody group as the backups:
-  // the five backup acts plus the one act the backups exist to protect against.
-  const phase18 = ["view_backups", "create_backup", "restore_backup", "export_backup", "run_health_check", "manage_system_reset"];
+test("data-safety capabilities are grantable, labelled and grouped", () => {
+  // The Danger Zone and selective cleanup sit in the same custody group as the
+  // backups: these are all acts that can expose or intentionally alter retained
+  // installation data.
+  const phase18 = [
+    "view_backups",
+    "create_backup",
+    "restore_backup",
+    "export_backup",
+    "run_health_check",
+    "manage_system_reset",
+    "preview_data_cleanup",
+    "execute_data_cleanup",
+  ];
   for (const capability of phase18) {
     assert.equal(groupOfCapability(capability as never)?.key, "data_safety", `${capability} is in one group`);
     assert.ok(CAPABILITY_ACTIONS[capability as never], `${capability} has a verb`);

@@ -57,6 +57,8 @@ export interface AuthContextValue {
   clearError: () => void;
   /** Re-check expiry now (used by tests and by the route guard). */
   revalidate: () => void;
+  /** Re-resolve role/capabilities after a branch or membership change. */
+  refreshIdentity: () => Promise<boolean>;
   /** Self-service password recovery. `redirectTo` is where the link lands. */
   requestPasswordReset: (identifier: string, redirectTo?: string) => Promise<PasswordResetOutcome>;
   /** Set a new password on the current (or recovering) session. */
@@ -414,6 +416,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return changePasswordRequest(current, next);
   }, []);
 
+  const refreshIdentity = useCallback(async () => {
+    const { session: next, signedOut } = await resyncCurrentIdentity();
+    if (signedOut || !next) {
+      setSession(null);
+      setStatus("anonymous");
+      setEndReason("signed_out");
+      return false;
+    }
+    // Set even when the serialized identity compares equal: a branch switch is
+    // also a deliberate boundary for every branch-scoped data provider.
+    setSession(next);
+    return true;
+  }, []);
+
   const clearError = useCallback(() => setError(null), []);
 
   const value = useMemo<AuthContextValue>(
@@ -430,6 +446,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signOutEverywhere,
       clearError,
       revalidate,
+      refreshIdentity,
       requestPasswordReset,
       updatePassword,
       changePassword,
@@ -446,6 +463,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signOutEverywhere,
       clearError,
       revalidate,
+      refreshIdentity,
       requestPasswordReset,
       updatePassword,
       changePassword,

@@ -71,6 +71,7 @@ export interface ApprovalContextValue {
     note: string | null,
   ) => Promise<ApprovalRequest>;
   cancel: (id: string) => Promise<ApprovalRequest>;
+  approveWithManagerPin: (id: string, username: string, pin: string) => Promise<ApprovalRequest>;
 
   /** Perform the act an approved request stands for, then record what it made. */
   apply: (request: ApprovalRequest) => Promise<AppliedApproval>;
@@ -151,6 +152,13 @@ export function ApprovalProvider({ children }: { children: ReactNode }) {
     return cancelled;
   }, []);
 
+  const approveWithManagerPin = useCallback<ApprovalContextValue["approveWithManagerPin"]>(async (id, username, pin) => {
+    if (mode !== "supabase") throw new AppError("FORBIDDEN", "Inline manager approval is unavailable offline");
+    const approved = await repository.approveWithManagerPin(id, username, pin);
+    setRequests((prev) => prev.map((request) => request.id === id ? approved : request));
+    return approved;
+  }, [mode, repository]);
+
   const apply = useCallback<ApprovalContextValue["apply"]>(async (target) => {
     const applied = await applyApprovedRequest(target);
     setRequests((prev) =>
@@ -210,6 +218,7 @@ export function ApprovalProvider({ children }: { children: ReactNode }) {
       request,
       decide,
       cancel,
+      approveWithManagerPin,
       apply,
       approveAndApply,
       saveRules: saveRulesAction,
@@ -229,6 +238,7 @@ export function ApprovalProvider({ children }: { children: ReactNode }) {
       request,
       decide,
       cancel,
+      approveWithManagerPin,
       apply,
       approveAndApply,
       saveRulesAction,

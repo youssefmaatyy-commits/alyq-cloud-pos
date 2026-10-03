@@ -569,7 +569,7 @@ test("the extract resolves keys to words and reads oldest first", async () => {
   assert.ok(discounted, "the action is resolved through the dictionary");
   assert.equal(discounted.entity, "audit.entity.sale");
   assert.equal(discounted.record, "INV-000001");
-  assert.equal(discounted.details, "percent: 5", "details flatten the way the screen shows them");
+  assert.equal(discounted.details, '{"percent":5}', "structured evidence is preserved as JSON");
 });
 
 // ── 5. reading it and taking it out are two authorities ───────────────────

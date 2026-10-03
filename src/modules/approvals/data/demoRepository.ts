@@ -217,6 +217,10 @@ export class DemoApprovalRepository implements ApprovalRepository {
     return (await this.decideRequest(id, "cancelled", null)).request;
   }
 
+  async approveWithManagerPin(_id: string, _username: string, _pin: string): Promise<ApprovalRequest> {
+    throw new AppError("FORBIDDEN", "Inline manager approval is unavailable offline");
+  }
+
   async markApplied(id: string, entityId: string): Promise<ApprovalRequest> {
     const existing = this.requests.find((r) => r.id === id);
     if (!existing) throw new AppError("NOT_FOUND", `Approval request ${id} not found`);

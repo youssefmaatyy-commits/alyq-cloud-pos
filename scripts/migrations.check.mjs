@@ -58,6 +58,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const MIGRATIONS_DIR = path.join(ROOT, "supabase", "migrations");
 const SHIM_FILE = path.join(ROOT, "supabase", "tests", "supabase-shim.sql");
 const SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "scenarios.sql");
+const PHASE2_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "phase2_scenarios.sql");
 const SEED_FILE = path.join(ROOT, "supabase", "seed.sql");
 const SRC_DIR = path.join(ROOT, "src");
 
@@ -289,6 +290,22 @@ if (!VERIFY_ONLY) {
         "\nRole scenarios skipped (real server; re-run with --scenarios to include them).",
       ),
     );
+  }
+
+  if (failures.length === 0 && runScenarios) {
+    console.log(c.bold("\nPhase 2 focused scenarios (branch + approval + shift + cleanup + audit)"));
+    try {
+      const sql = fs.readFileSync(PHASE2_SCENARIOS_FILE, "utf8");
+      await driver.exec(sql, "phase2_scenarios.sql");
+      console.log(`  ${c.green("✓")} every focused Phase 2 scenario passed`);
+      for (const notice of sql.matchAll(/raise notice '([^']+)'/g)) {
+        console.log(c.dim(`      ${notice[1]}`));
+      }
+    } catch (error) {
+      console.log(`  ${c.red("✗")} a focused Phase 2 scenario failed`);
+      if (error?.stack) console.log(c.dim(error.stack));
+      failures.push({ name: "Phase 2 scenarios", phase: "scenario", error: String(error.message) });
+    }
   }
 
   // ── development seed ───────────────────────────────────────────────────

@@ -27,6 +27,8 @@ import { useI18n } from "@/lib/i18n/I18nProvider";
 import type { TranslationKey } from "@/lib/i18n/dictionary";
 import { Link, useNavigate } from "react-router-dom";
 import { isSupabaseConfigured } from "@/lib/supabase/client";
+import { can } from "@/lib/permissions/enforce";
+import { SelectiveCleanupPanel } from "../components/SelectiveCleanupPanel";
 import {
   clearOperationalData,
   factoryReset,
@@ -79,6 +81,7 @@ export function SystemSettingsPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const demoMode = !isSupabaseConfigured;
+  const mayReset = can("system.reset");
 
   // ── wizard state (one wizard, parameterized by mode) ─────────────────────
   const [mode, setMode] = useState<"operational" | "factory" | null>(null);
@@ -216,6 +219,9 @@ export function SystemSettingsPage() {
         backLabel={t("common.back")}
       />
 
+      <SelectiveCleanupPanel />
+
+      {mayReset ? <>
       {!demoMode ? (
         <Card className="mb-4 border-amber-300 bg-amber-50/60">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -505,6 +511,7 @@ export function SystemSettingsPage() {
           ) : null}
         </Modal>
       ) : null}
+      </> : null}
     </div>
   );
 }

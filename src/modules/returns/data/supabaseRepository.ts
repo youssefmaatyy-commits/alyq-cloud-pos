@@ -63,6 +63,7 @@ interface RefundRow {
   settled_at: string | null;
   settled_by: string | null;
   settled_by_name: string | null;
+  settlement_shift_id: string | null;
 }
 
 function toNumber(value: number | string | null | undefined): number {

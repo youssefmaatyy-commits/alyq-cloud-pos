@@ -500,10 +500,17 @@ await step(5, "The health check reads relationships and reports", async () => {
 
 // ── STEP 6 · the schedule is a policy an admin sets ───────────────────────
 await step(6, "The schedule is a policy an admin sets", async () => {
-  const select = app.document.querySelector("select");
+  // The shell now also has an active-branch selector. Target the schedule by
+  // its complete option contract rather than assuming the first select on the
+  // page belongs to this card.
+  const expectedOptions = ["off", "daily", "weekly"];
+  const select = [...app.document.querySelectorAll("select")].find((candidate) => {
+    const values = [...candidate.options].map((option) => option.value);
+    return expectedOptions.every((value) => values.includes(value));
+  });
   if (!select) throw new Error("the schedule has no frequency control");
   const options = [...select.options].map((option) => option.value);
-  for (const expected of ["off", "daily", "weekly"]) {
+  for (const expected of expectedOptions) {
     if (!options.includes(expected)) throw new Error(`the schedule cannot be set to ${expected}`);
   }
   app.typeInto(select, "weekly");

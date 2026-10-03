@@ -194,6 +194,18 @@ export const AUDIT_ACTIONS = [
   "promo_code.created",
   "promo_code.changed",
   "promo_code.disabled",
+  // Branch authority, policy, PIN evidence, drawer movements and selective cleanup.
+  "branch.created",
+  "branch.access_changed",
+  "branch.switched",
+  "operation_policy.updated",
+  "approval.verification_failed",
+  "manager_pin.changed",
+  "cash.in",
+  "cash.out",
+  "cleanup.previewed",
+  "cleanup.executed",
+  "cleanup.refused",
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -243,8 +255,22 @@ export const AUDIT_ENTITIES = [
   "promo_code",
   /** A physical count (`stocktakes`) — the session, not each keystroke. */
   "stocktake",
+  "branch",
+  "branch_membership",
+  "operation_policy",
+  "cash_movement",
+  "cleanup_preview",
+  "cleanup_execution",
 ] as const;
 export type AuditEntity = (typeof AUDIT_ENTITIES)[number];
+
+export type AuditJsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | AuditJsonValue[]
+  | { [key: string]: AuditJsonValue };
 
 export interface AuditLogEntry {
   id: string;
@@ -255,9 +281,18 @@ export interface AuditLogEntry {
   /** Short human-readable label (e.g. "SHF-000004", "Transport"). */
   entity_label: string;
   /** Structured, JSON-safe detail for the expanded row. */
-  details: Record<string, string | number | boolean | null>;
+  details: Record<string, AuditJsonValue>;
   user_id: string;
   user_name: string;
+  approver_id?: string | null;
+  approver_name?: string | null;
+  branch_id?: string | null;
+  branch_name?: string | null;
+  module?: string | null;
+  correlation_id?: string | null;
+  before_state?: Record<string, AuditJsonValue> | null;
+  after_state?: Record<string, AuditJsonValue> | null;
+  reason?: string | null;
   /** ISO timestamp of the action. */
   created_at: string;
 }
@@ -268,9 +303,18 @@ export interface NewAuditLogEntry {
   entity: AuditEntity;
   entity_id: string;
   entity_label: string;
-  details?: Record<string, string | number | boolean | null>;
+  details?: Record<string, AuditJsonValue>;
   user_id: string;
   user_name: string;
+  approver_id?: string | null;
+  approver_name?: string | null;
+  branch_id?: string | null;
+  branch_name?: string | null;
+  module?: string | null;
+  correlation_id?: string | null;
+  before_state?: Record<string, AuditJsonValue> | null;
+  after_state?: Record<string, AuditJsonValue> | null;
+  reason?: string | null;
 }
 
 /**
@@ -290,6 +334,9 @@ export interface AuditFiltersValue {
   entity: AuditEntity | "all";
   /** Matched on `user_id`, so a renamed employee stays one person. */
   user: string | "all";
+  approver: string | "all";
+  branch: string | "all";
+  module: string | "all";
   /** Inclusive `yyyy-mm-dd` bounds; `null`/`""` means open-ended. */
   from: string;
   to: string;
@@ -300,6 +347,9 @@ export const EMPTY_AUDIT_FILTERS: AuditFiltersValue = {
   action: "all",
   entity: "all",
   user: "all",
+  approver: "all",
+  branch: "all",
+  module: "all",
   from: "",
   to: "",
 };

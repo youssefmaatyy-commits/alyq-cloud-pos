@@ -81,6 +81,14 @@ export function SettingsHomePage() {
           testId: "settings-card-users",
         },
         {
+          to: "/settings/branches",
+          permission: "users.manage",
+          icon: "⌂",
+          titleKey: "admin.settings.card.branches.title",
+          descKey: "admin.settings.card.branches.desc",
+          testId: "settings-card-branches",
+        },
+        {
           to: "/settings/roles",
           permission: "roles.manage",
           icon: "🛡",
@@ -148,7 +156,7 @@ export function SettingsHomePage() {
           // Phase 47: the Danger Zone lives last and reads differently on
           // purpose — a card for the acts you must never reach by accident.
           to: "/settings/system",
-          permission: "system.reset",
+          permission: "system.preview_cleanup",
           icon: "⚠",
           titleKey: "admin.settings.card.system.title",
           descKey: "admin.settings.card.system.desc",

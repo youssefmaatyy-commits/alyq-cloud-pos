@@ -16,6 +16,7 @@ import { canAct } from "@/lib/permissions/enforce";
 import { useApprovals } from "../hooks/ApprovalProvider";
 import { approvalRulesToForm, type ApprovalRulesFormValues } from "../types";
 import { validateApprovalRulesForm } from "../validation";
+import { OperationPoliciesPanel } from "../components/OperationPoliciesPanel";
 
 /**
  * Settings → Approval Rules (Phase 12, requirement 2).
@@ -36,7 +37,7 @@ export function ApprovalRulesPage() {
   const toast = useToast();
   const { rules, saveRules, loading, refresh } = useApprovals();
 
-  const mayEdit = useMemo(() => canAct("manage_settings"), [rules]);
+  const mayEdit = canAct("manage_settings");
   const [form, setForm] = useState<ApprovalRulesFormValues>(() => approvalRulesToForm(rules));
   const [errors, setErrors] = useState<Partial<Record<keyof ApprovalRulesFormValues, string>>>({});
   const [busy, setBusy] = useState(false);
@@ -244,6 +245,8 @@ export function ApprovalRulesPage() {
           </label>
         </Card>
       </div>
+
+      <OperationPoliciesPanel />
 
       <Card className="mt-4">
         <p className="text-xs text-slate-500">

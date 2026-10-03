@@ -112,6 +112,12 @@ export interface ApprovalRequest {
   decision_note: string | null;
   /** The record approving produced; written once, which is what stops a replay. */
   result_entity_id: string | null;
+  operation_type?: string | null;
+  correlation_id?: string | null;
+  expires_at?: string | null;
+  consumed_at?: string | null;
+  approver_user_id?: string | null;
+  approver_branch_id?: string | null;
   created_at: string;
 }
 

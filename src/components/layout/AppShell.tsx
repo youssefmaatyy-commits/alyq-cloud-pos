@@ -4,6 +4,7 @@ import { useI18n } from "@/lib/i18n/I18nProvider";
 import { useCatalog } from "@/modules/products/hooks/CatalogProvider";
 import { useInventory } from "@/modules/inventory/hooks/InventoryProvider";
 import { useAuth } from "@/lib/auth";
+import { useBranch } from "@/lib/branch";
 import { ROLE_LABELS } from "@/lib/permissions/roles";
 import { can } from "@/lib/permissions/enforce";
 import { openStorefrontRoute } from "@/lib/storefront/storefrontLink";
@@ -152,6 +153,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // the same capability table the route guard reads allows the screen.
   const { user } = useInventory();
   const { signOut, signOutEverywhere, endReason, user: sessionUser } = useAuth();
+  const branch = useBranch();
   const navigate = useNavigate();
   const brand = useBrand();
   const canOpen = (path: string) =>
@@ -574,6 +576,29 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             ) : null}
           </div>
           ) : <div className="flex-1" />}
+
+          {/* Branch is an authority boundary, not a cosmetic store filter. The
+              RPC refuses unassigned ids; a successful switch remounts every
+              business provider and refreshes the synchronous capability set. */}
+          {branch.current ? (
+            <label className="relative flex min-w-0 max-w-28 items-center sm:max-w-40" title={branch.current.code}>
+              <span className="sr-only">{lang === "ar" ? "الفرع النشط" : "Active branch"}</span>
+              <select
+                data-testid="branch-switcher"
+                value={branch.current.id}
+                disabled={branch.switching || branch.loading || branch.branches.length < 2}
+                onChange={(event) => { void branch.switchBranch(event.target.value); }}
+                className="h-9 max-w-44 appearance-none truncate rounded-xl border border-stone-200 bg-white py-0 ps-3 pe-8 text-xs font-bold text-stone-700 outline-none hover:bg-stone-50 disabled:cursor-default disabled:opacity-80"
+              >
+                {branch.branches.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {lang === "ar" ? item.name_ar : item.name_en}
+                  </option>
+                ))}
+              </select>
+              <ChevronIcon className="pointer-events-none absolute end-2.5 h-3 w-3 -rotate-90 text-stone-400" />
+            </label>
+          ) : null}
 
           {/* Notifications — one menu for the two inboxes the sidebar badges
               already count. A viewer with neither inbox sees no button at all

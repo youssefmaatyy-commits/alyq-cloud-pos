@@ -55,6 +55,8 @@ export const PERMISSION_CATALOG = {
   "refunds.approve": { module: "refunds", action: "approve", capability: "approve_refund" },
   "shifts.open": { module: "shifts", action: "open", capability: "open_shift" },
   "shifts.close": { module: "shifts", action: "close", capability: "close_shift" },
+  "shifts.cash_in": { module: "shifts", action: "cash_in", capability: "cash_in" },
+  "shifts.cash_out": { module: "shifts", action: "cash_out", capability: "cash_out" },
   "expenses.create": { module: "expenses", action: "create", capability: "add_expense" },
   "expenses.edit": { module: "expenses", action: "edit", capability: "edit_expense" },
   "expenses.delete": { module: "expenses", action: "delete", capability: "delete_expense" },
@@ -98,6 +100,8 @@ export const PERMISSION_CATALOG = {
   "backups.restore": { module: "backups", action: "restore", capability: "restore_backup" },
   "backups.export": { module: "backups", action: "export", capability: "export_backup" },
   "system.health_check": { module: "system", action: "health_check", capability: "run_health_check" },
+  "system.preview_cleanup": { module: "system", action: "preview_cleanup", capability: "preview_data_cleanup" },
+  "system.execute_cleanup": { module: "system", action: "execute_cleanup", capability: "execute_data_cleanup" },
 } as const satisfies Readonly<Record<string, PermissionDefinition>>;
 
 /** A known module.action identifier. */
@@ -240,7 +244,7 @@ export const CAPABILITY_GROUPS: readonly CapabilityGroup[] = [
   },
   {
     key: "shifts",
-    capabilities: ["open_shift", "close_shift", "approve_shift_adjustment"],
+    capabilities: ["open_shift", "close_shift", "cash_in", "cash_out", "approve_shift_adjustment"],
   },
   {
     key: "online",
@@ -274,6 +278,8 @@ export const CAPABILITY_GROUPS: readonly CapabilityGroup[] = [
       // custody of the whole installation — but this one is the act the backups
       // exist to protect against, admin-only by construction.
       "manage_system_reset",
+      "preview_data_cleanup",
+      "execute_data_cleanup",
     ],
   },
 ] as const;
@@ -443,6 +449,8 @@ export const CAPABILITY_ACTIONS: Record<Capability, PermissionAction> = {
   // Shifts
   open_shift: "create",
   close_shift: "edit",
+  cash_in: "create",
+  cash_out: "create",
   approve_shift_adjustment: "approve",
   // Online
   manage_online_orders: "manage",
@@ -452,8 +460,10 @@ export const CAPABILITY_ACTIONS: Record<Capability, PermissionAction> = {
   manage_users: "manage",
   manage_roles: "manage",
   manage_settings: "manage",
-  // Phase 47: the Danger Zone
+  // Danger Zone: preview is a read; execution is the destructive authority.
   manage_system_reset: "manage",
+  preview_data_cleanup: "view",
+  execute_data_cleanup: "delete",
   view_audit_log: "view",
   // Data safety (Phase 18). Restore is `manage` rather than `delete` because it
   // does both: every table is emptied and filled again from a snapshot. The verb
