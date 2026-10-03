@@ -63,6 +63,7 @@ const PHASE3_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "phase3_scena
 const PHASE35_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "phase3_5_scenarios.sql");
 const PHASE4_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "phase4_scenarios.sql");
 const PROMPT5_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "prompt5_scenarios.sql");
+const PROMPT6_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "prompt6_scenarios.sql");
 const SEED_FILE = path.join(ROOT, "supabase", "seed.sql");
 const SRC_DIR = path.join(ROOT, "src");
 
@@ -374,6 +375,20 @@ if (!VERIFY_ONLY) {
       console.log(`  ${c.red("✗")} a focused Prompt 5 scenario failed`);
       if (error?.stack) console.log(c.dim(error.stack));
       failures.push({ name: "Prompt 5 scenarios", phase: "scenario", error: String(error.message) });
+    }
+  }
+
+  if (failures.length === 0 && runScenarios) {
+    console.log(c.bold("\nPrompt 6 focused scenarios (mobile installation + push custody)"));
+    try {
+      const sql = fs.readFileSync(PROMPT6_SCENARIOS_FILE, "utf8");
+      await driver.exec(sql, "prompt6_scenarios.sql");
+      console.log(`  ${c.green("✓")} every focused Prompt 6 scenario passed`);
+      for (const notice of sql.matchAll(/raise notice '([^']+)'/g)) console.log(c.dim(`      ${notice[1]}`));
+    } catch (error) {
+      console.log(`  ${c.red("✗")} a focused Prompt 6 scenario failed`);
+      if (error?.stack) console.log(c.dim(error.stack));
+      failures.push({ name: "Prompt 6 scenarios", phase: "scenario", error: String(error.message) });
     }
   }
 

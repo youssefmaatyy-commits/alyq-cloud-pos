@@ -216,6 +216,9 @@ export const AUDIT_ACTIONS = [
   "hardware.configured",
   "hardware.printer_tested",
   "drawer.open_authorized",
+  // Prompt 6: management phone registration lifecycle. Push tokens are never audit detail.
+  "mobile.installation_registered",
+  "mobile.installation_deactivated",
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -275,6 +278,7 @@ export const AUDIT_ENTITIES = [
   "cleanup_execution",
   "register",
   "hardware",
+  "mobile_installation",
 ] as const;
 export type AuditEntity = (typeof AUDIT_ENTITIES)[number];
 
