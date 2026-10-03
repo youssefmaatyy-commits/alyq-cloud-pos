@@ -20,6 +20,7 @@ import { getSupabaseRepository } from "@/modules/products/data/supabaseRepositor
 import { isSupabaseConfigured, getSupabaseClient } from "@/lib/supabase/client";
 import { useRealtimeWatch } from "@/lib/supabase/useRealtimeWatch";
 import { useBranch } from "@/lib/branch";
+import { useAuth } from "@/lib/auth";
 import { useInventory } from "@/modules/inventory/hooks/InventoryProvider";
 import { canCompleteSale, canApplyDiscount } from "../permissions";
 import { SALES_ROW_CAP, getSalesRepository, type SalesRepository } from "../data";
@@ -45,19 +46,37 @@ import { evaluateCartPricing, normalizeCouponCode, selectAutomaticPromotion, typ
 import type { Promotion, PromotionTarget } from "@/modules/online/types";
 import { holdCart as persistHeldCart, listHeldCarts, removeHeldCart, type HeldCartRecord } from "../offline/heldCarts";
 import { cacheCatalogSnapshot, planOfflineInventory, readCachedCatalog } from "../offline/catalogCache";
-import { getConnectivityStatus, reportNetworkResult, subscribeConnectivity, type ConnectivityStatus } from "../offline/connectivity";
-import { enqueueOfflineSale, getOfflineSaleDisplay, getSyncSummary, processOutbox } from "../offline/outbox";
+import {
+  getConnectivitySnapshot,
+  getConnectivityStatus,
+  reportNetworkResult,
+  reportQueueHealth,
+  reportSessionUsability,
+  subscribeConnectivity,
+  subscribeConnectivitySnapshot,
+  type ApplicationConnectivityState,
+  type ConnectivitySnapshot,
+  type ConnectivityStatus,
+} from "../offline/connectivity";
+import { enqueueOfflineSale, getLastSyncedAt, getOfflineSaleDisplay, getSyncSummary, processOutbox } from "../offline/outbox";
+import { probeSystemBackend } from "@/modules/system/services/healthService";
 
 export interface PosContextValue {
   mode: "supabase" | "demo";
   repository: SalesRepository;
-  /** Last-known connectivity; server remains final authority at sync/payment. */
+  /** Last-known transport decision used by the supported offline cash boundary. */
   connectivity: ConnectivityStatus;
+  connectivityState: ApplicationConnectivityState;
+  connectivitySnapshot: ConnectivitySnapshot;
   workingFromCache: boolean;
+  cachedCatalogAt: string | null;
   syncPendingCount: number;
   syncErrorCount: number;
+  syncDeferredCount: number;
   syncConflictCount: number;
+  lastSuccessfulSyncAt: string | null;
   retrySync: () => Promise<void>;
+  refreshSyncState: () => Promise<void>;
   // catalog snapshot (re-used from products module load)
   products: Product[];
   /** Product categories come from the existing catalogue repository. */
@@ -168,10 +187,14 @@ export function PosProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<AppError | null>(null);
   const [connectivity, setConnectivity] = useState<ConnectivityStatus>(() => getConnectivityStatus());
+  const [connectivitySnapshot, setConnectivitySnapshot] = useState<ConnectivitySnapshot>(() => getConnectivitySnapshot());
   const [workingFromCache, setWorkingFromCache] = useState(false);
+  const [cachedCatalogAt, setCachedCatalogAt] = useState<string | null>(null);
   const [syncPendingCount, setSyncPendingCount] = useState(0);
   const [syncErrorCount, setSyncErrorCount] = useState(0);
+  const [syncDeferredCount, setSyncDeferredCount] = useState(0);
   const [syncConflictCount, setSyncConflictCount] = useState(0);
+  const [lastSuccessfulSyncAt, setLastSuccessfulSyncAt] = useState<string | null>(null);
   const [lines, setLines] = useState<CartLine[]>([]);
   // React may defer/replay a state updater. A scanner and a picker must know
   // *synchronously* whether their exact line was added, even for two scans in
@@ -229,8 +252,11 @@ export function PosProvider({ children }: { children: ReactNode }) {
     return repositoryRef.current;
   }, []);
   const mode = repository.kind;
-  const { current: currentBranch } = useBranch();
+  const branchContext = useBranch();
+  const currentBranch = branchContext.current;
   const activeBranchId = currentBranch?.id ?? null;
+  const { refresh: refreshBranches } = branchContext;
+  const { refreshIdentity, status: authStatus } = useAuth();
 
   // Use the live user from the inventory module so role changes (the
   // inventory role switcher, future auth) take effect on the till immediately.
@@ -258,6 +284,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       setPromotions(website?.promotions ?? []);
       setPromotionTargets(website?.promotionTargets ?? []);
       setWorkingFromCache(false);
+      setCachedCatalogAt(new Date().toISOString());
       reportNetworkResult("success");
       // Cache only the exact catalog the POS actually used; no invented variants
       // or prices can leak into an offline checkout.
@@ -275,6 +302,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       setCategories([]);
       setVariants([...cached.variants].sort(compareVariants));
       setWorkingFromCache(true);
+      setCachedCatalogAt(cached.cachedAt);
       return cached.products;
     }
   }, [activeBranchId]);
@@ -302,33 +330,79 @@ export function PosProvider({ children }: { children: ReactNode }) {
   }, [activeBranchId]);
 
   const refreshSyncSummary = useCallback(async () => {
-    const summary = await getSyncSummary();
+    const [summary, lastSync] = await Promise.all([getSyncSummary(activeBranchId), getLastSyncedAt()]);
     setSyncPendingCount(summary.pendingCount);
-    setSyncErrorCount(summary.errorCount);
+    setSyncErrorCount(summary.failedCount);
+    setSyncDeferredCount(summary.deferredCount);
     setSyncConflictCount(summary.conflictCount);
-  }, []);
+    setLastSuccessfulSyncAt(lastSync);
+    reportQueueHealth({
+      pending: summary.pendingCount,
+      failed: summary.failedCount,
+      deferred: summary.deferredCount,
+      conflicts: summary.conflictCount,
+    });
+  }, [activeBranchId]);
+
+  useEffect(() => {
+    reportSessionUsability(authStatus === "authenticated" ? "usable" : authStatus === "anonymous" ? "expired" : "unknown");
+  }, [authStatus]);
 
   useEffect(() => {
     void refreshSyncSummary();
-    return subscribeConnectivity((next) => setConnectivity(next));
+    const unsubscribeTransport = subscribeConnectivity((next) => setConnectivity(next));
+    const unsubscribeSnapshot = subscribeConnectivitySnapshot(setConnectivitySnapshot);
+    return () => {
+      unsubscribeTransport();
+      unsubscribeSnapshot();
+    };
   }, [refreshSyncSummary]);
 
-  const retrySync = useCallback(async () => {
-    if (getConnectivityStatus() !== "online") return;
-    // A cashier retry may re-attempt network failures, never a stock/business
-    // conflict. Conflicts stay preserved for explicit business review.
+  const synchronizeAfterCheck = useCallback(async (manual: boolean) => {
+    if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+    const probe = await probeSystemBackend();
+    reportNetworkResult(probe.reachable ? "success" : "network-error");
+    if (!probe.reachable || probe.authenticated === false) {
+      await refreshSyncSummary();
+      return;
+    }
+    // Recovery refreshes authority before replay. Revoked membership/capability
+    // therefore wins over any cached permission the offline tab once held.
+    if (mode === "supabase") {
+      const usable = await refreshIdentity();
+      if (!usable) {
+        reportSessionUsability("expired");
+        return;
+      }
+      await refreshBranches();
+    }
     await processOutbox((input) => completeSaleGuarded(input), {
-      retryNetwork: true,
+      // An explicit button may bypass transient-network backoff. Automatic
+      // recovery cannot bypass the five-attempt cap and never retries a
+      // conflict, permission/schema refusal, or rejected business rule.
+      retryNetwork: manual,
+      recovery: !manual,
       branchId: activeBranchId,
     });
     await refreshSyncSummary();
     await loadCatalog().catch(() => undefined);
-  }, [activeBranchId, loadCatalog, refreshSyncSummary]);
+  }, [activeBranchId, loadCatalog, mode, refreshBranches, refreshIdentity, refreshSyncSummary]);
+
+  const retrySync = useCallback(() => synchronizeAfterCheck(true), [synchronizeAfterCheck]);
 
   useEffect(() => {
     if (connectivity !== "online") return;
-    void retrySync();
-  }, [connectivity, retrySync]);
+    void synchronizeAfterCheck(false);
+  }, [connectivity, synchronizeAfterCheck]);
+
+  // A failed Supabase request can happen while the browser still reports a
+  // working network. One bounded recovery probe avoids requiring a reload and
+  // avoids a reconnect storm; real requests remain the primary signal.
+  useEffect(() => {
+    if (connectivity !== "offline" || (typeof navigator !== "undefined" && navigator.onLine === false)) return;
+    const timer = window.setInterval(() => { void synchronizeAfterCheck(false); }, 30_000);
+    return () => window.clearInterval(timer);
+  }, [connectivity, synchronizeAfterCheck]);
 
   const refreshSales = useCallback(
     async (options: { silent?: boolean; from?: string; to?: string } = {}) => {
@@ -839,6 +913,12 @@ export function PosProvider({ children }: { children: ReactNode }) {
         if (appliedCouponCode) {
           throw new AppError("VALIDATION", "Coupons require an online price check and cannot be used offline", "coupon");
         }
+        if (input.discount_type !== "none" || input.lines.some((line) => (line.discount_type ?? "none") !== "none" && Number(line.discount_value) > 0)) {
+          throw new AppError("VALIDATION", "Manager-approved and manual discounts require an internet connection", "discount");
+        }
+        if (lines.some((line) => Boolean(line.automatic_promotion_id) || (line.base_price != null && round2(line.base_price) !== round2(line.unit_price)))) {
+          throw new AppError("VALIDATION", "Promotion pricing requires an internet connection", "payment");
+        }
         // Last-known inventory is a local safety check only. The queued payload
         // is replayed unchanged and the server re-checks exact shelf, price,
         // shift and permissions before it becomes a financial sale.
@@ -856,7 +936,11 @@ export function PosProvider({ children }: { children: ReactNode }) {
             discount_value: line.item_discount?.value ?? 0,
             name_en: line.name_en,
             name_ar: line.name_ar,
-            sku: line.sku,
+            sku: line.variant_sku ?? line.sku,
+            barcode: line.barcode,
+            color_ar: line.color_ar,
+            color_en: line.color_en,
+            size_value: line.size_label ?? (line.size == null ? null : String(line.size)),
             unit_price: line.unit_price,
           })),
           {
@@ -924,11 +1008,17 @@ export function PosProvider({ children }: { children: ReactNode }) {
       mode,
       repository,
       connectivity,
+      connectivityState: connectivitySnapshot.state,
+      connectivitySnapshot,
       workingFromCache,
+      cachedCatalogAt,
       syncPendingCount,
       syncErrorCount,
+      syncDeferredCount,
       syncConflictCount,
+      lastSuccessfulSyncAt,
       retrySync,
+      refreshSyncState: refreshSyncSummary,
       products,
       categories,
       variants,
@@ -983,11 +1073,16 @@ export function PosProvider({ children }: { children: ReactNode }) {
       mode,
       repository,
       connectivity,
+      connectivitySnapshot,
       workingFromCache,
+      cachedCatalogAt,
       syncPendingCount,
       syncErrorCount,
+      syncDeferredCount,
       syncConflictCount,
+      lastSuccessfulSyncAt,
       retrySync,
+      refreshSyncSummary,
       products,
       categories,
       variants,

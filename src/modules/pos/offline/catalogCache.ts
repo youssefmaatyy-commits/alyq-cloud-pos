@@ -19,6 +19,7 @@ import type { ProductVariant } from "@/modules/products/variants";
 import { AppError } from "@/modules/products/data/repository";
 import type { CompleteSaleInput } from "../types";
 import { getOfflineDb, type OfflineWrite } from "./db";
+import { ensureOfflineSchema } from "./schema";
 import type { CachedCatalogSnapshot, CachedProduct, CachedVariant } from "./types";
 
 const CATALOG_CACHED_AT_KEY = "catalog_cached_at";
@@ -29,6 +30,7 @@ export async function cacheCatalogSnapshot(
   variants: ProductVariant[],
   branchId: string | null = null,
 ): Promise<void> {
+  await ensureOfflineSchema();
   const db = getOfflineDb();
   const cachedAt = new Date().toISOString();
   const cachedProducts: CachedProduct[] = products.map((product) => ({
@@ -50,6 +52,8 @@ export async function cacheCatalogSnapshot(
 }
 
 export async function readCachedCatalog(expectedBranchId: string | null = null): Promise<CachedCatalogSnapshot> {
+  const schema = await ensureOfflineSchema();
+  if (!schema.compatible) return { products: [], variants: [], cachedAt: null };
   const db = getOfflineDb();
   const [products, variants, meta, branchMeta] = await Promise.all([
     db.getAll<CachedProduct>("cached_products"),

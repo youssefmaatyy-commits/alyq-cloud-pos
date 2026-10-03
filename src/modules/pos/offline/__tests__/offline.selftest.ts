@@ -15,7 +15,7 @@ import type { Product } from "@/modules/products/types";
 import type { ProductVariant } from "@/modules/products/variants";
 import type { CompleteSaleInput, Sale } from "../../types";
 import { resetOfflineDbForTests, getOfflineDb } from "../db";
-import { resetConnectivityForTests, reportNetworkResult, getConnectivityStatus, subscribeConnectivity } from "../connectivity";
+import { resetConnectivityForTests, reportNetworkResult, getConnectivityStatus, getConnectivitySnapshot, reportQueueHealth, reportSyncActivity, subscribeConnectivity } from "../connectivity";
 import { cacheCatalogSnapshot, planOfflineInventory, readCachedCatalog } from "../catalogCache";
 import {
   enqueueOfflineSale,
@@ -28,6 +28,7 @@ import {
   type CompleteSaleFn,
 } from "../outbox";
 import { offlineSaleToDisplaySale, type OfflineSaleLine, type OfflineSaleRecord } from "../types";
+import { ensureOfflineSchema } from "../schema";
 
 type TestCase = { name: string; fn: () => void | Promise<void> };
 const tests: TestCase[] = [];
@@ -215,6 +216,22 @@ test("catalog cache never exposes one branch's last-known shelves in another bra
 
 // ── enqueue + local inventory ───────────────────────────────────────────────
 
+test("cache schema upgrade invalidates disposable catalog only and preserves unsynced business data", async () => {
+  freshEnv();
+  await cacheCatalogSnapshot([product()], [variant()], "branch-a");
+  const record = await enqueueOne("cr-schema-upgrade");
+  const db = getOfflineDb();
+  await db.put("sync_metadata", { key: "offline_business_schema_version", value: "1" });
+  await db.put("sync_metadata", { key: "offline_catalog_schema_version", value: "1" });
+  const health = await ensureOfflineSchema();
+  assert.equal(health.compatible, true);
+  assert.equal(health.detail, "upgraded");
+  const cached = await readCachedCatalog("branch-a");
+  assert.equal(cached.products.length, 0, "old disposable catalog rows are cleared");
+  assert.ok(await db.get<OfflineSaleRecord>("offline_sales", record.id), "queued sale survives cache invalidation");
+  assert.equal((await getSyncSummary()).pendingCount, 1);
+});
+
 test("known-offline exact-variant cash sale queues immediately and decrements cached stock once", async () => {
   freshEnv();
   const exactUuid = "123e4567-e89b-42d3-a456-426614174000";
@@ -295,7 +312,8 @@ test("offline outbox preserves exact variant and waits for its originating branc
     [{
       product_id: "prod-1", variant_id: "black-42", qty: 1,
       discount_type: "none", discount_value: 0,
-      name_en: "ALYQ-01", name_ar: "ALYQ-01", sku: "ALYQ-01-BLK-42", unit_price: 500,
+      name_en: "ALYQ-01", name_ar: "ALYQ-01", sku: "ALYQ-01-BLK-42", barcode: "ALYQ01BLK42",
+      color_en: "Black", color_ar: "أسود", size_value: "42", unit_price: 500,
     }],
     { subtotal: 500, discount_amount: 0, total: 500, branch_id: "branch-a" },
   );
@@ -303,6 +321,13 @@ test("offline outbox preserves exact variant and waits for its originating branc
   const storedLines = await getOfflineDb().getAll<OfflineSaleLine>("offline_sale_lines");
   assert.equal(storedLines[0].branch_id, "branch-a");
   assert.equal(storedLines[0].variant_id, "black-42");
+  assert.equal(storedLines[0].sku, "ALYQ-01-BLK-42");
+  assert.equal(storedLines[0].barcode, "ALYQ01BLK42");
+  assert.equal(storedLines[0].color_en, "Black");
+  assert.equal(storedLines[0].color_ar, "أسود");
+  assert.equal(storedLines[0].size_value, "42");
+  assert.equal(record.input.offline_evidence?.lines[0].variant_id, "black-42");
+  assert.equal(record.input.offline_evidence?.lines[0].sku, "ALYQ-01-BLK-42");
 
   let calls = 0;
   const complete: CompleteSaleFn = async (received) => {
@@ -310,12 +335,14 @@ test("offline outbox preserves exact variant and waits for its originating branc
     assert.equal(received.lines[0].variant_id, "black-42");
     return fakeSale("branch-sale", "INV-BRANCH");
   };
-  const wrongBranch = await processOutbox(complete, { branchId: "branch-b", force: true });
+  const wrongBranch = await processOutbox(complete, { branchId: "branch-b", retryNetwork: true });
   assert.equal(calls, 0, "switching branches cannot redirect queued stock");
   assert.deepEqual(wrongBranch.synced, []);
-  assert.equal((await getSyncSummary()).pendingCount, 1);
+  assert.equal((await getSyncSummary()).deferredCount, 1);
+  const deferred = await getOfflineDb().get<OfflineSaleRecord>("offline_sales", record.id);
+  assert.equal(deferred?.sync_status, "deferred");
 
-  await processOutbox(complete, { branchId: "branch-a", force: true });
+  await processOutbox(complete, { branchId: "branch-a", retryNetwork: true });
   assert.equal(calls, 1);
   assert.equal((await getSyncSummary()).pendingCount, 0);
 });
@@ -422,11 +449,11 @@ test("a network failure keeps the sale queued with an error status — never del
 
   const summary = await getSyncSummary();
   assert.equal(summary.pendingCount, 0);
-  assert.equal(summary.errorCount, 1, "queued as an error, not silently pending forever");
+  assert.equal(summary.failedCount, 1, "queued as failed, not silently pending forever");
 
   const stillThere = await getOfflineDb().get<OfflineSaleRecord>("offline_sales", record.id);
   assert.ok(stillThere, "never deleted");
-  assert.equal(stillThere!.sync_status, "error");
+  assert.equal(stillThere!.sync_status, "failed");
   assert.equal(stillThere!.last_error_kind, "network");
 
   const visible = await getOfflineSalesForDisplay();
@@ -452,6 +479,65 @@ test("retry after reconnecting succeeds exactly once, replaying the identical cl
   assert.deepEqual(seenRefs, ["cr-retry-then-ok", "cr-retry-then-ok"], "same client_ref both times — this is what stops a duplicate sale");
   const summary = await getSyncSummary();
   assert.equal(summary.pendingCount + summary.errorCount, 0);
+});
+
+test("lost server response replays the same reference and resolves to one authoritative sale", async () => {
+  freshEnv();
+  const record = await enqueueOne("cr-lost-response");
+  const committed = new Map<string, Sale>();
+  let writes = 0;
+  let first = true;
+  const complete: CompleteSaleFn = async (received) => {
+    let sale = committed.get(received.client_ref);
+    if (!sale) {
+      sale = fakeSale("server-lost-response", "S-LOST");
+      committed.set(received.client_ref, sale);
+      writes += 1;
+    }
+    if (first) {
+      first = false;
+      throw new AppError("NETWORK", "Response was lost after commit");
+    }
+    return sale;
+  };
+  await processOutbox(complete);
+  await retrySyncNow(complete);
+  assert.equal(writes, 1, "stable client_ref makes the authoritative server write idempotent");
+  assert.equal(committed.size, 1);
+  const stored = await getOfflineDb().get<OfflineSaleRecord>("offline_sales", record.id);
+  assert.equal(stored?.server_id, "server-lost-response");
+  assert.equal(stored?.sync_status, "synced");
+});
+
+test("automatic network recovery is capped while an explicit retry remains eligible", async () => {
+  freshEnv();
+  await enqueueOne("cr-bounded-network");
+  let calls = 0;
+  const fail: CompleteSaleFn = async () => {
+    calls += 1;
+    throw new AppError("NETWORK", "Failed to fetch");
+  };
+  await processOutbox(fail);
+  for (let index = 0; index < 10; index += 1) await processOutbox(fail, { recovery: true });
+  assert.equal(calls, 5, "automatic recovery stops at the bounded attempt cap");
+  await retrySyncNow(fail);
+  assert.equal(calls, 6, "a deliberate retry may re-attempt the transient network row");
+});
+
+test("revoked sale authority is deferred without an automatic retry loop", async () => {
+  freshEnv();
+  const record = await enqueueOne("cr-revoked");
+  let calls = 0;
+  const complete: CompleteSaleFn = async () => {
+    calls += 1;
+    throw new AppError("DB", "Offline sale sync is not permitted in the active branch");
+  };
+  await processOutbox(complete);
+  const stored = await getOfflineDb().get<OfflineSaleRecord>("offline_sales", record.id);
+  assert.equal(stored?.sync_status, "deferred");
+  assert.equal(stored?.last_error_kind, "permission");
+  await processOutbox(complete);
+  assert.equal(calls, 1, "a permanent permission refusal is not hammered automatically");
 });
 
 test("an inventory conflict at sync time is surfaced distinctly and the sale is preserved", async () => {
@@ -484,7 +570,7 @@ test("cashier retry re-attempts network failures but preserves conflicts for rev
   assert.equal((await getSyncSummary()).conflictCount, 1);
 });
 
-test("a rejected (business-rule) failure is not hammered automatically, but manual retry still attempts it", async () => {
+test("a rejected business rule is preserved and no manual force bypass is available", async () => {
   freshEnv();
   await enqueueOne("cr-rejected");
   let autoCalls = 0;
@@ -498,9 +584,9 @@ test("a rejected (business-rule) failure is not hammered automatically, but manu
   // network failures are eligible for the automatic loop (see outbox.ts).
   await processOutbox(rejectingComplete);
   assert.equal(autoCalls, 1, "automatic sync leaves a rejected sale for a human, not a retry loop");
-  // The manual "Retry sync" button still attempts everything, unconditionally.
+  // Manual retry bypasses network backoff only; it never overrides a refusal.
   await retrySyncNow(rejectingComplete);
-  assert.equal(autoCalls, 2, "manual retry always attempts, regardless of error kind");
+  assert.equal(autoCalls, 1, "manual retry cannot force a rejected business operation");
 });
 
 test("multiple queued sales sync safely in creation order, each exactly once", async () => {
@@ -566,6 +652,19 @@ test("connectivity flips on a real network result, independent of any polling", 
   unsubscribe();
   reportNetworkResult("network-error");
   assert.equal(seen.length, 2, "no more notifications after unsubscribing");
+});
+
+test("application connectivity distinguishes syncing, degraded and sync error facts", () => {
+  resetConnectivityForTests("online");
+  assert.equal(getConnectivitySnapshot().state, "online");
+  reportSyncActivity("syncing");
+  assert.equal(getConnectivitySnapshot().state, "syncing");
+  reportSyncActivity("idle");
+  reportNetworkResult("network-error");
+  assert.equal(getConnectivitySnapshot().state, "degraded", "browser can be up while backend is unavailable");
+  reportNetworkResult("success");
+  reportQueueHealth({ pending: 0, failed: 1, deferred: 0, conflicts: 0 });
+  assert.equal(getConnectivitySnapshot().state, "sync_error");
 });
 
 // ── display mapping ──────────────────────────────────────────────────────────

@@ -26,9 +26,9 @@
 import type { OfflineStoreName } from "./types";
 
 const DB_NAME = "alyq-pos-offline";
-// Version 2 adds durable suspended-sale drafts. Existing v1 queue/catalog
-// records are retained by IndexedDB's upgrade transaction.
-const DB_VERSION = 2;
+// Version 3 formalizes cache/business schema metadata. No store is dropped:
+// IndexedDB's upgrade transaction preserves every v1/v2 pending sale and line.
+const DB_VERSION = 3;
 
 const STORE_KEY_PATH: Record<OfflineStoreName, string> = {
   cached_products: "id",

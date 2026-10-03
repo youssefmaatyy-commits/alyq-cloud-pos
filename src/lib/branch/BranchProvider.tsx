@@ -11,6 +11,7 @@ import {
 import type { AppRole } from "@/lib/permissions/roles";
 import { useAuth } from "@/lib/auth";
 import { getSupabaseClient } from "@/lib/supabase/client";
+import { getConnectivitySnapshot, getConnectivityStatus } from "@/modules/pos/offline/connectivity";
 
 export interface BranchAccess {
   id: string;
@@ -104,6 +105,11 @@ export function BranchProvider({ children }: { children: ReactNode }) {
     const target = branches.find((branch) => branch.id === branchId && branch.active);
     if (!target) return false; // inaccessible branches are neither shown nor accepted.
     if (auth.mode === "demo" || target.is_current) return true;
+    const connectivity = getConnectivitySnapshot();
+    if (getConnectivityStatus() !== "online" || connectivity.backend !== "reachable" || connectivity.session !== "usable") {
+      setError("Reconnect and refresh your session before switching branches");
+      return false;
+    }
     const client = getSupabaseClient();
     if (!client) return false;
     setSwitching(true);

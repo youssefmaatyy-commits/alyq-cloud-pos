@@ -219,28 +219,34 @@ export class SupabaseSalesRepository implements SalesRepository {
   async completeSale(input: CompleteSaleInput, approvalRequestId?: string | null): Promise<Sale> {
     try {
       const client = this.require();
-      const { data, error } = await client.rpc("pos_complete_sale", {
-        // Migration 0035: an over-limit discount is refused unless a real,
-        // approved, unspent request stands behind it. Validated in the database,
-        // spent in the same transaction as the sale it produced.
-        p_approval_request_id: approvalRequestId ?? null,
-        p_payload: {
-          client_ref: input.client_ref,
-          lines: input.lines,
-          discount_type: input.discount_type,
-          discount_value: input.discount_value,
-          coupon_code: input.coupon_code ?? input.promo_code ?? null,
-          promo_code: input.promo_code ?? input.coupon_code ?? null,
-          payments: input.payments,
-          customer_id: input.customer_id ?? null,
-          customer_name: input.customer_name ?? null,
-          customer_phone: input.customer_phone ?? null,
-          notes: input.notes?.trim() || null,
-          user_id: input.user_id,
-          user_name: input.user_name,
-          source: input.source ?? "pos",
-        },
-      });
+      const payload = {
+        client_ref: input.client_ref,
+        lines: input.lines,
+        discount_type: input.discount_type,
+        discount_value: input.discount_value,
+        coupon_code: input.coupon_code ?? input.promo_code ?? null,
+        promo_code: input.promo_code ?? input.coupon_code ?? null,
+        payments: input.payments,
+        customer_id: input.customer_id ?? null,
+        customer_name: input.customer_name ?? null,
+        customer_phone: input.customer_phone ?? null,
+        notes: input.notes?.trim() || null,
+        user_id: input.user_id,
+        user_name: input.user_name,
+        source: input.source ?? "pos",
+      };
+      const { data, error } = input.offline_evidence
+        ? await client.rpc("pos_sync_offline_sale", {
+            p_payload: payload,
+            p_evidence: input.offline_evidence,
+          })
+        : await client.rpc("pos_complete_sale", {
+            // Migration 0035: an over-limit discount is refused unless a real,
+            // approved, unspent request stands behind it. Validated in the database,
+            // spent in the same transaction as the sale it produced.
+            p_approval_request_id: approvalRequestId ?? null,
+            p_payload: payload,
+          });
       if (error) throw toAppError(error);
       const saleId = (data as { sale_id?: string } | null)?.sale_id;
       if (!saleId) throw new AppError("DB", "Sale id missing from response");

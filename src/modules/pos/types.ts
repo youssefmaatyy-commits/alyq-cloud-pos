@@ -169,9 +169,34 @@ export interface Sale {
   /** Cashier note frozen with the transaction; never recomputed on reprint. */
   notes?: string | null;
   /** Client-only sync state for a cash sale accepted while the till was offline. */
-  offline_sync_status?: "pending" | "syncing" | "synced" | "error";
+  offline_sync_status?: "pending" | "syncing" | "synced" | "failed" | "deferred" | "conflict";
   offline_last_error?: string | null;
-  offline_last_error_kind?: "network" | "conflict" | "rejected" | null;
+  offline_last_error_kind?: "network" | "conflict" | "permission" | "branch" | "schema" | "rejected" | null;
+}
+
+/**
+ * Frozen evidence attached only to a supported offline cash sale. The server
+ * compares it with its own current catalogue and promotion calculation; it is
+ * never accepted as price authority.
+ */
+export interface OfflinePricingEvidence {
+  schema_version: 1;
+  branch_id: string;
+  captured_at: string;
+  subtotal: number;
+  discount_amount: number;
+  total: number;
+  lines: Array<{
+    product_id: string;
+    variant_id: string | null;
+    qty: number;
+    unit_price: number;
+    sku: string;
+    barcode: string | null;
+    color_ar: string | null;
+    color_en: string | null;
+    size_value: string | null;
+  }>;
 }
 
 /** Payload the cart sends to complete a sale. */
@@ -202,6 +227,8 @@ export interface CompleteSaleInput {
   notes?: string | null;
   user_id: string;
   user_name: string;
+  /** Present only on durable offline cash sales; see `pos_sync_offline_sale`. */
+  offline_evidence?: OfflinePricingEvidence;
   /** Omitted by the till; set to `online` when an order approval creates it. */
   source?: SaleSource;
 }

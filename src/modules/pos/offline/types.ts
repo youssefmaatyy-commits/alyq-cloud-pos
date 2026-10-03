@@ -60,11 +60,23 @@ export interface OfflineSaleLine {
   /** Frozen at cart time so the till can show the line without a live catalog read. */
   name_en: string;
   name_ar: string;
+  /** Exact merchant identifiers and dimensions frozen for safe inspection. */
   sku: string;
+  barcode?: string | null;
+  color_ar?: string | null;
+  color_en?: string | null;
+  size_value?: string | null;
   unit_price: number;
 }
 
-export type OfflineSyncStatus = "pending" | "syncing" | "synced" | "error";
+export const OFFLINE_BUSINESS_SCHEMA_VERSION = 3;
+export const OFFLINE_CATALOG_SCHEMA_VERSION = 2;
+
+/** One normalized lifecycle shared by the queue, history, status indicator and support UI. */
+export type OfflineSyncStatus = "pending" | "syncing" | "synced" | "failed" | "deferred" | "conflict";
+export type OfflineSyncErrorKind = "network" | "conflict" | "permission" | "branch" | "schema" | "rejected";
+
+export type { OfflinePricingEvidence } from "../types";
 
 /**
  * A sale completed while offline, before (and after) it reaches the server.
@@ -91,6 +103,8 @@ export interface OfflineSaleRecord {
   customer_phone: string | null;
   user_id: string;
   user_name: string;
+  /** Local business schema used to validate a safe replay after an app upgrade. */
+  schema_version?: number;
   sync_status: OfflineSyncStatus;
   /** Filled in once `pos_complete_sale` (or its idempotent replay) succeeds. */
   server_id: string | null;
@@ -99,7 +113,7 @@ export interface OfflineSaleRecord {
   /** Human-readable reason the last sync attempt failed, if it did. */
   last_error: string | null;
   /** Coarse classification of `last_error`, so the UI can react differently. */
-  last_error_kind: "network" | "conflict" | "rejected" | null;
+  last_error_kind: OfflineSyncErrorKind | null;
 }
 
 /**
@@ -115,13 +129,47 @@ export interface SyncOutboxEntry {
   /** Prevents a queued Branch A sale from replaying after a switch to Branch B. */
   branch_id?: string | null;
   created_at: string;
+  /** Currently only cash sale completion is supported offline. */
+  operation_type?: "sale.complete";
+  schema_version?: number;
   attempts: number;
   last_attempt_at: string | null;
   /** Backoff schedule for the automatic (non-manual) retry loop. */
   next_attempt_at: string | null;
-  status: "pending" | "syncing" | "error";
+  status: Exclude<OfflineSyncStatus, "synced">;
   last_error: string | null;
-  last_error_kind: "network" | "conflict" | "rejected" | null;
+  last_error_kind: OfflineSyncErrorKind | null;
+}
+
+/** A redacted queue row safe for operational UI and copied diagnostics. */
+export interface SafeSyncOperation {
+  client_ref: string;
+  local_sale_id: string;
+  operation_type: "sale.complete";
+  branch_id: string | null;
+  /** Captured staff display name only; no auth/session identifier or customer PII. */
+  user_name: string;
+  created_at: string;
+  attempts: number;
+  last_attempt_at: string | null;
+  next_attempt_at: string | null;
+  status: OfflineSyncStatus;
+  error_kind: OfflineSyncErrorKind | null;
+  error_summary: string | null;
+  retryable: boolean;
+  total: number;
+  lines: Array<{
+    product_id: string;
+    variant_id: string | null;
+    sku: string;
+    barcode: string | null;
+    color_ar: string | null;
+    color_en: string | null;
+    size_value: string | null;
+    qty: number;
+  }>;
+  synced_at: string | null;
+  server_sale_number: string | null;
 }
 
 /** Small key/value store for sync bookkeeping (e.g. `catalog_cached_at`). */
@@ -167,14 +215,14 @@ export function offlineSaleToDisplaySale(record: OfflineSaleRecord, lines: Offli
         sale_id: record.id,
         product_id: line.product_id,
         variant_id: line.variant_id,
-        variant_color_ar: null,
-        variant_color_en: null,
-        variant_size: null,
-        variant_size_label: null,
+        variant_color_ar: line.color_ar ?? null,
+        variant_color_en: line.color_en ?? null,
+        variant_size: line.size_value && /^[0-9]+(?:\.[0-9]{1,2})?$/.test(line.size_value) ? Number(line.size_value) : null,
+        variant_size_label: line.size_value ?? null,
         name_ar: line.name_ar,
         name_en: line.name_en,
         sku: line.sku,
-        barcode: null,
+        barcode: line.barcode ?? null,
         unit_price: line.unit_price,
         quantity: line.qty,
         gross_total: gross,
