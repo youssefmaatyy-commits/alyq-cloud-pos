@@ -4,6 +4,7 @@ export const IPC = Object.freeze({
   FULLSCREEN_CHANGED: "alyq:app:fullscreen-changed",
   OPEN_EXTERNAL: "alyq:app:open-external",
   GET_CONFIG: "alyq:config:get",
+  GET_REGISTER_BINDING: "alyq:register-binding:get",
   SAVE_HARDWARE_CONFIG: "alyq:config:save-hardware",
   SAVE_REGISTER_BINDING: "alyq:config:save-register-binding",
   CLEAR_REGISTER_BINDING: "alyq:config:clear-register-binding",

@@ -26,6 +26,10 @@ export async function getDesktopConfig(): Promise<DesktopConfig | null> {
   return desktopApi()?.getConfig() ?? null;
 }
 
+export async function getDesktopRegisterBinding(): Promise<DesktopRegisterBinding | null> {
+  return desktopApi()?.getRegisterBinding() ?? null;
+}
+
 export async function saveDesktopHardwareConfig(config: DesktopHardwareConfig): Promise<DesktopHardwareConfig> {
   const api = desktopApi();
   if (!api) throw new Error("Desktop hardware is unavailable in the web application");

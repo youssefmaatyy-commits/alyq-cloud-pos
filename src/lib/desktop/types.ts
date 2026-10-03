@@ -40,11 +40,14 @@ export interface DesktopRegisterBinding {
   snapshot: DesktopRegisterSnapshot;
 }
 
+export type DesktopPublicRegisterBinding = Omit<DesktopRegisterBinding, "credential">;
+
+/** Renderer-wide configuration deliberately excludes the register credential. */
 export interface DesktopConfig {
   schemaVersion: 1;
   installationId: string;
   hardware: DesktopHardwareConfig;
-  registerBinding: DesktopRegisterBinding | null;
+  registerBinding: DesktopPublicRegisterBinding | null;
 }
 
 export interface DesktopPrinterInfo {
@@ -72,6 +75,8 @@ export interface ALYQDesktopApi {
   onFullscreenChanged(callback: (enabled: boolean) => void): () => void;
   openExternal(url: string): Promise<boolean>;
   getConfig(): Promise<DesktopConfig>;
+  /** Narrow credential-bearing call used only by the register RPC adapter. */
+  getRegisterBinding(): Promise<DesktopRegisterBinding | null>;
   saveHardwareConfig(config: DesktopHardwareConfig): Promise<DesktopHardwareConfig>;
   saveRegisterBinding(binding: DesktopRegisterBinding): Promise<{ saved: true; registerId: string }>;
   clearRegisterBinding(): Promise<{ cleared: true }>;

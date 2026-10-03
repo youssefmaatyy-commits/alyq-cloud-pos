@@ -281,6 +281,7 @@ alter table public.cash_movements add column if not exists register_id uuid refe
 alter table public.audit_log add column if not exists register_id uuid references public.registers(id) on delete set null;
 create index if not exists sales_register_idx on public.sales(register_id,created_at desc) where register_id is not null;
 create index if not exists shifts_register_id_idx on public.shifts(register_id,opening_at desc) where register_id is not null;
+create unique index if not exists shifts_one_open_per_register_idx on public.shifts(register_id) where status='open' and register_id is not null;
 create index if not exists cash_movements_register_idx on public.cash_movements(register_id,created_at desc) where register_id is not null;
 create index if not exists audit_log_register_idx on public.audit_log(register_id,created_at desc) where register_id is not null;
 

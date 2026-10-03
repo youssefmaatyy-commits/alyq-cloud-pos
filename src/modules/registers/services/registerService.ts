@@ -1,4 +1,4 @@
-import { getDesktopConfig, getDesktopContext, isDesktopRuntime, saveDesktopRegisterBinding } from "@/lib/desktop/bridge";
+import { getDesktopContext, getDesktopRegisterBinding, isDesktopRuntime, saveDesktopRegisterBinding } from "@/lib/desktop/bridge";
 import type { DesktopRegisterBinding } from "@/lib/desktop/types";
 import { assertCapability } from "@/lib/permissions/enforce";
 import { getSupabaseClient, isSupabaseConfigured } from "@/lib/supabase/client";
@@ -74,9 +74,8 @@ function bindingFor(register: RegisterRecord, credential: string): DesktopRegist
 }
 
 async function requireDesktopCredential(): Promise<RegisterCredential> {
-  const config = await getDesktopConfig();
-  const binding = config?.registerBinding;
-  if (!config || !binding) {
+  const binding = await getDesktopRegisterBinding();
+  if (!binding) {
     throw new AppError("FORBIDDEN", "This desktop installation has not been registered");
   }
   return {

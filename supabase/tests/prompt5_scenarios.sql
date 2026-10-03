@@ -14,7 +14,7 @@ declare
   v_created jsonb; v_created_two jsonb; v_context jsonb; v_managed jsonb;
   v_register uuid; v_register_two uuid; v_credential text; v_credential_two text;
   v_payload jsonb; v_evidence jsonb; v_first jsonb; v_second jsonb;
-  v_before integer; v_after integer;
+  v_before integer; v_after integer; v_shift uuid; v_movement uuid;
 begin
   perform pg_temp.become(v_admin,'authenticated');
   perform public.switch_active_branch_with_audit(v_main);
@@ -117,6 +117,37 @@ begin
   end;
   if exists(select 1 from public.audit_log where action='drawer.open_authorized' and register_id=v_register) then
     raise exception 'refused drawer command wrote a success audit';
+  end if;
+
+  -- Complete register → shift → sale → cash movement → close evidence chain.
+  -- Close the legacy unregistered setup shift first, then open through the
+  -- credential-bound RPC; one physical register cannot own two open shifts.
+  select id into v_shift from public.shifts where status='open' and opened_by=v_admin::text order by opening_at desc limit 1;
+  perform public.close_shift_authoritative(v_shift,0,'Prompt 5 register-chain setup');
+  v_shift:=(public.open_registered_shift(50,v_install,v_credential)).id;
+  if (select register_id from public.shifts where id=v_shift) is distinct from v_register
+     or (select branch_id from public.shifts where id=v_shift) is distinct from v_main then
+    raise exception 'registered shift lost branch/register evidence';
+  end if;
+  begin
+    perform public.register_manage(v_register,'reassign',null,v_other);
+    raise exception 'register moved with an open shift';
+  exception when check_violation then null;
+  end;
+  perform public.register_authorize_drawer_open(v_install,v_credential,'cash count');
+  v_payload:=v_payload||jsonb_build_object('client_ref','prompt5-register-shift-sale');
+  v_first:=public.pos_complete_registered_sale(v_payload,null,v_install,v_credential,v_register);
+  v_movement:=(public.record_cash_movement('cash_in',10,'Prompt 5 float',null,null)->>'id')::uuid;
+  if (select shift_id from public.sales where id=(v_first->>'sale_id')::uuid) is distinct from v_shift
+     or (select register_id from public.sales where id=(v_first->>'sale_id')::uuid) is distinct from v_register
+     or (select register_id from public.cash_movements where id=v_movement) is distinct from v_register
+     or (select user_id from public.cash_movements where id=v_movement) is distinct from v_admin then
+    raise exception 'register/shift/user/cash evidence chain failed';
+  end if;
+  perform public.close_shift_authoritative(v_shift,165,null);
+  if (select status from public.shifts where id=v_shift)<>'closed'
+     or not exists(select 1 from public.audit_log where action='drawer.open_authorized' and register_id=v_register and user_id=v_admin::text) then
+    raise exception 'registered shift close or authorized drawer audit failed';
   end if;
 
   perform pg_temp.become(v_cashier,'authenticated');

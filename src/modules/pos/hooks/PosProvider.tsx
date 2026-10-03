@@ -62,6 +62,7 @@ import { enqueueOfflineSale, getLastSyncedAt, getOfflineSaleDisplay, getSyncSumm
 import { probeSystemBackend } from "@/modules/system/services/healthService";
 import { useRegister } from "@/modules/registers";
 import { getRegisterSaleEvidence } from "@/modules/registers/services/registerService";
+import { resolveExactScannedVariant } from "../services/scanner";
 
 export interface PosContextValue {
   mode: "supabase" | "demo";
@@ -615,9 +616,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       const code = skuOrBarcode.trim().toUpperCase();
       if (!code) return false;
 
-      const variant = variants.find(
-        (v) => v.sku.toUpperCase() === code || (v.barcode ?? "").toUpperCase() === code,
-      );
+      const variant = resolveExactScannedVariant(code, variants);
       if (variant) {
         if (!variant.active) return false;
         const owner = products.find((p) => p.id === variant.product_id);

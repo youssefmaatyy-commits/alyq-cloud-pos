@@ -17,6 +17,7 @@ const api = Object.freeze({
   },
   openExternal: (url) => ipcRenderer.invoke(IPC.OPEN_EXTERNAL, url),
   getConfig: () => ipcRenderer.invoke(IPC.GET_CONFIG),
+  getRegisterBinding: () => ipcRenderer.invoke(IPC.GET_REGISTER_BINDING),
   saveHardwareConfig: (config) => ipcRenderer.invoke(IPC.SAVE_HARDWARE_CONFIG, config),
   saveRegisterBinding: (binding) => ipcRenderer.invoke(IPC.SAVE_REGISTER_BINDING, binding),
   clearRegisterBinding: () => ipcRenderer.invoke(IPC.CLEAR_REGISTER_BINDING),

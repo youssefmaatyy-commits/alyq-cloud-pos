@@ -138,6 +138,17 @@ async function readConfig() {
   return config;
 }
 
+function publicConfig(config) {
+  return {
+    ...config,
+    registerBinding: config.registerBinding ? {
+      registerId: config.registerBinding.registerId,
+      installationId: config.registerBinding.installationId,
+      snapshot: config.registerBinding.snapshot,
+    } : null,
+  };
+}
+
 async function writeConfig(config) {
   const destination = configPath();
   const temporary = `${destination}.${process.pid}.tmp`;
@@ -296,7 +307,11 @@ function installIpcHandlers() {
   });
   ipcMain.handle(IPC.GET_CONFIG, async (event) => {
     assertSender(event);
-    return readConfig();
+    return publicConfig(await readConfig());
+  });
+  ipcMain.handle(IPC.GET_REGISTER_BINDING, async (event) => {
+    assertSender(event);
+    return (await readConfig()).registerBinding;
   });
   ipcMain.handle(IPC.SAVE_HARDWARE_CONFIG, async (event, raw) => {
     assertSender(event);

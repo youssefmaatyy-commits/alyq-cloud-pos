@@ -4,6 +4,7 @@ import fs from "node:fs";
 const main = fs.readFileSync("desktop/main.mjs", "utf8");
 const preload = fs.readFileSync("desktop/preload.mjs", "utf8");
 const contracts = fs.readFileSync("desktop/contracts.mjs", "utf8");
+const packageManifest = fs.readFileSync("package.json", "utf8");
 
 const tests: Array<[string, () => void]> = [
   ["renderer is isolated, sandboxed and has no Node integration", () => {
@@ -51,6 +52,16 @@ const tests: Array<[string, () => void]> = [
   ["IPC names are fixed application constants", () => {
     assert.match(contracts, /Object\.freeze/);
     assert.doesNotMatch(preload, /invoke\((?!IPC\.)/);
+  }],
+  ["renderer-wide configuration redacts the register credential", () => {
+    assert.match(main, /function publicConfig/);
+    assert.match(main, /GET_CONFIG[\s\S]*publicConfig\(await readConfig\(\)\)/);
+    assert.match(preload, /GET_REGISTER_BINDING/);
+  }],
+  ["packaged shell sources contain no privileged secret class", () => {
+    const packagedShell = `${packageManifest}\n${main}\n${preload}\n${contracts}`;
+    assert.doesNotMatch(packagedShell, /SUPABASE_SERVICE_ROLE|DATABASE_PASSWORD|MANAGER_PIN_HASH|BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY/i);
+    assert.doesNotMatch(packageManifest, /\.env|credentials|private[-_]?key/i);
   }],
 ];
 
