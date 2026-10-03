@@ -1,5 +1,6 @@
 import { stockStatus, type Product, type StockStatus, UNCATEGORIZED_ID } from "@/modules/products/types";
 import { normalizeText } from "@/modules/products/services/productQuery";
+import type { ProductVariant } from "@/modules/products/variants";
 import type { StockMovement } from "../types";
 
 /**
@@ -32,7 +33,14 @@ export function queryInventory(
   products: Product[],
   filters: InventoryFiltersValue,
   categoryName: CategoryNameResolver,
+  variants: readonly ProductVariant[] = [],
 ): Product[] {
+  const variantsByProduct = new Map<string, ProductVariant[]>();
+  for (const variant of variants) {
+    const list = variantsByProduct.get(variant.product_id) ?? [];
+    list.push(variant);
+    variantsByProduct.set(variant.product_id, list);
+  }
   const needle = normalizeText(filters.search);
   const terms = needle ? needle.split(" ") : [];
 
@@ -45,13 +53,33 @@ export function queryInventory(
       return false;
     }
 
-    if (filters.status !== "all" && stockStatus(product) !== filters.status) return false;
+    const ownVariants = (variantsByProduct.get(product.id) ?? []).filter((variant) => variant.active);
+    if (filters.status !== "all") {
+      if (product.variants_enabled && ownVariants.length > 0) {
+        const statuses = ownVariants.map((variant) =>
+          variant.stock_quantity <= 0
+            ? "out"
+            : variant.low_stock_level > 0 && variant.stock_quantity <= variant.low_stock_level
+              ? "low"
+              : "in",
+        );
+        if (filters.status === "none") return false;
+        if (filters.status === "in" ? statuses.some((status) => status !== "in") : !statuses.includes(filters.status)) return false;
+      } else if (stockStatus(product) !== filters.status) return false;
+    }
 
     if (terms.length > 0) {
+      const variantHaystack = normalizeText(ownVariants.map((variant) => [
+        variant.sku,
+        variant.barcode ?? "",
+        variant.color_ar ?? "",
+        variant.color_en ?? "",
+        variant.size_label ?? variant.size ?? "",
+      ].join(" ")).join(" "));
       const haystack = buildProductSearchIndex(product);
       const categoryHaystack = normalizeText(categoryName(product.category_id));
       for (const term of terms) {
-        if (!haystack.includes(term) && !categoryHaystack.includes(term)) return false;
+        if (!haystack.includes(term) && !variantHaystack.includes(term) && !categoryHaystack.includes(term)) return false;
       }
     }
     return true;

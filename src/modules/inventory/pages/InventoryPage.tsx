@@ -42,6 +42,7 @@ export function InventoryPage() {
     products,
     movements,
     variantsByProduct,
+    variants,
     loading,
     error,
     refresh,
@@ -76,7 +77,7 @@ export function InventoryPage() {
   };
 
   const results = useMemo(
-    () => queryInventory(products, filters, nameOf),
+    () => queryInventory(products, filters, nameOf, variants),
     [products, filters],
   );
   const totalPages = totalPagesFor(results.length, pageSize);

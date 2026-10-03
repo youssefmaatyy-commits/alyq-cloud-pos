@@ -42,6 +42,7 @@ export interface InventoryContextValue {
     reason: StockReason;
     quantity: number;
     notes: string | null;
+    clientRef?: string;
   }) => Promise<InventoryAdjustmentResult>;
   /** Convenience selectors. */
   productById: (id: string) => Product | undefined;
@@ -111,6 +112,7 @@ export function InventoryProvider({ children }: { children: ReactNode }) {
       reason: StockReason;
       quantity: number;
       notes: string | null;
+      clientRef?: string;
     }) => {
       if (!canAdjustStock(user)) {
         throw Object.assign(new Error("FORBIDDEN"), { code: "FORBIDDEN" });

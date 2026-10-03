@@ -29,6 +29,8 @@ import {
   matchStockToProducts,
 } from "../services/stockImport";
 import type { Product } from "@/modules/products/types";
+import type { ProductVariant } from "@/modules/products/variants";
+import { queryInventory } from "../services/inventoryQuery";
 import type { StockMovement } from "../types";
 
 type TestCase = { name: string; fn: () => void | Promise<void> };
@@ -80,6 +82,21 @@ function movement(partial: Partial<StockMovement> & { id: string; product_id: st
     ...partial,
   } as StockMovement;
 }
+
+// ── Exact-variant inventory search/status ──────────────────────────────────
+
+test("inventory query finds exact variant SKU/barcode and exposes low/out shelves", () => {
+  const owner = product({ id: "variant-owner", variants_enabled: true, stock_quantity: 8, low_stock_level: 2 });
+  const variants = [
+    { id: "v-low", product_id: owner.id, sku: "RING-GOLD-17", barcode: "99170001", color_en: "Gold", color_ar: "ذهبي", size: 17, size_label: null, stock_quantity: 1, low_stock_level: 2, active: true },
+    { id: "v-out", product_id: owner.id, sku: "RING-SILVER-18", barcode: "99180001", color_en: "Silver", color_ar: "فضي", size: 18, size_label: null, stock_quantity: 0, low_stock_level: 2, active: true },
+  ] as ProductVariant[];
+  const base = { categoryId: "all" as const };
+  assert.deepEqual(queryInventory([owner], { ...base, search: "99170001", status: "all" }, () => "", variants).map((p) => p.id), [owner.id]);
+  assert.equal(queryInventory([owner], { ...base, search: "RING-SILVER-18", status: "out" }, () => "", variants).length, 1);
+  assert.equal(queryInventory([owner], { ...base, search: "Gold 17", status: "low" }, () => "", variants).length, 1);
+  assert.equal(queryInventory([owner], { ...base, search: "", status: "in" }, () => "", variants).length, 0);
+});
 
 // ── Stock Valuation ─────────────────────────────────────────────────────────
 

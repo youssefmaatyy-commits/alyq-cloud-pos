@@ -110,6 +110,7 @@ export async function adjustStock(args: {
   reason: StockMovement["reason"];
   quantity: number;
   notes: string | null;
+  clientRef?: string;
 }): Promise<InventoryAdjustmentResult> {
   assertCanAdjustStock();
   // `recount` is the movement list's word for a correction: the count on the
@@ -130,6 +131,7 @@ export async function adjustStock(args: {
     notes: args.notes,
     userId: user.id,
     userName: user.name,
+    clientRef: args.clientRef,
   };
 
   const result =
@@ -150,10 +152,15 @@ export async function adjustStock(args: {
   // recorded as a correction and every other reason as an adjustment, matching
   // the two capabilities the funnel asserts above (`stock.correct` / `stock.adjust`).
   const movement = result.movement;
+  const currentVariants = repository.kind === "supabase"
+    ? await repository.listVariants()
+    : variants;
   const adjustedVariant = movement.variant_id
-    ? variants.find((v) => v.id === movement.variant_id) ?? null
+    ? currentVariants.find((v) => v.id === movement.variant_id) ?? null
     : null;
-  void recordAudit({
+  // Live mode audits in inventory_adjust_stock() in the same transaction as the
+  // shelf and ledger. Demo mode keeps the established local audit adapter.
+  if (repository.kind === "demo") void recordAudit({
     action: args.reason === "recount" ? "stock.corrected" : "stock.adjusted",
     entity: "stock",
     entity_id: result.product.id,
@@ -179,7 +186,7 @@ export async function adjustStock(args: {
   return {
     ...result,
     variant: adjustedVariant,
-    status: deriveStatus(result.product, variants),
+    status: deriveStatus(result.product, currentVariants),
   };
 }
 

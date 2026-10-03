@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import {
   Button,
@@ -17,7 +17,6 @@ import {
 } from "../validation";
 import {
   EMPTY_ADJUSTMENT_FORM,
-  STOCK_MOVEMENT_TYPES,
   STOCK_REASONS,
   isOutbound,
   type StockAdjustmentFormValues,
@@ -26,6 +25,8 @@ import {
 } from "../types";
 import { useInventory } from "../hooks/InventoryProvider";
 import { sizeLabelOf, type ProductVariant } from "@/modules/products/variants";
+
+const MANUAL_ADJUSTMENT_TYPES: StockMovementType[] = ["adjustment_in", "adjustment_out", "receive", "issue", "correction"];
 
 const REASONS_FOR_TYPE: Record<StockMovementType, StockReason[]> = {
   adjustment_in: ["recount", "customer_return", "other"],
@@ -53,6 +54,7 @@ export function StockAdjustmentModal({ productId, open, onClose }: StockAdjustme
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [submitAttempted, setSubmitAttempted] = useState(false);
   const [saving, setSaving] = useState(false);
+  const adjustmentClientRef = useRef<string | null>(null);
 
   // Phase 43: which shelf is being counted. A variant product is adjusted per
   // combination — the rollup above it is derived and refuses direct writes.
@@ -75,6 +77,7 @@ export function StockAdjustmentModal({ productId, open, onClose }: StockAdjustme
     setTouched({});
     setSubmitAttempted(false);
     setVariantId(null);
+    adjustmentClientRef.current = null;
   }, [open, productId]);
 
   const result = useMemo(() => validateAdjustment(values), [values]);
@@ -132,6 +135,12 @@ export function StockAdjustmentModal({ productId, open, onClose }: StockAdjustme
     }
     setSaving(true);
     try {
+      const clientRef = adjustmentClientRef.current ?? `adjust-${
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+      }`;
+      adjustmentClientRef.current = clientRef;
       await adjustStock({
         productId: product.id,
         variantId: chosenVariant?.id ?? null,
@@ -139,7 +148,9 @@ export function StockAdjustmentModal({ productId, open, onClose }: StockAdjustme
         reason: result.data.reason,
         quantity: result.data.quantity,
         notes: result.data.notes,
+        clientRef,
       });
+      adjustmentClientRef.current = null;
       toast.success(t("inventory.toast.created"));
       onClose();
     } catch (error) {
@@ -147,7 +158,7 @@ export function StockAdjustmentModal({ productId, open, onClose }: StockAdjustme
       if (err?.code === "FORBIDDEN") {
         toast.error(t("inventory.adjust.permission"));
       } else {
-        toast.error(t("inventory.toast.failed"));
+        toast.error(err?.message || t("inventory.toast.failed"));
       }
     } finally {
       setSaving(false);
@@ -235,7 +246,7 @@ export function StockAdjustmentModal({ productId, open, onClose }: StockAdjustme
                 value={values.type}
                 onChange={(e) => handleTypeChange(e.target.value as StockMovementType)}
               >
-                {STOCK_MOVEMENT_TYPES.map((type) => (
+                {MANUAL_ADJUSTMENT_TYPES.map((type) => (
                   <option key={type} value={type}>
                     {t(`inventory.type.${type}` as never)}
                   </option>
