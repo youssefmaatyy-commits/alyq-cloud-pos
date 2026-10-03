@@ -1,6 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
-import { Link } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { PageHeader } from "@/components/layout/AppShell";
 import {
@@ -17,293 +16,284 @@ import {
   useToast,
 } from "@/components/ui";
 import { usePos } from "../hooks/PosProvider";
-import { buildSalesSheets } from "../services/salesExport";
-import { normalizeText } from "@/modules/products/services/productQuery";
+import { useReturns } from "@/modules/returns";
+import { buildTransactionCenterSheets } from "../services/salesExport";
 import { canConfirmPayment } from "../permissions";
+import { can } from "@/lib/permissions/enforce";
 import { confirmPayment as confirmPaymentAction } from "../services/saleService";
 import { getCurrentUser } from "@/modules/inventory/permissions";
+import { useBranch } from "@/lib/branch/BranchProvider";
+import {
+  EMPTY_TRANSACTION_FILTERS,
+  searchTransactionCenter,
+  type TransactionCenterFilters,
+  type TransactionCenterResult,
+  type TransactionCenterRow,
+} from "../services/transactionCenter";
 
 /**
- * Sales history — every completed / pending / voided sale.
- * Read-only; voiding happens from the sale detail screen.
+ * Unified Invoice / Return Center.
+ *
+ * Live mode sends every query, lifecycle filter and page boundary to PostgreSQL;
+ * browser memory is never mistaken for complete history. Each row keeps the
+ * SALE → RETURN → REFUND linkage visible and distinguishes money still pending,
+ * rejected money and completed settlement.
  */
 export function SalesHistoryPage() {
-  const { t, pick, date, num } = useI18n();
+  const { t, pick } = useI18n();
   const toast = useToast();
-  const { sales, salesLoading, error, refreshSales } = usePos();
-  const allowConfirm = canConfirmPayment();
-
-  const [search, setSearch] = useState("");
+  const { sales, refreshSales } = usePos();
+  const { returnsList, refundsList, refresh: refreshReturns } = useReturns();
+  const { current: branch } = useBranch();
+  const canViewSales = can("sales.view");
+  const [params, setParams] = useSearchParams();
+  const [filters, setFilters] = useState<TransactionCenterFilters>(() => {
+    if (params.get("today") !== "1") return EMPTY_TRANSACTION_FILTERS;
+    const today = localDateInput(new Date());
+    return { ...EMPTY_TRANSACTION_FILTERS, dateFrom: today, dateTo: today };
+  });
+  const [result, setResult] = useState<TransactionCenterResult | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [refreshToken, setRefreshToken] = useState(0);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const requestSequence = useRef(0);
 
-  /** Authorized inline confirmation from history — no totals/stock change. */
+  useEffect(() => {
+    if (params.get("today") === "1") setParams({}, { replace: true });
+  }, [params, setParams]);
+
+  useEffect(() => {
+    if (!canViewSales) {
+      setLoading(false);
+      return;
+    }
+    const sequence = ++requestSequence.current;
+    const timer = window.setTimeout(() => {
+      setLoading(true);
+      setError(null);
+      void searchTransactionCenter(filters, { sales, returns: returnsList, refunds: refundsList })
+        .then((next) => {
+          if (requestSequence.current === sequence) setResult(next);
+        })
+        .catch((cause) => {
+          if (requestSequence.current === sequence) setError(cause instanceof Error ? cause.message : String(cause));
+        })
+        .finally(() => {
+          if (requestSequence.current === sequence) setLoading(false);
+        });
+    }, filters.query || filters.cashier ? 250 : 0);
+    return () => window.clearTimeout(timer);
+  }, [canViewSales, filters, sales, returnsList, refundsList, refreshToken]);
+
+  const update = <K extends keyof TransactionCenterFilters>(key: K, value: TransactionCenterFilters[K]) => {
+    setFilters((current) => ({ ...current, [key]: value, page: key === "page" ? Number(value) : 1 }));
+  };
+
   const confirmPayment = async (saleId: string) => {
     setBusyId(saleId);
     try {
       const user = getCurrentUser();
-      await confirmPaymentAction(saleId, {
-        user_id: user.id,
-        user_name: user.name,
-      });
+      await confirmPaymentAction(saleId, { user_id: user.id, user_name: user.name });
+      await Promise.all([refreshSales({ silent: true }), refreshReturns({ silent: true })]);
+      setRefreshToken((value) => value + 1);
       toast.success(t("pos.paymentConfirmed"));
-      await refreshSales();
-    } catch {
-      toast.error(t("pos.paymentConfirmFailed"));
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : t("pos.paymentConfirmFailed"));
     } finally {
       setBusyId(null);
     }
   };
-  const [status, setStatus] = useState<"all" | "completed" | "pending" | "voided">("all");
-  const [method, setMethod] = useState<"all" | "cash" | "instapay">("all");
-  // Phase 46: the dashboard's Today Sales tile routes here as `?today=1`.
-  // Rendered as a visible toggle so the scope is never a hidden surprise.
-  const [todayOnly, setTodayOnly] = useState(false);
-  const [params, setParams] = useSearchParams();
-  const hydrated = useRef(false);
-  useEffect(() => {
-    if (hydrated.current) return;
-    hydrated.current = true;
-    if (params.get("today") === "1") {
-      setTodayOnly(true);
-      setParams({}, { replace: true });
-    }
-  }, []); // once, on mount
 
-  const filtered = useMemo(() => {
-    const needle = normalizeText(search);
-    const terms = needle ? needle.split(" ") : [];
-    return sales.filter((sale) => {
-      if (status !== "all" && sale.status !== status) return false;
-      if (method !== "all" && sale.payment_method !== method) return false;
-      if (todayOnly) {
-        const now = new Date();
-        if (new Date(sale.created_at) < new Date(now.getFullYear(), now.getMonth(), now.getDate())) {
-          return false;
-        }
-      }
-      if (terms.length > 0) {
-        const haystack = normalizeText(
-          [
-            sale.sale_number,
-            sale.user_name,
-            sale.items
-              .map((i) => `${i.name_en} ${i.name_ar} ${i.sku}`)
-              .join(" "),
-          ].join(" \u0001 "),
-        );
-        for (const term of terms) {
-          if (!haystack.includes(term)) return false;
-        }
-      }
-      return true;
-    });
-  }, [sales, search, status, method, todayOnly]);
-
-  const statusBadge = (status: string) => {
-    if (status === "completed") return <Badge tone="success">{t("pos.status.completed")}</Badge>;
-    if (status === "pending") return <Badge tone="warning">{t("pos.status.pending")}</Badge>;
-    return <Badge tone="danger">{t("pos.status.voided")}</Badge>;
-  };
-
-  // A pending InstaPay sale the current user is allowed to confirm.
-  const canConfirmSale = (sale: (typeof sales)[number]) =>
-    allowConfirm &&
-    sale.status !== "voided" &&
-    sale.payments.some((p) => p.method === "instapay" && p.status === "pending");
-
-  // Compact method summary: "Cash", "InstaPay" or "Cash + InstaPay".
-  const methodsLabel = (sale: (typeof sales)[number]) => {
-    const methods = [...new Set((sale.payments ?? []).map((p) => p.method))];
-    if (methods.length === 0) return sale.payment_method === "cash" ? t("pos.payment.cash") : t("pos.payment.instapay");
-    return methods.map((m) => t(`pos.payment.${m}`)).join(" + ");
-  };
-
-  const confirmButton = (sale: (typeof sales)[number]) =>
-    canConfirmSale(sale) ? (
-      <Button
-        size="sm"
-        variant="subtle"
-        className="whitespace-nowrap"
-        loading={busyId === sale.id}
-        onClick={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          void confirmPayment(sale.id);
-        }}
-      >
-        ✓ {t("pos.confirmPaymentShort")}
-      </Button>
-    ) : null;
+  if (!canViewSales) {
+    return (
+      <EmptyState
+        icon="🔒"
+        title={t("perm.denied")}
+        description={t("permissions.denied.view_sales")}
+      />
+    );
+  }
 
   return (
     <div>
       <PageHeader
         crumbs={[{ label: t("home.management.title"), to: "/management" }, { label: t("nav.sales") }]}
-        title={t("pos.salesTitle")}
-        subtitle={t("pos.salesSubtitle")}
+        title={t("pos.invoiceCenter")}
+        subtitle={t("pos.invoiceCenterSubtitle")}
         actions={
           <>
-            {/* Exports `filtered` — search + status + method all applied. */}
-            <ExportButton
-              name="sales"
-              count={filtered.length}
-              build={() => buildSalesSheets({ sales: filtered, t, pick })}
-            />
-            <Link
-              to="/pos"
-              className="alyq-btn-primary alyq-cta h-10 gap-2 rounded-xl px-4 text-sm"
-            >
+            {(result?.rows.length ?? 0) > 0 ? (
+              <ExportButton name="invoice-center-page" count={result?.rows.length ?? 0} build={() => buildTransactionCenterSheets({ rows: result?.rows ?? [], t })} />
+            ) : null}
+            <Button variant="secondary" onClick={() => setRefreshToken((value) => value + 1)}>⟳</Button>
+            <Link to="/pos" className="alyq-btn-primary alyq-cta h-10 gap-2 rounded-xl px-4 text-sm">
               {t("nav.register")}
             </Link>
           </>
         }
       />
 
-      <Card className="mb-4 grid gap-3 sm:grid-cols-4">
-        <TextInput
-          value={search}
-          leading={<SearchIcon />}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder={t("pos.cols.saleNumber") + " / " + t("pos.cols.user")}
-          aria-label={t("common.search")}
-          type="search"
-        />
-        <SelectInput
-          value={status}
-          onChange={(e) => setStatus(e.target.value as typeof status)}
-          aria-label={t("pos.cols.status")}
-        >
-          <option value="all">{`${t("pos.cols.status")}: ${t("common.all")}`}</option>
-          <option value="completed">{t("pos.status.completed")}</option>
-          <option value="pending">{t("pos.status.pending")}</option>
-          <option value="voided">{t("pos.status.voided")}</option>
-        </SelectInput>
-        <SelectInput
-          value={method}
-          onChange={(e) => setMethod(e.target.value as typeof method)}
-          aria-label={t("pos.cols.method")}
-        >
-          <option value="all">{`${t("pos.cols.method")}: ${t("common.all")}`}</option>
-          <option value="cash">{t("pos.payment.cash")}</option>
-          <option value="instapay">{t("pos.payment.instapay")}</option>
-        </SelectInput>
-        <label className="flex cursor-pointer items-center justify-between gap-2 rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm font-semibold text-slate-800 shadow-sm">
-          {t("pos.salesTodayToggle")}
-          <input
-            type="checkbox"
-            checked={todayOnly}
-            onChange={(e) => setTodayOnly(e.target.checked)}
-            aria-label={t("pos.salesTodayToggle")}
-            data-testid="sales-today-toggle"
-            className="h-4 w-4 accent-stone-900"
+      <div className="mb-4 flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700">
+        <span className="rounded-lg bg-white px-2 py-1 ring-1 ring-slate-200">⌂ {branch ? pick(branch.name_ar, branch.name_en) : t("pos.branchUnavailable")}</span>
+        <span>{t("pos.serverSearchNotice")}</span>
+      </div>
+
+      <Card className="mb-4 space-y-3">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <TextInput
+            value={filters.query}
+            leading={<SearchIcon />}
+            onChange={(event) => update("query", event.target.value)}
+            placeholder={t("pos.transactionSearchPlaceholder")}
+            aria-label={t("common.search")}
+            type="search"
+            className="xl:col-span-2"
           />
-        </label>
+          <TextInput
+            value={filters.cashier}
+            onChange={(event) => update("cashier", event.target.value)}
+            placeholder={t("pos.cashierFilter")}
+            aria-label={t("pos.cashierFilter")}
+            type="search"
+          />
+          <SelectInput value={filters.saleStatus} onChange={(event) => update("saleStatus", event.target.value as TransactionCenterFilters["saleStatus"])}>
+            <option value="all">{`${t("pos.cols.status")}: ${t("common.all")}`}</option>
+            <option value="completed">{t("pos.status.completed")}</option>
+            <option value="pending">{t("pos.status.pending")}</option>
+            <option value="voided">{t("pos.status.voided")}</option>
+          </SelectInput>
+          <SelectInput value={filters.refundStatus} onChange={(event) => update("refundStatus", event.target.value as TransactionCenterFilters["refundStatus"])}>
+            <option value="all">{`${t("refunds.title")}: ${t("common.all")}`}</option>
+            <option value="none">{t("pos.noRefund")}</option>
+            <option value="pending">{t("returns.status.pending")}</option>
+            <option value="completed">{t("returns.status.completed")}</option>
+            <option value="rejected">{t("returns.status.rejected")}</option>
+          </SelectInput>
+          <SelectInput value={filters.paymentMethod} onChange={(event) => update("paymentMethod", event.target.value as TransactionCenterFilters["paymentMethod"])}>
+            <option value="all">{`${t("pos.cols.method")}: ${t("common.all")}`}</option>
+            <option value="cash">{t("pos.payment.cash")}</option>
+            <option value="instapay">{t("pos.payment.instapay")}</option>
+            <option value="visa">{t("pos.payment.visa")}</option>
+            <option value="cod">{t("pos.payment.cod")}</option>
+          </SelectInput>
+          <SelectInput value={filters.paymentStatus} onChange={(event) => update("paymentStatus", event.target.value as TransactionCenterFilters["paymentStatus"])}>
+            <option value="all">{t("pos.allPaymentStatuses")}</option>
+            <option value="paid">{t("pos.status.paid")}</option>
+            <option value="pending">{t("pos.status.pending")}</option>
+          </SelectInput>
+          <input type="date" value={filters.dateFrom} onChange={(event) => update("dateFrom", event.target.value)} aria-label={t("returns.filterDateFrom")} data-testid="sales-date-from" className="h-10 rounded-xl border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700" />
+          <input type="date" value={filters.dateTo} onChange={(event) => update("dateTo", event.target.value)} aria-label={t("returns.filterDateTo")} data-testid="sales-date-to" className="h-10 rounded-xl border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700" />
+        </div>
+        {hasFilters(filters) ? (
+          <button type="button" onClick={() => setFilters(EMPTY_TRANSACTION_FILTERS)} className="text-xs font-bold text-indigo-700 hover:underline">
+            {t("returns.clearSearch")}
+          </button>
+        ) : null}
       </Card>
 
       {error ? (
-        <ErrorState
-          title={t("products.errorLoad")}
-          message={error.message}
-          retryLabel={t("common.retry")}
-          onRetry={() => void refreshSales()}
-        />
-      ) : salesLoading ? (
-        <div className="alyq-card">
-          <LoadingBlock label={t("common.loading")} />
-        </div>
-      ) : filtered.length === 0 ? (
-        <Card>
-          <EmptyState
-            icon="🧾"
-            title={t("pos.emptyCart")}
-            description={t("pos.salesSubtitle")}
-            action={
-              <Link to="/pos" className="alyq-btn-primary alyq-cta h-10 rounded-xl px-4 text-sm">
-                {t("nav.register")}
-              </Link>
-            }
-          />
-        </Card>
+        <ErrorState title={t("common.error")} message={error} retryLabel={t("common.retry")} onRetry={() => setRefreshToken((value) => value + 1)} />
+      ) : loading && !result ? (
+        <div className="alyq-card"><LoadingBlock label={t("common.loading")} /></div>
+      ) : !result || result.rows.length === 0 ? (
+        <Card><EmptyState icon="🧾" title={t("pos.noTransactions")} description={t("pos.noTransactionsHint")} /></Card>
       ) : (
         <>
-          <div className="alyq-card hidden overflow-x-auto md:block">
-            <table className="w-full border-collapse text-sm">
-              <thead>
-                <tr className="border-b border-slate-200 bg-slate-50 text-start text-[11px] font-bold uppercase tracking-wider text-slate-600">
-                  <th className="px-4 py-3 text-start font-semibold">{t("pos.cols.saleNumber")}</th>
-                  <th className="px-3 py-3 text-start font-semibold">{t("pos.cols.date")}</th>
-                  <th className="px-3 py-3 text-start font-semibold">{t("pos.cols.items")}</th>
-                  <th className="px-3 py-3 text-end font-semibold">{t("pos.cols.total")}</th>
-                  <th className="px-3 py-3 text-start font-semibold">{t("pos.cols.method")}</th>
-                  <th className="px-3 py-3 text-start font-semibold">{t("pos.cols.user")}</th>
-                  <th className="px-3 py-3 text-start font-semibold">{t("pos.cols.status")}</th>
-                  <th className="px-3 py-3 text-end font-semibold">{t("common.actions")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((sale) => (
-                  <tr key={sale.id} className="border-b border-slate-50 last:border-0 hover:bg-slate-50/60">
-                    <td className="px-4 py-3">
-                      <Link
-                        to={`/pos/sales/${sale.id}`}
-                        className="font-mono text-xs font-bold text-indigo-700 hover:underline"
-                      >
-                        {sale.sale_number}
-                      </Link>
-                    </td>
-                    <td className="px-3 py-3 text-xs text-slate-600" dir="ltr">
-                      {date(sale.created_at)}
-                    </td>
-                    <td className="px-3 py-3 text-xs font-semibold text-slate-700">
-                      {sale.items.length}
-                    </td>
-                    <td className="px-3 py-3 text-end text-sm font-bold tabular-nums text-slate-900">
-                      {num(sale.total, 2)}
-                    </td>
-                    <td className="px-3 py-3 text-xs font-semibold text-slate-700">
-                      {methodsLabel(sale)}
-                    </td>
-                    <td className="px-3 py-3 text-xs text-slate-600">{sale.user_name}</td>
-                    <td className="px-3 py-3">{statusBadge(sale.status)}</td>
-                    <td className="px-3 py-3 text-end">{confirmButton(sale)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="space-y-3 md:hidden">
-            {filtered.map((sale) => (
-              <Link
-                key={sale.id}
-                to={`/pos/sales/${sale.id}`}
-                className="alyq-card block p-3 transition hover:border-indigo-300"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="font-mono text-sm font-bold text-indigo-700">{sale.sale_number}</p>
-                    <p className="text-[11px] text-slate-500" dir="ltr">{date(sale.created_at)}</p>
-                  </div>
-                  {statusBadge(sale.status)}
-                </div>
-                <div className="mt-2 flex items-center justify-between gap-2 text-xs">
-                  <span className="font-semibold text-slate-700">
-                    {sale.items.length} · {t(`pos.payment.${sale.payment_method}`)}
-                  </span>
-                  <span className="text-sm font-extrabold tabular-nums text-slate-900">
-                    {num(sale.total, 2)}
-                  </span>
-                </div>
-                {confirmButton(sale) ? (
-                  <div className="mt-2 flex justify-end" onClick={(event) => event.preventDefault()}>
-                    {confirmButton(sale)}
-                  </div>
-                ) : null}
-              </Link>
+          <div className={`space-y-3 transition-opacity ${loading ? "opacity-60" : "opacity-100"}`} aria-busy={loading}>
+            {result.rows.map((row) => (
+              <TransactionCard key={row.id} row={row} busy={busyId === row.id} onConfirm={() => void confirmPayment(row.id)} />
             ))}
+          </div>
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 alyq-card px-3 py-2.5 text-xs font-semibold text-slate-700">
+            <span>{t("products.showing", { from: (result.page - 1) * result.page_size + 1, to: Math.min(result.page * result.page_size, result.total), total: result.total })}</span>
+            <div className="flex items-center gap-2">
+              <SelectInput value={String(filters.pageSize)} onChange={(event) => update("pageSize", Number(event.target.value))} className="h-8 w-auto py-1 text-xs">
+                {[10, 25, 50, 100].map((size) => <option key={size} value={size}>{size}</option>)}
+              </SelectInput>
+              <Button size="sm" variant="secondary" disabled={result.page <= 1} onClick={() => update("page", result.page - 1)}>‹ {t("products.prev")}</Button>
+              <span>{result.page} / {Math.max(result.page_count, 1)}</span>
+              <Button size="sm" variant="secondary" disabled={result.page >= result.page_count} onClick={() => update("page", result.page + 1)}>{t("products.next")} ›</Button>
+            </div>
           </div>
         </>
       )}
     </div>
   );
+}
+
+function TransactionCard({ row, busy, onConfirm }: { row: TransactionCenterRow; busy: boolean; onConfirm: () => void }) {
+  const { t, num, date } = useI18n();
+  const awaitingPayment = row.status !== "voided" && row.payment_status === "pending";
+  return (
+    <article className="alyq-card p-4" data-testid={`transaction-${row.id}`}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <Link to={`/pos/sales/${row.id}`} className="font-mono text-sm font-black text-indigo-700 hover:underline">{row.sale_number}</Link>
+            <SaleBadge status={row.status} />
+            {row.source !== "pos" ? <Badge tone="info">{row.source}</Badge> : null}
+          </div>
+          <p className="mt-1 text-xs text-slate-500" dir="ltr">{date(row.created_at)}</p>
+          <p className="mt-1 text-xs font-semibold text-slate-700">
+            {row.customer_name || t("customers.guestCustomer")}
+            {row.customer_phone ? <span className="ms-2 font-mono" dir="ltr">{row.customer_phone}</span> : null}
+          </p>
+          <p className="mt-0.5 text-[11px] text-slate-500">{row.cashier_name}{row.branch_code ? ` · ${row.branch_code}` : ""}{row.shift_id ? ` · ${t("shifts.shiftNumber")} ${row.shift_id.slice(0, 8)}` : ""}</p>
+        </div>
+        <div className="text-end">
+          <p className="text-lg font-black tabular-nums text-slate-900" dir="ltr">{num(row.total, 2)}</p>
+          <p className="text-[11px] font-semibold text-slate-500">{row.item_count} · {row.payment_methods.map((method) => t(`pos.payment.${method}` as never)).join(" + ")}</p>
+          <div className="mt-2 flex justify-end gap-2">
+            {awaitingPayment && canConfirmPayment() ? <Button size="sm" variant="subtle" loading={busy} onClick={onConfirm}>✓ {t("pos.confirmPaymentShort")}</Button> : null}
+            <Link to={`/pos/sales/${row.id}`} className="inline-flex h-8 items-center rounded-lg bg-slate-900 px-3 text-xs font-bold text-white">{t("common.view")}</Link>
+          </div>
+        </div>
+      </div>
+
+      {(row.returns.length > 0 || row.refunds.length > 0) ? (
+        <div className="mt-3 border-t border-slate-100 pt-3" data-testid="transaction-linkage">
+          <div className="flex flex-wrap items-center gap-2 text-[11px] font-bold">
+            <span className="rounded-lg bg-indigo-50 px-2 py-1 text-indigo-800">SALE · {row.sale_number}</span>
+            {row.returns.map((item) => (
+              <span key={item.id} className="contents">
+                <span className="text-slate-300">→</span>
+                <Link to={`/returns/${item.id}`} className="rounded-lg bg-amber-50 px-2 py-1 text-amber-800 hover:underline">RETURN · {item.reference}</Link>
+              </span>
+            ))}
+            {row.refunds.map((item) => (
+              <span key={item.id} className="contents">
+                <span className="text-slate-300">→</span>
+                <span className={`rounded-lg px-2 py-1 ${item.status === "completed" ? "bg-emerald-50 text-emerald-800" : item.status === "pending" ? "bg-amber-50 text-amber-900" : "bg-rose-50 text-rose-800"}`}>
+                  REFUND · {item.reference} · {t(`returns.status.${item.status}` as never)} · {num(item.amount, 2)}
+                </span>
+              </span>
+            ))}
+          </div>
+          <div className="mt-2 flex flex-wrap gap-3 text-[11px] font-semibold">
+            {row.completed_refund_total > 0 ? <span className="text-emerald-700">{t("pos.refundCompletedTotal")}: {num(row.completed_refund_total, 2)}</span> : null}
+            {row.pending_refund_total > 0 ? <span className="text-amber-800">{t("pos.refundPendingTotal")}: {num(row.pending_refund_total, 2)}</span> : null}
+          </div>
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
+function SaleBadge({ status }: { status: TransactionCenterRow["status"] }) {
+  const { t } = useI18n();
+  if (status === "completed") return <Badge tone="success">{t("pos.status.completed")}</Badge>;
+  if (status === "pending") return <Badge tone="warning">{t("pos.status.pending")}</Badge>;
+  return <Badge tone="danger">{t("pos.status.voided")}</Badge>;
+}
+
+function hasFilters(filters: TransactionCenterFilters): boolean {
+  return Boolean(filters.query || filters.cashier || filters.dateFrom || filters.dateTo || filters.saleStatus !== "all" || filters.refundStatus !== "all" || filters.paymentMethod !== "all" || filters.paymentStatus !== "all");
+}
+
+function localDateInput(value: Date): string {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }

@@ -97,6 +97,10 @@ export class DemoReturnRepository implements ReturnRepository {
     return delay([...this.returns].sort((a, b) => b.created_at.localeCompare(a.created_at)));
   }
 
+  async getReturnsForSale(saleId: string): Promise<SalesReturn[]> {
+    return delay(this.returns.filter((item) => item.sale_id === saleId), 20);
+  }
+
   async getReturn(id: string): Promise<SalesReturn> {
     const found = this.returns.find((r) => r.id === id);
     if (!found) throw new AppError("NOT_FOUND", `Return ${id} not found`);

@@ -144,7 +144,7 @@ await waitFor(() => testid("pos-result-prd-1001"), { label: "the barcode row" })
 pressEnter();
 await waitFor(() => testid("cart-line-prd-1001::"), { label: "the exact barcode to add" });
 assert.equal(
-  testid("cart-line-prd-1001::")?.querySelector('[data-testid^="cart-quantity-"]')?.textContent,
+  testid("cart-line-prd-1001::")?.querySelector('[data-testid^="cart-quantity-"]')?.value,
   "1",
   "the barcode added exactly one unit",
 );
@@ -347,7 +347,7 @@ pressEnter();
 await waitFor(
   () =>
     testid(`cart-line-${idOf("POS-SCROLL-5")}::`)?.querySelector('[data-testid^="cart-quantity-"]')
-      ?.textContent === "2",
+      ?.value === "2",
   { label: "the RTL exact-code add to raise the line to two" },
 );
 assert.equal(testid("pos-checkout-panel"), checkout);

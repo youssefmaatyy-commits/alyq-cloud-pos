@@ -224,3 +224,61 @@ export function buildSalesSheets({ sales, t, pick }: SalesExportInput): BuiltShe
 
   return buildSheets([invoices, items]);
 }
+
+/**
+ * Export exactly the authoritative, server-paginated rows visible in the
+ * Invoice/Return Center. This summary deliberately does not pretend that the
+ * provider's recent-sales cache contains every old invoice or line item.
+ */
+export function buildTransactionCenterSheets({
+  rows,
+  t,
+}: {
+  rows: readonly import("./transactionCenter").TransactionCenterRow[];
+  t: Translate;
+}): BuiltSheet[] {
+  type Row = import("./transactionCenter").TransactionCenterRow;
+  type LinkRow = { sale: Row; kind: "return" | "refund"; reference: string; status: string; amount: number; created_at: string };
+  const live = rows.filter((row) => row.status !== "voided");
+  const sum = (select: (row: Row) => number) => Math.round(live.reduce((total, row) => total + select(row), 0) * 100) / 100;
+  const summary: ExportSheet<Row> = {
+    name: t("export.sheet.invoices"),
+    rows,
+    columns: [
+      { header: t("export.col.invoiceNumber"), value: (row) => row.sale_number, width: 18 },
+      { header: t("pos.clientReference"), value: (row) => row.client_ref, width: 26 },
+      { header: t("export.col.dateTime"), value: (row) => toDate(row.created_at), kind: "datetime" },
+      { header: t("export.col.status"), value: (row) => t(`pos.status.${row.status}` as never), width: 14 },
+      { header: t("export.col.paymentStatus"), value: (row) => t(`pos.status.${row.payment_status}` as never), width: 16 },
+      { header: t("export.col.customer"), value: (row) => row.customer_name ?? "", width: 24 },
+      { header: t("export.col.customerPhone"), value: (row) => row.customer_phone ?? "", width: 16 },
+      { header: t("export.col.cashier"), value: (row) => row.cashier_name, width: 20 },
+      { header: t("export.col.quantity"), value: (row) => row.item_count, kind: "number" },
+      { header: t("export.col.paymentMethod"), value: (row) => row.payment_methods.map((method) => t(`pos.payment.${method}` as never)).join(" + "), width: 20 },
+      { header: t("export.col.subtotal"), value: (row) => row.subtotal, kind: "money" },
+      { header: t("export.col.discount"), value: (row) => row.discount_amount, kind: "money" },
+      { header: t("export.col.total"), value: (row) => row.total, kind: "money" },
+      { header: t("pos.refundCompletedTotal"), value: (row) => row.completed_refund_total, kind: "money" },
+      { header: t("pos.refundPendingTotal"), value: (row) => row.pending_refund_total, kind: "money" },
+    ],
+    totals: [t("export.totalRow"), "", null, "", "", "", "", "", sum((row) => row.item_count), "", sum((row) => row.subtotal), sum((row) => row.discount_amount), sum((row) => row.total), sum((row) => row.completed_refund_total), sum((row) => row.pending_refund_total)],
+    notes: [t("export.note.totalsExcludeVoided"), t("pos.serverSearchNotice")],
+  };
+  const links: LinkRow[] = rows.flatMap((sale) => [
+    ...sale.returns.map((item) => ({ sale, kind: "return" as const, reference: item.reference, status: item.status, amount: item.amount, created_at: item.created_at })),
+    ...sale.refunds.map((item) => ({ sale, kind: "refund" as const, reference: item.reference, status: item.status, amount: item.amount, created_at: item.created_at })),
+  ]);
+  const linkage: ExportSheet<LinkRow> = {
+    name: t("returns.title"),
+    rows: links,
+    columns: [
+      { header: t("export.col.invoiceNumber"), value: (row) => row.sale.sale_number, width: 18 },
+      { header: t("export.col.type"), value: (row) => row.kind === "return" ? t("returns.title") : t("refunds.title"), width: 16 },
+      { header: t("export.col.reference"), value: (row) => row.reference, width: 18 },
+      { header: t("export.col.dateTime"), value: (row) => toDate(row.created_at), kind: "datetime" },
+      { header: t("export.col.status"), value: (row) => t(`returns.status.${row.status}` as never), width: 16 },
+      { header: t("returns.refundAmount"), value: (row) => row.amount, kind: "money" },
+    ],
+  };
+  return buildSheets([summary, linkage]);
+}

@@ -248,7 +248,17 @@ assert.ok(!resultsBox(), "Escape closes the result list");
 assert.equal(searchBox().value, "ALYQ-10", "Escape keeps the typed query");
 await searchFor("");
 await waitFor(() => testid("pos-catalog"), { label: "the catalog" });
-clickEl(testid("pos-clear-cart"));
+const confirmClearCart = async () => {
+  clickEl(testid("pos-clear-cart"));
+  await sleep(120);
+  const dialog = [...document.querySelectorAll('[role="dialog"]')].pop();
+  const confirm = [...(dialog?.querySelectorAll("button") ?? [])].find((button) =>
+    (button.textContent ?? "").includes("Clear items"),
+  );
+  assert.ok(confirm, "populated cart asks for clear confirmation");
+  clickEl(confirm);
+};
+await confirmClearCart();
 await waitFor(() => testid("pos-mobile-cart-open") === null || [...document.querySelectorAll('[data-testid^="cart-line-"]')].length === 0, {
   label: "the cart to empty",
 });
@@ -262,7 +272,7 @@ const silverId = catalog().variants.find((v) => v.sku === SILVER_SKU)?.id;
 assert.ok(goldId && silverId, "both shelf UUIDs resolve from the catalogue");
 const qtyOf = (variantId) =>
   testid(`cart-line-${productId}::${variantId}`)?.querySelector('[data-testid^="cart-quantity-"]')
-    ?.textContent ?? "0";
+    ?.value ?? "0";
 
 await searchFor("UX2");
 await waitFor(() => rowFor("UX2 Ring"), { label: "the ring row" });
@@ -349,7 +359,7 @@ console.log("  ✓ the customer is attached to the sale");
 const customerName = () => document.querySelector('input[aria-label="Select customer"]')?.value;
 const expectCustomer = (action) => assert.equal(customerName(), "سارة المحمود", `customer survives ${action}`);
 const lineFor = (label) => cartLines().find((line) => line.textContent.includes(label));
-const quantityFor = (label) => lineFor(label)?.querySelector('[data-testid^="cart-quantity-"]')?.textContent;
+const quantityFor = (label) => lineFor(label)?.querySelector('[data-testid^="cart-quantity-"]')?.value;
 clickEl(lineFor("Silver / 17").querySelector('button[aria-label="Increase quantity"]'));
 await waitFor(() => quantityFor("Silver / 17") === "2", { label: "Silver increase" });
 assert.equal(quantityFor("Gold / 17"), "2", "increasing Silver does not touch Gold");
@@ -427,7 +437,7 @@ assert.ok(testid(`cart-line-${productId}::${silverId}`), "the scan resolved Silv
 assert.equal(searchBox().value, "", "the box clears for the next scan");
 assert.equal(document.activeElement, searchBox(), "focus stays in the box between scans");
 expectCustomer("an exact-variant barcode scan");
-clickEl(testid("pos-clear-cart"));
+await confirmClearCart();
 await waitFor(() => cartLines().length === 0, { label: "clear items to empty the cart" });
 expectCustomer("Clear items (which must NOT clear the customer)");
 setField('[data-testid="pos-scan-search"]', silver.barcode);

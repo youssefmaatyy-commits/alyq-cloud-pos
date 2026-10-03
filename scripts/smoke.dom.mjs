@@ -1126,10 +1126,10 @@ async function main() {
   assert.ok(plus && minus, "accessible quantity controls appear on the exact cart row");
   plus.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
   await sleep(200);
-  assert.equal(cartItem.querySelector('[data-testid^="cart-quantity-"]')?.textContent, "2", "qty increased");
+  assert.equal(cartItem.querySelector('[data-testid^="cart-quantity-"]')?.value, "2", "qty increased");
   minus.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
   await sleep(200);
-  assert.equal(cartItem.querySelector('[data-testid^="cart-quantity-"]')?.textContent, "1", "qty decreased");
+  assert.equal(cartItem.querySelector('[data-testid^="cart-quantity-"]')?.value, "1", "qty decreased");
   console.log("  ✓ cart add / increase / decrease");
 
   // Discount (percent) — admin is allowed
@@ -1254,13 +1254,13 @@ async function main() {
 
   // Sales history + detail + stock deduction
   await navigate("#/pos/sales");
-  assert.ok(bodyText().includes("Sales history"), "sales history renders");
+  assert.ok(bodyText().includes("Invoice & Return Center"), "invoice and return center renders");
   assert.ok((bodyText().match(/INV-\d{6}/g) || []).length >= 2, "both sales listed");
   assert.ok(bodyText().includes("Pending"), "pending status visible");
 
   // The pending InstaPay sale — confirm it directly from history.
-  const pendingRow = [...document.querySelectorAll("tbody tr")].find((tr) =>
-    (tr.textContent ?? "").includes("Pending"),
+  const pendingRow = [...document.querySelectorAll('[data-testid^="transaction-"]')].find((card) =>
+    (card.textContent ?? "").includes("Pending"),
   );
   assert.ok(pendingRow, "a pending sale is listed");
   // assert the history exposes the authorized quick-confirm action
@@ -1273,7 +1273,7 @@ async function main() {
   const pendingLink = pendingRow.querySelector("a[href*='/pos/sales/']");
   assert.ok(pendingLink, "pending row links to detail");
   const pendingHref = pendingLink.getAttribute("href");
-  const totalOnList = pendingRow.querySelectorAll("td")[3]?.textContent?.trim();
+  const pendingInvoice = pendingLink.textContent?.trim();
   await navigate(pendingHref);
 
   // Detail shows the pending InstaPay state with a confirm action, method unchanged.
@@ -1333,8 +1333,8 @@ async function main() {
 
   // History updates and no duplicate sale is created; totals stay identical.
   await navigate("#/pos/sales");
-  const refreshedRow = [...document.querySelectorAll("tbody tr")].find((tr) =>
-    (tr.textContent ?? "").includes(totalOnList ?? "__never__"),
+  const refreshedRow = [...document.querySelectorAll('[data-testid^="transaction-"]')].find((card) =>
+    (card.textContent ?? "").includes(pendingInvoice ?? "__never__"),
   );
   assert.ok(refreshedRow, "same sale still listed (no duplicate created)");
   assert.ok(!(refreshedRow?.textContent ?? "").includes("Pending"), "history shows it completed");
@@ -1442,6 +1442,13 @@ async function main() {
   const clearItems = document.querySelector('aside [data-testid="pos-clear-cart"]');
   if (clearItems) {
     clearItems.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+    await sleep(150);
+    const clearDialog = [...document.querySelectorAll('[role="dialog"]')].pop();
+    const confirmClear = [...(clearDialog?.querySelectorAll("button") ?? [])].find((button) =>
+      (button.textContent ?? "").includes("Clear items"),
+    );
+    assert.ok(confirmClear, "clear-cart confirmation protects a populated sale");
+    confirmClear.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
     await sleep(200);
   }
   assert.equal(document.querySelectorAll('aside [data-testid^="cart-line-"]').length, 0, "old cart lines cleared before the linked sale");
@@ -1908,7 +1915,7 @@ async function main() {
 
   // ── POS sales are untouched by the shift ──
   await navigate("#/pos/sales");
-  for (let i = 0; i < 10 && !bodyText().includes("Sales history"); i += 1) await sleep(300);
+  for (let i = 0; i < 10 && !bodyText().includes("Invoice & Return Center"); i += 1) await sleep(300);
   const invoiceNumbers = bodyText().match(/INV-\d{6}/g) ?? [];
   assert.ok(
     new Set(invoiceNumbers).size >= salesCountInShift,
@@ -1917,7 +1924,7 @@ async function main() {
   assert.ok(invoiceNumbers.includes(cashInvoice), "the cash sale is still listed");
   assert.ok(invoiceNumbers.includes(instapayInvoice), "the InstaPay sale is still listed");
   const salesRow = (invoice) =>
-    [...document.querySelectorAll("tbody tr")].find((tr) => (tr.textContent ?? "").includes(invoice));
+    [...document.querySelectorAll('[data-testid^="transaction-"]')].find((card) => (card.textContent ?? "").includes(invoice));
   const cashRow = salesRow(cashInvoice);
   const instapayRow = salesRow(instapayInvoice);
   assert.ok(cashRow && instapayRow, "both shift sales have history rows");
@@ -1931,8 +1938,8 @@ async function main() {
   );
   await navigate("#/pos/sales");
   await sleep(400);
-  assert.ok(!bodyText().includes("Shift #"), "POS sales table has no shift columns");
-  console.log("  ✓ POS sales unaffected by the shift lifecycle");
+  assert.ok(bodyText().includes("Shift #"), "Invoice Center keeps authoritative shift linkage");
+  console.log("  ✓ POS sales and shift linkage unaffected by the shift lifecycle");
 
   // ── Audit log records every shift/expense action ──
   await navigate("#/audit");
@@ -2678,7 +2685,7 @@ async function main() {
   assert.ok(!bodyText().includes("Complete sale"), "no untranslated POS copy in RTL");
 
   await navigate("#/pos/sales");
-  assert.ok(bodyText().includes("سجل المبيعات"), "sales history in Arabic");
+  assert.ok(bodyText().includes("مركز الفواتير والمرتجعات"), "invoice and return center in Arabic");
   assert.ok(/INV-\d{6}/.test(bodyText()), "sale numbers stay LTR-safe in RTL");
   console.log("  ✓ POS Arabic RTL");
 

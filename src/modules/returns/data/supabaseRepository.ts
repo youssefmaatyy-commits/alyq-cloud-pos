@@ -171,6 +171,35 @@ export class SupabaseReturnRepository implements ReturnRepository {
     }
   }
 
+  async getReturnsForSale(saleId: string): Promise<SalesReturn[]> {
+    try {
+      const client = this.require();
+      const { data: returnsData, error } = await client
+        .from("sales_returns")
+        .select("*")
+        .eq("sale_id", saleId)
+        .order("created_at", { ascending: true });
+      if (error) throw toAppError(error);
+      const rows = (returnsData as ReturnRow[] | null) ?? [];
+      if (rows.length === 0) return [];
+      const { data: itemsData, error: itemsError } = await client
+        .from("return_items")
+        .select("*")
+        .in("return_id", rows.map((row) => row.id));
+      if (itemsError) throw toAppError(itemsError);
+      const grouped = new Map<string, ReturnItemRow[]>();
+      for (const item of (itemsData as ReturnItemRow[] | null) ?? []) {
+        const list = grouped.get(item.return_id) ?? [];
+        list.push(item);
+        grouped.set(item.return_id, list);
+      }
+      return rows.map((row) => mapReturn(row, grouped.get(row.id) ?? []));
+    } catch (err) {
+      if (err instanceof AppError) throw err;
+      throw toAppError(err);
+    }
+  }
+
   async getReturn(id: string): Promise<SalesReturn> {
     try {
       const client = this.require();

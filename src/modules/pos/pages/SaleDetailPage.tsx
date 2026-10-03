@@ -18,6 +18,7 @@ import { Link } from "react-router-dom";
 import { usePos } from "../hooks/PosProvider";
 import { canVoidSale, canConfirmPayment } from "../permissions";
 import type { Sale } from "../types";
+import type { RefundRecord, SalesReturn } from "@/modules/returns/types";
 import { buildReceiptHtml, customerInfoIssue, printHtmlDocument } from "../services/receipt";
 import { salesReceiptStrings } from "../services/receiptStrings";
 import { loadBrand } from "@/lib/branding/brand";
@@ -42,19 +43,52 @@ export function SaleDetailPage() {
   const { sales, salesLoading, error, refreshSales } = usePos();
 
   const [sale, setSale] = useState<Sale | null>(null);
+  const [detailLoading, setDetailLoading] = useState(true);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const [detailRefreshToken, setDetailRefreshToken] = useState(0);
+  const [saleReturns, setSaleReturns] = useState<SalesReturn[]>([]);
+  const [saleRefunds, setSaleRefunds] = useState<RefundRecord[]>([]);
   const [confirmVoid, setConfirmVoid] = useState(false);
   const [voiding, setVoiding] = useState(false);
   const [confirmPay, setConfirmPay] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [returnOpen, setReturnOpen] = useState(false);
-  const { getReturnsForSale, getRefundsForSale } = useReturns();
-  const saleReturns = sale ? getReturnsForSale(sale.id) : [];
-  const saleRefunds = sale ? getRefundsForSale(sale.id) : [];
+  const { repository: returnRepository } = useReturns();
+  const canViewSales = can("sales.view");
 
   useEffect(() => {
-    const found = sales.find((s) => s.id === id) ?? null;
-    setSale(found);
-  }, [sales, id]);
+    let cancelled = false;
+    if (!canViewSales) {
+      setDetailLoading(false);
+      return () => { cancelled = true; };
+    }
+    if (!id) {
+      setSale(null);
+      setDetailLoading(false);
+      return () => { cancelled = true; };
+    }
+    const loaded = sales.find((item) => item.id === id) ?? null;
+    setSale(loaded);
+    setSaleReturns([]);
+    setSaleRefunds([]);
+    setDetailLoading(!loaded);
+    setDetailError(null);
+    void Promise.all([
+      loaded ? Promise.resolve(loaded) : getSalesRepository().getSale(id),
+      returnRepository.getReturnsForSale(id),
+      returnRepository.getRefundsForSale(id),
+    ]).then(([fullSale, returns, refunds]) => {
+      if (cancelled) return;
+      setSale(fullSale);
+      setSaleReturns(returns);
+      setSaleRefunds(refunds);
+    }).catch((cause) => {
+      if (!cancelled) setDetailError(cause instanceof Error ? cause.message : String(cause));
+    }).finally(() => {
+      if (!cancelled) setDetailLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [canViewSales, detailRefreshToken, sales, id, returnRepository]);
 
   /**
    * Reprint the sales receipt from a completed transaction. Uses the shared
@@ -152,7 +186,17 @@ export function SaleDetailPage() {
     }
   }, [sale, t, toast, refreshSales]);
 
-  if (salesLoading && !sale) {
+  if (!canViewSales) {
+    return (
+      <EmptyState
+        icon="🔒"
+        title={t("perm.denied")}
+        description={t("permissions.denied.view_sales")}
+      />
+    );
+  }
+
+  if ((salesLoading || detailLoading) && !sale) {
     return (
       <div className="alyq-card">
         <LoadingBlock label={t("common.loading")} />
@@ -160,13 +204,16 @@ export function SaleDetailPage() {
     );
   }
 
-  if (error && !sale) {
+  if ((error || detailError) && !sale) {
     return (
       <ErrorState
         title={t("products.errorLoad")}
-        message={error.message}
+        message={detailError ?? error?.message ?? t("common.error")}
         retryLabel={t("common.retry")}
-        onRetry={() => void refreshSales()}
+        onRetry={() => {
+          setDetailRefreshToken((value) => value + 1);
+          void refreshSales();
+        }}
       />
     );
   }
@@ -316,6 +363,12 @@ export function SaleDetailPage() {
                 <dt>Item discounts / خصم الأصناف</dt>
                 <dd className="tabular-nums text-rose-600">−{num(sale.item_discount_amount ?? 0, 2)}</dd>
               </div>
+              {(sale.automatic_discount_amount ?? 0) > 0 ? (
+                <div className="flex justify-between text-emerald-700">
+                  <dt>🏷 {sale.automatic_promotion_name ?? t("online.promos.title")}</dt>
+                  <dd className="tabular-nums">−{num(sale.automatic_discount_amount ?? 0, 2)}</dd>
+                </div>
+              ) : null}
               <div className="flex justify-between text-slate-600">
                 <dt>Invoice discount / خصم الفاتورة</dt>
                 <dd className="tabular-nums text-rose-600">−{num(sale.discount_amount, 2)}</dd>
@@ -392,6 +445,17 @@ export function SaleDetailPage() {
             <p className="mt-1 text-xs text-slate-600">
               {t("pos.cols.user")}: <span className="font-semibold text-slate-900">{sale.user_name}</span>
             </p>
+            <p className="mt-1 break-all text-xs text-slate-600">
+              {t("pos.clientReference")}: <span className="font-mono text-[11px] text-slate-900">{sale.client_ref}</span>
+            </p>
+            <p className="mt-1 text-xs text-slate-600">
+              {t("pos.saleSource")}: <span className="font-semibold text-slate-900">{sale.source ?? "pos"}</span>
+            </p>
+            {sale.shift_id ? (
+              <p className="mt-1 break-all text-xs text-slate-600">
+                {t("shifts.shiftNumber")}: <span className="font-mono text-[11px] text-slate-900">{sale.shift_id}</span>
+              </p>
+            ) : null}
             <p className="mt-1 text-xs text-slate-600">
               {t("customers.customerLabel")}:{" "}
               {sale.customer_id ? (
@@ -428,8 +492,13 @@ export function SaleDetailPage() {
                       <p className="font-mono text-xs font-bold text-indigo-700">{ret.return_number}</p>
                       <p className="text-[11px] text-slate-500" dir="ltr">{date(ret.created_at)}</p>
                     </div>
-                    <span className="text-xs font-bold tabular-nums text-slate-900">
+                    <span className="text-end text-xs font-bold tabular-nums text-slate-900">
                       {num(ret.refund_amount, 2)}
+                      {saleRefunds.find((refund) => refund.return_id === ret.id) ? (
+                        <span className={`mt-0.5 block text-[10px] ${saleRefunds.find((refund) => refund.return_id === ret.id)?.status === "completed" ? "text-emerald-700" : saleRefunds.find((refund) => refund.return_id === ret.id)?.status === "pending" ? "text-amber-700" : "text-rose-700"}`}>
+                          {t(`returns.status.${saleRefunds.find((refund) => refund.return_id === ret.id)!.status}` as never)}
+                        </span>
+                      ) : null}
                     </span>
                   </Link>
                 ))}
@@ -458,6 +527,18 @@ export function SaleDetailPage() {
           open={returnOpen}
           onClose={() => setReturnOpen(false)}
           preselectedSaleId={sale.id}
+          preselectedSale={sale}
+          preselectedReturns={saleReturns}
+          preselectedRefunds={saleRefunds}
+          onSuccess={() => {
+            void Promise.all([
+              returnRepository.getReturnsForSale(sale.id),
+              returnRepository.getRefundsForSale(sale.id),
+            ]).then(([returns, refunds]) => {
+              setSaleReturns(returns);
+              setSaleRefunds(refunds);
+            });
+          }}
         />
       )}
 

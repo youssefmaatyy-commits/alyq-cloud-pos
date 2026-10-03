@@ -95,5 +95,5 @@ export const RETENTION_PHRASE = "APPLY RETENTION";
 export const DEFAULT_RETENTION_DAYS = 30;
 
 /** Shipped with this build. Not a claim about what a remote database has applied. */
-export const SHIPPED_MIGRATION_COUNT = 75;
-export const SHIPPED_LATEST_MIGRATION = "0075_authoritative_inventory_adjustments.sql";
+export const SHIPPED_MIGRATION_COUNT = 77;
+export const SHIPPED_LATEST_MIGRATION = "0077_prevent_legacy_campaign_promotion_overlap.sql";

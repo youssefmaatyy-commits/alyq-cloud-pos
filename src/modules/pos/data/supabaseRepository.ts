@@ -28,6 +28,11 @@ interface SaleRow {
   automatic_discount_amount?: number | string | null;
   automatic_promotion_id?: string | null;
   automatic_promotion_name?: string | null;
+  promotion_rule_type?: string | null;
+  promotion_buy_x?: number | string | null;
+  promotion_get_y?: number | string | null;
+  promotion_reward_qty?: number | string | null;
+  promotion_rewarded_units?: unknown;
   total: number | string;
   amount_received: number | string | null;
   change: number | string | null;
@@ -84,6 +89,8 @@ interface SaleItemRow {
   automatic_promotion_id?: string | null;
   automatic_promotion_name?: string | null;
   automatic_discount_amount?: number | string | null;
+  rewarded_qty?: number | string | null;
+  promotion_rule_type?: string | null;
   /** Present from migration 0055 onward; older rows are null (unknown cost). */
   unit_cost?: number | string | null;
 }
@@ -124,6 +131,11 @@ function mapSale(row: SaleRow, items: SaleItemRow[] = [], payments: SalePaymentR
     automatic_discount_amount: row.automatic_discount_amount == null ? undefined : toNumber(row.automatic_discount_amount),
     automatic_promotion_id: row.automatic_promotion_id ?? null,
     automatic_promotion_name: row.automatic_promotion_name ?? null,
+    promotion_rule_type: row.promotion_rule_type ?? null,
+    promotion_buy_x: row.promotion_buy_x == null ? null : toNumber(row.promotion_buy_x),
+    promotion_get_y: row.promotion_get_y == null ? null : toNumber(row.promotion_get_y),
+    promotion_reward_qty: row.promotion_reward_qty == null ? null : toNumber(row.promotion_reward_qty),
+    promotion_rewarded_units: row.promotion_rewarded_units ?? [],
     total: toNumber(row.total),
     amount_received: row.amount_received == null ? null : toNumber(row.amount_received),
     change: row.change == null ? null : toNumber(row.change),
@@ -156,6 +168,8 @@ function mapSale(row: SaleRow, items: SaleItemRow[] = [], payments: SalePaymentR
       automatic_promotion_id: i.automatic_promotion_id ?? null,
       automatic_promotion_name: i.automatic_promotion_name ?? null,
       automatic_discount_amount: i.automatic_discount_amount == null ? 0 : toNumber(i.automatic_discount_amount),
+      rewarded_qty: i.rewarded_qty == null ? 0 : toNumber(i.rewarded_qty),
+      promotion_rule_type: i.promotion_rule_type ?? null,
       unit_cost: i.unit_cost == null ? null : toNumber(i.unit_cost),
     })),
     payments: payments.map(mapPayment),

@@ -274,8 +274,9 @@ async function main() {
   // ── 3 · every route, through the module's own filters ─────────────────────
   clickTestid("kpi-today-sales");
   await waitFor(() => ux.dom.window.location.hash.startsWith("#/pos/sales"), { label: "the sales route" });
-  await waitFor(() => testid("sales-today-toggle")?.checked === true, { label: "the today filter to hydrate" });
-  console.log("  ✓ Sales tile → sales history with the Today filter ON");
+  const today = new Date().toISOString().slice(0, 10);
+  await waitFor(() => testid("sales-date-from")?.value === today && testid("sales-date-to")?.value === today, { label: "the today date range to hydrate" });
+  console.log("  ✓ Sales tile → Invoice Center with today's server date range");
 
   await navigate("#/", 600);
   await waitFor(() => testid("kpi-web-orders"), { label: "the KPI row again" });

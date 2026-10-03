@@ -20,7 +20,7 @@ import type { PaidUnitPrice } from "../validation";
 import { saleReturnability } from "../services/saleReturnability";
 import { getOnlineOrdersRepository } from "@/modules/online/data";
 import type { Sale } from "@/modules/pos/types";
-import type { ReturnItemInput } from "../types";
+import type { RefundRecord, ReturnItemInput, SalesReturn } from "../types";
 import { normalizeText } from "@/modules/products/services/productQuery";
 
 /** One shared empty map, so `returnableMap` keeps a stable identity. */
@@ -30,6 +30,11 @@ export interface ReturnFormModalProps {
   open: boolean;
   onClose: () => void;
   preselectedSaleId?: string | null;
+  /** Authoritative detail already loaded outside the provider history window. */
+  preselectedSale?: Sale | null;
+  /** Targeted linkage loaded with that sale, independent of provider history size. */
+  preselectedReturns?: SalesReturn[];
+  preselectedRefunds?: RefundRecord[];
   onSuccess?: (returnId: string) => void;
 }
 
@@ -37,6 +42,9 @@ export function ReturnFormModal({
   open,
   onClose,
   preselectedSaleId,
+  preselectedSale,
+  preselectedReturns,
+  preselectedRefunds,
   onSuccess,
 }: ReturnFormModalProps) {
   const { t, pick, num, date } = useI18n();
@@ -67,8 +75,17 @@ export function ReturnFormModal({
   }, [preselectedSaleId]);
 
   const selectedSale: Sale | undefined = useMemo(() => {
+    if (preselectedSale?.id === selectedSaleId) return preselectedSale;
     return sales.find((s) => s.id === selectedSaleId);
-  }, [sales, selectedSaleId]);
+  }, [preselectedSale, sales, selectedSaleId]);
+  const effectiveReturns = useMemo(() => {
+    if (!preselectedSale || preselectedSale.id !== selectedSaleId || !preselectedReturns) return returnsList;
+    return [...returnsList.filter((item) => item.sale_id !== preselectedSale.id), ...preselectedReturns];
+  }, [preselectedReturns, preselectedSale, returnsList, selectedSaleId]);
+  const effectiveRefunds = useMemo(() => {
+    if (!preselectedSale || preselectedSale.id !== selectedSaleId || !preselectedRefunds) return refundsList;
+    return [...refundsList.filter((item) => item.sale_id !== preselectedSale.id), ...preselectedRefunds];
+  }, [preselectedRefunds, preselectedSale, refundsList, selectedSaleId]);
 
   // Reset form when sale changes or modal opens
   useEffect(() => {
@@ -128,8 +145,8 @@ export function ReturnFormModal({
   // One computation decides what this modal may offer — see saleReturnability
   // for why "no lines loaded" and "all lines returned" must not be conflated.
   const returnability = useMemo(
-    () => (selectedSale ? saleReturnability(selectedSale, returnsList) : null),
-    [selectedSale, returnsList],
+    () => (selectedSale ? saleReturnability(selectedSale, effectiveReturns) : null),
+    [selectedSale, effectiveReturns],
   );
   const returnableMap = returnability?.returnableMap ?? EMPTY_RETURNABLE_MAP;
   const hasAnyReturnable = returnability?.state === "returnable";
@@ -194,11 +211,11 @@ export function ReturnFormModal({
       itemsInput,
       reason,
       refundMethod,
-      returnsList,
-      refundsList,
+      effectiveReturns,
+      effectiveRefunds,
       originPaidPrices,
     );
-  }, [selectedSale, itemsInput, reason, refundMethod, returnsList, refundsList, originPaidPrices]);
+  }, [selectedSale, itemsInput, reason, refundMethod, effectiveReturns, effectiveRefunds, originPaidPrices]);
 
   const handleSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
