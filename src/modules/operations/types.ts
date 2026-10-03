@@ -32,7 +32,9 @@ export type NotificationKind =
   | "stocktake_open"
   | "backup_warning"
   | "storage_warning"
-  | "system_warning";
+  | "system_warning"
+  | "approval_request"
+  | "sync_conflict";
 
 export interface OperationalNotification {
   /** Stable across renders. Kind + entity, never a timestamp of the render. */
@@ -95,5 +97,5 @@ export const RETENTION_PHRASE = "APPLY RETENTION";
 export const DEFAULT_RETENTION_DAYS = 30;
 
 /** Shipped with this build. Not a claim about what a remote database has applied. */
-export const SHIPPED_MIGRATION_COUNT = 82;
-export const SHIPPED_LATEST_MIGRATION = "0082_desktop_registers_and_hardware.sql";
+export const SHIPPED_MIGRATION_COUNT = 83;
+export const SHIPPED_LATEST_MIGRATION = "0083_mobile_installations_and_push.sql";

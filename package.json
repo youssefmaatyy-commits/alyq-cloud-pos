@@ -1,7 +1,7 @@
 {
   "name": "alyq-cloud-pos",
   "private": true,
-  "version": "5.0.0",
+  "version": "6.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -19,9 +19,21 @@
     "desktop:build": "npm run build",
     "desktop:package:dir": "npm run desktop:build && electron-builder --dir",
     "desktop:package:win": "npm run desktop:build && electron-builder --win nsis --x64",
-    "desktop:package:win:unpacked": "npm run desktop:build && electron-builder --win --dir --x64"
+    "desktop:package:win:unpacked": "npm run desktop:build && electron-builder --win --dir --x64",
+    "mobile:build": "npm run build && cap sync",
+    "mobile:sync": "cap sync",
+    "mobile:android": "npm run mobile:build && cap open android",
+    "mobile:ios": "npm run mobile:build && cap open ios",
+    "mobile:doctor": "cap doctor"
   },
   "dependencies": {
+    "@capacitor/app": "^8.0.1",
+    "@capacitor/browser": "^8.0.1",
+    "@capacitor/core": "^8.0.2",
+    "@capacitor/device": "^8.0.1",
+    "@capacitor/network": "^8.0.1",
+    "@capacitor/preferences": "^8.0.1",
+    "@capacitor/push-notifications": "^8.0.1",
     "@supabase/supabase-js": "^2.109.0",
     "clsx": "2.1.1",
     "react": "19.2.6",
@@ -31,6 +43,9 @@
     "xlsx": "file:vendor/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
+    "@capacitor/android": "^8.0.2",
+    "@capacitor/cli": "^8.0.2",
+    "@capacitor/ios": "^8.0.2",
     "@electric-sql/pglite": "^0.5.8",
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.63.0",
@@ -53,7 +68,7 @@
     "vite": "7.3.6",
     "vite-plugin-singlefile": "^2.3.3"
   },
-  "description": "ALYQ Cloud POS web and Windows desktop application",
+  "description": "ALYQ Cloud POS web, Windows desktop, and mobile management application",
   "main": "desktop/main.mjs",
   "build": {
     "appId": "eg.alyq.pos",

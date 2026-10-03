@@ -68,6 +68,7 @@ import { DesktopHardwarePage } from "@/modules/registers/pages/DesktopHardwarePa
 import { OperationsCenterPage } from "@/modules/operations/pages/OperationsCenterPage";
 import { ImportCenterPage } from "@/modules/import/pages/ImportCenterPage";
 import { StoreManagementHome, SalesHome, CatalogHome, InventoryHome, OnlineHome } from "./components/layout/moduleHomes";
+import { MobileApp } from "@/modules/mobile/MobileApp";
 
 import {
   DeliveryZonesPage,
@@ -237,6 +238,9 @@ export default function App() {
                 <Route path="v2/*" element={<StorefrontV2PreviewRedirect />} />
                 <Route path="*" element={<Navigate to="/store" replace />} />
               </Route>
+              {/* Prompt 6 management application: same auth and business services,
+                  but a purpose-built phone shell rather than the cashier sidebar. */}
+              <Route path="/mobile/*" element={<RequireAuth><MobileApp /></RequireAuth>} />
               <Route path="*" element={<AuthenticatedApp />} />
             </Routes>
           </HashRouter>
