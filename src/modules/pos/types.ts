@@ -157,6 +157,8 @@ export interface Sale {
   paid_at: string | null;
   paid_by: string | null;
   paid_by_name: string | null;
+  /** Originating branch frozen on the invoice and used by return tenancy. */
+  branch_id?: string | null;
   /** `pos` unless an approved online order created it. */
   source?: SaleSource;
   /**

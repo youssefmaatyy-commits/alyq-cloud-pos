@@ -104,8 +104,8 @@ await test("archived and textual-size saved shelves remain editable and keep the
   const oneSize = saved({ size: null, size_label: "One Size", active: false, stock_quantity: 4 });
   const draft = variantDraftFromSaved([oneSize]);
   assert.equal(draft.mode, "colors_sizes");
-  assert.deepEqual(draft.sizes, []);
-  assert.equal(validateVariantDraft(draft, "RING"), null, "a legacy label-only shelf needs no numeric chip to edit its barcode");
+  assert.deepEqual(draft.sizes, ["One Size"]);
+  assert.equal(validateVariantDraft(draft, "RING"), null, "a legacy label-only shelf hydrates into the flexible size list");
   assert.equal(variantDraftTotal(draft.rows), 4, "an archived shelf can still hold real stock");
   assert.equal(reconcileVariantDraft(draft, "RING").rows[0].id, oneSize.id);
 });

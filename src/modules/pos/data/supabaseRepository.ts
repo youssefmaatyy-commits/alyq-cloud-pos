@@ -47,6 +47,8 @@ interface SaleRow {
   paid_at: string | null;
   paid_by: string | null;
   paid_by_name: string | null;
+  /** Frozen originating branch (migration 0071). */
+  branch_id?: string | null;
   /** Present from migration 0017 onward; older rows simply lack it. */
   source?: Sale["source"] | null;
   /** The open shift the till sale was completed under (migration 0040). */
@@ -182,6 +184,7 @@ function mapSale(row: SaleRow, items: SaleItemRow[] = [], payments: SalePaymentR
     paid_at: row.paid_at ?? null,
     paid_by: row.paid_by ?? null,
     paid_by_name: row.paid_by_name ?? null,
+    branch_id: row.branch_id ?? null,
     source: row.source ?? "pos",
     shift_id: row.shift_id ?? null,
     notes: row.notes ?? null,

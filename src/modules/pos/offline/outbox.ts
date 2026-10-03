@@ -59,6 +59,8 @@ export interface EnqueueOfflineSaleMeta {
   subtotal: number;
   discount_amount: number;
   total: number;
+  /** Server-resolved active branch whose cached shelves were used. */
+  branch_id?: string | null;
 }
 
 /** Write a completed-while-offline sale locally and queue it for sync. */
@@ -76,6 +78,7 @@ export async function enqueueOfflineSale(
     id: localId,
     client_ref: input.client_ref,
     created_at: createdAt,
+    branch_id: meta.branch_id ?? null,
     input,
     subtotal: meta.subtotal,
     discount_amount: meta.discount_amount,
@@ -95,6 +98,7 @@ export async function enqueueOfflineSale(
   const saleLines: OfflineSaleLine[] = lines.map((line, index) => ({
     id: `${localId}::${index}`,
     local_sale_id: localId,
+    branch_id: meta.branch_id ?? null,
     product_id: line.product_id,
     variant_id: line.variant_id,
     qty: line.qty,
@@ -108,6 +112,7 @@ export async function enqueueOfflineSale(
   const outboxEntry: SyncOutboxEntry = {
     client_ref: input.client_ref,
     local_sale_id: localId,
+    branch_id: meta.branch_id ?? null,
     created_at: createdAt,
     attempts: 0,
     last_attempt_at: null,
@@ -263,12 +268,22 @@ async function attemptEntry(entry: SyncOutboxEntry, complete: CompleteSaleFn): P
  * for business review. Without either, only never-tried entries and due
  * network failures run automatically.
  */
-async function processOutboxPass(complete: CompleteSaleFn, options: { force?: boolean; retryNetwork?: boolean } = {}): Promise<SyncRunResult> {
+export interface ProcessOutboxOptions {
+  force?: boolean;
+  retryNetwork?: boolean;
+  /** Replay only rows captured for this active branch. Legacy unscoped rows remain compatible. */
+  branchId?: string | null;
+}
+
+async function processOutboxPass(complete: CompleteSaleFn, options: ProcessOutboxOptions = {}): Promise<SyncRunResult> {
   const db = getOfflineDb();
   const entries = await db.getAll<SyncOutboxEntry>("sync_outbox");
   const now = Date.now();
   const due = entries
     .filter((entry) => entry.status !== "syncing")
+    // A branch switch must never redirect already-captured stock. Rows from
+    // another branch stay queued and become eligible when that branch is active.
+    .filter((entry) => !options.branchId || !entry.branch_id || entry.branch_id === options.branchId)
     .filter((entry) => {
       if (options.force) return true;
       if (entry.status === "pending") return true;
@@ -294,7 +309,7 @@ async function processOutboxPass(complete: CompleteSaleFn, options: { force?: bo
 // guard, but the client now also makes only one RPC for one queued sale.
 let activeSync: Promise<SyncRunResult> | null = null;
 
-export function processOutbox(complete: CompleteSaleFn, options: { force?: boolean; retryNetwork?: boolean } = {}): Promise<SyncRunResult> {
+export function processOutbox(complete: CompleteSaleFn, options: ProcessOutboxOptions = {}): Promise<SyncRunResult> {
   if (activeSync) return activeSync;
   activeSync = processOutboxPass(complete, options).finally(() => {
     activeSync = null;

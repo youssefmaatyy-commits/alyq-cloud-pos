@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { can } from "@/lib/permissions/enforce";
+import { useBranch } from "@/lib/branch";
 import { PageHeader } from "@/components/layout/AppShell";
 import {
   Badge,
@@ -41,6 +42,7 @@ export function SaleDetailPage() {
   const toast = useToast();
   const navigate = useNavigate();
   const { sales, salesLoading, error, refreshSales } = usePos();
+  const { branches } = useBranch();
 
   const [sale, setSale] = useState<Sale | null>(null);
   const [detailLoading, setDetailLoading] = useState(true);
@@ -451,6 +453,17 @@ export function SaleDetailPage() {
             <p className="mt-1 text-xs text-slate-600">
               {t("pos.saleSource")}: <span className="font-semibold text-slate-900">{sale.source ?? "pos"}</span>
             </p>
+            {sale.branch_id ? (
+              <p className="mt-1 text-xs text-slate-600">
+                {isRTL ? "الفرع" : "Branch"}:{" "}
+                <span className="font-semibold text-slate-900">
+                  {(() => {
+                    const branch = branches.find((entry) => entry.id === sale.branch_id);
+                    return branch ? (isRTL ? branch.name_ar : branch.name_en) : sale.branch_id;
+                  })()}
+                </span>
+              </p>
+            ) : null}
             {sale.shift_id ? (
               <p className="mt-1 break-all text-xs text-slate-600">
                 {t("shifts.shiftNumber")}: <span className="font-mono text-[11px] text-slate-900">{sale.shift_id}</span>

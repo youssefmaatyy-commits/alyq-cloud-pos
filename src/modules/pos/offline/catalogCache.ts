@@ -22,26 +22,47 @@ import { getOfflineDb, type OfflineWrite } from "./db";
 import type { CachedCatalogSnapshot, CachedProduct, CachedVariant } from "./types";
 
 const CATALOG_CACHED_AT_KEY = "catalog_cached_at";
+const CATALOG_BRANCH_ID_KEY = "catalog_branch_id";
 
-export async function cacheCatalogSnapshot(products: Product[], variants: ProductVariant[]): Promise<void> {
+export async function cacheCatalogSnapshot(
+  products: Product[],
+  variants: ProductVariant[],
+  branchId: string | null = null,
+): Promise<void> {
   const db = getOfflineDb();
   const cachedAt = new Date().toISOString();
-  const cachedProducts: CachedProduct[] = products.map((product) => ({ ...product, cached_at: cachedAt }));
-  const cachedVariants: CachedVariant[] = variants.map((variant) => ({ ...variant, cached_at: cachedAt }));
+  const cachedProducts: CachedProduct[] = products.map((product) => ({
+    ...product,
+    branch_id: branchId,
+    cached_at: cachedAt,
+  }));
+  const cachedVariants: CachedVariant[] = variants.map((variant) => ({
+    ...variant,
+    branch_id: branchId,
+    cached_at: cachedAt,
+  }));
   await db.clear("cached_products");
   await db.clear("cached_variants");
   await db.putMany("cached_products", cachedProducts);
   await db.putMany("cached_variants", cachedVariants);
   await db.put("sync_metadata", { key: CATALOG_CACHED_AT_KEY, value: cachedAt });
+  await db.put("sync_metadata", { key: CATALOG_BRANCH_ID_KEY, value: branchId ?? "" });
 }
 
-export async function readCachedCatalog(): Promise<CachedCatalogSnapshot> {
+export async function readCachedCatalog(expectedBranchId: string | null = null): Promise<CachedCatalogSnapshot> {
   const db = getOfflineDb();
-  const [products, variants, meta] = await Promise.all([
+  const [products, variants, meta, branchMeta] = await Promise.all([
     db.getAll<CachedProduct>("cached_products"),
     db.getAll<CachedVariant>("cached_variants"),
     db.get<{ key: string; value: string }>("sync_metadata", CATALOG_CACHED_AT_KEY),
+    db.get<{ key: string; value: string }>("sync_metadata", CATALOG_BRANCH_ID_KEY),
   ]);
+  // Never show Branch A's last-known quantities after the user has switched to
+  // Branch B. Legacy caches without a branch marker remain readable only when
+  // no branch is being asserted by the caller.
+  if (expectedBranchId && branchMeta?.value !== expectedBranchId) {
+    return { products: [], variants: [], cachedAt: null };
+  }
   return { products, variants, cachedAt: meta?.value ?? null };
 }
 
@@ -66,6 +87,7 @@ export function planOfflineInventory(
   variants: readonly ProductVariant[],
   lines: readonly CompleteSaleInput["lines"][number][],
   cachedAt: string | null,
+  branchId: string | null = null,
 ): OfflineInventoryPlan {
   const productMap = new Map(products.map((product) => [product.id, { ...product }]));
   const variantMap = new Map(variants.map((variant) => [variant.id, { ...variant }]));
@@ -115,11 +137,11 @@ export function planOfflineInventory(
   const writes: OfflineWrite[] = [
     ...[...changedProducts].map((id) => ({
       store: "cached_products" as const,
-      value: { ...productMap.get(id)!, cached_at: stamp } satisfies CachedProduct,
+      value: { ...productMap.get(id)!, branch_id: branchId, cached_at: stamp } satisfies CachedProduct,
     })),
     ...[...changedVariants].map((id) => ({
       store: "cached_variants" as const,
-      value: { ...variantMap.get(id)!, cached_at: stamp } satisfies CachedVariant,
+      value: { ...variantMap.get(id)!, branch_id: branchId, cached_at: stamp } satisfies CachedVariant,
     })),
   ];
   return { products: nextProducts, variants: nextVariants, writes };

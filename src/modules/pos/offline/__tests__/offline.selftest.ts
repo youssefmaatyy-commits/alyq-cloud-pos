@@ -198,6 +198,21 @@ test("catalog cache round-trips the exact live products/variants — nothing fab
   assert.equal(latest.products[0].stock_quantity, 999);
 });
 
+test("catalog cache never exposes one branch's last-known shelves in another branch", async () => {
+  freshEnv();
+  await cacheCatalogSnapshot(
+    [product({ variants_enabled: true, stock_quantity: 10 })],
+    [variant({ size_value: "42", stock_quantity: 10 })],
+    "branch-a",
+  );
+  const branchA = await readCachedCatalog("branch-a");
+  assert.equal(branchA.variants[0].id, "var-1");
+  assert.equal(branchA.variants[0].branch_id, "branch-a");
+  const branchB = await readCachedCatalog("branch-b");
+  assert.equal(branchB.products.length, 0, "Branch A product totals do not leak to Branch B");
+  assert.equal(branchB.variants.length, 0, "Branch A exact shelf does not leak to Branch B");
+});
+
 // ── enqueue + local inventory ───────────────────────────────────────────────
 
 test("known-offline exact-variant cash sale queues immediately and decrements cached stock once", async () => {
@@ -268,6 +283,41 @@ test("a cash sale completed offline is queued with a stable client_ref and appea
   const summary = await getSyncSummary();
   assert.equal(summary.pendingCount, 1);
   assert.equal(summary.errorCount, 0);
+});
+
+test("offline outbox preserves exact variant and waits for its originating branch", async () => {
+  freshEnv();
+  const saleInput = input("branch-a-black-42", {
+    lines: [{ product_id: "prod-1", variant_id: "black-42", qty: 1 }],
+  });
+  const record = await enqueueOfflineSale(
+    saleInput,
+    [{
+      product_id: "prod-1", variant_id: "black-42", qty: 1,
+      discount_type: "none", discount_value: 0,
+      name_en: "ALYQ-01", name_ar: "ALYQ-01", sku: "ALYQ-01-BLK-42", unit_price: 500,
+    }],
+    { subtotal: 500, discount_amount: 0, total: 500, branch_id: "branch-a" },
+  );
+  assert.equal(record.branch_id, "branch-a");
+  const storedLines = await getOfflineDb().getAll<OfflineSaleLine>("offline_sale_lines");
+  assert.equal(storedLines[0].branch_id, "branch-a");
+  assert.equal(storedLines[0].variant_id, "black-42");
+
+  let calls = 0;
+  const complete: CompleteSaleFn = async (received) => {
+    calls += 1;
+    assert.equal(received.lines[0].variant_id, "black-42");
+    return fakeSale("branch-sale", "INV-BRANCH");
+  };
+  const wrongBranch = await processOutbox(complete, { branchId: "branch-b", force: true });
+  assert.equal(calls, 0, "switching branches cannot redirect queued stock");
+  assert.deepEqual(wrongBranch.synced, []);
+  assert.equal((await getSyncSummary()).pendingCount, 1);
+
+  await processOutbox(complete, { branchId: "branch-a", force: true });
+  assert.equal(calls, 1);
+  assert.equal((await getSyncSummary()).pendingCount, 0);
 });
 
 test("the multi-store receipt/lines/outbox write is atomic when structured clone rejects a value", async () => {

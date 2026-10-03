@@ -19,6 +19,7 @@ import { getDemoRepository } from "@/modules/products/data/demoRepository";
 import { getSupabaseRepository } from "@/modules/products/data/supabaseRepository";
 import { isSupabaseConfigured, getSupabaseClient } from "@/lib/supabase/client";
 import { useRealtimeWatch } from "@/lib/supabase/useRealtimeWatch";
+import { useBranch } from "@/lib/branch";
 import { useInventory } from "@/modules/inventory/hooks/InventoryProvider";
 import { canCompleteSale, canApplyDiscount } from "../permissions";
 import { SALES_ROW_CAP, getSalesRepository, type SalesRepository } from "../data";
@@ -228,6 +229,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
     return repositoryRef.current;
   }, []);
   const mode = repository.kind;
+  const { current: currentBranch } = useBranch();
+  const activeBranchId = currentBranch?.id ?? null;
 
   // Use the live user from the inventory module so role changes (the
   // inventory role switcher, future auth) take effect on the till immediately.
@@ -258,13 +261,13 @@ export function PosProvider({ children }: { children: ReactNode }) {
       reportNetworkResult("success");
       // Cache only the exact catalog the POS actually used; no invented variants
       // or prices can leak into an offline checkout.
-      void cacheCatalogSnapshot(list, combinations).catch(() => undefined);
+      void cacheCatalogSnapshot(list, combinations, activeBranchId).catch(() => undefined);
       return list;
     } catch (caught) {
       const problem = caught instanceof AppError ? caught : new AppError("DB", String(caught));
       if (problem.code !== "NETWORK") throw problem;
       reportNetworkResult("network-error");
-      const cached = await readCachedCatalog();
+      const cached = await readCachedCatalog(activeBranchId);
       if (cached.products.length === 0) throw problem;
       setProducts(cached.products);
       // Category labels are not in the offline snapshot. Keep browse-all
@@ -274,7 +277,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       setWorkingFromCache(true);
       return cached.products;
     }
-  }, []);
+  }, [activeBranchId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -295,8 +298,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
   // Suspended drafts are local cashier work, not server sales. Load them once;
   // no draft affects stock, price authority or the sales ledger until payment.
   useEffect(() => {
-    void listHeldCarts().then(setHeldCarts).catch(() => setHeldCarts([]));
-  }, []);
+    void listHeldCarts(activeBranchId).then(setHeldCarts).catch(() => setHeldCarts([]));
+  }, [activeBranchId]);
 
   const refreshSyncSummary = useCallback(async () => {
     const summary = await getSyncSummary();
@@ -314,10 +317,13 @@ export function PosProvider({ children }: { children: ReactNode }) {
     if (getConnectivityStatus() !== "online") return;
     // A cashier retry may re-attempt network failures, never a stock/business
     // conflict. Conflicts stay preserved for explicit business review.
-    await processOutbox((input) => completeSaleGuarded(input), { retryNetwork: true });
+    await processOutbox((input) => completeSaleGuarded(input), {
+      retryNetwork: true,
+      branchId: activeBranchId,
+    });
     await refreshSyncSummary();
     await loadCatalog().catch(() => undefined);
-  }, [loadCatalog, refreshSyncSummary]);
+  }, [activeBranchId, loadCatalog, refreshSyncSummary]);
 
   useEffect(() => {
     if (connectivity !== "online") return;
@@ -704,9 +710,10 @@ export function PosProvider({ children }: { children: ReactNode }) {
     const held = await persistHeldCart({
       held_by_id: user.id,
       held_by_name: user.name,
-      // The current POS domain has no branch selector in its cart state. Keep
-      // this nullable rather than inventing an assignment the cashier never made.
-      store: null,
+      // The BranchProvider is server-resolved; this snapshot prevents a held
+      // Branch A cart from silently becoming Branch B work after a switch.
+      branch_id: activeBranchId,
+      store: currentBranch?.name_en ?? null,
       shift_id: null,
       customer: selectedCustomer,
       lines: linesRef.current,
@@ -721,12 +728,13 @@ export function PosProvider({ children }: { children: ReactNode }) {
     setSelectedCustomer(null);
     setSaleNoteValue("");
     return held;
-  }, [appliedCouponCode, canSell, discount, removeCoupon, saleNote, selectedCustomer, updateLines, user]);
+  }, [activeBranchId, appliedCouponCode, canSell, currentBranch?.name_en, discount, removeCoupon, saleNote, selectedCustomer, updateLines, user]);
 
   const restoreHeldCart = useCallback(async (id: string): Promise<boolean> => {
     if (linesRef.current.length > 0) return false;
     const held = heldCarts.find((entry) => entry.id === id);
     if (!held) return false;
+    if (held.branch_id && held.branch_id !== activeBranchId) return false;
     // A hold is not a reservation. Re-read every exact shelf before making it
     // the active cart; payment still repeats authoritative server pricing/stock
     // checks, including coupons and promotions.
@@ -756,7 +764,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
     await removeHeldCart(id);
     setHeldCarts((current) => current.filter((entry) => entry.id !== id));
     return true;
-  }, [heldCarts, products, updateLines, variants]);
+  }, [activeBranchId, heldCarts, products, updateLines, variants]);
 
   const cancelHeldCart = useCallback(async (id: string): Promise<void> => {
     if (!canSell) throw new AppError("FORBIDDEN", "You cannot cancel held sales");
@@ -834,7 +842,10 @@ export function PosProvider({ children }: { children: ReactNode }) {
         // Last-known inventory is a local safety check only. The queued payload
         // is replayed unchanged and the server re-checks exact shelf, price,
         // shift and permissions before it becomes a financial sale.
-        const inventory = planOfflineInventory(products, variants, input.lines, null);
+        if (!activeBranchId) {
+          throw new AppError("VALIDATION", "An active branch is required for offline stock", "branch");
+        }
+        const inventory = planOfflineInventory(products, variants, input.lines, null, activeBranchId);
         const record = await enqueueOfflineSale(
           input,
           lines.map((line) => ({
@@ -848,7 +859,12 @@ export function PosProvider({ children }: { children: ReactNode }) {
             sku: line.sku,
             unit_price: line.unit_price,
           })),
-          { subtotal: totals.subtotal, discount_amount: totals.discountAmount, total: totals.total },
+          {
+            subtotal: totals.subtotal,
+            discount_amount: totals.discountAmount,
+            total: totals.total,
+            branch_id: activeBranchId,
+          },
           inventory.writes,
         );
         const display = await getOfflineSaleDisplay(record.id);
@@ -896,7 +912,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
         setCompleting(false);
       }
     },
-    [appliedCouponCode, canSell, completing, lines, discount, products, variants, totals, refreshSales, refreshSyncSummary, loadCatalog, removeCoupon, saleNote, selectedCustomer, user, updateLines],
+    [activeBranchId, appliedCouponCode, canSell, completing, lines, discount, products, variants, totals, refreshSales, refreshSyncSummary, loadCatalog, removeCoupon, saleNote, selectedCustomer, user, updateLines],
   );
 
   const dismissCompleted = useCallback(() => setCompletedSale(null), []);

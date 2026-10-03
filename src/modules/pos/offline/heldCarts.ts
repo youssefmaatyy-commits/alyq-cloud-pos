@@ -14,6 +14,8 @@ export interface HeldCartRecord {
   updated_at: string;
   held_by_id: string;
   held_by_name: string;
+  /** Branch where the exact shelf snapshot was selected. */
+  branch_id?: string | null;
   store: string | null;
   shift_id: string | null;
   customer: Customer | null;
@@ -35,9 +37,12 @@ function clone<T>(value: T): T {
   return structuredClone(value);
 }
 
-export async function listHeldCarts(): Promise<HeldCartRecord[]> {
+export async function listHeldCarts(branchId: string | null = null): Promise<HeldCartRecord[]> {
   const db = getOfflineDb();
   return (await db.getAll<HeldCartRecord>("held_carts"))
+    // Legacy drafts had no branch marker; keep them visible for upgrade
+    // compatibility. Every new draft is branch-qualified below.
+    .filter((record) => !branchId || !record.branch_id || record.branch_id === branchId)
     .sort((a, b) => b.updated_at.localeCompare(a.updated_at));
 }
 

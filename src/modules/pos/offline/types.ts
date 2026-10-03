@@ -32,12 +32,16 @@ export type OfflineStoreName = (typeof OFFLINE_STORE_NAMES)[number];
 
 /** A cached product row — the exact live `Product`, nothing invented. */
 export interface CachedProduct extends Product {
+  /** Server-resolved branch whose quantity this row snapshots. */
+  branch_id?: string | null;
   /** When this row was last refreshed from a live catalog load. */
   cached_at: string;
 }
 
 /** A cached variant row — the exact live `ProductVariant`, nothing invented. */
 export interface CachedVariant extends ProductVariant {
+  /** Server-resolved branch whose exact shelf this row snapshots. */
+  branch_id?: string | null;
   cached_at: string;
 }
 
@@ -46,6 +50,8 @@ export interface OfflineSaleLine {
   /** `${local_sale_id}::${index}` — composite key, stable across writes. */
   id: string;
   local_sale_id: string;
+  /** Branch shelf this exact line was accepted against while offline. */
+  branch_id?: string | null;
   product_id: string;
   variant_id: string | null;
   qty: number;
@@ -73,6 +79,8 @@ export interface OfflineSaleRecord {
   id: string;
   client_ref: string;
   created_at: string;
+  /** Active branch at capture time; the outbox only replays in this branch. */
+  branch_id?: string | null;
   input: CompleteSaleInput;
   /** Precomputed for display — the exact numbers the cashier saw at the till. */
   subtotal: number;
@@ -104,6 +112,8 @@ export interface SyncOutboxEntry {
   /** Same value as the sale's `client_ref` — one outbox row per sale, by construction. */
   client_ref: string;
   local_sale_id: string;
+  /** Prevents a queued Branch A sale from replaying after a switch to Branch B. */
+  branch_id?: string | null;
   created_at: string;
   attempts: number;
   last_attempt_at: string | null;
@@ -121,8 +131,8 @@ export interface SyncMetadataEntry {
 }
 
 export interface CachedCatalogSnapshot {
-  products: Product[];
-  variants: ProductVariant[];
+  products: CachedProduct[];
+  variants: CachedVariant[];
   cachedAt: string | null;
 }
 
@@ -214,6 +224,7 @@ export function offlineSaleToDisplaySale(record: OfflineSaleRecord, lines: Offli
     paid_at: null,
     paid_by: null,
     paid_by_name: null,
+    branch_id: record.branch_id ?? null,
     source: "pos",
     shift_id: null,
     offline_sync_status: record.sync_status,

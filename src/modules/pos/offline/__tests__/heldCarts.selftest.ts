@@ -19,7 +19,7 @@ test("held cart survives repository reads and keeps customer, exact variant and 
   resetOfflineDbForTests();
   await clearHeldCartsForTests();
   const held = await holdCart({
-    held_by_id: "cashier", held_by_name: "Cashier", store: "Main", shift_id: "shift-1",
+    held_by_id: "cashier", held_by_name: "Cashier", branch_id: "branch-a", store: "Main", shift_id: "shift-1",
     customer: { id: "customer-1", name: "Aya", phone: "0100", email: null, address: null, notes: null, created_at: "2026-01-01", updated_at: "2026-01-01" },
     lines: [line("gold-17"), line("silver-17")],
     invoice_discount: { type: "percent", value: 5 }, coupon_code: "SAVE10", notes: "Call first",
@@ -31,6 +31,9 @@ test("held cart survives repository reads and keeps customer, exact variant and 
   assert.equal(loaded[0].customer?.id, "customer-1");
   assert.equal(loaded[0].coupon_code, "SAVE10");
   assert.equal(loaded[0].lines[0].item_discount?.value, 3);
+  assert.equal(loaded[0].branch_id, "branch-a");
+  assert.equal((await listHeldCarts("branch-b")).length, 0, "held cart cannot cross branches");
+  assert.equal((await listHeldCarts("branch-a")).length, 1);
   await removeHeldCart(held.id);
   assert.equal((await listHeldCarts()).length, 0);
 });
