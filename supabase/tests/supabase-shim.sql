@@ -17,6 +17,34 @@
 -- Storage internals) is out of scope here and is covered by the live suites.
 -- ═══════════════════════════════════════════════════════════════════════════
 
+-- ── pgcrypto schema compatibility ─────────────────────────────────────────
+-- Hosted Supabase installs pgcrypto in `extensions`. Historical migrations
+-- also contain unqualified calls whose fixed search_path includes `public`, so
+-- the disposable database keeps narrow public forwarding functions while the
+-- extension itself lives in the production schema.
+create schema if not exists extensions;
+create extension if not exists pgcrypto with schema extensions;
+
+create or replace function public.crypt(text, text)
+returns text language sql immutable strict
+as 'select extensions.crypt($1, $2)';
+
+create or replace function public.gen_salt(text)
+returns text language sql volatile strict
+as 'select extensions.gen_salt($1)';
+
+create or replace function public.gen_salt(text, integer)
+returns text language sql volatile strict
+as 'select extensions.gen_salt($1, $2)';
+
+create or replace function public.gen_random_bytes(integer)
+returns bytea language sql volatile strict
+as 'select extensions.gen_random_bytes($1)';
+
+create or replace function public.digest(text, text)
+returns bytea language sql immutable strict
+as 'select extensions.digest($1, $2)';
+
 -- ── roles ─────────────────────────────────────────────────────────────────
 -- Supabase ships these; `create policy … to authenticated` and
 -- `grant … to authenticated` both fail without them.
@@ -33,6 +61,8 @@ begin
   end if;
 end
 $$;
+
+grant usage on schema extensions to anon, authenticated, service_role;
 
 -- ── auth schema ───────────────────────────────────────────────────────────
 create schema if not exists auth;

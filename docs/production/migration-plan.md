@@ -1,15 +1,15 @@
-# Production migration plan — 0001 through 0083
+# Production migration plan — 0001 through 0084
 
-This is an operator plan, not evidence of hosted execution. The repository contains 83 contiguous forward migrations from `0001_create_categories.sql` through `0083_mobile_installations_and_push.sql`. Historical files must not be edited.
+This is an operator plan, not evidence of hosted execution. The repository contains 84 contiguous forward migrations from `0001_create_categories.sql` through `0084_role_aliases_rls_hardening.sql`. Historical files must not be edited.
 
 ## Determine the exact pending range
 
 1. Freeze the approved Git SHA and independently confirm the Production project.
 2. Export the provider migration ledger and schema before changing anything.
 3. Compare every recorded migration name/checksum to this repository. **Stop on drift, gaps, renamed files, unknown later migrations, or a partially applied file.** Do not infer success from object existence alone.
-4. If the target is empty, the exact ordered range is `0001`–`0083`.
-5. If the target has a matching contiguous prefix ending at `NNNN`, the exact pending range is `NNNN+1`–`0083`.
-6. If it already has a matching `0001`–`0083`, no database migration is pending. Never replay merely to create evidence.
+4. If the target is empty, the exact ordered range is `0001`–`0084`.
+5. If the target has a matching contiguous prefix ending at `NNNN`, the exact pending range is `NNNN+1`–`0084`.
+6. If it already has a matching `0001`–`0084`, no database migration is pending. Never replay merely to create evidence.
 
 ## Mandatory execution sequence
 
@@ -18,7 +18,7 @@ This is an operator plan, not evidence of hosted execution. The repository conta
 - Keep the prior compatible clients available and assign stop/rollback authority.
 - Apply each pending file in numeric order with stop-on-error and transaction semantics. Record filename, checksum, start/end UTC, outcome and operator.
 - Stop on the first error. Do not run later files and do not mark a failed file applied manually.
-- After success, re-export the ledger and verify maximum `0083_mobile_installations_and_push.sql`, expected schema/RPC parity, RLS/grants, branch isolation, audit append-only behavior and staging smoke tests.
+- After success, re-export the ledger and verify maximum `0084_role_aliases_rls_hardening.sql`, expected schema/RPC parity, RLS/grants, branch isolation, audit append-only behavior and staging smoke tests.
 
 ## Dry-run evidence from preparation
 
