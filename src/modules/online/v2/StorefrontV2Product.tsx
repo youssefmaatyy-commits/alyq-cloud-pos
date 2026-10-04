@@ -40,7 +40,7 @@ export function StorefrontV2Product() {
   if (!product || !entry) return <div className="v2-container v2-not-found">
     <h1>{t("common.notFound")}</h1>
     <p>{t("store.product.notFoundHint")}</p>
-    <Link to="/store/products" className="v2-outline-button">{t("store.product.browseAll")} ↗</Link>
+    <Link to="/store/products" className="v2-outline-button">{t("store.product.browseAll")}</Link>
   </div>;
   return <V2Detail key={product.id} product={product} entry={entry} />;
 }
@@ -210,7 +210,7 @@ function V2Detail({ product, entry }: { product: Product; entry: CatalogProduct 
           onClick={() => { if (sizeGuide.current) { sizeGuide.current.open = true;
             sizeGuide.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
             sizeGuide.current.querySelector("summary")?.focus(); } }}>
-          {t("store.product.content.dimensions")} ↗</button> : null}
+          {t("store.product.content.dimensions")}</button> : null}
         <p className="v2-pdp-stock" role="status">
           {!product.stock_tracking_enabled ? t("store.v2.notOrderable")
             : product.variants_enabled && !selected ? model.sellable.length ? t("store.v2.pleaseChoose") : t("store.product.outOfStock")
@@ -225,14 +225,14 @@ function V2Detail({ product, entry }: { product: Product; entry: CatalogProduct 
               value={quantity} onChange={(event) => setQuantityDraft(Math.max(1, Math.min(max || 1, Math.floor(Number(event.target.value) || 1))))} />
           </label>
           <button type="button" className="v2-primary-button" disabled={!orderable || available <= 0}
-            onClick={addToBag} data-testid="v2-pdp-add">{t("store.product.addToCart")} ↗</button>
+            onClick={addToBag} data-testid="v2-pdp-add">{t("store.product.addToCart")}</button>
         </div>
         <button type="button" className="v2-pdp-wishlist" aria-pressed={wished}
           aria-label={t(wished ? "store.wishlist.remove" : "store.wishlist.add")}
           onClick={() => void toggleWishlist(product.id)}>
           <span aria-hidden>{wished ? "♥" : "♡"}</span> {t(wished ? "store.wishlist.remove" : "store.wishlist.add")}
         </button>
-        {added ? <p className="v2-success" role="status">{t("store.v2.added")} · <Link to="/store/cart">{t("store.v2.bag")} ↗</Link></p> : null}
+        {added ? <p className="v2-success" role="status">{t("store.v2.added")} · <Link to="/store/cart">{t("store.v2.bag")}</Link></p> : null}
         <p className="v2-pdp-disclaimer">{t("store.v2.stockAtCheckout")}</p>
         {content?.short_description_ar || content?.short_description_en ? <p className="v2-pdp-description">
           {pick(content.short_description_ar, content.short_description_en)}</p> : null}
@@ -256,7 +256,7 @@ function V2Detail({ product, entry }: { product: Product; entry: CatalogProduct 
         <p>{review.body}</p><cite>{review.author_name}</cite>
       </blockquote>)}
     </div></V2Section> : null}
-    {related.length ? <V2Section title={t("store.product.related")} action={<Link className="v2-text-link" to="/store/products">{t("store.v2.viewAll")} ↗</Link>}>
+    {related.length ? <V2Section title={t("store.product.related")} action={<Link className="v2-text-link" to="/store/products">{t("store.v2.viewAll")}</Link>}>
       <V2ProductGrid>{related.map((item) => <V2ProductCard key={item.product.id} entry={item} />)}</V2ProductGrid>
     </V2Section> : null}
   </div>;

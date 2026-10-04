@@ -84,7 +84,7 @@ export function StorefrontV2Confirmation() {
         {order.payment_method === "instapay" ? <p className="v2-alert" role="status">
           {t("store.checkout.instapayNeverAutomatic")}</p> : <p className="v2-small">{t("store.confirmation.codNote")}</p>}
         <Link to="/store/track" state={{ number: order.order_number, phone: order.customer_phone }}
-          className="v2-primary-button">{t("store.confirmation.trackOrder")} ↗</Link>
+          className="v2-primary-button">{t("store.confirmation.trackOrder")}</Link>
         {copy.support_href ? <V2ActionLink href={copy.support_href} className="v2-outline-button">
           {pick(copy.support_cta_ar, copy.support_cta_en) || t("store.nav.contact")}</V2ActionLink> : null}
         {whatsapp ? <a href={whatsapp} className="v2-text-link" target="_blank" rel="noopener noreferrer">

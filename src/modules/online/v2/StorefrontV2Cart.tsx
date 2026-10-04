@@ -83,7 +83,7 @@ export function StorefrontV2Cart() {
             </article>;
           })}
           <div className="v2-cart-actions"><Link to="/store/products" className="v2-text-link">
-            {t("store.cart.continueShopping")} ↗</Link>
+            {t("store.cart.continueShopping")}</Link>
             <button type="button" onClick={clear}>{t("store.cart.clear")}</button>
           </div>
         </div>
@@ -95,7 +95,7 @@ export function StorefrontV2Cart() {
           <Link to="/store/checkout" aria-disabled={!canCheckout} tabIndex={canCheckout ? 0 : -1}
             onClick={(event) => { if (!canCheckout) event.preventDefault(); }}
             className="v2-primary-button v2-cart-checkout" data-testid="v2-cart-checkout">
-            {t("store.cart.checkout")} ↗</Link>
+            {t("store.cart.checkout")}</Link>
           <p className="v2-small">{t("store.v2.stockAtCheckout")}</p>
         </V2Panel></aside>
       </div>

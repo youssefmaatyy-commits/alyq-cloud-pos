@@ -261,7 +261,7 @@ export function StorefrontV2Account() {
               {t("store.v2.journey.reorderUnavailable")}{reorderProblem === t("store.v2.journey.reorderUnavailable") ? "" : ` · ${reorderProblem}`}</p> : null}
             {reorderSuccess ? <p role="status" className="v2-field-success">{t("store.account.reordered")}: {reorderSuccess}
               {reorderProblem ? <> · {t("store.v2.journey.reorderPartial")}{" "}
-                <Link to="/store/cart">{t("store.v2.bag")} ↗</Link></> : null}</p> : null}
+                <Link to="/store/cart">{t("store.v2.bag")}</Link></> : null}</p> : null}
             <div className="v2-history">{history.map((order) => <article key={order.id} className="v2-history-card" data-testid="v2-history-order">
               <div><strong dir="ltr">{order.order_number}</strong><span className="v2-small">
                 {new Date(order.created_at).toLocaleDateString(lang === "ar" ? "ar-EG" : "en-GB")} · {t("store.cart.itemCount", {

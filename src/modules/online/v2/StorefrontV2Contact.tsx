@@ -44,7 +44,7 @@ export function StorefrontV2Contact() {
         {contact.email ? <div><dt>{t("store.contact.email")}</dt><dd>{emailHref ?
           <a href={emailHref}>{contact.email}</a> : contact.email}</dd></div> : null}
         {address ? <div><dt>{t("store.contact.address")}</dt><dd>{address}{" "}
-          {map ? <a href={map} target="_blank" rel="noopener noreferrer">{t("store.contact.openMap")} ↗</a> : null}</dd></div> : null}
+          {map ? <a href={map} target="_blank" rel="noopener noreferrer">{t("store.contact.openMap")}</a> : null}</dd></div> : null}
         {hours ? <div><dt>{t("store.contact.hours")}</dt><dd className="v2-preline">{hours}</dd></div> : null}
       </dl>
     </V2Panel>
@@ -52,13 +52,13 @@ export function StorefrontV2Contact() {
         <textarea value={message} rows={4} onChange={(event) => setMessage(event.target.value)}
           placeholder={t("store.contact.messagePlaceholder")} /></label>
         {send ? <a className="v2-primary-button" href={send} target="_blank" rel="noopener noreferrer">
-          {t("store.contact.sendOnWhatsapp")} ↗</a> : <p className="v2-small">{t("store.contact.noWhatsapp")}</p>}
+          {t("store.contact.sendOnWhatsapp")}</a> : <p className="v2-small">{t("store.contact.noWhatsapp")}</p>}
         <p className="v2-small">{t("store.contact.whatsappNote")}</p>
       </V2Panel>
     </div><aside className="v2-journey-aside">
       {channels.length ? <V2Panel title={t("store.contact.followUs")}>
         <div className="v2-contact-channels">{channels.map((channel) => <a key={channel.platform}
-          href={channel.href} target="_blank" rel="noopener noreferrer">{channel.label} ↗</a>)}</div>
+          href={channel.href} target="_blank" rel="noopener noreferrer">{channel.label}</a>)}</div>
       </V2Panel> : null}
       {settings.delivery.enabled || settings.delivery.pickup_enabled ? <V2Panel title={t("store.footer.delivery")}>
         {settings.delivery.enabled ? <p>{t("store.checkout.delivery")}: {settings.delivery.fee
@@ -70,7 +70,7 @@ export function StorefrontV2Contact() {
           {deliveryZones.filter((zone) => zone.enabled).map((zone) => pick(zone.name_ar, zone.name_en)).join(" · ")}</p> : null}
       </V2Panel> : null}
       {instapay ? <V2Panel title={t("store.checkout.instapay")}><a href={instapay} target="_blank" rel="noopener noreferrer">
-        {t("store.checkout.openInstapay")} ↗</a><p className="v2-small">{t("store.contact.instapayNote")}</p></V2Panel> : null}
+        {t("store.checkout.openInstapay")}</a><p className="v2-small">{t("store.contact.instapayNote")}</p></V2Panel> : null}
     </aside></div>
   </div>;
 }

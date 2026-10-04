@@ -78,7 +78,7 @@ export function StorefrontV2DraftPreview({ settings, products }: {
             <div className={`v2-hero-content v2-hero-${slide.contentPosition}`} style={{ padding: "22px 0", width: "calc(100% - 36px)" }}>
               {slide.title ? <h1 style={{ fontSize: device === "mobile" ? 30 : 38 }}>{slide.title}</h1> : null}
               {slide.subtitle ? <p className="v2-hero-subtitle" style={{ fontSize: 12 }}>{slide.subtitle}</p> : null}
-              {slide.ctaLabel ? <span className="v2-hero-button" style={{ marginTop: 12 }}>{slide.ctaLabel} ↗</span> : null}
+              {slide.ctaLabel ? <span className="v2-hero-button" style={{ marginTop: 12 }}>{slide.ctaLabel}</span> : null}
             </div>
           </div>
         ) : null}

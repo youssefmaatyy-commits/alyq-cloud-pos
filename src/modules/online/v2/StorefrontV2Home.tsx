@@ -68,7 +68,7 @@ export function StorefrontV2Home() {
   }
   function action(section: HomepageSectionConfig, fallback = "#/store/products") {
     const label = section.cta_ar || section.cta_en ? pick(section.cta_ar, section.cta_en) : t("store.v2.viewAll");
-    return <V2ActionLink href={section.cta_href || fallback} className="v2-text-link">{label}<span aria-hidden> ↗</span></V2ActionLink>;
+    return <V2ActionLink href={section.cta_href || fallback} className="v2-text-link">{label}<span aria-hidden></span></V2ActionLink>;
   }
 
   const render = (section: HomepageSectionConfig) => {
@@ -95,7 +95,7 @@ export function StorefrontV2Home() {
               {slide.title ? <h1>{slide.title}</h1> : null}
               {slide.subtitle ? <p className="v2-hero-subtitle">{slide.subtitle}</p> : null}
               <div className="v2-hero-actions">
-                {slide.ctaLabel ? <V2ActionLink href={slide.ctaHref} className="v2-hero-button">{slide.ctaLabel}<span aria-hidden> ↗</span></V2ActionLink> : null}
+                {slide.ctaLabel ? <V2ActionLink href={slide.ctaHref} className="v2-hero-button">{slide.ctaLabel}<span aria-hidden></span></V2ActionLink> : null}
                 {slide.secondaryCtaLabel ? <V2ActionLink href={slide.secondaryCtaHref} className="v2-hero-secondary">{slide.secondaryCtaLabel}</V2ActionLink> : null}
               </div>
             </div>
@@ -126,7 +126,7 @@ export function StorefrontV2Home() {
                 return (
                   <Link key={category.id} to={`/store/products?category=${encodeURIComponent(category.id)}`} className="v2-category">
                     <V2Image src={cover} alt="" />
-                    <span className="v2-category-title">{label}<span aria-hidden> ↗</span></span>
+                    <span className="v2-category-title">{label}<span aria-hidden></span></span>
                   </Link>
                 );
               })}
@@ -170,7 +170,7 @@ export function StorefrontV2Home() {
                 <div className="v2-editorial-copy"><p className="v2-eyebrow">{t("store.v2.eyebrow")}</p>
                   <h3>{pick(block.title_ar, block.title_en)}</h3>
                   {block.subtitle_ar || block.subtitle_en ? <p>{pick(block.subtitle_ar, block.subtitle_en)}</p> : null}
-                  {block.cta_ar || block.cta_en ? <V2ActionLink href={block.cta_href} className="v2-text-link">{pick(block.cta_ar, block.cta_en)} ↗</V2ActionLink> : null}
+                  {block.cta_ar || block.cta_en ? <V2ActionLink href={block.cta_href} className="v2-text-link">{pick(block.cta_ar, block.cta_en)}</V2ActionLink> : null}
                 </div>
               </div>)}</div>
           </V2Section>
@@ -210,7 +210,7 @@ export function StorefrontV2Home() {
             {cover ? <V2Image src={cover} mobileSrc={section.mobile_image_url} alt="" /> : null}
             <div className="v2-editorial-copy"><p className="v2-eyebrow">{t("store.v2.stories")}</p>
               <h3>{title}</h3>{body ? <p>{body}</p> : null}
-              {cta ? <V2ActionLink href={link} className="v2-text-link">{cta} ↗</V2ActionLink> : null}
+              {cta ? <V2ActionLink href={link} className="v2-text-link">{cta}</V2ActionLink> : null}
             </div>
           </div>
         </V2Section>;
@@ -229,7 +229,7 @@ export function StorefrontV2Home() {
         return <V2Section key="newsletter" id="newsletter" title={title} className="v2-newsletter-section">
           <div className="v2-newsletter"><p>{section.body_ar || section.body_en ? pick(section.body_ar, section.body_en) : t("store.v2.newsletterIntro")}</p>
             <a href={`mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent("ALYQ news")}`}
-              className="v2-outline-button">{t("store.v2.newsletterAction")} ↗</a>
+              className="v2-outline-button">{t("store.v2.newsletterAction")}</a>
             <small>{t("store.v2.newsletterNote")}</small>
           </div>
         </V2Section>;
@@ -271,7 +271,7 @@ export function StorefrontV2Home() {
         if (!settings.contact.phone && !settings.contact.email) return null;
         return <V2Section key="contact" title={title}><div className="v2-contact-band">
           <p>{pick(settings.contact.address_ar, settings.contact.address_en)}</p>
-          <Link to="/store/contact" className="v2-text-link">{t("store.nav.contact")} ↗</Link>
+          <Link to="/store/contact" className="v2-text-link">{t("store.nav.contact")}</Link>
         </div></V2Section>;
       }
     }
@@ -280,7 +280,7 @@ export function StorefrontV2Home() {
   const rendered = sections.map(render).filter(Boolean);
   return <div className="v2-home" data-testid="v2-home">{rendered.length ? rendered : (
     <div className="v2-container v2-home-empty"><V2State kind="empty" />
-      <Link to="/store/products" className="v2-outline-button">{t("store.product.browseAll")} ↗</Link>
+      <Link to="/store/products" className="v2-outline-button">{t("store.product.browseAll")}</Link>
     </div>
   )}</div>;
 }

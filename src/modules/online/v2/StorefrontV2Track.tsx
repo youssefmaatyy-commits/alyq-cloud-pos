@@ -78,7 +78,7 @@ export function StorefrontV2Track() {
       </div> : null}
     </div><aside className="v2-journey-aside"><V2Panel title={t("store.confirmation.whatHappensNext")}>
       <p className="v2-small">{t("store.confirmation.step3")}</p>
-      <Link to="/store/contact" className="v2-text-link">{t("store.nav.contact")} ↗</Link>
+      <Link to="/store/contact" className="v2-text-link">{t("store.nav.contact")}</Link>
     </V2Panel></aside></div>
   </div>;
 }

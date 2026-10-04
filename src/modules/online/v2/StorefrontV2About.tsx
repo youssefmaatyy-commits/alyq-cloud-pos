@@ -31,8 +31,8 @@ export function StorefrontV2About() {
       <div className="v2-about-copy"><h1>{title}</h1>
         {body ? body.split(/\n{2,}/).map((paragraph, index) => <p key={index} className="v2-preline">{paragraph.trim()}</p>)
           : <p>{pick(settings.contact.tagline_ar, settings.contact.tagline_en)}</p>}
-        {cta && about.cta_href ? <V2ActionLink href={about.cta_href} className="v2-primary-button">{cta} ↗</V2ActionLink> : null}
-        <Link to="/store/products" className="v2-text-link">{t("store.cart.continueShopping")} ↗</Link>
+        {cta && about.cta_href ? <V2ActionLink href={about.cta_href} className="v2-primary-button">{cta}</V2ActionLink> : null}
+        <Link to="/store/products" className="v2-text-link">{t("store.cart.continueShopping")}</Link>
       </div></div>
   </div>;
 }

@@ -113,7 +113,7 @@ export function StorefrontV2Catalog() {
       <label className="sr-only" htmlFor="v2-search-input">{t("store.search.label")}</label>
       <input id="v2-search-input" type="search" value={search} onChange={(event) => setSearch(event.target.value)}
         placeholder={t("store.search.placeholder")} />
-      <button type="submit">{t("store.v2.searchGo")} ↗</button>
+      <button type="submit">{t("store.v2.searchGo")}</button>
     </form>
     <div className="v2-category-chips" role="group" aria-label={t("store.nav.categories")}>
       <button type="button" aria-pressed={filters.categoryId === "all"} onClick={() => apply({ categoryId: "all" })}>{t("store.v2.allCategories")}</button>
