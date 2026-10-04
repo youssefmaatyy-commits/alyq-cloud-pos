@@ -29,7 +29,7 @@ update public.custom_roles
    and not ('cash_out' = any(capabilities));
 
 create table if not exists public.operation_policies (
-  id                          uuid primary key default gen_random_uuid(),
+  id                          uuid primary key default extensions.gen_random_uuid(),
   branch_id                   uuid not null references public.branches(id) on delete cascade,
   operation                   text not null check (operation in (
     'item_discount','invoice_discount','price_override','void','refund','cash_out','selective_cleanup'
@@ -288,7 +288,7 @@ begin
   insert into public.audit_log(action,entity,entity_id,entity_label,details,user_id,user_name,
     branch_id,module,correlation_id,before_state,after_state)
   values('operation_policy.updated','operation_policy',v_after.id::text,v_after.operation,'{}',
-    auth.uid()::text,coalesce(v_name,'Staff'),v_branch,'approvals',gen_random_uuid()::text,
+    auth.uid()::text,coalesce(v_name,'Staff'),v_branch,'approvals',extensions.gen_random_uuid()::text,
     case when v_before.id is null then null else to_jsonb(v_before)-array['updated_by','updated_at'] end,
     to_jsonb(v_after)-array['updated_by','updated_at']);
   return to_jsonb(v_after);
@@ -349,7 +349,7 @@ begin
     raise exception 'This user is not an approver at the branch' using errcode='check_violation';
   end if;
   insert into public.manager_credentials(user_id,branch_id,pin_hash,changed_by)
-  values(p_user_id,p_branch_id,crypt(p_pin,gen_salt('bf',10)),auth.uid())
+  values(p_user_id,p_branch_id,extensions.crypt(p_pin,extensions.gen_salt('bf',10)),auth.uid())
   on conflict(user_id,branch_id) do update set pin_hash=excluded.pin_hash,changed_at=now(),changed_by=auth.uid();
   delete from public.manager_pin_attempts where approver_id=p_user_id and branch_id=p_branch_id;
   select name into v_name from public.profiles where id=auth.uid();
@@ -365,7 +365,7 @@ $$;
 alter table public.approval_requests
   add column if not exists operation_type text,
   add column if not exists operation_fingerprint text,
-  add column if not exists correlation_id uuid default gen_random_uuid(),
+  add column if not exists correlation_id uuid default extensions.gen_random_uuid(),
   add column if not exists expires_at timestamptz,
   add column if not exists consumed_at timestamptz,
   add column if not exists approver_user_id uuid,
@@ -455,7 +455,7 @@ language sql
 immutable
 set search_path = public
 as $$
-  select encode(digest(
+  select encode(extensions.digest(
     concat_ws('|',p_operation,coalesce(p_branch_id::text,''),coalesce(p_target,''),
       coalesce(round(p_percent,4)::text,''),coalesce(round(p_amount,2)::text,''),
       coalesce(jsonb_strip_nulls(coalesce(p_payload,'{}') - 'approval_request_id')::text,'{}')),
@@ -658,7 +658,7 @@ begin
   if v_attempt.locked_until>now() then return jsonb_build_object('ok',false,'code','RATE_LIMITED'); end if;
   select * into v_cred from public.manager_credentials
    where user_id=v_manager.id and branch_id=v_request.branch_id;
-  v_ok:=v_cred.pin_hash is not null and crypt(coalesce(p_pin,''),v_cred.pin_hash)=v_cred.pin_hash;
+  v_ok:=v_cred.pin_hash is not null and extensions.crypt(coalesce(p_pin,''),v_cred.pin_hash)=v_cred.pin_hash;
   if not v_ok then
     insert into public.manager_pin_attempts(requester_id,approver_id,branch_id,window_started,failed_count,locked_until)
     values(auth.uid(),v_manager.id,v_request.branch_id,now(),1,null)
@@ -1055,7 +1055,7 @@ create sequence if not exists public.cash_movement_number_seq start 1;
 create or replace function public.next_cash_movement_number() returns text language sql volatile
 as $$ select 'CM-'||lpad(nextval('public.cash_movement_number_seq')::text,6,'0') $$;
 create table if not exists public.cash_movements(
-  id uuid primary key default gen_random_uuid(),
+  id uuid primary key default extensions.gen_random_uuid(),
   movement_number text not null unique default public.next_cash_movement_number(),
   branch_id uuid not null references public.branches(id) on delete restrict,
   shift_id uuid not null references public.shifts(id) on delete restrict,
@@ -1068,7 +1068,7 @@ create table if not exists public.cash_movements(
   approver_id uuid references public.profiles(id) on delete restrict,
   approver_name text,
   approval_request_id uuid references public.approval_requests(id) on delete restrict,
-  correlation_id uuid not null default gen_random_uuid(),
+  correlation_id uuid not null default extensions.gen_random_uuid(),
   created_at timestamptz not null default now(),
   constraint cash_movement_approval_complete check(
     (approver_id is null and approver_name is null and approval_request_id is null)
@@ -1293,7 +1293,7 @@ begin
     jsonb_build_object('opening_cash',v_shift.opening_cash,'cash_sales',v_cash_sales,'cash_in',v_in,
       'cash_refunds',v_cash_refunds,'cash_out',v_out,'legacy_cash_expenses',v_cash_expenses,
       'expected_cash',v_expected,'actual_cash',p_actual_cash,'difference',v_diff),
-    auth.uid()::text,coalesce(v_name,'Staff'),v_branch,'shifts',gen_random_uuid()::text,
+    auth.uid()::text,coalesce(v_name,'Staff'),v_branch,'shifts',extensions.gen_random_uuid()::text,
     nullif(btrim(coalesce(p_reason,'')),''),v_summary);
   return v_shift;
 end;
