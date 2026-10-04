@@ -74,19 +74,27 @@ function MobileShell() {
         {branch.error ? <p className="mobile-top-error">{branch.error}</p> : null}
       </header>
       <main className="mobile-content" id="mobile-main">
+        {/* App.tsx mounts this shell on a wildcard route under the "mobile"
+            segment, which strips that segment before this descendant <Routes>
+            ever sees the pathname (the same mechanism SettingsArea relies on
+            for its own "settings" wildcard mount). Route paths declared here
+            must therefore stay relative to that already-consumed segment —
+            index/"orders"/etc., never a path re-including the mount segment —
+            or every match falls through to the wildcard below and no tab but
+            the shell chrome ever renders. */}
         <Routes>
-          <Route path="/mobile" element={<MobileDashboardPage />} />
-          <Route path="/mobile/orders" element={<MobileOrdersPage />} />
-          <Route path="/mobile/orders/:id" element={<MobileOrderDetailPage />} />
-          <Route path="/mobile/inventory" element={<MobileInventoryPage />} />
-          <Route path="/mobile/inventory/:id" element={<MobileProductDetailPage />} />
-          <Route path="/mobile/invoices" element={<MobileInvoicesPage />} />
-          <Route path="/mobile/invoices/:id" element={<MobileInvoiceDetailPage />} />
-          <Route path="/mobile/approvals" element={<MobileApprovalsPage />} />
-          <Route path="/mobile/approvals/:id" element={<MobileApprovalDetailPage />} />
-          <Route path="/mobile/notifications" element={<MobileNotificationsPage />} />
-          <Route path="/mobile/health" element={<MobileHealthPage />} />
-          <Route path="/mobile/more" element={<MobileMorePage />} />
+          <Route index element={<MobileDashboardPage />} />
+          <Route path="orders" element={<MobileOrdersPage />} />
+          <Route path="orders/:id" element={<MobileOrderDetailPage />} />
+          <Route path="inventory" element={<MobileInventoryPage />} />
+          <Route path="inventory/:id" element={<MobileProductDetailPage />} />
+          <Route path="invoices" element={<MobileInvoicesPage />} />
+          <Route path="invoices/:id" element={<MobileInvoiceDetailPage />} />
+          <Route path="approvals" element={<MobileApprovalsPage />} />
+          <Route path="approvals/:id" element={<MobileApprovalDetailPage />} />
+          <Route path="notifications" element={<MobileNotificationsPage />} />
+          <Route path="health" element={<MobileHealthPage />} />
+          <Route path="more" element={<MobileMorePage />} />
           <Route path="*" element={<Navigate to="/mobile" replace />} />
         </Routes>
       </main>

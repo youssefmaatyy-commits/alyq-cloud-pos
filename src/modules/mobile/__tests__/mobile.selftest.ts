@@ -69,6 +69,21 @@ test("mobile source has a narrow native surface and no privileged secret materia
   assert.match(source, /mobile_installation_deactivate/);
 });
 
+test("bottom-tab routes are relative to the /mobile/* mount, not absolute", () => {
+  // `App.tsx` mounts this shell at `<Route path="/mobile/*">`, which strips the
+  // "/mobile" prefix before this component's own descendant <Routes> ever sees
+  // the pathname (the same mechanism `SettingsArea` relies on for `/settings/*`).
+  // A route declared here as `path="/mobile/orders"` therefore never matches —
+  // every tab but Home silently falls through to the wildcard. This guards
+  // against that regression reappearing.
+  const app = fs.readFileSync("src/modules/mobile/MobileApp.tsx", "utf8");
+  assert.doesNotMatch(app, /<Route\s+path="\/mobile/, "route paths inside MobileApp must be relative, e.g. path=\"orders\" not path=\"/mobile/orders\"");
+  assert.match(app, /<Route\s+index\s+element=\{<MobileDashboardPage/);
+  for (const relative of ["orders", "orders/:id", "inventory", "inventory/:id", "invoices", "invoices/:id", "approvals", "approvals/:id", "notifications", "health", "more"]) {
+    assert.match(app, new RegExp(`<Route path="${relative.replace(/[/:]/g, "\\$&")}"`), `missing relative route for "${relative}"`);
+  }
+});
+
 test("phone shell is purpose-built, RTL-aware and width hardened", () => {
   const app = fs.readFileSync("src/modules/mobile/MobileApp.tsx", "utf8");
   const css = fs.readFileSync("src/modules/mobile/mobile.css", "utf8");
