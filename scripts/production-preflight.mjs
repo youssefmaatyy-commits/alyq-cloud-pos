@@ -35,8 +35,8 @@ check(/webDir:\s*["']dist["']/.test(cap), "Capacitor packages the production dis
 const migrationDir = path.join(root, "supabase", "migrations");
 const migrations = fs.readdirSync(migrationDir).filter((name) => /^\d{4}_.+\.sql$/.test(name)).sort();
 const contiguous = migrations.every((name, index) => Number(name.slice(0, 4)) === index + 1);
-check(migrations.length === 83 && contiguous && migrations.at(-1) === "0083_mobile_installations_and_push.sql", "migrations are contiguous 0001–0083");
-check(/SHIPPED_MIGRATION_COUNT\s*=\s*83/.test(operations) && /0083_mobile_installations_and_push\.sql/.test(operations), "application schema constants match migration 0083");
+check(migrations.length === 84 && contiguous && migrations.at(-1) === "0084_role_aliases_rls_hardening.sql", "migrations are contiguous 0001–0084");
+check(/SHIPPED_MIGRATION_COUNT\s*=\s*84/.test(operations) && /0084_role_aliases_rls_hardening\.sql/.test(operations), "application schema constants match migration 0084");
 
 const requiredEnv = ["VITE_SUPABASE_URL", "VITE_SUPABASE_ANON_KEY", "VITE_CURRENCY", "VITE_STOREFRONT_URL", "VITE_DEMO_SEED", "VITE_APP_VERSION", "VITE_BUILD_SHA"];
 check(requiredEnv.every((name) => env.includes(name)), "all client-safe production variable names are documented");
