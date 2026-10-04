@@ -368,10 +368,14 @@ export function StorefrontV2Checkout() {
               {pick(copy.instapay_note_ar, copy.instapay_note_en)}</p> : null}
             <p className="v2-alert" role="status">{t("store.checkout.instapayNeverAutomatic")}</p>
           </div>}
+          {/* Order notes is a single optional field -- folded into the
+             payment panel instead of its own full bordered section, which
+             only added an extra card's worth of border/padding/heading to a
+             checkout that already has four other sections above it. */}
+          <label className="v2-field">{t("store.checkout.orderNotes")} ({t("common.optional")})
+            <textarea value={notes} rows={3} placeholder={t("store.checkout.orderNotesPlaceholder")}
+              onChange={(event) => setNotes(event.target.value)} /></label>
         </V2Panel>
-        <V2Panel><label className="v2-field">{t("store.checkout.orderNotes")} ({t("common.optional")})
-          <textarea value={notes} rows={3} placeholder={t("store.checkout.orderNotesPlaceholder")}
-            onChange={(event) => setNotes(event.target.value)} /></label></V2Panel>
       </div><aside className="v2-journey-aside"><V2Panel title={t("store.cart.summary")}>
         <ul className="v2-checkout-items">{entries.map((entry) => <li key={`${entry.product.id}::${entry.variant?.id ?? ""}`}>
           <span>{pick(entry.product.name_ar, entry.product.name_en)}

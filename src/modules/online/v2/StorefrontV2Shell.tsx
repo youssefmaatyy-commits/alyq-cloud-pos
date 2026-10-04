@@ -10,6 +10,7 @@ import { adaptV2Appearance, v2Href } from "./appearance";
 import { V2ActionLink, V2Icon as Icon } from "./Primitives";
 import { resolvedV2SocialChannels, V2SocialIcons } from "./SocialChannels";
 import { SocialIcon } from "../components/storefront/SocialIcon";
+import { useV2ScrollRestoration } from "./scrollRestoration";
 import "./storefront-v2.css";
 
 export function StorefrontV2Shell({ children }: { children: ReactNode }) {
@@ -19,6 +20,9 @@ export function StorefrontV2Shell({ children }: { children: ReactNode }) {
   const { customer } = useStoreAccount();
   const location = useLocation();
   const navigate = useNavigate();
+  // One centralized scroll policy for every /store/* route change -- see
+  // ./scrollRestoration.ts. No per-page/per-button scrollTo() calls.
+  useV2ScrollRestoration();
   const appearance = useMemo(() => adaptV2Appearance(settings), [settings]);
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -35,6 +39,26 @@ export function StorefrontV2Shell({ children }: { children: ReactNode }) {
   const drawerRef = useRef<HTMLElement>(null);
   const menuTrigger = useRef<HTMLButtonElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const headerRef = useRef<HTMLElement>(null);
+  // The sticky "order summary" column on desktop checkout/cart (see
+  // .v2-journey-aside in storefront-v2.css) used to assume a fixed 150px
+  // header height so it never slid under the sticky header. That guess is
+  // only correct at the default logo size with no desktop nav wrap; a
+  // merchant-configured taller logo (the admin slider allows up to 96px) can
+  // make the real sticky header taller than 150px, which would overlap the
+  // summary. Measuring the header's own live rendered height removes the
+  // guess entirely -- the CSS only ever has to add this shop's *actual*
+  // header height, whatever it is.
+  const [headerHeight, setHeaderHeight] = useState(0);
+  useEffect(() => {
+    const el = headerRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry) setHeaderHeight(Math.round(entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height));
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
   const messages = useMemo(() => resolvedAnnouncementMessages(settings), [settings]);
   const categories = categoriesFacet.slice(0, 12);
   const hasOffers = campaigns.some((campaign) => isCampaignLive(campaign)) || promotions.some((promotion) => isPromotionLive(promotion));
@@ -160,7 +184,9 @@ export function StorefrontV2Shell({ children }: { children: ReactNode }) {
   const newsletterEmail = settings.contact.email.trim();
 
   return (
-    <div className="store-v2" dir={dir} style={appearance.variables} data-testid="store-v2">
+    <div className="store-v2" dir={dir} data-testid="store-v2"
+      style={headerHeight > 0 ? { ...appearance.variables, "--v2-header-live-height": `${headerHeight}px` } as CSSProperties
+        : appearance.variables}>
       <a href="#v2-main" className="v2-skip" onClick={(event) => {
         // HashRouter owns the fragment. Native #v2-main navigation would be
         // mistaken for a route and send the shopper to the login fallback.
@@ -185,7 +211,7 @@ export function StorefrontV2Shell({ children }: { children: ReactNode }) {
           </span>}
         </div>
       ) : null}
-      <header className={`v2-header ${appearance.stickyHeader ? "v2-header-sticky" : ""}`}>
+      <header ref={headerRef} className={`v2-header ${appearance.stickyHeader ? "v2-header-sticky" : ""}`}>
         <div className="v2-header-inner">
           <div className="v2-header-start">
             <button ref={menuTrigger} type="button" className="v2-icon-button v2-mobile-only"

@@ -695,13 +695,43 @@
   .store-v2 .v2-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .store-v2 .v2-field-wide { grid-column: 1/-1; }
 }
+/* Mobile checkout/cart/account/track/confirmation polish: these are utility
+   "journey" pages, not marketing pages, so a phone-width visit should not
+   need as much scroll to see the whole flow. Every rule below only trims
+   outer rhythm (page padding, gaps between stacked panels, heading size) --
+   no required field, label, or button is removed, and every input/button
+   keeps its existing >=44px touch target. Applies to every page sharing
+   these classes (cart, checkout, confirmation, track, account, contact),
+   not only checkout, since the same "too tall/too spaced out" issue was the
+   same shared markup on all of them. */
+@media (max-width: 679px) {
+  .store-v2 .v2-journey { padding-block: 18px 40px; }
+  .store-v2 .v2-journey > .v2-eyebrow { margin-bottom: 4px; }
+  .store-v2 .v2-journey > h1, .store-v2 .v2-journey-title h1 { font-size: 23px; margin-bottom: 10px; }
+  .store-v2 .v2-journey-grid { gap: 12px; margin-top: 14px; }
+  .store-v2 .v2-journey-main, .store-v2 .v2-checkout-form, .store-v2 .v2-journey-aside,
+  .store-v2 .v2-order-details { gap: 12px; }
+  .store-v2 .v2-journey-panel { padding: 15px; }
+  .store-v2 .v2-journey-panel > :not(:last-child) { margin-bottom: 12px; }
+  .store-v2 .v2-journey-panel h2 { font-size: 16px; margin-bottom: 12px; }
+  .store-v2 .v2-form-grid { gap: 10px; }
+  .store-v2 .v2-choice-grid { gap: 6px; margin-top: 8px; }
+  .store-v2 .v2-choice-grid button { min-height: 44px; padding: 7px 10px; }
+  .store-v2 .v2-totals { gap: 7px; }
+  .store-v2 .v2-coupon { padding-top: 13px; }
+}
 @media (min-width: 760px) {
   .store-v2 .v2-about-layout { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 }
 @media (min-width: 880px) {
   .store-v2 .v2-journey-grid { grid-template-columns: minmax(0, 1.65fr) minmax(280px, .9fr); }
   .store-v2 .v2-journey-aside { position: sticky; top: 20px; }
-  .store-v2 .v2-header-sticky ~ .v2-main .v2-journey-aside { top: 150px; }
+  /* `--v2-header-live-height` is the sticky header's own measured rendered
+     height (set by StorefrontV2Shell via ResizeObserver) so the summary
+     column never overlaps it regardless of a configured logo height or
+     desktop nav wrap; 150px only covers browsers without ResizeObserver or
+     the brief instant before the first measurement lands. */
+  .store-v2 .v2-header-sticky ~ .v2-main .v2-journey-aside { top: calc(var(--v2-header-live-height, 150px) + 16px); }
   .store-v2 .v2-account-grid { grid-template-columns: minmax(165px, 210px) minmax(0, 1fr); }
   .store-v2 .v2-account-nav { flex-direction: column; overflow: visible; }
 }

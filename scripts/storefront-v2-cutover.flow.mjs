@@ -93,6 +93,93 @@ check("missing product stays inside V2, shows a noindex not-found state and no o
   !testid("v2-product") && Boolean(document.querySelector('.v2-not-found h1')) &&
   robots() === "noindex, nofollow" && !testid("v2-order-details"));
 
+// ── Scroll restoration (centralized in StorefrontV2Shell, src/modules/online/v2/scrollRestoration.ts) ──
+// jsdom never lays anything out, so `window.scrollY` is always 0 and cannot
+// move on its own; stand up a tiny controllable stand-in so the shell's real
+// scroll listener/`scrollTo` calls can be observed end to end. Real in-app
+// <Link> clicks are used for every "new destination" hop (not the `go()`
+// helper's raw `location.hash =` assignment above, which bypasses
+// history.pushState entirely -- react-router never sees a distinct history
+// key for it, so it cannot exercise this feature); browser Back/Forward then
+// exercises the real session-history entries those clicks created.
+{
+  let simulatedY = 0;
+  const scrollCalls = [];
+  Object.defineProperty(dom.window, "scrollY", { configurable: true, get: () => simulatedY });
+  dom.window.scrollTo = (options) => {
+    const top = typeof options === "object" && options !== null ? (options.top ?? 0) : 0;
+    scrollCalls.push(top);
+    simulatedY = top;
+  };
+  const simulateScroll = (y) => { simulatedY = y; dom.window.dispatchEvent(new dom.window.Event("scroll")); };
+  const lastScrollTarget = () => scrollCalls.at(-1);
+  const clickLink = (selector, scope = document) => {
+    const el = scope.querySelector(selector);
+    if (!el) throw new Error(`scroll-restoration test: link not found: ${selector}`);
+    clickEl(el);
+  };
+
+  await go("#/store", "v2-home");
+  await waitFor(() => testid("v2-home")?.querySelector(".v2-card-name"), { label: "a home product link" });
+  simulateScroll(540); // shopper scrolls down the home page
+
+  clickLink(".v2-card-name", testid("v2-home")); // real <Link> click, like a shopper would
+  await waitFor(() => testid("v2-product"), { label: "home product click opens the PDP" });
+  check("clicking a product card (Home -> Product, a new destination) scrolls to the top",
+    lastScrollTarget() === 0);
+  const productA = dom.window.location.hash;
+  simulateScroll(300); // shopper scrolls down product A
+
+  clickLink('.v2-desktop-nav a[href="#/store/products"]'); // header nav, always present regardless of viewport CSS
+  await waitFor(() => testid("v2-catalog"), { label: "nav click opens the catalogue" });
+  check("clicking header nav (Product -> Catalogue, a new destination) scrolls to the top",
+    lastScrollTarget() === 0);
+  simulateScroll(200); // shopper scrolls down the catalogue
+
+  await waitFor(() => testid("v2-catalog")?.querySelectorAll(".v2-card-name").length, { label: "catalogue product links" });
+  const catalogLinks = [...testid("v2-catalog").querySelectorAll(".v2-card-name")];
+  const otherProductLink = catalogLinks.find((a) => a.getAttribute("href") !== productA) ?? catalogLinks[0];
+  clickEl(otherProductLink);
+  await waitFor(() => testid("v2-product"), { label: "catalogue product click opens a PDP" });
+  const productB = dom.window.location.hash;
+  check("clicking a different product card (Catalogue -> Product, a new destination) scrolls to the top",
+    lastScrollTarget() === 0 && productB !== productA);
+  simulateScroll(150); // shopper scrolls down product B
+
+  clickLink("a.v2-bag-button"); // header cart icon
+  await waitFor(() => testid("v2-cart"), { label: "bag icon click opens the cart" });
+  check("clicking the header bag icon (Product -> Cart, a new destination) scrolls to the top",
+    lastScrollTarget() === 0);
+  simulateScroll(90); // shopper scrolls down the (empty) cart
+
+  clickLink('.v2-desktop-nav a[href="#/store/about"]');
+  await waitFor(() => testid("v2-about"), { label: "nav click opens About" });
+  check("clicking header nav (Cart -> About, a new destination) scrolls to the top", lastScrollTarget() === 0);
+
+  dom.window.history.back(); // -> cart
+  await waitFor(() => testid("v2-cart"), { label: "Back returns to the cart" });
+  check("browser Back restores the cart's own scroll position, not the top", lastScrollTarget() === 90);
+
+  dom.window.history.back(); // -> product B
+  await waitFor(() => testid("v2-product") && dom.window.location.hash === productB, { label: "Back returns to product B" });
+  check("a second Back restores product B's own scroll position", lastScrollTarget() === 150);
+
+  dom.window.history.back(); // -> catalogue
+  await waitFor(() => testid("v2-catalog"), { label: "Back returns to the catalogue" });
+  check("a third Back restores the catalogue's own scroll position", lastScrollTarget() === 200);
+
+  dom.window.history.back(); // -> product A
+  await waitFor(() => testid("v2-product") && dom.window.location.hash === productA, { label: "Back returns to product A" });
+  check("a fourth Back restores product A's own scroll position", lastScrollTarget() === 300);
+
+  dom.window.history.forward(); // -> catalogue
+  await waitFor(() => testid("v2-catalog"), { label: "Forward returns to the catalogue" });
+  check("browser Forward restores the catalogue's own scroll position again, not the top",
+    lastScrollTarget() === 200);
+
+  await go("#/store", "v2-home");
+}
+
 await navigate("#/login", 320);
 await signInAs("admin");
 await go("#/online/website?tab=v2", "v2-studio");
