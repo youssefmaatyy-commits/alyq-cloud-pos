@@ -7,7 +7,8 @@ import { capabilitiesOf } from "@/lib/permissions/roles";
 import { getDemoRepository } from "../data/demoRepository";
 import type { NewProduct } from "../types";
 import type { ProductVariant } from "../variants";
-import { saveVariant } from "../services/variantService";
+import { generateVariants, saveVariant } from "../services/variantService";
+import { deriveBarcodeFromSku, nextBarcodeOnSkuChange } from "../services/barcode";
 import {
   EMPTY_PRODUCT_VARIANT_FORM, reconcileVariantDraft, validateVariantDraft,
   variantDraftFromSaved, variantDraftTotal,
@@ -55,6 +56,84 @@ await test("auto-generated colour × size rows keep independent stock and preser
     index === 1 ? { ...row, stock_quantity: "-1" } : row) }, "RING"), "invalidQuantity");
   assert.equal(validateVariantDraft({ ...draft, colors: [draft.colors[0], color("color:duplicate", " gold ")] }, "RING"), "duplicateColor");
   assert.equal(validateVariantDraft({ ...draft, mode: "sizes", colors: [], sizes: [] }, "RING"), "sizesRequired");
+});
+
+await test("a freshly generated colour × size combination is never barcode-less: it gets deriveBarcodeFromSku(sku) immediately", () => {
+  const draft = reconcileVariantDraft({ ...EMPTY_PRODUCT_VARIANT_FORM, mode: "colors_sizes",
+    colors: [color("color:gold", "Gold")], sizes: ["17"], rows: [] }, "RING");
+  assert.equal(draft.rows.length, 1);
+  const row = draft.rows[0];
+  assert.notEqual(row.barcode, "", "a brand-new row must not be left blank");
+  assert.equal(row.barcode, deriveBarcodeFromSku(row.sku), "the row's own barcode is derived from its own SKU, deterministically");
+  // Determinism: reconciling again from the exact same inputs reproduces the
+  // exact same barcode — no randomness, no time-based component anywhere.
+  const again = reconcileVariantDraft({ ...EMPTY_PRODUCT_VARIANT_FORM, mode: "colors_sizes",
+    colors: [color("color:gold", "Gold")], sizes: ["17"], rows: [] }, "RING");
+  assert.equal(again.rows[0].barcode, row.barcode);
+});
+
+await test("nextBarcodeOnSkuChange regenerates while in auto mode but preserves a manual override", () => {
+  // Auto mode: blank barcode always follows the new SKU.
+  assert.equal(nextBarcodeOnSkuChange("RING-GOLD-17", "RING-GOLD-18", ""), deriveBarcodeFromSku("RING-GOLD-18"));
+  // Auto mode: a barcode that still matches the OLD sku's derivation is
+  // considered "auto" and follows the SKU change too.
+  assert.equal(
+    nextBarcodeOnSkuChange("RING-GOLD-17", "RING-GOLD-18", deriveBarcodeFromSku("RING-GOLD-17")),
+    deriveBarcodeFromSku("RING-GOLD-18"),
+  );
+  // Manual override: once the barcode has diverged from what the OLD sku
+  // would derive, a SKU edit must never silently replace it.
+  assert.equal(nextBarcodeOnSkuChange("RING-GOLD-17", "RING-GOLD-18", "MANUFACTURER-CODE-9"), "MANUFACTURER-CODE-9");
+});
+
+await test("generateVariants persists the derived barcode automatically, and saveVariant derives one for a manually added combination left blank", async () => {
+  signIn("admin");
+  const input: NewProduct = {
+    sku: "GEN-RING", barcode: null, name_ar: "خاتم", name_en: "Generated ring", description_ar: null,
+    description_en: null, category_id: null, product_type: "physical", selling_price: 150,
+    cost_price: 80, tax_rate: 0, stock_tracking_enabled: true, stock_quantity: 0,
+    low_stock_level: 1, show_on_website: true, is_featured: false, active: true,
+    image_url: null, images: [],
+  };
+  const product = await repo.createProduct(input);
+  const [generated] = await generateVariants({
+    product,
+    rows: [{
+      color: { color_ar: "ذهبي", color_en: "Gold", color_hex: "#d4af37" },
+      size: 17, size_label: null, size_value: "17", size_sort_order: 17,
+      sku: "GEN-RING-GOLD-17", enabled: true,
+    }],
+    siblings: [],
+    lowStockLevel: 1,
+  });
+  assert.equal(generated.barcode, deriveBarcodeFromSku("GEN-RING-GOLD-17"),
+    "a generated combination's barcode is automatically derived, never left null");
+
+  // A manually added combination (saveVariant, not the generator) with no
+  // barcode typed in must also end up with the deterministic one — manual
+  // creation is not a loophole around auto-generation.
+  const manual = (await saveVariant({
+    product,
+    values: {
+      sku: "GEN-RING-SILVER-18", barcode: "", color_ar: "فضي", color_en: "Silver", color_hex: "#c0c0c0",
+      size: 18, size_label: null, image_url: null, price_override: null, cost_override: null,
+      stock_quantity: 0, low_stock_level: 1, active: true, sort_order: 2,
+    },
+    siblings: [generated],
+  })).variant;
+  assert.equal(manual.barcode, deriveBarcodeFromSku("GEN-RING-SILVER-18"));
+
+  // An explicit manual barcode on a manually added combination is respected verbatim.
+  const overridden = (await saveVariant({
+    product,
+    values: {
+      sku: "GEN-RING-ROSE-19", barcode: "SUPPLIER-CODE-7", color_ar: "وردي", color_en: "Rose", color_hex: "#e8b4b8",
+      size: 19, size_label: null, image_url: null, price_override: null, cost_override: null,
+      stock_quantity: 0, low_stock_level: 1, active: true, sort_order: 3,
+    },
+    siblings: [generated, manual],
+  })).variant;
+  assert.equal(overridden.barcode, "SUPPLIER-CODE-7");
 });
 
 await test("no variants, colour-only and size-only modes generate only the requested shelf identities", () => {

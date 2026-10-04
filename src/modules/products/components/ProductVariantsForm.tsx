@@ -9,6 +9,7 @@ import {
   type ProductVariantDraft, type ProductVariantFormValue, type ProductVariantMode, type VariantColorRow,
 } from "../services/variantDraft";
 import { naturalSizeCompare, parseSizes, suggestVariantSku, variantLabel } from "../variants";
+import { deriveBarcodeFromSku, nextBarcodeOnSkuChange } from "../services/barcode";
 
 export { EMPTY_PRODUCT_VARIANT_FORM };
 export type { ProductVariantDraft, ProductVariantFormValue, ProductVariantMode };
@@ -70,6 +71,14 @@ export function ProductVariantsForm({
   const updateRow = (id: string, patch: Partial<ProductVariantDraft>) => onChange({
     ...value, rows: value.rows.map((row) => row.id === id ? { ...row, ...patch } : row),
   });
+  /**
+   * Editing a row's SKU keeps its barcode "in sync" while the barcode is
+   * still in auto mode (blank, or exactly what the old SKU would derive) —
+   * the same rule the product form and the variant editor apply. A barcode
+   * that already diverged (hand-typed, a manufacturer code) is left alone.
+   */
+  const updateSku = (row: ProductVariantDraft, nextSku: string) =>
+    updateRow(row.id, { sku: nextSku, barcode: nextBarcodeOnSkuChange(row.sku, nextSku, row.barcode) });
 
   const removeColor = (id: string) => {
     if (value.rows.some((row) => row.color_id === id && row.persistedId)) {
@@ -156,15 +165,20 @@ export function ProductVariantsForm({
       targets.some((target) => target.id === row.id) ? { ...row, [field]: raw } : row,
     ) });
   };
+  /** Fills any blank SKU, then any blank barcode left behind — a row never
+   * leaves this screen without both identifiers once this has run. */
   const generateMissingSku = () => {
     const taken = value.rows.map((row) => row.sku).filter(Boolean);
     onChange({ ...value, rows: value.rows.map((row) => {
-      if (row.sku.trim()) return row;
-      const color = value.colors.find((entry) => entry.id === row.color_id);
-      const sku = suggestVariantSku(productSku, color ? { color_ar: color.color_ar, color_en: color.color_en } : null,
-        row.size || null, row.size || null, taken);
-      taken.push(sku);
-      return { ...row, sku };
+      let sku = row.sku;
+      if (!sku.trim()) {
+        const color = value.colors.find((entry) => entry.id === row.color_id);
+        sku = suggestVariantSku(productSku, color ? { color_ar: color.color_ar, color_en: color.color_en } : null,
+          row.size || null, row.size || null, taken);
+        taken.push(sku);
+      }
+      const barcode = row.barcode.trim() || deriveBarcodeFromSku(sku);
+      return sku === row.sku && barcode === row.barcode ? row : { ...row, sku, barcode };
     }) });
   };
 
@@ -296,7 +310,7 @@ export function ProductVariantsForm({
                   const archived = row.persistedId && !row.active;
                   return <tr key={row.id} data-testid={`product-variant-${row.id}`} className={`border-b border-slate-100 last:border-0 ${archived ? "bg-slate-50 text-slate-500" : ""}`}>
                     <td className="min-w-32 p-2 font-bold">{variantLabel({ color_ar: row.color_ar, color_en: row.color_en, size: null, size_label: row.size, size_value: row.size }, lang) || "—"}</td>
-                    <td className="p-2"><TextInput className="w-32 font-mono text-xs" value={row.sku} onChange={(event) => updateRow(row.id, { sku: event.target.value })} aria-label={`${t("products.sku")} ${row.id}`} data-testid={`variant-field-sku-${row.id}`} /></td>
+                    <td className="p-2"><TextInput className="w-32 font-mono text-xs" value={row.sku} onChange={(event) => updateSku(row, event.target.value)} aria-label={`${t("products.sku")} ${row.id}`} data-testid={`variant-field-sku-${row.id}`} /></td>
                     <td className="p-2"><TextInput className="w-32 font-mono text-xs" value={row.barcode} onChange={(event) => updateRow(row.id, { barcode: event.target.value })} aria-label={`${t("products.barcode")} ${row.id}`} data-testid={`variant-field-barcode-${row.id}`} /></td>
                     <td className="p-2"><TextInput dir="ltr" inputMode="numeric" className="w-16 text-xs" value={row.stock_quantity} readOnly={!stockEditable || Boolean(row.persistedId)} onChange={(event) => updateRow(row.id, { stock_quantity: event.target.value })} aria-label={`${t("products.variants.colStock")} ${row.id}`} data-testid={`variant-field-stock-${row.id}`} /></td>
                     <td className="p-2"><TextInput dir="ltr" inputMode="numeric" className="w-16 text-xs" value={row.low_stock_level} onChange={(event) => updateRow(row.id, { low_stock_level: event.target.value })} aria-label={`${t("products.variants.lowStock")} ${row.id}`} data-testid={`variant-field-low-${row.id}`} /></td>

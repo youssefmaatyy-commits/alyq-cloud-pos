@@ -2,6 +2,7 @@ import {
   colorKeyOf, generateCombinations, naturalSizeCompare, suggestVariantSku, variantSizeValue,
   type ProductColorImage, type ProductVariant, type VariantColorDraft,
 } from "../variants";
+import { deriveBarcodeFromSku } from "./barcode";
 
 export type ProductVariantMode = "none" | "colors" | "sizes" | "colors_sizes";
 export interface VariantColorRow {
@@ -98,7 +99,11 @@ export function reconcileVariantDraft(value: ProductVariantFormValue, productSku
       size: combination.size_value ?? "",
       size_label: combination.size_value ?? "",
       size_sort_order: combination.size_sort_order,
-      sku, barcode: "", stock_quantity: "0", low_stock_level: "0",
+      // A freshly generated combination is immediately scannable and
+      // printable: the barcode starts "in sync" with the suggested SKU
+      // (same deterministic derivation the product form already uses), never
+      // blank. The admin can still overtype it — see `nextBarcodeOnSkuChange`.
+      sku, barcode: deriveBarcodeFromSku(sku), stock_quantity: "0", low_stock_level: "0",
       price_override: "", cost_override: "", image_url: "", active: true,
     } satisfies ProductVariantDraft;
   });

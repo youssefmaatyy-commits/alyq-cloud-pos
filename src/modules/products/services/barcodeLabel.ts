@@ -64,19 +64,19 @@ function renderLabelCard(data: BarcodeLabelData, strings: BarcodeLabelStrings): 
 }
 
 /**
- * Build the complete, standalone print document for one product.
- * Layout is a simple flow of fixed-size label cards so a sheet of identical
- * labels prints predictably on both A4 and label-roll printers.
+ * The standalone print document shell shared by a single-item print and a
+ * mixed, multi-variant bulk print — one `<body>` of label cards, one popup,
+ * one `window.print()`. Extracted so a bulk job never has to open a separate
+ * window per variant: every selected combination's cards land on the same
+ * sheet, each with its own exact barcode/SKU/color/size.
  */
-export function buildBarcodeLabelHtml(
-  data: BarcodeLabelData,
+function renderLabelDocument(
+  cards: string,
   strings: BarcodeLabelStrings,
+  direction: "rtl" | "ltr" | undefined,
 ): string {
-  const copies = Math.max(1, Math.min(data.copies ?? 1, 40));
-  const cards = Array.from({ length: copies }, () => renderLabelCard(data, strings)).join("");
-
   return `<!doctype html>
-<html lang="${data.direction === "rtl" ? "ar" : "en"}" dir="${data.direction === "rtl" ? "rtl" : "ltr"}">
+<html lang="${direction === "rtl" ? "ar" : "en"}" dir="${direction === "rtl" ? "rtl" : "ltr"}">
 <head>
 <meta charset="utf-8" />
 <title>${escapeXml(strings.documentTitle)}</title>
@@ -143,4 +143,44 @@ export function buildBarcodeLabelHtml(
 ${cards}
 </body>
 </html>`;
+}
+
+/**
+ * Build the complete, standalone print document for one product.
+ * Layout is a simple flow of fixed-size label cards so a sheet of identical
+ * labels prints predictably on both A4 and label-roll printers.
+ */
+export function buildBarcodeLabelHtml(
+  data: BarcodeLabelData,
+  strings: BarcodeLabelStrings,
+): string {
+  const copies = Math.max(1, Math.min(data.copies ?? 1, 40));
+  const cards = Array.from({ length: copies }, () => renderLabelCard(data, strings)).join("");
+  return renderLabelDocument(cards, strings, data.direction);
+}
+
+/** One entry in a mixed, multi-variant print job: its own data (including
+ * its own `copies`) — e.g. Gold/10 × 3 labels, Silver/30 × 4 labels. */
+export interface BarcodeLabelItem {
+  data: BarcodeLabelData;
+}
+
+/**
+ * Build ONE print document covering several different variants in a single
+ * job — the admin selects any number of rows, each with its own copy count,
+ * and gets one popup / one `window.print()` instead of one per variant.
+ * Every card still carries the exact barcode, SKU, colour and size of the
+ * variant it was generated from; nothing here invents a shared code.
+ */
+export function buildBarcodeLabelsHtml(
+  items: readonly BarcodeLabelItem[],
+  strings: BarcodeLabelStrings,
+): string {
+  const cards = items
+    .flatMap((item) => {
+      const copies = Math.max(1, Math.min(item.data.copies ?? 1, 40));
+      return Array.from({ length: copies }, () => renderLabelCard(item.data, strings));
+    })
+    .join("");
+  return renderLabelDocument(cards, strings, items[0]?.data.direction);
 }

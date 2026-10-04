@@ -56,7 +56,8 @@ import {
   type VariantColorDraft,
 } from "../variants";
 import type { Product } from "../types";
-import { buildBarcodeLabelHtml } from "../services/barcodeLabel";
+import { buildBarcodeLabelHtml, buildBarcodeLabelsHtml, type BarcodeLabelData } from "../services/barcodeLabel";
+import { deriveBarcodeFromSku, isDerivedFromSku, nextBarcodeOnSkuChange } from "../services/barcode";
 import { ProductVariantsForm } from "./ProductVariantsForm";
 import { variantDraftFromSaved, validateVariantDraft } from "../services/variantDraft";
 import { adjustStock } from "@/modules/inventory/services/inventoryService";
@@ -167,6 +168,30 @@ function VariantFormModal({
 
   const set = <K extends keyof VariantFormState>(key: K, value: VariantFormState[K]) =>
     setValues((prev) => ({ ...prev, [key]: value }));
+
+  /**
+   * Typing a SKU keeps the barcode "in sync" while the field is still auto
+   * (blank, or exactly what the previous SKU would have derived) — the same
+   * rule the product form applies. A barcode that has already diverged (a
+   * manufacturer code, a manual override) is left alone.
+   */
+  const setSku = (nextSku: string) =>
+    setValues((prev) => ({
+      ...prev,
+      sku: nextSku,
+      barcode: nextBarcodeOnSkuChange(prev.sku, nextSku, prev.barcode),
+    }));
+
+  const regenerateBarcode = () => {
+    const derived = deriveBarcodeFromSku(values.sku);
+    if (!derived) {
+      toast.error(t("barcode.needsSku"));
+      return;
+    }
+    set("barcode", derived);
+  };
+
+  const barcodeIsAuto = !values.barcode.trim() || isDerivedFromSku(values.sku, values.barcode);
 
   const save = async () => {
     if (!allowed || saving) return;
@@ -281,7 +306,7 @@ function VariantFormModal({
           <TextInput
             dir="ltr"
             value={values.sku}
-            onChange={(e) => set("sku", e.target.value)}
+            onChange={(e) => setSku(e.target.value)}
             placeholder={suggestVariantSku(
               product.sku,
               values.color_en.trim() || values.color_ar.trim()
@@ -294,13 +319,33 @@ function VariantFormModal({
             disabled={!allowed}
           />
         </Field>
-        <Field label={t("products.barcode")}>
-          <TextInput
-            dir="ltr"
-            value={values.barcode}
-            onChange={(e) => set("barcode", e.target.value)}
-            disabled={!allowed}
-          />
+        <Field
+          label={t("products.barcode")}
+          hint={barcodeIsAuto ? t("barcode.autoHint") : t("barcode.manualHint")}
+        >
+          <div className="flex items-center gap-1.5">
+            <TextInput
+              dir="ltr"
+              value={values.barcode}
+              placeholder={deriveBarcodeFromSku(values.sku)}
+              onChange={(e) => set("barcode", e.target.value)}
+              disabled={!allowed}
+              className="flex-1"
+              data-testid="variant-form-barcode"
+            />
+            <Badge tone={barcodeIsAuto ? "info" : "neutral"}>
+              {barcodeIsAuto ? t("barcode.auto") : t("barcode.manual")}
+            </Badge>
+            <button
+              type="button"
+              onClick={regenerateBarcode}
+              disabled={!allowed}
+              title={t("barcode.regenerate")}
+              className="rounded-md px-1.5 py-1.5 text-[11px] font-bold text-indigo-600 hover:bg-indigo-50 disabled:opacity-40"
+            >
+              {t("barcode.generate")}
+            </button>
+          </div>
         </Field>
         <Field label={t("products.variants.priceOverride")} hint={t("products.variants.priceHint")}>
           <TextInput
@@ -410,15 +455,21 @@ function VariantGeneratorModal({
 
   const rows: GenerateVariantRow[] = useMemo(() => {
     const taken = siblings.map((v) => v.sku);
-    return generateCombinations(colors, sizes).map((combination) => ({
-      color: combination.color,
-      size: combination.size,
-      size_label: combination.size_label,
-      size_value: combination.size_value,
-      size_sort_order: combination.size_sort_order,
-      sku: suggestVariantSku(product.sku, combination.color, combination.size, combination.size_label, taken),
-      enabled: !disabledCombinations.has(`${combination.color_key}|${combination.size_value ?? ""}`),
-    }));
+    return generateCombinations(colors, sizes).map((combination) => {
+      const sku = suggestVariantSku(product.sku, combination.color, combination.size, combination.size_label, taken);
+      return {
+        color: combination.color,
+        size: combination.size,
+        size_label: combination.size_label,
+        size_value: combination.size_value,
+        size_sort_order: combination.size_sort_order,
+        sku,
+        // Every row this preview creates is scannable from the moment it is
+        // saved — the barcode is derived from the suggested SKU up front.
+        barcode: deriveBarcodeFromSku(sku),
+        enabled: !disabledCombinations.has(`${combination.color_key}|${combination.size_value ?? ""}`),
+      };
+    });
   }, [colors, product.sku, siblings, sizes,disabledCombinations]);
 
   const generate = async () => {
@@ -518,7 +569,10 @@ function VariantGeneratorModal({
                   size_value: row.size_value,
                 })}
               </span>
-              <span className="font-mono text-[11px] text-slate-500">{row.sku}</span>
+              <span className="flex flex-col items-end font-mono text-[11px] text-slate-500 leading-tight">
+                <span>{row.sku}</span>
+                <span className="text-slate-400">{row.barcode}</span>
+              </span>
             </li>
           ))}
           {rows.length === 0 ? (
@@ -551,17 +605,59 @@ export function VariantEditor({
   const { t, num, pick, isRTL } = useI18n();
   const toast = useToast();
   const lang = isRTL ? "ar" : "en";
-  const printVariant = (variant: ProductVariant) => {
-    if (!variant.barcode?.trim()) { toast.error(t("barcode.needsValue")); return; }
-    const html = buildBarcodeLabelHtml({
-      nameAr: product.name_ar, nameEn: product.name_en, sku: variant.sku, barcode: variant.barcode,
-      color: pick(variant.color_ar, variant.color_en), size: variantSizeValue(variant),
-      price: `${num(variant.price_override ?? product.selling_price, 2)} EGP`, direction: isRTL ? "rtl" : "ltr",
-    }, { documentTitle: t("barcode.printTitle"), skuLabel: t("products.sku"), priceLabel: t("products.sellingPrice"), printAction: t("barcode.print"), unsupported: t("barcode.unsupported") });
+
+  // ── label print: shared field toggles + per-row copies for single AND
+  // bulk printing, so the two actions never drift into two different UIs. ──
+  const [labelOptions, setLabelOptions] = useState({ name: true, color: true, size: true, sku: true, price: true, number: true });
+  const [copies, setCopies] = useState<Record<string, string>>({});
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const copiesFor = (variantId: string) => Math.max(1, Math.min(Number(copies[variantId]) || 1, 40));
+
+  const openPrintWindow = (html: string) => {
     const win = window.open("", "_blank", "width=720,height=640");
     if (!win) { toast.error(t("barcode.printBlocked")); return; }
     win.document.open(); win.document.write(html); win.document.close();
   };
+
+  /** A variant with no barcode yet (hand-cleared, or saved before this
+   * feature existed) still gets one at print time — it is never silently
+   * excluded from a label run, since this never changes what is stored. */
+  const labelDataFor = (variant: ProductVariant, labelCopies: number): BarcodeLabelData => ({
+    nameAr: product.name_ar, nameEn: product.name_en, sku: variant.sku,
+    barcode: variant.barcode?.trim() || deriveBarcodeFromSku(variant.sku),
+    color: pick(variant.color_ar, variant.color_en), size: variantSizeValue(variant),
+    price: `${num(variant.price_override ?? product.selling_price, 2)} EGP`,
+    copies: labelCopies, direction: isRTL ? "rtl" : "ltr",
+    showName: labelOptions.name, showColor: labelOptions.color, showSize: labelOptions.size,
+    showSku: labelOptions.sku, showPrice: labelOptions.price, showNumber: labelOptions.number,
+  });
+
+  const labelStrings = {
+    documentTitle: t("barcode.printTitle"), skuLabel: t("products.sku"),
+    priceLabel: t("products.sellingPrice"), printAction: t("barcode.print"), unsupported: t("barcode.unsupported"),
+  };
+
+  const printVariant = (variant: ProductVariant) => {
+    const data = labelDataFor(variant, copiesFor(variant.id));
+    if (!data.barcode) { toast.error(t("barcode.needsValue")); return; }
+    openPrintWindow(buildBarcodeLabelHtml(data, labelStrings));
+  };
+
+  const printSelected = () => {
+    const chosen = variants.filter((variant) => selected.has(variant.id));
+    if (!chosen.length) return;
+    const items = chosen
+      .map((variant) => ({ data: labelDataFor(variant, copiesFor(variant.id)) }))
+      .filter((item) => Boolean(item.data.barcode));
+    if (!items.length) { toast.error(t("barcode.needsValue")); return; }
+    openPrintWindow(buildBarcodeLabelsHtml(items, labelStrings));
+  };
+
+  const toggleSelected = (id: string) =>
+    setSelected((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; });
+  const allSelected = variants.length > 0 && variants.every((variant) => selected.has(variant.id));
+  const toggleSelectAll = () =>
+    setSelected((prev) => (prev.size === variants.length ? new Set() : new Set(variants.map((variant) => variant.id))));
 
   const canEdit = canAct("edit_product");
   const canDelete = canAct("delete_product");
@@ -895,18 +991,54 @@ export function VariantEditor({
 
       {/* ── the combinations table ── */}
       {variants.length > 0 ? (
-        <div className="mt-3 overflow-x-auto rounded-xl border border-slate-200">
+        <div className="mt-3 space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-slate-50 p-2.5 text-[11px]" data-testid="variant-label-toolbar">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-semibold text-slate-600">
+              {(["name", "color", "size", "sku", "price", "number"] as const).map((key) => (
+                <label key={key} className="flex items-center gap-1">
+                  <input
+                    type="checkbox"
+                    checked={labelOptions[key]}
+                    onChange={(event) => setLabelOptions((current) => ({ ...current, [key]: event.target.checked }))}
+                  />
+                  {key}
+                </label>
+              ))}
+            </div>
+            <Button
+              size="sm"
+              variant="secondary"
+              type="button"
+              disabled={selected.size === 0}
+              onClick={printSelected}
+              data-testid="variant-print-selected"
+            >
+              {t("products.variants.printSelected", { count: selected.size })}
+            </Button>
+          </div>
+          <div className="overflow-x-auto rounded-xl border border-slate-200">
           <table className="w-full text-xs" data-testid="variant-table">
             <thead>
               <tr className="border-b border-slate-100 bg-slate-50 text-start text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                <th className="px-2 py-2 text-center">
+                  <input
+                    type="checkbox"
+                    aria-label={t("products.variants.selectAll")}
+                    checked={allSelected}
+                    onChange={toggleSelectAll}
+                    data-testid="variant-select-all"
+                  />
+                </th>
                 <th className="px-3 py-2 text-start">{t("products.variants.colCombination")}</th>
                 <th className="px-3 py-2 text-start">{t("products.sku")}</th>
+                <th className="px-3 py-2 text-start">{t("products.variants.colBarcode")}</th>
                 <th className="px-3 py-2 text-end">{t("products.variants.colPrice")}</th>
                 {canAct("view_cost") ? (
                   <th className="px-3 py-2 text-end">{t("products.variants.colCost")}</th>
                 ) : null}
                 <th className="px-3 py-2 text-end">{t("products.variants.colStock")}</th>
                 <th className="px-3 py-2 text-start">{t("products.variants.colStatus")}</th>
+                <th className="px-3 py-2 text-center">{t("products.variants.colCopies")}</th>
                 <th className="px-3 py-2 text-end">{t("products.variants.colActions")}</th>
               </tr>
             </thead>
@@ -914,8 +1046,18 @@ export function VariantEditor({
               {variants.map((variant) => {
                 const referenced = (references[variant.id] ?? 0) > 0;
                 const lastSellable = product.variants_enabled && (variants.length <= 1 || (variant.active && activeCount <= 1));
+                const barcodeAuto = isDerivedFromSku(variant.sku, variant.barcode);
                 return (
                   <tr key={variant.id} className="border-b border-slate-50 last:border-0" data-testid={`variant-row-${variant.sku}`}>
+                    <td className="px-2 py-2 text-center">
+                      <input
+                        type="checkbox"
+                        aria-label={`${t("products.variants.selectAll")} ${variant.sku}`}
+                        checked={selected.has(variant.id)}
+                        onChange={() => toggleSelected(variant.id)}
+                        data-testid={`variant-select-${variant.sku}`}
+                      />
+                    </td>
                     <td className="px-3 py-2">
                       <span className="flex items-center gap-1.5 font-bold text-slate-900">
                         <Swatch hex={variant.color_hex} />
@@ -925,6 +1067,14 @@ export function VariantEditor({
                       </span>
                     </td>
                     <td className="px-3 py-2 font-mono text-[11px] text-slate-600">{variant.sku}</td>
+                    <td className="px-3 py-2">
+                      <span className="flex items-center gap-1.5 font-mono text-[11px] text-slate-600" data-testid={`variant-barcode-${variant.sku}`}>
+                        {variant.barcode?.trim() || <span className="italic text-slate-400">{t("barcode.needsValue")}</span>}
+                        <Badge tone={variant.barcode?.trim() ? (barcodeAuto ? "info" : "neutral") : "warning"}>
+                          {variant.barcode?.trim() ? (barcodeAuto ? t("barcode.auto") : t("barcode.manual")) : "—"}
+                        </Badge>
+                      </span>
+                    </td>
                     <td className="px-3 py-2 text-end tabular-nums">
                       {variant.price_override !== null ? num(variant.price_override, 2) : "—"}
                     </td>
@@ -938,6 +1088,17 @@ export function VariantEditor({
                     </td>
                     <td className="px-3 py-2">
                       <VariantStatusBadge variant={variant} />
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      <TextInput
+                        dir="ltr"
+                        inputMode="numeric"
+                        value={copies[variant.id] ?? "1"}
+                        onChange={(e) => setCopies((prev) => ({ ...prev, [variant.id]: e.target.value }))}
+                        className="mx-auto h-7 w-14 text-center text-xs"
+                        aria-label={`${t("products.variants.colCopies")} ${variant.sku}`}
+                        data-testid={`variant-copies-${variant.sku}`}
+                      />
                     </td>
                     <td className="px-3 py-2">
                       <div className="flex items-center justify-end gap-1">
@@ -995,6 +1156,7 @@ export function VariantEditor({
               })}
             </tbody>
           </table>
+          </div>
         </div>
       ) : (
         <p className="mt-3 rounded-xl bg-slate-50 px-3 py-3 text-xs font-medium text-slate-600">

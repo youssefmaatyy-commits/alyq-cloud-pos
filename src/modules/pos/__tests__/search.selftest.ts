@@ -14,6 +14,7 @@
 import assert from "node:assert/strict";
 import type { Product } from "@/modules/products/types";
 import type { ProductVariant } from "@/modules/products/variants";
+import { deriveBarcodeFromSku } from "@/modules/products/services/barcode";
 import {
   POS_SEARCH_RESULT_CAP,
   isPosSellable,
@@ -194,6 +195,35 @@ test("a variant product matches as a product — variant choice stays with the p
   assert.equal(hits[0].product.variants_enabled, true);
   // The match names the product only: no variant id is smuggled through.
   assert.ok(!("variant_id" in hits[0]), "matching never pre-selects a combination");
+});
+
+test("an auto-derived variant barcode scans exactly like a hand-typed one — no special-casing needed", () => {
+  // Mirrors exactly what reconcileVariantDraft / generateVariants / saveVariant
+  // now persist automatically for a combination whose barcode was left blank:
+  // deriveBarcodeFromSku(sku). The search layer must resolve it precisely to
+  // its own product + its own exact combination, the same as any manually
+  // typed barcode — proving auto-generation introduced no new ambiguity.
+  const roseSku = "UX2-RING-ROSE-19";
+  const rose19 = variant({
+    id: "33333333-3333-3333-3333-333333333333",
+    product_id: variantRing.id,
+    sku: roseSku,
+    barcode: deriveBarcodeFromSku(roseSku),
+    color_key: "rose",
+    color_ar: "وردي",
+    color_en: "Rose",
+  });
+  const scopedVariants = [...variants, rose19];
+  const byAutoBarcode = matchPosProducts(products, scopedVariants, rose19.barcode!);
+  assert.equal(byAutoBarcode.length, 1, "the auto-derived barcode resolves to exactly one product");
+  assert.equal(byAutoBarcode[0].product.id, variantRing.id, "it surfaces the correct parent (variant picker decides the exact combination)");
+  // Scanning the PARENT product's own barcode must never happen here — a
+  // variants-enabled product has none in this fixture set, same as production
+  // (parent barcode is inert once variants_enabled is true).
+  assert.equal(variantRing.barcode, null);
+  // Gold/17 (no explicit barcode set in this fixture) must stay distinguishable
+  // from Rose/19's auto-derived barcode — they never collide or get confused.
+  assert.notEqual(rose19.barcode, gold17.barcode);
 });
 
 test("the result cap keeps the list a compact dropdown, not a catalogue", () => {

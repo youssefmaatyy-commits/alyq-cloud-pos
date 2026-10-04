@@ -108,6 +108,29 @@ export function isDerivedFromSku(sku: string, barcode: string | null | undefined
 }
 
 /**
+ * The barcode a SKU field's edit should leave behind, shared by every screen
+ * that keeps a barcode "in sync" with a SKU (the product form, the variant
+ * editor, the generator).
+ *
+ * A blank barcode or one that still matches what the OLD sku would have
+ * derived is in "auto" mode and follows the new SKU. A barcode that has
+ * already diverged (a manufacturer code, a hand-typed override) is a
+ * deliberate choice and must never be silently replaced just because the SKU
+ * text changed next to it.
+ */
+export function nextBarcodeOnSkuChange(
+  oldSku: string,
+  newSku: string,
+  currentBarcode: string | null | undefined,
+): string {
+  const trimmed = (currentBarcode ?? "").trim();
+  if (!trimmed || isDerivedFromSku(oldSku, trimmed)) {
+    return deriveBarcodeFromSku(newSku);
+  }
+  return trimmed;
+}
+
+/**
  * Encode a value as Code 128 subset B.
  * Throws nothing — returns `null` when the payload can't be encoded so the
  * caller can render a friendly placeholder instead.

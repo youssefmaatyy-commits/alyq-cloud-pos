@@ -33,6 +33,7 @@ import { applyVariantMovement } from "@/modules/inventory/services/inventoryServ
 import { getCatalogRepository } from "../data";
 import { AppError, type VariantActor, type VariantOpening } from "../data/repository";
 import type { Product } from "../types";
+import { deriveBarcodeFromSku } from "./barcode";
 import {
   colorKeyOf,
   compareVariants,
@@ -172,7 +173,11 @@ export async function saveVariant({
       "23505",
     );
   }
-  const barcode = values.barcode?.trim() || null;
+  // A sellable combination should not normally go without a barcode: when the
+  // admin leaves it blank, derive one from the now-final SKU — the same
+  // deterministic rule the product form already uses, so the catalogue never
+  // has two different barcode "dialects". An explicit manual value always wins.
+  const barcode = values.barcode?.trim() || deriveBarcodeFromSku(sku) || null;
   if (barcode && others.some((v) => (v.barcode ?? "").toUpperCase() === barcode.toUpperCase())) {
     throw new AppError("DUPLICATE_BARCODE", `${barcode} already belongs to another variant`, "barcode", "23505");
   }
@@ -252,6 +257,13 @@ export interface GenerateVariantRow {
   size_sort_order: number;
   /** Pre-filled from the suggested SKU; the admin can overtype it. */
   sku: string;
+  /**
+   * Pre-filled from the suggested SKU via `deriveBarcodeFromSku`; the admin
+   * can overtype it. Optional only for callers that pre-date this field —
+   * `generateVariants` derives one from `sku` whenever it is left blank, so a
+   * generated combination never ends up without a barcode.
+   */
+  barcode?: string;
   /** Unchecked rows are simply not created. */
   enabled: boolean;
 }
@@ -286,10 +298,14 @@ export async function generateVariants({
     if (twin) continue;
 
     take += 1;
+    const sku = row.sku.trim();
     const variant = await repository.createVariant({
       product_id: product.id,
-      sku: row.sku.trim(),
-      barcode: null,
+      sku,
+      // Every generated combination is immediately scannable: the barcode
+      // defaults to the deterministic SKU derivation unless the caller
+      // already supplied one (e.g. a hand-edited preview row).
+      barcode: row.barcode?.trim() || deriveBarcodeFromSku(sku) || null,
       color_key: colorKey,
       color_ar: row.color?.color_ar ?? null,
       color_en: row.color?.color_en ?? null,

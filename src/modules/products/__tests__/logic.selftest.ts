@@ -27,7 +27,7 @@ import {
   validateBarcodePayload,
   barcodeToSvgString,
 } from "../services/barcode";
-import { buildBarcodeLabelHtml } from "../services/barcodeLabel";
+import { buildBarcodeLabelHtml, buildBarcodeLabelsHtml } from "../services/barcodeLabel";
 import { resolveProductImages, validateImageFile } from "../services/imageStorage";
 
 const cat = (
@@ -555,6 +555,57 @@ test("label escapes user content (no HTML injection)", () => {
   assert.ok(!html.includes("<script>alert(1)</script>"), "script tag escaped");
   assert.ok(html.includes("&lt;script&gt;"), "escaped form present");
   assert.ok(html.includes("A&amp;B"), "ampersand escaped");
+});
+
+test("barcode label field-visibility toggles hide exactly what is asked and always keep the barcode", () => {
+  const strings = { documentTitle: "t", skuLabel: "SKU", priceLabel: "P", printAction: "x", unsupported: "u" };
+  const full = buildBarcodeLabelHtml(
+    { nameAr: "اسم", nameEn: "Name", sku: "SKU-1", barcode: "SKU-1", price: "EGP 10", color: "Gold", size: "17", direction: "ltr" },
+    strings,
+  );
+  assert.ok(full.includes("Name") && full.includes("SKU-1") && full.includes("EGP 10") && full.includes("Gold") && full.includes("17"));
+
+  const barcodeOnly = buildBarcodeLabelHtml(
+    {
+      nameAr: "اسم", nameEn: "Name", sku: "SKU-1", barcode: "SKU-1", price: "EGP 10", color: "Gold", size: "17",
+      direction: "ltr", showName: false, showColor: false, showSize: false, showSku: false, showPrice: false,
+    },
+    strings,
+  );
+  assert.ok(!barcodeOnly.includes(">Name<"), "name hidden");
+  assert.ok(!barcodeOnly.includes("Gold"), "colour hidden");
+  assert.ok(!barcodeOnly.includes("EGP 10"), "price hidden");
+  assert.ok(!barcodeOnly.includes(`${strings.skuLabel}</span> SKU-1`), "SKU line hidden");
+  assert.ok(barcodeOnly.includes("<svg"), "the barcode symbol itself is never hidden");
+  assert.ok(barcodeOnly.includes("SKU-1"), "the barcode number is still printed (it IS the barcode value here)");
+
+  const noNumber = buildBarcodeLabelHtml(
+    { nameAr: "", nameEn: "Name", sku: "SKU-1", barcode: "SKU-1", price: "EGP 10", direction: "ltr", showNumber: false },
+    strings,
+  );
+  assert.ok(!noNumber.includes('class="barcode-number"'), "the human-readable number line can be hidden");
+  assert.ok(noNumber.includes("<svg"), "the scannable symbol is always present regardless of showNumber");
+});
+
+test("buildBarcodeLabelsHtml prints several different variants, each with its own copies, in ONE document", () => {
+  const strings = { documentTitle: "Labels", skuLabel: "SKU", priceLabel: "Price", printAction: "Print", unsupported: "u" };
+  const html = buildBarcodeLabelsHtml(
+    [
+      { data: { nameAr: "", nameEn: "Ring", sku: "RING-GOLD-10", barcode: "RING-GOLD-10", price: "EGP 100", color: "Gold", size: "10", copies: 3, direction: "ltr" } },
+      { data: { nameAr: "", nameEn: "Ring", sku: "RING-GOLD-20", barcode: "RING-GOLD-20", price: "EGP 100", color: "Gold", size: "20", copies: 2, direction: "ltr" } },
+      { data: { nameAr: "", nameEn: "Ring", sku: "RING-SILVER-30", barcode: "RING-SILVER-30", price: "EGP 90", color: "Silver", size: "30", copies: 4, direction: "ltr" } },
+    ],
+    strings,
+  );
+  // One popup, one document: exactly one <html>/<body>, not one per variant.
+  assert.equal(html.split("<!doctype html>").length - 1, 1, "a single combined document, not one window per variant");
+  assert.equal(html.split('class="label"').length - 1, 9, "3 + 2 + 4 = 9 label cards total");
+  assert.ok(html.includes("RING-GOLD-10") && html.includes("RING-GOLD-20") && html.includes("RING-SILVER-30"),
+    "every selected variant's own exact barcode appears");
+  // Each barcode value appears exactly as many times as its own copy count.
+  const occurrences = (needle: string) => html.split(needle).length - 1;
+  assert.ok(occurrences("RING-GOLD-10") >= 3, "Gold/10 printed its 3 copies");
+  assert.ok(occurrences("RING-SILVER-30") >= 4, "Silver/30 printed its 4 copies");
 });
 
 test("barcodeToSvgString emits a standalone SVG", () => {
