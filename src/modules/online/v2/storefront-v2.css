@@ -9,7 +9,6 @@
   display: flex;
   flex-direction: column;
   isolation: isolate;
-  overflow-x: clip;
   font-size: 14px;
   line-height: 1.5;
 }
@@ -26,7 +25,19 @@
 .store-v2 :is(a, button):hover { transition: color .18s ease, background-color .18s ease, border-color .18s ease, opacity .18s ease; }
 .store-v2 [aria-pressed="true"] { font-weight: 700; }
 .store-v2 .v2-container { width: min(100% - 32px, 1336px); margin-inline: auto; }
-.store-v2 .v2-main { flex: 1; min-width: 0; }
+/* `overflow-x: clip` used to sit on `.store-v2` itself as a last-line-of-defense
+   against any element bleeding past the viewport edge on mobile (see the
+   `clippedContent` check in rendered-v2.flow.mjs). Any non-`visible` overflow
+   on an ancestor of a `position: sticky` element — even clipping only the X
+   axis — makes that ancestor the sticky element's containing block instead of
+   the real page viewport, which is exactly what made `.v2-header-sticky`
+   track iOS Safari's dynamic toolbar/viewport resize incorrectly and jump
+   during scroll. Scoping the clip to `.v2-main`/`.v2-footer` — both siblings
+   of the header, never its ancestors — keeps the same protection for every
+   element the test actually inspects (cards, PDP layout, footer; the logo and
+   announcement ticker already clip themselves) without the header ever being
+   nested inside a non-`visible`-overflow box. */
+.store-v2 .v2-main { flex: 1; min-width: 0; overflow-x: clip; }
 .store-v2 .v2-main:focus { outline: none; }
 .store-v2 .v2-skip { position: absolute; z-index: 100; inset-inline-start: 12px; top: -100px; background: var(--v2-primary); color: var(--v2-primary-text); padding: 12px 16px; }
 .store-v2 .v2-skip:focus { top: 12px; }
@@ -371,7 +382,7 @@
 .store-v2 .v2-not-found p { margin-block: 13px 22px; color: var(--v2-muted); }
 
 /* Footer keeps contact and linked pages from the existing settings. */
-.store-v2 .v2-footer { margin-top: auto; background: var(--v2-footer-bg); color: var(--v2-footer-text); }
+.store-v2 .v2-footer { margin-top: auto; background: var(--v2-footer-bg); color: var(--v2-footer-text); overflow-x: clip; }
 .store-v2 .v2-footer-newsletter { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 17px; width: min(100% - 40px, 1336px); margin-inline: auto; padding-block: 38px; border-bottom: 1px solid currentColor; }
 .store-v2 .v2-footer-newsletter p:not(.v2-eyebrow) { margin-top: 7px; font-family: var(--v2-font-display); font-size: 22px; }
 .store-v2 .v2-footer-newsletter small { display: block; margin-top: 8px; opacity: .85; }
