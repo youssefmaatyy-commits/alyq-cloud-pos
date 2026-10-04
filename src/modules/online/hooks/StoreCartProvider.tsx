@@ -195,6 +195,13 @@ export interface StoreCartContextValue {
    * the same reason the register does not.
    */
   add: (product: Product, quantity?: number, variant?: StoreVariant | null) => boolean;
+  /** Increments once per successful add (including quantity increases placed
+   * through `setQuantity` by a caller that confirms the increase itself, e.g.
+   * the PDP). Presentation-only — nothing about the cart depends on it; it
+   * exists purely so success feedback (a toast, a bag-icon pulse) can react
+   * to "a line was really added" without re-deriving that from cart state. */
+  addPulse: number;
+  notifyAdded: () => void;
   setQuantity: (productId: string, variantId: string | null, quantity: number) => void;
   increase: (productId: string, variantId: string | null) => void;
   decrease: (productId: string, variantId: string | null) => void;
@@ -297,6 +304,11 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
   );
 
   const [lines, setLines] = useState<CartLine[]>(stored.lines);
+  // A counter, not a boolean: every successful add bumps it once, so a
+  // listener (the header's bag icon, a toast) can react to each individual
+  // success — including two in a row — with a plain `useEffect` dependency,
+  // without owning any of the actual cart/stock logic itself.
+  const [addPulse, setAddPulse] = useState(0);
   const [prunedCount, setPrunedCount] = useState(0);
   const [couponCode, setCouponCode] = useState<string | null>(stored.couponCode);
   const [couponInput, setCouponInput] = useState("");
@@ -576,6 +588,12 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
 
   // ── cart operations ───────────────────────────────────────────────────────
 
+  // Exposed so the one caller that adds via `setQuantity` instead of `add`
+  // (the PDP, increasing a line that is already in the cart) can report the
+  // same "a line really was added to" event `add()` reports below — without
+  // `setQuantity` itself needing to know about pulses, toasts or icons.
+  const notifyAdded = useCallback(() => setAddPulse((count) => count + 1), []);
+
   const add = useCallback(
     (product: Product, quantity = 1, variant: StoreVariant | null = null): boolean => {
       const wanted = Math.max(1, Math.trunc(quantity) || 1);
@@ -618,9 +636,10 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
           },
         ];
       });
+      if (added) notifyAdded();
       return added;
     },
-    [catalogContext.reserved, catalogContext.reservedVariant],
+    [catalogContext.reserved, catalogContext.reservedVariant, notifyAdded],
   );
 
   const setQuantity = useCallback(
@@ -921,6 +940,8 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
       prunedCount,
       acknowledgePruned: () => setPrunedCount(0),
       add,
+      addPulse,
+      notifyAdded,
       setQuantity,
       increase,
       decrease,
@@ -962,6 +983,8 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
     [
       add,
       addMany,
+      addPulse,
+      notifyAdded,
       applyingCoupon,
       applyCoupon,
       checkout,

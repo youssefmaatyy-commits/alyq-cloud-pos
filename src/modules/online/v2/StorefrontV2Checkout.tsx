@@ -1,7 +1,7 @@
 /** Customer-facing V2 checkout. It presents the EXISTING cart/checkout
  * provider and its placeOrder() abstraction; prices and stock remain advisory
  * until the existing authoritative place_online_order path accepts the order. */
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type RefObject } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { useStoreCart, type CheckoutInput } from "../hooks/StoreCartProvider";
@@ -27,8 +27,9 @@ const fields = ["city", "area", "street", "building", "floor", "apartment"] as c
  * only the popup's own bounded pane scrolls. Pricing/eligibility logic is
  * completely untouched — this only replaces how the SAME zones/fee/ETA data
  * already computed by the cart provider is presented. */
-function V2ZoneSelect({ zones, value, onChange, invalid }: {
+function V2ZoneSelect({ zones, value, onChange, invalid, triggerRef }: {
   zones: DeliveryZone[]; value: string | null; onChange: (id: string) => void; invalid: boolean;
+  triggerRef?: RefObject<HTMLButtonElement | null>;
 }) {
   const { t, pick, money } = useI18n();
   const [open, setOpen] = useState(false);
@@ -61,7 +62,7 @@ function V2ZoneSelect({ zones, value, onChange, invalid }: {
 
   return <div className="v2-zone-select" ref={rootRef}>
     <span className="v2-zone-select-label" id="v2-zone-select-label">{t("store.checkout.chooseZone")}</span>
-    <button type="button" className="v2-zone-select-trigger" data-testid="v2-zone-select-trigger"
+    <button type="button" ref={triggerRef} className="v2-zone-select-trigger" data-testid="v2-zone-select-trigger"
       aria-haspopup="listbox" aria-expanded={open} aria-labelledby="v2-zone-select-label v2-zone-select-value"
       aria-invalid={invalid} onClick={() => setOpen((current) => !current)}>
       <span className="v2-zone-select-value" id="v2-zone-select-value" data-testid="v2-zone-select-value">
@@ -89,6 +90,28 @@ function V2ZoneSelect({ zones, value, onChange, invalid }: {
   </div>;
 }
 
+/** Scrolls (and, where it makes sense, focuses) the first invalid field after
+ * a failed submit. The header's own rendered height is measured live — not
+ * hardcoded — so the target always clears the sticky header regardless of
+ * screen size, logo height or whether the merchant even enabled a sticky
+ * header at all. `preventScroll` on focus stops the browser's own
+ * focus-triggered scroll from fighting this one (the classic iOS Safari
+ * double-jump when a text input's keyboard opens mid-scroll); the short
+ * delay lets the scroll settle before the keyboard appears. */
+function scrollCheckoutFieldIntoView(el: HTMLElement | null, focusField: boolean) {
+  if (!el || typeof window === "undefined") return;
+  const header = document.querySelector<HTMLElement>(".store-v2 .v2-header.v2-header-sticky");
+  const headerOffset = header ? header.getBoundingClientRect().height : 0;
+  const rect = el.getBoundingClientRect();
+  const target = Math.max(0, window.scrollY + rect.top - headerOffset - 16);
+  const reduceMotion = Boolean(window.matchMedia?.("(prefers-reduced-motion: reduce)").matches);
+  window.scrollTo({ top: target, behavior: reduceMotion ? "auto" : "smooth" });
+  if (!focusField) return;
+  window.setTimeout(() => {
+    try { el.focus({ preventScroll: true }); } catch { el.focus(); }
+  }, reduceMotion ? 0 : 350);
+}
+
 export function StorefrontV2Checkout() {
   const { t, pick, money } = useI18n();
   const navigate = useNavigate();
@@ -114,6 +137,15 @@ export function StorefrontV2Checkout() {
   const [touched, setTouched] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const pending = useRef(false);
+  // Incremented on every submit attempt (whether or not it already failed
+  // once before) so the focus-the-first-invalid-field effect below reruns
+  // for repeat failures too, always targeting whatever is still wrong.
+  const [submitAttempt, setSubmitAttempt] = useState(0);
+  const nameRef = useRef<HTMLInputElement>(null);
+  const phoneRef = useRef<HTMLInputElement>(null);
+  const zoneTriggerRef = useRef<HTMLButtonElement>(null);
+  const addressFieldRefs = useRef<Partial<Record<(typeof fields)[number], HTMLInputElement | null>>>({});
+  const shortfallRef = useRef<HTMLParagraphElement>(null);
   const defaultAddress = addresses.find((row) => row.is_default) ?? addresses[0] ?? null;
   const zones = useMemo(() => deliveryZones.filter((zone) => zone.enabled), [deliveryZones]);
   const places = useMemo(() => deliveryAreasOf(settings.delivery), [settings.delivery]);
@@ -177,10 +209,34 @@ export function StorefrontV2Checkout() {
     });
   }, [address.area, address.city, address.street, deliveryType, deliveryZoneId, name, phone, setDeliveryLocation, settings.delivery, zones]);
 
+  // Runs after a failed submit (and only then — the ref lookups below read
+  // the DOM that has already re-rendered with `touched=true`, so the error
+  // text/aria-invalid state this targets is the same state the shopper sees).
+  // Order mirrors the form's own visual top-to-bottom order exactly: contact
+  // fields, then delivery area (zone), then city/area/street, then the
+  // minimum-order notice. Fields that pass validation, or that do not even
+  // apply to the current delivery type, are simply skipped.
+  useEffect(() => {
+    if (submitAttempt === 0) return;
+    const candidates: Array<{ invalid: boolean; el: HTMLElement | null; focusField: boolean }> = [
+      { invalid: issues.name, el: nameRef.current, focusField: true },
+      { invalid: issues.phone, el: phoneRef.current, focusField: true },
+      { invalid: issues.zone, el: zoneTriggerRef.current, focusField: true },
+      { invalid: issues.address && !address.city.trim(), el: addressFieldRefs.current.city ?? null, focusField: true },
+      { invalid: (issues.address && !address.area.trim()) || issues.area, el: addressFieldRefs.current.area ?? null, focusField: true },
+      { invalid: issues.address && !address.street.trim(), el: addressFieldRefs.current.street ?? null, focusField: true },
+      { invalid: issues.shortfall > 0, el: shortfallRef.current, focusField: false },
+    ];
+    const first = candidates.find((candidate) => candidate.invalid && candidate.el);
+    if (first?.el) scrollCheckoutFieldIntoView(first.el, first.focusField);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [submitAttempt]);
+
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (pending.current || placing) return;
     setTouched(true);
+    setSubmitAttempt((count) => count + 1);
     clearCheckoutError();
     if (!orderable || issues.name || issues.phone || issues.address || issues.area || issues.zone || issues.shortfall > 0) return;
     pending.current = true; // synchronous guard, before React disables the button
@@ -224,11 +280,11 @@ export function StorefrontV2Checkout() {
         <V2Panel title={t("store.checkout.contactSection")}>
           <div className="v2-form-grid">
             <label className="v2-field">{t("store.checkout.fullName")}
-              <input autoComplete="name" required value={name} onChange={(event) => setName(event.target.value)}
+              <input ref={nameRef} autoComplete="name" required value={name} onChange={(event) => setName(event.target.value)}
                 aria-invalid={showErrors && issues.name} />
               {showErrors && issues.name ? <span role="alert" className="v2-field-error">{t("store.checkout.nameRequired")}</span> : null}</label>
             <label className="v2-field">{t("store.checkout.phone")}
-              <input inputMode="tel" autoComplete="tel" required value={phone} onChange={(event) => setPhone(event.target.value)}
+              <input ref={phoneRef} inputMode="tel" autoComplete="tel" required value={phone} onChange={(event) => setPhone(event.target.value)}
                 placeholder="01xxxxxxxxx" dir="ltr" aria-invalid={showErrors && issues.phone} />
               {showErrors && issues.phone ? <span role="alert" className="v2-field-error">{phone.trim()
                 ? t("store.checkout.phoneInvalid") : t("store.checkout.phoneRequired")}</span>
@@ -249,7 +305,7 @@ export function StorefrontV2Checkout() {
           {deliveryType === "delivery" && settings.delivery.enabled ? <>
             {zones.length ? <>
               <V2ZoneSelect zones={zones} value={deliveryZoneId} onChange={setDeliveryZoneId}
-                invalid={showErrors && issues.zone} />
+                invalid={showErrors && issues.zone} triggerRef={zoneTriggerRef} />
               {showErrors && issues.zone ? <p role="alert" className="v2-field-error">{t("store.checkout.zoneRequired")}</p> : null}
             </> : null}
 
@@ -268,7 +324,7 @@ export function StorefrontV2Checkout() {
             </fieldset> : null}
             <div className="v2-form-grid">{fields.map((field) => <label key={field} className="v2-field">
               {t(`store.checkout.${field}`)}
-              <input value={address[field]} autoComplete={field === "city" ? "address-level2" :
+              <input ref={(el) => { addressFieldRefs.current[field] = el; }} value={address[field]} autoComplete={field === "city" ? "address-level2" :
                 field === "area" ? "address-level3" : field === "street" ? "street-address" : undefined}
                 list={places.length && (field === "city" || field === "area") ? "v2-delivery-places" : undefined}
                 aria-invalid={showErrors && issues.address && (field === "city" || field === "area" || field === "street") && !address[field].trim()}
@@ -280,7 +336,7 @@ export function StorefrontV2Checkout() {
             {showErrors && issues.address ? <p className="v2-field-error" role="alert">{t("store.checkout.addressRequired")}</p> : null}
             {issues.area ? <p className="v2-field-error" role="alert">{t("store.checkout.areaNotServed")}</p> : null}
             {!deliveryQuoteReady && !issues.area ? <p className="v2-small" role="status">{t("store.cart.deliveryCalculatedAtCheckout")}</p> : null}
-            {issues.shortfall > 0 ? <p className="v2-alert" role="status">{t("store.checkout.minimumOrder", {
+            {issues.shortfall > 0 ? <p ref={shortfallRef} className="v2-alert" role="status">{t("store.checkout.minimumOrder", {
               amount: money(issues.minimum), remaining: money(issues.shortfall) })}</p> : null}
             {pick(copy.delivery_note_ar, copy.delivery_note_en) ? <p className="v2-small">
               {pick(copy.delivery_note_ar, copy.delivery_note_en)}</p> : null}

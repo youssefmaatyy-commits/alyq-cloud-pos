@@ -15,7 +15,7 @@ import "./storefront-v2.css";
 export function StorefrontV2Shell({ children }: { children: ReactNode }) {
   const { t, pick, dir, lang, toggleLang } = useI18n();
   const { settings, categoriesFacet, categoryContents, sections, campaigns, promotions } = useStorefront();
-  const { unitCount } = useStoreCart();
+  const { unitCount, addPulse } = useStoreCart();
   const { customer } = useStoreAccount();
   const location = useLocation();
   const navigate = useNavigate();
@@ -24,6 +24,12 @@ export function StorefrontV2Shell({ children }: { children: ReactNode }) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [messageIndex, setMessageIndex] = useState(0);
+  // Shared add-to-cart feedback: one global toast and a one-time bag-icon
+  // pulse, both driven by the cart provider's own success signal so every
+  // add entry point (quick add, variant picker, PDP) gets the same reaction
+  // without each of them rendering its own copy of this UI.
+  const [bagPulse, setBagPulse] = useState(false);
+  const [addedToastVisible, setAddedToastVisible] = useState(false);
   const [reducedMotion, setReducedMotion] = useState(() =>
     typeof window !== "undefined" && Boolean(window.matchMedia?.("(prefers-reduced-motion: reduce)").matches));
   const drawerRef = useRef<HTMLElement>(null);
@@ -69,6 +75,20 @@ export function StorefrontV2Shell({ children }: { children: ReactNode }) {
     media.addEventListener("change", onChange);
     return () => media.removeEventListener("change", onChange);
   }, []);
+
+  useEffect(() => {
+    // `addPulse` starts at 0 and only increments on a real successful add, so
+    // this never fires on mount — only on an actual add-to-cart. A second add
+    // while the toast/pulse is still showing simply restarts both timers
+    // (the cleanup below clears the previous ones), which keeps the toast on
+    // screen rather than letting two in a row make it flicker.
+    if (addPulse === 0) return;
+    setBagPulse(true);
+    setAddedToastVisible(true);
+    const pulseTimer = window.setTimeout(() => setBagPulse(false), 650);
+    const toastTimer = window.setTimeout(() => setAddedToastVisible(false), 2600);
+    return () => { window.clearTimeout(pulseTimer); window.clearTimeout(toastTimer); };
+  }, [addPulse]);
 
   useEffect(() => {
     if (reducedMotion) return;
@@ -193,7 +213,8 @@ export function StorefrontV2Shell({ children }: { children: ReactNode }) {
               aria-label={t("store.nav.changeLanguage")}>{lang === "ar" ? "EN" : "عربي"}</button> : null}
             {appearance.showAccount ? <Link to="/store/account" className="v2-icon-button" aria-label={t("store.account.title")}
               title={customer ? customer.name : t("store.account.signIn")}><Icon name="user" /></Link> : null}
-            {appearance.showCart ? <Link to="/store/cart" className="v2-icon-button v2-bag-button" aria-label={`${t("store.v2.bag")} (${unitCount})`}>
+            {appearance.showCart ? <Link to="/store/cart" className="v2-icon-button v2-bag-button"
+              data-pulse={bagPulse || undefined} aria-label={`${t("store.v2.bag")} (${unitCount})`}>
               <Icon name="bag" /><span className="v2-bag-count" aria-hidden>{unitCount}</span>
             </Link> : null}
           </div>
@@ -300,6 +321,14 @@ export function StorefrontV2Shell({ children }: { children: ReactNode }) {
             aria-label={t("store.nav.changeLanguage")}>{lang === "ar" ? "English" : "العربية"}</button> : null}
         </div>
       </footer>
+      {/* One shared confirmation for every add-to-cart action on the site.
+          `key={addPulse}` forces a fresh text node on each add so a screen
+          reader announces repeat identical messages too, not only the first. */}
+      <div className="v2-added-toast" data-visible={addedToastVisible || undefined} aria-hidden={!addedToastVisible}>
+        <span className="v2-added-toast-bubble" role="status" aria-live="polite" key={addPulse}>
+          <Icon name="check" />{t("store.v2.added")}
+        </span>
+      </div>
     </div>
   );
 }

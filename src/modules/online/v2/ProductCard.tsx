@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { variantMatchesCatalogFilters, type CatalogFilters, type CatalogProduct } from "../services/catalogQuery";
@@ -37,6 +37,17 @@ export function V2ProductCard({ entry, priority = false, filters }: {
   const [chosen, setChosen] = useState<StoreVariant | null>(null);
   const [colorKey, setColorKey] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
+  // Transient "Added ✓" state on the button itself. `addLock` is the actual
+  // guard against rapid repeated taps adding the item more than once while
+  // that confirmation is still showing; `justAdded` only drives the label.
+  const [justAdded, setJustAdded] = useState(false);
+  const addLock = useRef(false);
+  const justAddedTimer = useRef<number | null>(null);
+  const addLockTimer = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (justAddedTimer.current !== null) window.clearTimeout(justAddedTimer.current);
+    if (addLockTimer.current !== null) window.clearTimeout(addLockTimer.current);
+  }, []);
   const wished = inWishlist(product.id);
   const matchingSellable = narrowed && filters
     ? model.sellable.filter((variant) => variantMatchesCatalogFilters(variant, filters)) : model.sellable;
@@ -56,9 +67,18 @@ export function V2ProductCard({ entry, priority = false, filters }: {
     ?.variants.find((variant) => variant.image_url)?.image_url;
 
   function addVariant(variant: StoreVariant | null) {
+    // A short window where a second tap is simply ignored, not a second
+    // add — this is what actually prevents a double-tap from adding twice;
+    // `justAdded` below only controls what the button displays meanwhile.
+    if (addLock.current) return;
+    addLock.current = true;
+    addLockTimer.current = window.setTimeout(() => { addLock.current = false; }, 900);
     if (add(product, 1, variant)) {
       setOpen(false);
       setNotice(t("store.v2.added"));
+      setJustAdded(true);
+      if (justAddedTimer.current !== null) window.clearTimeout(justAddedTimer.current);
+      justAddedTimer.current = window.setTimeout(() => setJustAdded(false), 1400);
     } else {
       setNotice(t("store.error.insufficient_stock"));
     }
@@ -128,11 +148,13 @@ export function V2ProductCard({ entry, priority = false, filters }: {
         <V2Status available={cardAvailable} mode={mode} tracked={product.stock_tracking_enabled} />
         {settings.product_card.show_quick_add ? (
           <button type="button" className="v2-card-add" data-testid={`v2-quick-add-${product.id}`}
+            data-added={justAdded || undefined}
             disabled={!sellable} aria-expanded={product.variants_enabled && matchingSellable.length > 1 ? open : undefined}
             onClick={quickAdd}>
-            <span>{!sellable ? t("store.product.unavailable") : product.variants_enabled && matchingSellable.length > 1
-              ? t("store.v2.selectOptions") : t("store.v2.quickAdd")}</span>
-            <span aria-hidden>{open ? "−" : "+"}</span>
+            <span>{justAdded ? t("store.v2.addedShort") : !sellable ? t("store.product.unavailable")
+              : product.variants_enabled && matchingSellable.length > 1
+                ? t("store.v2.selectOptions") : t("store.v2.quickAdd")}</span>
+            <span aria-hidden>{justAdded ? "✓" : open ? "−" : "+"}</span>
           </button>
         ) : null}
         {open && model.variants.length > 1 ? (

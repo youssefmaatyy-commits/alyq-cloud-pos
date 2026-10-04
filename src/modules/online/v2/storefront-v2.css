@@ -151,6 +151,16 @@
   .store-v2 .v2-logo img.v2-mobile-only { display: none; }
 }
 .store-v2 .v2-bag-count { position: absolute; inset-inline-end: -1px; top: 1px; min-width: 15px; height: 15px; border-radius: 100%; display: grid; place-items: center; padding: 0 3px; background: var(--v2-primary); color: var(--v2-primary-text); font-size: 9px; font-weight: 700; }
+/* One-time pulse on a successful add, toggled briefly via a data attribute —
+   the count itself already updates immediately as a normal re-render; this
+   only draws the eye to it. Scoped to the icon/badge, never the 44px tap
+   target itself, so it never shifts layout or nearby text. */
+.store-v2 .v2-bag-button[data-pulse] svg, .store-v2 .v2-bag-button[data-pulse] .v2-bag-count {
+  animation: v2BagPulse .45s ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .store-v2 .v2-bag-button[data-pulse] svg, .store-v2 .v2-bag-button[data-pulse] .v2-bag-count { animation: none; }
+}
 .store-v2 .v2-language-button { min-height: 40px; border: 0; padding: 0 14px; background: transparent; color: inherit; font-weight: 700; }
 .store-v2 .v2-desktop-only, .store-v2 .v2-desktop-nav { display: none; }
 .store-v2 .v2-search-row { display: flex; width: min(100% - 32px, 880px); margin: 0 auto 14px; border: 1px solid currentColor; }
@@ -298,6 +308,12 @@
 .store-v2 .v2-card-add span:last-child { font-size: 19px; font-weight: 400; line-height: 1; }
 .store-v2 .v2-card-add:not(:disabled):hover { color: var(--v2-accent-text); }
 .store-v2 .v2-card-add:disabled { color: var(--v2-muted); }
+/* Success feedback: a brief colour/scale change, never a layout shift (the
+   label text changes but the button keeps its own width/position), and the
+   animation itself is dropped under reduced motion — only the colour change
+   (not motion) remains, so the confirmation stays visible either way. */
+.store-v2 .v2-card-add[data-added] { color: var(--v2-accent-text); animation: v2AddedPop .32s ease-out; }
+@media (prefers-reduced-motion: reduce) { .store-v2 .v2-card-add[data-added] { animation: none; } }
 .store-v2 .v2-card-options { padding: 14px 0; border-bottom: 1px solid var(--v2-border); }
 .store-v2 .v2-card-options .v2-solid-button { width: 100%; margin-top: 14px; }
 .store-v2 .v2-variant-chooser { display: grid; gap: 23px; }
@@ -317,6 +333,14 @@
 .store-v2 .v2-skeleton-row div { width: 100%; aspect-ratio: 3 / 4; background: var(--v2-surface); animation: v2Pulse 1.6s ease-in-out infinite alternate; }
 .store-v2 .v2-home-empty { padding-block: 90px; text-align: center; }
 @keyframes v2Pulse { from { opacity: .55; } to { opacity: 1; } }
+/* Add-to-cart success micro-feedback (card quick-add, PDP buy button, header
+   bag icon, the toast below). Every animation here is intentionally small —
+   a few percent of scale, a fraction of a second — and every rule has a
+   matching reduced-motion override that drops the animation/transition
+   entirely while leaving the actual state change (label, colour, visibility)
+   intact, per the storefront's existing reduced-motion convention. */
+@keyframes v2AddedPop { 0% { transform: scale(1); } 45% { transform: scale(1.05); } 100% { transform: scale(1); } }
+@keyframes v2BagPulse { 0% { transform: scale(1); } 50% { transform: scale(1.14); } 100% { transform: scale(1); } }
 
 /* Catalogue: narrow-screen controls expand by request, but always visible on desktop. */
 .store-v2 .v2-catalog { padding-block: 45px 80px; }
@@ -366,6 +390,8 @@
 .store-v2 .v2-quantity { display: flex; flex-direction: column; flex: none; width: 78px; color: var(--v2-muted); font-size: 10px; font-weight: 600; }
 .store-v2 .v2-quantity input { width: 100%; flex: 1; min-height: 42px; border: 1px solid var(--v2-border); padding: 4px 5px; background: var(--v2-bg); color: var(--v2-text); font-variant-numeric: tabular-nums; text-align: center; }
 .store-v2 .v2-pdp-buy-row .v2-primary-button { flex: 1; align-self: end; min-width: 0; }
+.store-v2 .v2-pdp-buy-row .v2-primary-button[data-added] { animation: v2AddedPop .32s ease-out; }
+@media (prefers-reduced-motion: reduce) { .store-v2 .v2-pdp-buy-row .v2-primary-button[data-added] { animation: none; } }
 .store-v2 .v2-pdp-wishlist { display: flex; align-items: center; gap: 9px; min-height: 42px; margin-top: 11px; border: 0; background: transparent; color: inherit; font-size: 11px; }
 .store-v2 .v2-pdp-wishlist span { font-size: 22px; }
 .store-v2 .v2-success { padding-block: 10px; font-weight: 700; }
@@ -731,3 +757,20 @@
 .store-v2 .v2-lightbox-navigation button { width: 48px; height: 48px; border: 1px solid currentColor;
   background: transparent; color: inherit; font-size: 28px; }
 .store-v2 .v2-lightbox :is(button, a):focus-visible { outline-color: #fff; }
+
+/* Add-to-cart toast: a single global, non-interactive confirmation shared by
+   every add-to-cart entry point (quick add, variant picker, PDP). Fixed to
+   the viewport so it is never hidden by the sticky header or covered by page
+   content, respects the iPhone home-indicator safe area, and never captures
+   a tap (the shopper never needs to dismiss it — it clears itself). */
+.store-v2 .v2-added-toast { position: fixed; inset-inline: 0; bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  z-index: 70; display: flex; justify-content: center; padding-inline: 16px; pointer-events: none; }
+.store-v2 .v2-added-toast-bubble { display: inline-flex; align-items: center; gap: 8px; max-width: 100%;
+  padding: 11px 18px; border-radius: 999px; background: var(--v2-header-bg); color: var(--v2-header-text);
+  box-shadow: 0 10px 30px rgb(0 0 0 / .18); font-size: 12px; font-weight: 600; letter-spacing: .02em;
+  opacity: 0; transform: translateY(10px); transition: opacity .25s ease, transform .25s ease; }
+.store-v2 .v2-added-toast-bubble svg { width: 15px; height: 15px; flex: none; }
+.store-v2 .v2-added-toast[data-visible] .v2-added-toast-bubble { opacity: 1; transform: translateY(0); }
+@media (prefers-reduced-motion: reduce) {
+  .store-v2 .v2-added-toast-bubble { transition: opacity .15s linear; transform: none; }
+}

@@ -49,7 +49,7 @@ function V2Detail({ product, entry }: { product: Product; entry: CatalogProduct 
   const { t, pick, lang } = useI18n();
   const { settings, contentByProduct, products, catalogContext, categories, mode,
     variantsOf, colorGalleryFor, campaigns, promotions, promotionTargets, reviews } = useStorefront();
-  const { add, setQuantity, lines } = useStoreCart();
+  const { add, setQuantity, lines, notifyAdded } = useStoreCart();
   const { inWishlist, toggleWishlist } = useStoreAccount();
   const content: ProductContent | null = contentByProduct.get(product.id) ?? null;
   const variants = variantsOf(product.id);
@@ -64,6 +64,12 @@ function V2Detail({ product, entry }: { product: Product; entry: CatalogProduct 
   const zoomCloseButton = useRef<HTMLButtonElement>(null);
   const sizeGuide = useRef<HTMLDetailsElement>(null);
   const [added, setAdded] = useState(false);
+  // Guards the button against a rapid double tap adding the line twice while
+  // the "Added ✓" confirmation is still showing; cleared with the same timer
+  // that clears the confirmation itself.
+  const addLock = useRef(false);
+  const addedTimer = useRef<number | null>(null);
+  useEffect(() => () => { if (addedTimer.current !== null) window.clearTimeout(addedTimer.current); }, []);
   const selected = product.variants_enabled
     ? model.variants.find((variant) => variant.id === selectedId && model.remaining(variant) > 0) ?? null
     : null;
@@ -146,16 +152,32 @@ function V2Detail({ product, entry }: { product: Product; entry: CatalogProduct 
     setSelectedId(variant?.id ?? null);
     setImageIndex(0);
     setAdded(false);
+    addLock.current = false;
+    if (addedTimer.current !== null) { window.clearTimeout(addedTimer.current); addedTimer.current = null; }
   };
   const addToBag = () => {
-    if (!orderable || (product.variants_enabled && !selected)) return;
+    if (addLock.current || !orderable || (product.variants_enabled && !selected)) return;
     const already = lines.find((line) => line.product_id === product.id &&
       (line.variant_id ?? null) === (selected?.id ?? null))?.quantity ?? 0;
     const next = Math.min(already + quantity, max);
     if (next <= already) return;
-    if (already > 0) setQuantity(product.id, selected?.id ?? null, next);
-    else add(product, Math.min(quantity, max), selected);
+    // Only ever show success once the line is actually in the cart: `add()`
+    // reports it directly; the already-in-cart branch above has already
+    // confirmed (via `next > already`, computed from this same render's own
+    // stock figures) that the increase it is about to make is real.
+    let success: boolean;
+    if (already > 0) {
+      setQuantity(product.id, selected?.id ?? null, next);
+      notifyAdded();
+      success = true;
+    } else {
+      success = add(product, Math.min(quantity, max), selected);
+    }
+    if (!success) return;
+    addLock.current = true;
     setAdded(true);
+    if (addedTimer.current !== null) window.clearTimeout(addedTimer.current);
+    addedTimer.current = window.setTimeout(() => { setAdded(false); addLock.current = false; }, 1600);
   };
 
   return <div className="v2-pdp v2-container" data-testid="v2-product">
@@ -224,8 +246,9 @@ function V2Detail({ product, entry }: { product: Product; entry: CatalogProduct 
             <input aria-label={t("store.v2.quantity")} type="number" min="1" max={max || 1} inputMode="numeric"
               value={quantity} onChange={(event) => setQuantityDraft(Math.max(1, Math.min(max || 1, Math.floor(Number(event.target.value) || 1))))} />
           </label>
-          <button type="button" className="v2-primary-button" disabled={!orderable || available <= 0}
-            onClick={addToBag} data-testid="v2-pdp-add">{t("store.product.addToCart")}</button>
+          <button type="button" className="v2-primary-button" data-added={added || undefined}
+            disabled={!orderable || available <= 0}
+            onClick={addToBag} data-testid="v2-pdp-add">{added ? t("store.v2.addedShort") : t("store.product.addToCart")}</button>
         </div>
         <button type="button" className="v2-pdp-wishlist" aria-pressed={wished}
           aria-label={t(wished ? "store.wishlist.remove" : "store.wishlist.add")}
