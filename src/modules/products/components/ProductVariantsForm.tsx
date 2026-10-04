@@ -8,7 +8,7 @@ import {
   validateVariantDraft, variantDraftTotal,
   type ProductVariantDraft, type ProductVariantFormValue, type ProductVariantMode, type VariantColorRow,
 } from "../services/variantDraft";
-import { parseSizes, sizeLabelOf, suggestVariantSku, variantLabel } from "../variants";
+import { naturalSizeCompare, parseSizes, suggestVariantSku, variantLabel } from "../variants";
 
 export { EMPTY_PRODUCT_VARIANT_FORM };
 export type { ProductVariantDraft, ProductVariantFormValue, ProductVariantMode };
@@ -27,6 +27,16 @@ interface Props {
   stockEditable?: boolean;
   onChange: (value: ProductVariantFormValue) => void;
 }
+
+const COMMON_SWATCHES: Record<string,string> = {
+  black:"#000000", white:"#ffffff", red:"#ef4444", blue:"#3b82f6", green:"#22c55e",
+  yellow:"#eab308", orange:"#f97316", purple:"#a855f7", pink:"#ec4899", brown:"#92400e",
+  gray:"#6b7280", grey:"#6b7280", gold:"#d4af37", silver:"#c0c0c0", beige:"#d6c6a5",
+  "أسود":"#000000", "أبيض":"#ffffff", "أحمر":"#ef4444", "أزرق":"#3b82f6", "أخضر":"#22c55e",
+  "أصفر":"#eab308", "برتقالي":"#f97316", "بنفسجي":"#a855f7", "وردي":"#ec4899", "بني":"#92400e",
+  "رمادي":"#6b7280", "ذهبي":"#d4af37", "فضي":"#c0c0c0", "بيج":"#d6c6a5",
+};
+const commonSwatch = (name:string) => COMMON_SWATCHES[name.trim().toLocaleLowerCase()] ?? "";
 
 const newColorId = () => `color:${typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : Math.random().toString(36).slice(2)}`;
 
@@ -53,6 +63,10 @@ export function ProductVariantsForm({
   const updateColor = (id: string, patch: Partial<VariantColorRow>) => change({
     ...value, colors: value.colors.map((color) => color.id === id ? { ...color, ...patch } : color),
   });
+  const updateColorName = (color: VariantColorRow, field: "color_ar"|"color_en", name: string) => {
+    const automatic = commonSwatch(name);
+    updateColor(color.id, { [field]: name, ...(!color.color_hex && automatic ? { color_hex: automatic } : {}) });
+  };
   const updateRow = (id: string, patch: Partial<ProductVariantDraft>) => onChange({
     ...value, rows: value.rows.map((row) => row.id === id ? { ...row, ...patch } : row),
   });
@@ -64,20 +78,30 @@ export function ProductVariantsForm({
     }
     change({ ...value, colors: value.colors.filter((color) => color.id !== id) });
   };
-  const removeSize = (size: number) => {
-    if (value.rows.some((row) => row.size === String(size) && row.persistedId)) {
+  const removeSize = (size: string) => {
+    if (value.rows.some((row) => row.size.toLocaleLowerCase() === size.toLocaleLowerCase() && row.persistedId)) {
       toast.error(t("products.simple.archiveOption"));
       return;
     }
     change({ ...value, sizes: value.sizes.filter((entry) => entry !== size) });
   };
+  const moveSize = (size: string, direction: -1 | 1) => {
+    const index = value.sizes.indexOf(size);
+    const target = index + direction;
+    if (index < 0 || target < 0 || target >= value.sizes.length) return;
+    const sizes = [...value.sizes];
+    [sizes[index], sizes[target]] = [sizes[target], sizes[index]];
+    change({ ...value, sizes });
+  };
+  const sortSizesNaturally = () => change({ ...value, sizes: [...value.sizes].sort(naturalSizeCompare) });
   const addSizes = () => {
     const parsed = parseSizes(sizeEntry);
-    if (!parsed.length || /[^\d\s.,;\u066B\u060C\u066C]/.test(sizeEntry)) {
+    if (!parsed.length) {
       toast.error(t("products.simple.invalidSizes"));
       return;
     }
-    change({ ...value, sizes: [...new Set([...value.sizes, ...parsed])].sort((a, b) => a - b) });
+    const existing = new Set(value.sizes.map((size) => size.toLocaleLowerCase()));
+    change({ ...value, sizes: [...value.sizes, ...parsed.filter((size) => !existing.has(size.toLocaleLowerCase()))] });
     setSizeEntry("");
   };
 
@@ -91,7 +115,9 @@ export function ProductVariantsForm({
       const url = await uploadProductImage(file);
       const current = valueRef.current;
       if (colorId) {
-        onChange({ ...current, colors: current.colors.map((color) => color.id === colorId ? { ...color, image_url: url } : color) });
+        onChange({ ...current, colors: current.colors.map((color) => color.id === colorId
+          ? { ...color, image_urls: [...color.image_urls, url], image_url: color.image_url || url }
+          : color) });
       } else {
         onChange({ ...current, rows: current.rows.map((row) => row.id === key ? { ...row, image_url: url } : row) });
       }
@@ -100,6 +126,25 @@ export function ProductVariantsForm({
     } finally {
       setUploading(null);
     }
+  };
+
+  const makePrimary = (color: VariantColorRow, url: string) => {
+    const image_urls = [url, ...color.image_urls.filter((image) => image !== url)];
+    updateColor(color.id, { image_urls, image_url: image_urls[0] ?? "" });
+  };
+  const removeColorImage = (color: VariantColorRow, url: string) => {
+    const image_urls = color.image_urls.filter((image) => image !== url);
+    updateColor(color.id, { image_urls, image_url: image_urls[0] ?? "" });
+  };
+  const moveColorImage = (color: VariantColorRow, url: string, direction: -1 | 1) => {
+    const index = color.image_urls.indexOf(url);
+    const target = index + direction;
+    // Index zero is the explicit primary. Secondary images can be ordered
+    // independently; use "Make primary" when the primary itself must change.
+    if (index < 1 || target < 1 || target >= color.image_urls.length) return;
+    const image_urls = [...color.image_urls];
+    [image_urls[index], image_urls[target]] = [image_urls[target], image_urls[index]];
+    updateColor(color.id, { image_urls, image_url: image_urls[0] ?? "" });
   };
 
   const targets = value.rows.filter((row) => !editing || !row.persistedId);
@@ -117,7 +162,7 @@ export function ProductVariantsForm({
       if (row.sku.trim()) return row;
       const color = value.colors.find((entry) => entry.id === row.color_id);
       const sku = suggestVariantSku(productSku, color ? { color_ar: color.color_ar, color_en: color.color_en } : null,
-        row.size ? Number(row.size) : null, row.size_label || null, taken);
+        row.size || null, row.size || null, taken);
       taken.push(sku);
       return { ...row, sku };
     }) });
@@ -148,7 +193,7 @@ export function ProductVariantsForm({
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h3 className="text-sm font-bold text-slate-900">{t("products.simple.colors")}</h3>
                 <Button size="sm" variant="secondary" type="button" data-testid="variant-add-color" disabled={structureLocked} onClick={() =>
-                  change({ ...value, colors: [...value.colors, { id: newColorId(), color_ar: "", color_en: "", color_hex: "", image_url: "" }] })
+                  change({ ...value, colors: [...value.colors, { id: newColorId(), color_ar: "", color_en: "", color_hex: "", image_urls: [], image_url: "" }] })
                 }>+ {t("products.simple.addColor")}</Button>
               </div>
               {value.colors.map((color, index) => (
@@ -160,22 +205,35 @@ export function ProductVariantsForm({
                     </button>
                   </div>
                   <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                    <Field label={t("products.variants.colorAr")}><TextInput dir="rtl" disabled={structureLocked} value={color.color_ar} onChange={(event) => updateColor(color.id, { color_ar: event.target.value })} placeholder="ذهبي" data-testid={`variant-color-ar-${index}`} /></Field>
-                    <Field label={t("products.variants.colorEn")}><TextInput dir="ltr" disabled={structureLocked} value={color.color_en} onChange={(event) => updateColor(color.id, { color_en: event.target.value })} placeholder="Gold" data-testid={`variant-color-en-${index}`} /></Field>
+                    <Field label={t("products.variants.colorAr")}><TextInput dir="rtl" disabled={structureLocked} value={color.color_ar} onChange={(event) => updateColorName(color,"color_ar",event.target.value)} placeholder="ذهبي" data-testid={`variant-color-ar-${index}`} /></Field>
+                    <Field label={t("products.variants.colorEn")}><TextInput dir="ltr" disabled={structureLocked} value={color.color_en} onChange={(event) => updateColorName(color,"color_en",event.target.value)} placeholder="Gold" data-testid={`variant-color-en-${index}`} /></Field>
                     <Field label={t("products.variants.colorHex")}>
                       <div className="flex items-center gap-2">
-                        <input type="color" disabled={structureLocked} className="h-10 w-12 shrink-0 cursor-pointer rounded-md border border-slate-200 bg-white p-1" aria-label={`${t("products.variants.colorHex")} ${index + 1}`} value={/^#[0-9a-fA-F]{6}$/.test(color.color_hex) ? color.color_hex : "#d4af37"} onChange={(event) => updateColor(color.id, { color_hex: event.target.value })} />
-                        <TextInput dir="ltr" disabled={structureLocked} className="min-w-0 font-mono text-xs" placeholder="#D4AF37" value={color.color_hex} onChange={(event) => updateColor(color.id, { color_hex: event.target.value })} data-testid={`variant-color-hex-${index}`} />
+                        <input type="color" data-testid={`variant-color-hex-${index}`} disabled={structureLocked} className="h-10 w-14 shrink-0 cursor-pointer rounded-md border border-slate-200 bg-white p-1" aria-label={`${t("products.variants.colorHex")} ${index + 1}`} value={/^#[0-9a-fA-F]{6}$/.test(color.color_hex) ? color.color_hex : "#64748b"} onChange={(event) => updateColor(color.id, { color_hex: event.target.value })} />
+                        {color.color_hex ? <button type="button" disabled={structureLocked} className="text-xs font-semibold text-rose-700" onClick={()=>updateColor(color.id,{color_hex:""})}>Clear</button> : <span className="text-xs text-slate-500">Optional</span>}
                       </div>
                     </Field>
                     <Field label={t("products.simple.colorImage")}>
-                      <div className="flex min-w-0 items-center gap-2">
-                        {color.image_url && <img src={color.image_url} className="h-10 w-10 shrink-0 rounded-md object-cover" alt="" />}
-                        <label className="cursor-pointer rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs font-semibold hover:bg-slate-100">
+                      <div className="space-y-2">
+                        <div className="flex flex-wrap gap-2">
+                          {color.image_urls.map((url, imageIndex) => (
+                            <div key={url} className={`relative rounded-lg border p-1 ${imageIndex===0 ? "border-slate-900" : "border-slate-200"}`}>
+                              <img src={url} className="h-12 w-12 rounded-md object-cover" alt="" />
+                              <button type="button" disabled={structureLocked} onClick={()=>makePrimary(color,url)} className="block w-full text-[9px] font-bold text-slate-700">{imageIndex===0 ? "Primary" : "Make primary"}</button>
+                              {imageIndex > 0 ? (
+                                <div className="flex justify-center gap-2 text-[10px] font-bold text-slate-600">
+                                  <button type="button" disabled={structureLocked || imageIndex===1} onClick={()=>moveColorImage(color,url,-1)} aria-label={`Move image ${imageIndex + 1} earlier`}>←</button>
+                                  <button type="button" disabled={structureLocked || imageIndex===color.image_urls.length-1} onClick={()=>moveColorImage(color,url,1)} aria-label={`Move image ${imageIndex + 1} later`}>→</button>
+                                </div>
+                              ) : null}
+                              <button type="button" disabled={structureLocked} onClick={()=>removeColorImage(color,url)} className="block w-full text-[9px] text-rose-700">{t("products.simple.removeColor")}</button>
+                            </div>
+                          ))}
+                        </div>
+                        <label className="inline-block cursor-pointer rounded-lg border border-slate-200 bg-white px-2 py-2 text-xs font-semibold hover:bg-slate-100">
                           {uploading === color.id ? t("common.loading") : t("products.simple.uploadImage")}
                           <input type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/avif,image/bmp" className="sr-only" disabled={structureLocked || uploading !== null} onChange={(event) => { void upload(event.target.files?.[0], color.id, color.id); event.target.value = ""; }} />
                         </label>
-                        {color.image_url && <button type="button" disabled={structureLocked} className="text-xs text-rose-700" onClick={() => updateColor(color.id, { image_url: "" })}>{t("products.simple.removeColor")}</button>}
                       </div>
                     </Field>
                   </div>
@@ -191,14 +249,17 @@ export function ProductVariantsForm({
               <div className="flex flex-wrap items-center gap-2">
                 {value.sizes.map((size) => (
                   <span key={size} className="inline-flex min-h-10 items-center gap-2 rounded-full border border-slate-300 bg-white px-3 text-sm font-bold tabular-nums text-slate-900" data-testid={`variant-size-${size}`}>
-                    {sizeLabelOf(size, null)}
+                    {size}
+                    <button type="button" disabled={structureLocked || value.sizes.indexOf(size)===0} onClick={() => moveSize(size,-1)} className="text-slate-500 disabled:opacity-30" aria-label={`Move ${size} earlier`}>←</button>
+                    <button type="button" disabled={structureLocked || value.sizes.indexOf(size)===value.sizes.length-1} onClick={() => moveSize(size,1)} className="text-slate-500 disabled:opacity-30" aria-label={`Move ${size} later`}>→</button>
                     <button type="button" disabled={structureLocked} onClick={() => removeSize(size)} className="text-rose-700 hover:text-rose-900" aria-label={`${t("products.simple.removeSize")} ${size}`} title={t("products.simple.removeSize")}>×</button>
                   </span>
                 ))}
               </div>
               <div className="flex max-w-md min-w-0 flex-wrap gap-2">
-                <TextInput dir="ltr" className="min-w-32 flex-1" disabled={structureLocked} value={sizeEntry} onChange={(event) => setSizeEntry(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addSizes(); } }} placeholder="17, 18, 19, 20" aria-label={t("products.simple.quickSizes")} data-testid="variant-size-entry" />
+                <TextInput dir="ltr" className="min-w-32 flex-1" disabled={structureLocked} value={sizeEntry} onChange={(event) => setSizeEntry(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addSizes(); } }} placeholder="XS, S, M, L · 28x30 · 3-4Y · One Size" aria-label={t("products.simple.quickSizes")} data-testid="variant-size-entry" />
                 <Button type="button" variant="secondary" onClick={addSizes} disabled={structureLocked} data-testid="variant-add-sizes">+ {t("products.simple.addSizes")}</Button>
+                <Button type="button" variant="ghost" onClick={sortSizesNaturally} disabled={structureLocked || value.sizes.length<2}>A→Z / 1→10</Button>
               </div>
               <p className="text-xs text-slate-600">{t("products.simple.quickSizesHint")}</p>
             </section>
@@ -234,7 +295,7 @@ export function ProductVariantsForm({
                   const color = value.colors.find((entry) => entry.id === row.color_id);
                   const archived = row.persistedId && !row.active;
                   return <tr key={row.id} data-testid={`product-variant-${row.id}`} className={`border-b border-slate-100 last:border-0 ${archived ? "bg-slate-50 text-slate-500" : ""}`}>
-                    <td className="min-w-32 p-2 font-bold">{variantLabel({ color_ar: row.color_ar, color_en: row.color_en, size: row.size ? Number(row.size) : null, size_label: row.size_label }, lang) || "—"}</td>
+                    <td className="min-w-32 p-2 font-bold">{variantLabel({ color_ar: row.color_ar, color_en: row.color_en, size: null, size_label: row.size, size_value: row.size }, lang) || "—"}</td>
                     <td className="p-2"><TextInput className="w-32 font-mono text-xs" value={row.sku} onChange={(event) => updateRow(row.id, { sku: event.target.value })} aria-label={`${t("products.sku")} ${row.id}`} data-testid={`variant-field-sku-${row.id}`} /></td>
                     <td className="p-2"><TextInput className="w-32 font-mono text-xs" value={row.barcode} onChange={(event) => updateRow(row.id, { barcode: event.target.value })} aria-label={`${t("products.barcode")} ${row.id}`} data-testid={`variant-field-barcode-${row.id}`} /></td>
                     <td className="p-2"><TextInput dir="ltr" inputMode="numeric" className="w-16 text-xs" value={row.stock_quantity} readOnly={!stockEditable || Boolean(row.persistedId)} onChange={(event) => updateRow(row.id, { stock_quantity: event.target.value })} aria-label={`${t("products.variants.colStock")} ${row.id}`} data-testid={`variant-field-stock-${row.id}`} /></td>

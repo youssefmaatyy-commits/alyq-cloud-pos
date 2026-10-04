@@ -37,6 +37,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npm run production:preflight
       # ESLint, added with migration 0030's hardening pass. It is the cheapest of
       # the four gates and the only one that reads the code rather than running
       # it: the hooks rules catch a conditional hook, which every other job here

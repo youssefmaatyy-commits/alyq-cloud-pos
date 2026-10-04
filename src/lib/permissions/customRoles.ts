@@ -241,6 +241,9 @@ export const CUSTOM_ROLE_PRESETS: readonly {
     name_ar: "مدير مبيعات",
     base_role: "manager",
     capabilities: [
+      "view_dashboard",
+      "view_products",
+      "view_sales",
       "view_inventory",
       "sell",
       "edit_sale",
@@ -267,6 +270,8 @@ export const CUSTOM_ROLE_PRESETS: readonly {
     name_ar: "مدير مخازن",
     base_role: "manager",
     capabilities: [
+      "view_dashboard",
+      "view_products",
       "view_inventory",
       "adjust_stock",
       "add_product",
@@ -285,6 +290,8 @@ export const CUSTOM_ROLE_PRESETS: readonly {
     name_ar: "محاسب",
     base_role: "viewer",
     capabilities: [
+      "view_dashboard",
+      "view_products",
       "view_inventory",
       "view_shifts",
       "view_reports",
@@ -303,7 +310,14 @@ export const CUSTOM_ROLE_PRESETS: readonly {
     name_en: "Warehouse Employee",
     name_ar: "موظف مخزن",
     base_role: "inventory_clerk",
-    capabilities: ["view_inventory", "adjust_stock", "import_data", "export_data"],
+    capabilities: [
+      "view_dashboard",
+      "view_products",
+      "view_inventory",
+      "adjust_stock",
+      "import_data",
+      "export_data",
+    ],
   },
 ] as const).map((preset) => ({
   ...preset,

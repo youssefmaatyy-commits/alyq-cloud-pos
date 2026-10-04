@@ -74,6 +74,7 @@ import {
   type OnlineMode,
   type OnlineOrderFilter,
   type OnlineOrdersRepository,
+  type PendingOrderAlert,
   type OrderCounts,
   type PlaceOrderResult,
   type PricingPreview,
@@ -720,6 +721,12 @@ export class SupabaseOnlineRepository
       if (filter.paymentStatus && filter.paymentStatus !== "all") {
         query = query.eq("payment_status", filter.paymentStatus);
       }
+      if (filter.deliveryType && filter.deliveryType !== "all") {
+        query = query.eq("delivery_type", filter.deliveryType);
+      }
+      if (filter.paymentMethod && filter.paymentMethod !== "all") {
+        query = query.eq("payment_method", filter.paymentMethod);
+      }
       const search = (filter.search ?? "").trim();
       if (search) {
         // Order number, name or phone — one box, because staff do not think in
@@ -756,6 +763,27 @@ export class SupabaseOnlineRepository
 
       return orders.map((row) =>
         mapOrder(row, itemsByOrder.get(row.id) ?? [], eventsByOrder.get(row.id) ?? []),
+      );
+    } catch (error) {
+      throw toOnlineError(error);
+    }
+  }
+
+  async listPendingOrderAlerts(limit = 100): Promise<PendingOrderAlert[]> {
+    try {
+      const client = this.require();
+      // This intentionally does not reuse `listOrders`: an arrival check only
+      // needs immutable IDs and timestamps, not every line item/event on the
+      // queue. The RLS policy remains the same staff-only read policy.
+      const { data, error } = await client
+        .from("online_orders")
+        .select("id, order_number, created_at")
+        .eq("status", "pending")
+        .order("created_at", { ascending: false })
+        .limit(Math.max(1, Math.min(Math.floor(limit), 250)));
+      if (error) throw toOnlineError(error);
+      return ((data as Array<{ id: string; order_number: string; created_at: string }> | null) ?? []).map(
+        (row) => ({ id: row.id, orderNumber: row.order_number, createdAt: row.created_at }),
       );
     } catch (error) {
       throw toOnlineError(error);
@@ -908,6 +936,12 @@ export class SupabaseOnlineRepository
       if (filter.status && filter.status !== "all") query = query.eq("status", filter.status);
       if (filter.paymentStatus && filter.paymentStatus !== "all") {
         query = query.eq("payment_status", filter.paymentStatus);
+      }
+      if (filter.deliveryType && filter.deliveryType !== "all") {
+        query = query.eq("delivery_type", filter.deliveryType);
+      }
+      if (filter.paymentMethod && filter.paymentMethod !== "all") {
+        query = query.eq("payment_method", filter.paymentMethod);
       }
       if (filter.from) query = query.gte("created_at", filter.from);
       if (filter.to) query = query.lte("created_at", `${filter.to}T23:59:59.999Z`);
@@ -1160,11 +1194,18 @@ export class SupabaseOnlineRepository
       const code = normalizeCouponCode(input.code);
       if (!code) return { valid: false, reason: "not_found" };
 
-      const { data, error } = await client.rpc("check_storefront_coupon", {
+      // This is intentionally the pricing-authority wrapper, not legacy
+      // `check_storefront_coupon`: Admin coupon-mode promotions live in
+      // `promotions`, and only the shared preview/order evaluator knows every
+      // target, channel, date, usage and stacking rule.
+      const { data, error } = await client.rpc("check_storefront_coupon_pricing", {
         p_code: code,
-        p_subtotal: Math.max(input.subtotal, 0),
-        p_product_ids: input.productIds,
-        p_category_ids: input.categoryIds,
+        p_lines: (input.lines ?? []).map((line) => ({
+          product_id: line.product_id,
+          variant_id: line.variant_id ?? null,
+          qty: line.qty,
+        })),
+        p_customer_key: input.customerKey ?? null,
       });
       if (error) throw toOnlineError(error);
 
@@ -1177,6 +1218,7 @@ export class SupabaseOnlineRepository
         value?: Numeric;
         min_subtotal?: Numeric;
         stackable?: boolean;
+        free_shipping?: boolean;
       } | null;
 
       if (!result?.valid) {
@@ -1196,6 +1238,7 @@ export class SupabaseOnlineRepository
         discountType: result.discount_type ?? "percent",
         value: toNumber(result.value ?? 0),
         stackable: result.stackable ?? false,
+        ...(result.free_shipping ? { freeShipping: true as const } : {}),
       };
     } catch (error) {
       throw toOnlineError(error);

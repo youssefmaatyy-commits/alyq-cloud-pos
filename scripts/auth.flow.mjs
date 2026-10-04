@@ -375,7 +375,13 @@ await step(5, "Verify cashier permissions", async () => {
   const complete = await app.stageSale();
   if (!complete) throw new Error("the cashier has no Complete sale control on the register");
   if (complete.disabled) throw new Error("the cashier cannot complete a sale");
-  out.push(`can complete a sale: ${!complete.disabled}`);
+  if (app.document.querySelector('select[aria-label="Invoice discount"]')) {
+    throw new Error("the cashier was shown an unauthorized invoice-discount control");
+  }
+  if (app.document.querySelector('select[aria-label="Item discount"]')) {
+    throw new Error("the cashier was shown an unauthorized item-discount control");
+  }
+  out.push("can complete a sale; unauthorized discount actions are not rendered");
   app.clickEl(complete);
   await sleep(1600);
   if (!/INV-\d{6}/.test(app.bodyText())) throw new Error("the cashier's sale was not recorded");
@@ -442,8 +448,8 @@ await step(6, "Try unauthorized action and confirm it is blocked", async () => {
   const adjust = [...app.document.querySelectorAll("main button")].find(
     (b) => (b.textContent ?? "").trim() === "Adjust stock",
   );
-  if (adjust && !adjust.disabled) throw new Error("a viewer could adjust stock");
-  out.push(`stock adjustment for a viewer: ${adjust ? "disabled" : "not rendered"}`);
+  if (adjust) throw new Error("a viewer was shown the unauthorized stock-adjustment action");
+  out.push("stock adjustment for a viewer: not rendered");
 
   const salesAfter = app.dom.window.localStorage.getItem("alyq.demo.sales.v1");
   if (salesAfter !== salesBefore) throw new Error("the blocked session wrote to the sales store");

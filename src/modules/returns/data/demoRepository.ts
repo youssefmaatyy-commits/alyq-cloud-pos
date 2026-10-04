@@ -97,6 +97,10 @@ export class DemoReturnRepository implements ReturnRepository {
     return delay([...this.returns].sort((a, b) => b.created_at.localeCompare(a.created_at)));
   }
 
+  async getReturnsForSale(saleId: string): Promise<SalesReturn[]> {
+    return delay(this.returns.filter((item) => item.sale_id === saleId), 20);
+  }
+
   async getReturn(id: string): Promise<SalesReturn> {
     const found = this.returns.find((r) => r.id === id);
     if (!found) throw new AppError("NOT_FOUND", `Return ${id} not found`);
@@ -118,6 +122,16 @@ export class DemoReturnRepository implements ReturnRepository {
   async createReturn(
     input: CreateReturnInput,
   ): Promise<{ returnRecord: SalesReturn; refundRecord: RefundRecord }> {
+    // A click retry carries the same key. Return the original records before
+    // checking returnable quantities or touching stock a second time.
+    if (input.client_ref) {
+      const prior = this.returns.find((entry) => entry.client_ref === input.client_ref);
+      if (prior) {
+        const refund = this.refunds.find((entry) => entry.return_id === prior.id);
+        if (refund) return delay({ returnRecord: prior, refundRecord: refund }, 20);
+      }
+    }
+
     const salesRepo = getDemoSalesRepository();
     const sale = await salesRepo.getSale(input.sale_id);
     if (!sale) throw new AppError("NOT_FOUND", `Sale ${input.sale_id} not found`);
@@ -185,28 +199,56 @@ export class DemoReturnRepository implements ReturnRepository {
         quantity: validItem.requested_quantity,
         line_total: validItem.line_total,
       });
+    }
 
-      // Increase stock safely and create stock movement record
+    // Validate first, construct immutable records next, then move stock. If a
+    // later shelf mutation fails, compensate each earlier one on its EXACT
+    // variant shelf before exposing any return/refund record. This is the demo
+    // equivalent of the live RPC transaction and prevents stock inflation.
+    const applied: ReturnItem[] = [];
+    try {
       const catalog = getCatalogDemo();
-      const products = await catalog.listProducts();
-      await applyDemoAdjustment(
-        {
-          productId: validItem.product_id,
-          // The exact shelf the goods left — never a sibling size or colour.
-          variantId: validItem.variant_id,
-          type: "adjustment_in",
-          reason: "customer_return",
-          quantity: validItem.requested_quantity,
-          notes: `Customer Return: ${returnNumber} (Sale ${sale.sale_number})`,
-          userId: input.user_id,
-          userName: input.user_name,
-        },
-        products,
-      );
+      for (const item of returnItems) {
+        const products = await catalog.listProducts();
+        await applyDemoAdjustment(
+          {
+            productId: item.product_id,
+            variantId: item.variant_id,
+            type: "adjustment_in",
+            reason: "customer_return",
+            quantity: item.quantity,
+            notes: `Customer Return: ${returnNumber} (Sale ${sale.sale_number})`,
+            userId: input.user_id,
+            userName: input.user_name,
+          },
+          products,
+        );
+        applied.push(item);
+      }
+    } catch (error) {
+      const catalog = getCatalogDemo();
+      for (const item of [...applied].reverse()) {
+        const products = await catalog.listProducts();
+        await applyDemoAdjustment(
+          {
+            productId: item.product_id,
+            variantId: item.variant_id,
+            type: "adjustment_out",
+            reason: "customer_return",
+            quantity: item.quantity,
+            notes: `Reversed: failed return ${returnNumber}`,
+            userId: input.user_id,
+            userName: input.user_name,
+          },
+          products,
+        );
+      }
+      throw error;
     }
 
     const returnRecord: SalesReturn = {
       id: returnId,
+      client_ref: input.client_ref ?? null,
       return_number: returnNumber,
       sale_id: sale.id,
       sale_number: sale.sale_number,
@@ -282,43 +324,61 @@ export class DemoReturnRepository implements ReturnRepository {
       settled_by: input.user_id,
       settled_by_name: input.user_name,
     };
+    // A rejection means the original stock-in must be reversed. Do that first
+    // and compensate any partial reversal on failure; only then publish the
+    // terminal refund/return state. A retry after an error therefore cannot
+    // double-debit a variant shelf or leave stock and refund status diverged.
+    const linked = settled.return_id ? this.returns.find((entry) => entry.id === settled.return_id) : null;
+    if (settled.status === "rejected" && linked) {
+      const reversed: ReturnItem[] = [];
+      try {
+        const catalog = getCatalogDemo();
+        for (const item of linked.items) {
+          const products = await catalog.listProducts();
+          await applyDemoAdjustment(
+            {
+              productId: item.product_id,
+              variantId: item.variant_id,
+              type: "adjustment_out",
+              reason: "customer_return",
+              quantity: item.quantity,
+              notes: `Reversed: refund ${settled.refund_number} rejected (Return ${linked.return_number})`,
+              userId: input.user_id,
+              userName: input.user_name,
+            },
+            products,
+          );
+          reversed.push(item);
+        }
+      } catch (error) {
+        const catalog = getCatalogDemo();
+        for (const item of [...reversed].reverse()) {
+          const products = await catalog.listProducts();
+          await applyDemoAdjustment(
+            {
+              productId: item.product_id,
+              variantId: item.variant_id,
+              type: "adjustment_in",
+              reason: "customer_return",
+              quantity: item.quantity,
+              notes: `Reversed: failed refund rejection ${settled.refund_number}`,
+              userId: input.user_id,
+              userName: input.user_name,
+            },
+            products,
+          );
+        }
+        throw error;
+      }
+    }
+
     this.refunds = this.refunds.map((r) => (r.id === refundId ? settled : r));
     persistRefunds(this.refunds);
-
-    // The linked return follows the money: its refund_status is a mirror of the
-    // settlement, which is what frees the reserved refundable amount for a
-    // rejection.
     if (settled.return_id) {
       this.returns = this.returns.map((r) =>
         r.id === settled.return_id ? { ...r, refund_status: settled.status } : r,
       );
       persistReturns(this.returns);
-
-      // A rejection cancels the return, so the goods are written back out —
-      // the exact mirror of pos_settle_refund (migration 0041). This keeps the
-      // released quantity honest: a later, genuine return restores stock
-      // exactly once, for the goods that actually came back that time.
-      if (settled.status === "rejected") {
-        const linked = this.returns.find((r) => r.id === settled.return_id);
-        if (linked) {
-          const catalog = getCatalogDemo();
-          for (const item of linked.items) {
-            const products = await catalog.listProducts();
-            await applyDemoAdjustment(
-              {
-                productId: item.product_id,
-                type: "adjustment_out",
-                reason: "customer_return",
-                quantity: item.quantity,
-                notes: `Reversed: refund ${settled.refund_number} rejected (Return ${linked.return_number})`,
-                userId: input.user_id,
-                userName: input.user_name,
-              },
-              products,
-            );
-          }
-        }
-      }
     }
 
     return delay({ refund: settled, alreadySettled: false }, 60);

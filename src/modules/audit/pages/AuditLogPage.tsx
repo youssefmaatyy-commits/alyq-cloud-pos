@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useI18n } from "@/lib/i18n/I18nProvider";
+import { useBranch } from "@/lib/branch";
 import { PageHeader } from "@/components/layout/AppShell";
 import {
   Badge,
@@ -30,6 +31,8 @@ import {
 } from "../services/auditService";
 import { buildAuditSheets } from "../services/auditExport";
 
+const evidenceJson = (value: unknown) => JSON.stringify(value ?? {}, null, 2);
+
 const ACTION_TONE: Record<string, "success" | "info" | "warning" | "danger" | "neutral"> = {
   "shift.opened": "success",
   "shift.closed": "info",
@@ -57,7 +60,8 @@ const ACTION_TONE: Record<string, "success" | "info" | "warning" | "danger" | "n
 
 /** Read-only audit trail (Phase 8). */
 export function AuditLogPage() {
-  const { t, date } = useI18n();
+  const { t, date, lang } = useI18n();
+  const branches = useBranch();
   const [entries, setEntries] = useState<AuditLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -84,12 +88,21 @@ export function AuditLogPage() {
   // employee would list names that never did anything, and a free-text box would
   // make the filter depend on spelling a name exactly as it was written down.
   const actors = useMemo(() => auditActors(entries), [entries]);
+  const approvers = useMemo(() => {
+    const seen = new Map<string, string>();
+    entries.forEach((entry) => { if (entry.approver_id) seen.set(entry.approver_id, entry.approver_name ?? entry.approver_id); });
+    return [...seen.entries()].map(([id, name]) => ({ id, name }));
+  }, [entries]);
+  const modules = useMemo(() => [...new Set(entries.map((entry) => entry.module).filter((value): value is string => Boolean(value)))].sort(), [entries]);
   const mayExport = useMemo(() => mayExportAudit(), []);
   const filtersActive =
     filters.search.trim() !== "" ||
     filters.action !== "all" ||
     filters.entity !== "all" ||
     filters.user !== "all" ||
+    filters.approver !== "all" ||
+    filters.branch !== "all" ||
+    filters.module !== "all" ||
     filters.from !== "" ||
     filters.to !== "";
 
@@ -180,6 +193,24 @@ export function AuditLogPage() {
               ))}
             </SelectInput>
           </div>
+          <div className="w-full sm:w-48">
+            <SelectInput value={filters.approver} onChange={(e) => setFilters({ ...filters, approver: e.target.value })} aria-label={t("audit.approver")}>
+              <option value="all">{t("audit.allApprovers")}</option>
+              {approvers.map((approver) => <option key={approver.id} value={approver.id}>{approver.name}</option>)}
+            </SelectInput>
+          </div>
+          <div className="w-full sm:w-48">
+            <SelectInput value={filters.branch} onChange={(e) => setFilters({ ...filters, branch: e.target.value })} aria-label={t("audit.branch")}>
+              <option value="all">{t("audit.allBranches")}</option>
+              {branches.branches.map((item) => <option key={item.id} value={item.id}>{lang === "ar" ? item.name_ar : item.name_en}</option>)}
+            </SelectInput>
+          </div>
+          <div className="w-full sm:w-40">
+            <SelectInput value={filters.module} onChange={(e) => setFilters({ ...filters, module: e.target.value })} aria-label={t("audit.module")}>
+              <option value="all">{t("audit.allModules")}</option>
+              {modules.map((module) => <option key={module} value={module}>{module}</option>)}
+            </SelectInput>
+          </div>
           <div className="w-full sm:w-40">
             <TextInput
               type="date"
@@ -246,15 +277,27 @@ export function AuditLogPage() {
                   <td className="px-3 py-3 text-xs text-slate-500">
                     {t(`audit.entity.${entry.entity}` as TranslationKey)}
                   </td>
-                  <td className="px-3 py-3 font-mono text-xs font-bold text-slate-800">
-                    {entry.entity_label}
+                  <td className="px-3 py-3 text-xs text-slate-800">
+                    <p className="font-mono font-bold">{entry.entity_label}</p>
+                    <p className="mt-1 font-mono text-[10px] font-normal text-slate-400">{entry.entity_id}</p>
+                    <p className="mt-1 text-[10px] text-slate-500">
+                      {[entry.branch_name ?? entry.branch_id, entry.module].filter(Boolean).join(" · ")}
+                    </p>
                   </td>
-                  <td className="px-3 py-3 text-xs text-slate-600">
-                    {Object.entries(entry.details)
-                      .map(([k, v]) => `${k}: ${v}`)
-                      .join(" · ")}
+                  <td className="max-w-xl px-3 py-3 text-xs text-slate-600">
+                    {entry.reason ? <p className="mb-1 font-semibold text-slate-800">{entry.reason}</p> : null}
+                    <details>
+                      <summary className="cursor-pointer font-semibold text-slate-600">{t("audit.details")}</summary>
+                      <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-50 p-2 font-mono text-[10px] leading-4">{evidenceJson(entry.details)}</pre>
+                      {entry.before_state ? <><p className="mt-2 font-bold">{t("audit.beforeState")}</p><pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap rounded-lg bg-rose-50 p-2 font-mono text-[10px]">{evidenceJson(entry.before_state)}</pre></> : null}
+                      {entry.after_state ? <><p className="mt-2 font-bold">{t("audit.afterState")}</p><pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap rounded-lg bg-emerald-50 p-2 font-mono text-[10px]">{evidenceJson(entry.after_state)}</pre></> : null}
+                      {entry.correlation_id ? <p className="mt-2 break-all font-mono text-[10px] text-slate-400">{t("audit.correlation")}: {entry.correlation_id}</p> : null}
+                    </details>
                   </td>
-                  <td className="px-4 py-3 text-xs text-slate-700">{entry.user_name}</td>
+                  <td className="px-4 py-3 text-xs text-slate-700">
+                    <p className="font-semibold">{entry.user_name}</p>
+                    {entry.approver_name || entry.approver_id ? <p className="mt-1 text-[10px] text-slate-500">{t("audit.approver")}: {entry.approver_name ?? entry.approver_id}</p> : null}
+                  </td>
                 </tr>
               ))}
             </tbody>

@@ -11,9 +11,9 @@ import { Link } from "react-router-dom";
 import { ChevronIcon } from "@/components/ui/icons";
 import { PageHeader } from "@/components/layout/AppShell";
 import { useI18n } from "@/lib/i18n/I18nProvider";
-import { canAct } from "@/lib/permissions/enforce";
-import { pathAdmits } from "@/lib/permissions/routes";
-import type { Capability } from "@/lib/permissions/roles";
+import { can } from "@/lib/permissions/enforce";
+import { pathPermits } from "@/lib/permissions/routes";
+import type { Permission } from "@/lib/permissions/catalog";
 
 export interface ModuleCard {
   /** Stable key — also the card's testid (`module-card-<key>`). */
@@ -23,7 +23,7 @@ export interface ModuleCard {
   title: string;
   description: string;
   /** Null = any signed-in role, exactly like the route table. */
-  capability?: Capability | null;
+  permission?: Permission | null;
   badge?: number;
   badgeLabel?: string;
 }
@@ -45,11 +45,11 @@ export function ModuleHomePage({
 }) {
   const { t } = useI18n();
   const visible = cards.filter((card) => {
-    // An explicit card capability is narrower than the path (stock adjustments
+    // An explicit card permission is narrower than the path (stock adjustments
     // sit on a screen the path only asks to view). Otherwise the path, including
-    // alternates, is the same door the route guard uses.
-    if (card.capability) return canAct(card.capability);
-    return pathAdmits(card.to, (capability) => canAct(capability));
+    // alternates, is the same normalized door the route guard uses.
+    if (card.permission) return can(card.permission);
+    return pathPermits(card.to, (permission) => can(permission));
   });
   if (visible.length === 0) return null;
 

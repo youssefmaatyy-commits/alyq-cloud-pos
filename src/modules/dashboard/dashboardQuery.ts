@@ -150,15 +150,21 @@ export function computeReturnsKpis(
 ): ReturnsKpis {
   let todayCount = 0;
   let todayTotal = 0;
-  const totalCount = returns.length;
+  let totalCount = 0;
   let totalRefunded = 0;
   let pendingRefunds = 0;
 
   for (const r of returns) {
-    totalRefunded += r.refund_amount;
-    if (isToday(r.created_at)) {
-      todayCount++;
-      todayTotal += r.refund_amount;
+    // A rejected return is history, not a completed return/refund. It must not
+    // inflate the operational count or be presented as money paid back.
+    if (r.refund_status === "rejected") continue;
+    totalCount++;
+    if (isToday(r.created_at)) todayCount++;
+    // Pending returns are work still owed; only a completed settlement counts
+    // as refunded value. This is intentionally separate from the count above.
+    if (r.refund_status === "completed") {
+      totalRefunded += r.refund_amount;
+      if (isToday(r.created_at)) todayTotal += r.refund_amount;
     }
   }
 

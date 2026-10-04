@@ -1,7 +1,6 @@
 import { encodeCode128, barcodeToSvgString, escapeXml } from "./barcodeHelpers";
 import { round2 } from "./posMath";
 import type { Sale } from "../types";
-import alyqLogoUrl from "@/assets/alyq-logo.png";
 
 /**
  * Printable receipt builders — ALYQ boutique edition.
@@ -12,13 +11,10 @@ import alyqLogoUrl from "@/assets/alyq-logo.png";
  *
  * Design goals (thermal 58mm / 80mm):
  * - compact: tight paddings, 10–11px body type, hairline separators
- * - boutique minimal: centered official logo, serif brand line, small-caps tagline
+ * - compact textual identity: the shop name + optional merchant tagline, no
+ *   large raster mark consuming the limited thermal paper height
  * - scannable: Code 128 symbol sized to fit 58mm media, never mirrored in RTL
  */
-
-/** Official ALYQ logo — imported as a Vite asset so the singlefile build
- *  inlines it as a data URL (works offline / in standalone HTML). */
-export const RECEIPT_LOGO_SRC = alyqLogoUrl;
 
 /** Contact footer — English labels exactly as specified by the brand. */
 export const RECEIPT_CONTACTS = [
@@ -84,6 +80,8 @@ export interface ReceiptStrings {
   saleLabel: string;
   dateLabel: string;
   cashierLabel: string;
+  branchLabel?: string;
+  registerLabel?: string;
   itemLabel: string;
   qtyLabel: string;
   priceLabel: string;
@@ -97,6 +95,7 @@ export interface ReceiptStrings {
   remainingLabel: string;
   customerLabel: string;
   customerPhoneLabel: string;
+  noteLabel?: string;
   statusLabel: string;
   thankYou: string;
   voidedNotice: string;
@@ -108,9 +107,8 @@ export interface ReceiptData {
   strings: ReceiptStrings;
   direction: "rtl" | "ltr";
   /**
-   * Phase 46: the shared brand logo, when the merchant enabled the receipt
-   * logo. Omitted or empty → the shipped ALYQ asset prints, exactly as before
-   * this phase. Never raw SVG/HTML — callers pass a stored media URL.
+   * Retained for call-site compatibility. Thermal receipts deliberately render
+   * compact text identity only, so raster logo URLs are ignored.
    */
   logo_url?: string | null;
 }
@@ -141,10 +139,9 @@ function receiptCss(rtl: boolean): string {
     padding: 6px 8px 8px;
     border: 1px solid #e2e8f0;
   }
-  .brand { text-align: center; margin: 0 0 3px; }
-  .brand .logo { display: block; width: 118px; max-width: 58%; height: auto; margin: 0 auto 2px; }
-  .brand .bname { font-family: Georgia, "Times New Roman", serif; font-size: 14px; font-weight: 700; color: #111; }
-  .brand .btag { font-size: 8px; letter-spacing: 3px; text-transform: uppercase; color: #555; margin-top: 1px; }
+  .brand { text-align: center; margin: 0 0 3px; padding-bottom: 2px; }
+  .brand .bname { font-family: Georgia, "Times New Roman", serif; font-size: 13px; font-weight: 700; color: #111; }
+  .brand .btag { font-size: 8px; letter-spacing: 2px; text-transform: uppercase; color: #555; margin-top: 1px; }
   .sep { border-top: 1px solid #e8e8e8; margin: 5px 0; }
   .headline { display: flex; justify-content: space-between; gap: 8px; font-size: 10.5px; margin: 1px 0; }
   .headline .k { color: #555; font-weight: 600; }
@@ -179,10 +176,9 @@ function receiptCss(rtl: boolean): string {
 </style>`;
 }
 
-/** Shared brand header (logo + wordmark) used by every receipt. */
+/** Shared compact text header used by every receipt. */
 function receiptBrandHeader(
   strings: Pick<ReceiptStrings, "businessName" | "businessTagline">,
-  logoSrc?: string | null,
 ): string {
   const { businessName, businessTagline } = strings;
   // The tagline is rendered only when there is one. The unapproved slogan that
@@ -194,11 +190,7 @@ function receiptBrandHeader(
     ? `
       <div class="btag">${escapeXml(businessTagline)}</div>`
     : "";
-  // Phase 46: the shared brand logo when configured and enabled; the shipped
-  // asset otherwise — a document written before branding prints unchanged.
-  const src = logoSrc?.trim() ? logoSrc : RECEIPT_LOGO_SRC;
   return `<div class="brand">
-      <img class="logo" src="${src}" alt="ALYQ" onerror="this.style.display='none'" />
       <div class="bname">${escapeXml(businessName)}</div>${tag}
     </div>`;
 }
@@ -218,9 +210,8 @@ function receiptDocument(opts: {
   documentTitle: string;
   strings: Pick<ReceiptStrings, "businessName" | "businessTagline">;
   bodyHtml: string;
-  logoSrc?: string | null;
 }): string {
-  const { rtl, documentTitle, strings, bodyHtml, logoSrc } = opts;
+  const { rtl, documentTitle, strings, bodyHtml } = opts;
   return `<!doctype html>
 <html lang="${rtl ? "ar" : "en"}" dir="${rtl ? "rtl" : "ltr"}">
 <head>
@@ -230,7 +221,7 @@ ${receiptCss(rtl)}
 </head>
 <body onload="window.focus();window.print();">
   <div class="receipt">
-    ${receiptBrandHeader(strings, logoSrc)}
+    ${receiptBrandHeader(strings)}
 ${bodyHtml}
   </div>
 </body>
@@ -266,7 +257,7 @@ function variantLine(
   return [color.trim(), size].filter(Boolean).join(" / ");
 }
 
-export function buildReceiptHtml({ sale, strings, direction, logo_url }: ReceiptData): string {
+export function buildReceiptHtml({ sale, strings, direction }: ReceiptData): string {
   const rtl = direction === "rtl";
   const date = new Date(sale.created_at);
   const dateStr = date.toLocaleString(rtl ? "ar-SA" : "en-GB", {
@@ -325,8 +316,11 @@ export function buildReceiptHtml({ sale, strings, direction, logo_url }: Receipt
     <div class="headline"><span class="k">${escapeXml(strings.saleLabel)}</span><span>${escapeXml(sale.sale_number)}</span></div>
     <div class="headline"><span class="k">${escapeXml(strings.dateLabel)}</span><span dir="ltr">${escapeXml(dateStr)}</span></div>
     <div class="headline"><span class="k">${escapeXml(strings.cashierLabel)}</span><span>${escapeXml(sale.user_name)}</span></div>
+    ${sale.branch_name ? `<div class="headline"><span class="k">${escapeXml(strings.branchLabel ?? "Branch")}</span><span>${escapeXml(sale.branch_name)}</span></div>` : ""}
+    ${sale.register_name ? `<div class="headline"><span class="k">${escapeXml(strings.registerLabel ?? "Register")}</span><span>${escapeXml(sale.register_name)}</span></div>` : ""}
     ${sale.customer_name ? `<div class="headline"><span class="k">${escapeXml(strings.customerLabel)}</span><span>${escapeXml(sale.customer_name)}</span></div>` : ""}
     ${sale.customer_phone ? `<div class="headline"><span class="k">${escapeXml(strings.customerPhoneLabel)}</span><bdi dir="ltr">${escapeXml(sale.customer_phone)}</bdi></div>` : ""}
+    ${sale.notes ? `<div class="headline"><span class="k">${escapeXml(strings.noteLabel ?? "Note")}</span><span>${escapeXml(sale.notes)}</span></div>` : ""}
     <div class="sep"></div>
     <table>
       <thead>
@@ -359,7 +353,6 @@ export function buildReceiptHtml({ sale, strings, direction, logo_url }: Receipt
     documentTitle: `${strings.businessName} — ${sale.sale_number}`,
     strings,
     bodyHtml,
-    logoSrc: logo_url,
   });
 }
 
@@ -432,7 +425,7 @@ export interface ReturnReceiptData {
   customerPhone?: string | null;
   /** Linked refund number, when a refund record exists. */
   refundNumber?: string | null;
-  /** Phase 46: the shared brand logo, when the receipt logo is enabled. */
+  /** Retained for call-site compatibility; the compact receipt ignores image logos. */
   logo_url?: string | null;
 }
 
@@ -442,7 +435,6 @@ export function buildReturnReceiptHtml({
   direction,
   customerPhone,
   refundNumber,
-  logo_url,
 }: ReturnReceiptData): string {
   const rtl = direction === "rtl";
   const dateStr = new Date(returnRecord.created_at).toLocaleString(rtl ? "ar-SA" : "en-GB", {
@@ -526,7 +518,6 @@ export function buildReturnReceiptHtml({
     documentTitle: `${strings.businessName} — ${returnRecord.return_number}`,
     strings,
     bodyHtml,
-    logoSrc: logo_url,
   });
 }
 

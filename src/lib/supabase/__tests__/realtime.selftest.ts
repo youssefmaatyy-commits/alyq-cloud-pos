@@ -34,6 +34,7 @@ import process from "node:process";
 
 import {
   arrivalsOf,
+  newPendingAlertsOf,
   DEFAULT_NOTIFICATION_PREFS,
   POLL_CHOICES,
   SAFETY_NET_POLL_MS,
@@ -714,23 +715,39 @@ test("the poll is the safety net: live stretches it, anything else restores it",
   assert.ok(SAFETY_NET_POLL_MS > Math.max(...POLL_CHOICES), "the safety net is slower than any polling choice");
 });
 
-test("only a rise is news, so an event and the poll cannot announce one order twice", () => {
+test("the legacy count helper treats only a rise as news", () => {
   assert.equal(arrivalsOf(null, 11), null, "a first reading is a baseline, not eleven new orders");
   assert.equal(arrivalsOf(3, 5), 2, "a rise announces what arrived");
   assert.equal(arrivalsOf(5, 5), null, "no change, no chime");
   assert.equal(arrivalsOf(5, 2), null, "somebody worked the queue — that is not news");
   assert.equal(arrivalsOf(0, 1), 1, "the first order of the day is announced");
+});
 
-  // The path both transports take: whichever reads first moves the baseline, so
-  // the second sees no rise. This is what keeps realtime from double-chiming.
-  let baseline: number | null = null;
-  const announced: number[] = [];
-  for (const pending of [4, 4, 5, 5, 5, 3]) {
-    const arrived = arrivalsOf(baseline, pending);
-    baseline = pending;
-    if (arrived !== null) announced.push(arrived);
-  }
-  assert.deepEqual(announced, [1], "one order arrived, one announcement");
+test("stable pending IDs deduplicate realtime, polling, and an unchanged count", () => {
+  const started = "2026-10-02T08:00:00.000Z";
+  const current = [
+    { id: "old", orderNumber: "WEB-1", createdAt: "2026-10-02T07:50:00.000Z" },
+    { id: "new", orderNumber: "WEB-2", createdAt: "2026-10-02T08:01:00.000Z" },
+  ];
+  const seen = new Set(["old"]);
+  const first = newPendingAlertsOf(current, seen, started);
+  assert.deepEqual(first.map((order) => order.id), ["new"]);
+  first.forEach((order) => seen.add(order.id));
+  assert.deepEqual(
+    newPendingAlertsOf(current, seen, started),
+    [],
+    "the polling confirmation of the realtime order cannot chime again",
+  );
+  assert.deepEqual(
+    newPendingAlertsOf([{ id: "older-window-row", orderNumber: "WEB-0", createdAt: "2026-10-02T07:00:00.000Z" }], seen, started),
+    [],
+    "an old pending order that enters the bounded window is not a new arrival",
+  );
+  assert.deepEqual(
+    newPendingAlertsOf([{ id: "same-count-new", orderNumber: "WEB-3", createdAt: "2026-10-02T08:02:00.000Z" }], seen, started).map((order) => order.id),
+    ["same-count-new"],
+    "a new ID is announced even if another pending order was worked at the same time",
+  );
 });
 
 // ── 6. the two lists that must agree ──────────────────────────────────────

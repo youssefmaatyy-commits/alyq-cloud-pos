@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useI18n } from "@/lib/i18n/I18nProvider";
-import { Button, Field, Modal, TextArea, useToast } from "@/components/ui";
+import { Button, Field, Modal, TextArea, TextInput, useToast } from "@/components/ui";
 import { AppError } from "@/modules/products/data/repository";
 import type { ApprovalKind, ApprovalRequirement, ApprovalValue } from "../types";
 import { useApprovals } from "../hooks/ApprovalProvider";
@@ -51,11 +51,14 @@ export function ApprovalRequestDialog({
 }: ApprovalRequestDialogProps) {
   const { t, num } = useI18n();
   const toast = useToast();
-  const { request } = useApprovals();
+  const { request, approveWithManagerPin, apply, mode } = useApprovals();
 
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [reasonError, setReasonError] = useState<string | null>(null);
+  const [approveNow, setApproveNow] = useState(false);
+  const [managerUsername, setManagerUsername] = useState("");
+  const [managerPin, setManagerPin] = useState("");
 
   if (!open || !requirement) return null;
 
@@ -77,6 +80,10 @@ export function ApprovalRequestDialog({
       setReasonError(t("approvals.reasonTooLong"));
       return;
     }
+    if (approveNow && (!managerUsername.trim() || !/^\d{4,12}$/.test(managerPin))) {
+      setReasonError(t("approvals.managerCredentialsRequired"));
+      return;
+    }
     setReasonError(null);
     setBusy(true);
     try {
@@ -90,13 +97,24 @@ export function ApprovalRequestDialog({
         newValue,
         payload,
       });
-      toast.success(t("approvals.filedToast", { number: created.request_number }));
+      if (approveNow) {
+        const approved = await approveWithManagerPin(created.id, managerUsername.trim(), managerPin);
+        // Replay goes through the existing domain funnel with the exact request
+        // id. The cashier remains auth.uid(); the manager is approval evidence.
+        await apply(approved);
+        toast.success(t("approvals.managerAppliedToast", { number: created.request_number }));
+      } else {
+        toast.success(t("approvals.filedToast", { number: created.request_number }));
+      }
       setReason("");
+      setManagerUsername("");
       onFiled?.(created.id, created.request_number);
       onClose();
     } catch (err) {
       toast.error(err instanceof AppError ? err.message || t("common.error") : t("common.error"));
     } finally {
+      // A manager credential is one attempt only: never cache or reuse it.
+      setManagerPin("");
       setBusy(false);
     }
   }
@@ -112,7 +130,7 @@ export function ApprovalRequestDialog({
             {t("common.cancel")}
           </Button>
           <Button onClick={() => void submit()} loading={busy}>
-            {t("approvals.sendFile")}
+            {approveNow ? t("approvals.approveAndApplyNow") : t("approvals.sendFile")}
           </Button>
         </>
       }
@@ -160,6 +178,46 @@ export function ApprovalRequestDialog({
             onChange={(e) => setReason(e.target.value)}
           />
         </Field>
+
+        <div className="rounded-xl border border-stone-200 p-3">
+          <label className="flex items-start gap-2 text-sm font-bold text-stone-800">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={approveNow}
+              disabled={mode !== "supabase"}
+              onChange={(event) => setApproveNow(event.target.checked)}
+            />
+            <span>
+              {t("approvals.managerNow")}
+              <span className="mt-1 block text-xs font-normal text-stone-500">
+                {mode === "supabase" ? t("approvals.managerNowHint") : t("approvals.managerOffline")}
+              </span>
+            </span>
+          </label>
+          {approveNow ? (
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <Field label={t("approvals.managerUsername")} required htmlFor="approval-manager-username">
+                <TextInput
+                  id="approval-manager-username"
+                  autoComplete="off"
+                  value={managerUsername}
+                  onChange={(event) => setManagerUsername(event.target.value)}
+                />
+              </Field>
+              <Field label={t("approvals.managerPin")} required htmlFor="approval-manager-pin">
+                <TextInput
+                  id="approval-manager-pin"
+                  type="password"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  value={managerPin}
+                  onChange={(event) => setManagerPin(event.target.value.replace(/\D/g, "").slice(0, 12))}
+                />
+              </Field>
+            </div>
+          ) : null}
+        </div>
       </div>
     </Modal>
   );

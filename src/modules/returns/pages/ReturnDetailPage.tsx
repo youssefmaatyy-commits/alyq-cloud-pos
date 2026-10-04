@@ -19,10 +19,10 @@ import { loadBrand } from "@/lib/branding/brand";
 import {
   buildReturnReceiptHtml,
   customerInfoIssue,
-  printHtmlDocument,
   returnReceiptStrings,
   usePos,
 } from "@/modules/pos";
+import { printReceiptDocument } from "@/modules/pos/services/hardware";
 
 export function ReturnDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -108,12 +108,11 @@ export function ReturnDetailPage() {
       return;
     }
 
-    const outcome = printHtmlDocument(html, returnRecord.return_number);
-    if (outcome === "embedded-blocked") {
-      toast.error(t("pos.printEmbedded"));
-    } else if (outcome === "failed") {
-      toast.error(t("barcode.printBlocked"));
-    }
+    const outcome = await printReceiptDocument(html, returnRecord.return_number);
+    if (outcome === "submitted") toast.success(t("pos.printSubmitted"));
+    else if (outcome === "native-failed") toast.error(t("pos.printFailed"));
+    else if (outcome === "embedded-blocked") toast.error(t("pos.printEmbedded"));
+    else if (outcome === "failed") toast.error(t("barcode.printBlocked"));
   };
 
   if (loading && !returnRecord) {

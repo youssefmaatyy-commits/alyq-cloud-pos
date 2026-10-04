@@ -163,8 +163,10 @@ export function ShiftProvider({ children }: { children: ReactNode }) {
         details: {
           branch: created.branch,
           register: created.register,
+          register_id: created.register_id ?? null,
           opening_cash: created.opening_cash,
         },
+        register_id: created.register_id ?? null,
         user_id: user.id,
         user_name: user.name,
       });
@@ -179,7 +181,9 @@ export function ShiftProvider({ children }: { children: ReactNode }) {
       const closed = await closeShiftRequest(shift.id, { ...input, summary: live });
       setShifts((prev) => prev.map((s) => (s.id === closed.id ? closed : s)));
       const user = getCurrentUser();
-      void recordAudit({
+      // Live mode audits inside close_shift_authoritative() in the same locked
+      // transaction as the frozen snapshot. Demo mode keeps its local trail.
+      if (mode === "demo") void recordAudit({
         action: "shift.closed",
         entity: "shift",
         entity_id: closed.id,
@@ -200,7 +204,7 @@ export function ShiftProvider({ children }: { children: ReactNode }) {
       });
       return closed;
     },
-    [sources],
+    [sources, mode],
   );
 
   const approveAdjustment = useCallback(async (shift: Shift) => {

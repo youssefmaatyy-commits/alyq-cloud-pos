@@ -19,8 +19,16 @@
 import { getCurrentAuthUser } from "@/lib/auth/services/sessionStore";
 import type { AuthUser } from "@/lib/auth/types";
 import { AppError } from "@/modules/products/data/repository";
+import { capabilityForPermission, type Permission } from "./catalog";
 import { resolveCapabilities } from "./customRoles";
 import { capabilitiesOf, hasCapability, type Capability } from "./roles";
+
+/** Minimal identity shape accepted by pure permission checks. */
+export interface PermissionSubject {
+  role?: string | null;
+  /** A resolved custom-role/default-role list; when present it wins over role. */
+  capabilities?: readonly string[] | null;
+}
 
 /**
  * The capabilities that apply to one user.
@@ -30,7 +38,7 @@ import { capabilitiesOf, hasCapability, type Capability } from "./roles";
  * user's role decides. A signed-out user has an empty role, which is not a
  * member of the model, so this returns `[]` and every check below denies.
  */
-export function capabilitiesOfUser(user: Pick<AuthUser, "role" | "capabilities"> | null | undefined): Capability[] {
+export function capabilitiesOfUser(user: PermissionSubject | null | undefined): Capability[] {
   if (!user) return [];
   if (Array.isArray(user.capabilities)) {
     // Already resolved at sign-in: filter rather than trust, so a stored
@@ -40,9 +48,9 @@ export function capabilitiesOfUser(user: Pick<AuthUser, "role" | "capabilities">
   return capabilitiesOf(user.role);
 }
 
-/** May this user do this? The question every gate and every hidden button asks. */
+/** May this user do this? The question every legacy gate asks. */
 export function userCan(
-  user: Pick<AuthUser, "role" | "capabilities"> | null | undefined,
+  user: PermissionSubject | null | undefined,
   capability: Capability,
 ): boolean {
   if (!user) return false;
@@ -60,6 +68,27 @@ export function actingUser(): AuthUser {
 /** Service-layer form of `userCan` for the current session. */
 export function canAct(capability: Capability): boolean {
   return userCan(actingUser(), capability);
+}
+
+/**
+ * Reusable application permission check.
+ *
+ * With no subject it checks the validated current session:
+ *
+ *     can("pos.sell")
+ *
+ * A subject can be supplied by tests, previews and non-React application code.
+ * It may carry a system role or an already-resolved capability list (the shape
+ * used by demo users and active custom roles). Unknown permission strings never
+ * fall back to a role or capability: they return false.
+ */
+export function can(
+  permission: Permission | string,
+  subject?: PermissionSubject | null,
+): boolean {
+  const capability = capabilityForPermission(permission);
+  if (!capability) return false;
+  return subject === undefined ? canAct(capability) : userCan(subject, capability);
 }
 
 /** Any capability in a list the acting user holds. */

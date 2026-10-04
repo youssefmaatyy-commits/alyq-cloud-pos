@@ -1498,15 +1498,20 @@ test("a partial view cannot claim a hold is missing, because it cannot see every
   assert.equal(partial.rows.length, 0);
 });
 
-test("the queue's own filter decides whether its review is complete", () => {
-  assert.equal(isEmptyOrderFilter(EMPTY_ORDER_FILTER), true, "an untouched queue shows everything");
+test("the queue's own filter decides whether its hold review is complete", () => {
+  // The normal operational view is intentionally bounded. Calling it complete
+  // would let a row outside the recent window be called an orphan, which is a
+  // harmful false repair recommendation.
+  assert.equal(isEmptyOrderFilter(EMPTY_ORDER_FILTER), false, "the bounded queue is a partial review");
   assert.equal(isEmptyOrderFilter(null), true);
   assert.equal(isEmptyOrderFilter(undefined), true);
   assert.equal(isEmptyOrderFilter({}), true, "and so does one with nothing set");
   assert.equal(isEmptyOrderFilter({ ...EMPTY_ORDER_FILTER, status: "pending" }), false);
   assert.equal(isEmptyOrderFilter({ ...EMPTY_ORDER_FILTER, paymentStatus: "pending" }), false);
+  assert.equal(isEmptyOrderFilter({ ...EMPTY_ORDER_FILTER, deliveryType: "delivery" }), false);
+  assert.equal(isEmptyOrderFilter({ ...EMPTY_ORDER_FILTER, paymentMethod: "cod" }), false);
   assert.equal(isEmptyOrderFilter({ ...EMPTY_ORDER_FILTER, search: "web" }), false);
-  assert.equal(isEmptyOrderFilter({ ...EMPTY_ORDER_FILTER, search: "   " }), true, "whitespace is not a search");
+  assert.equal(isEmptyOrderFilter({ ...EMPTY_ORDER_FILTER, search: "   " }), false, "the window still makes it partial");
   assert.equal(isEmptyOrderFilter({ ...EMPTY_ORDER_FILTER, from: "2026-01-01" }), false);
   assert.equal(isEmptyOrderFilter({ ...EMPTY_ORDER_FILTER, to: "2026-01-31" }), false);
   assert.equal(isEmptyOrderFilter({ ...EMPTY_ORDER_FILTER, limit: 25 }), false, "a capped queue is a partial one");

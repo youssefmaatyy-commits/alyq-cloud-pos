@@ -30,6 +30,8 @@ import path from "node:path";
 import process from "node:process";
 
 import { ar, en } from "@/lib/i18n/dictionary";
+import { isPermission } from "@/lib/permissions/catalog";
+import { ROUTE_PERMISSIONS } from "@/lib/permissions/routes";
 
 type TestCase = { name: string; fn: () => void };
 const tests: TestCase[] = [];
@@ -264,12 +266,8 @@ test("every gated path is declared, and names a capability that exists", () => {
     declared.add(match[1]);
     if (match[1].endsWith("/*")) declared.add(match[1].slice(0, -2));
   }
-  const routes = read("src/lib/permissions/routes.ts");
-  const gated = [...routes.matchAll(/\["(\/[^"]+)",\s*"([a-z_]+)"\]/g)].map((m) => ({
-    path: m[1],
-    capability: m[2],
-  }));
-  assert.ok(gated.length > 15, `this many paths carry a capability (${gated.length})`);
+  const gated = ROUTE_PERMISSIONS.map(([path, permission]) => ({ path, permission }));
+  assert.ok(gated.length > 15, `this many paths carry a permission (${gated.length})`);
 
   const undeclared = gated.filter(
     (entry) =>
@@ -279,18 +277,14 @@ test("every gated path is declared, and names a capability that exists", () => {
   assert.deepEqual(
     undeclared.map((entry) => entry.path),
     [],
-    "ROUTE_CAPABILITIES gates paths App.tsx does not declare",
+    "ROUTE_PERMISSIONS gates paths App.tsx does not declare",
   );
 
-  const roles = read("src/lib/permissions/roles.ts");
-  const capabilities = new Set(
-    [...roles.slice(roles.indexOf("export const CAPABILITIES")).matchAll(/^\s{2}"([a-z_]+)",$/gm)].map((m) => m[1]),
-  );
-  const unknown = gated.filter((entry) => !capabilities.has(entry.capability));
+  const unknown = gated.filter((entry) => !isPermission(entry.permission));
   assert.deepEqual(
-    unknown.map((entry) => `${entry.path}->${entry.capability}`),
+    unknown.map((entry) => `${entry.path}->${entry.permission}`),
     [],
-    "a route is gated by a capability nobody has — that screen is unreachable for everyone",
+    "a route is gated by a permission outside the normalized catalog",
   );
 });
 

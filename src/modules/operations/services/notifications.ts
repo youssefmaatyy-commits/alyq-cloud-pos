@@ -53,6 +53,19 @@ export interface StocktakeSignal {
   createdAt: string;
 }
 
+export interface ApprovalSignal {
+  id: string;
+  number: string;
+  status: string;
+  requestedAt: string;
+}
+
+export interface SyncConflictSignal {
+  id: string;
+  reference: string;
+  updatedAt: string;
+}
+
 export interface NotificationSnapshot {
   stock: readonly StockSignal[];
   orders: readonly OrderSignal[];
@@ -60,6 +73,9 @@ export interface NotificationSnapshot {
   shifts: readonly ShiftSignal[];
   promotions: readonly PromotionSignal[];
   stocktakes: readonly StocktakeSignal[];
+  /** Optional extensions use the same stable identity/deduplication path. */
+  approvals?: readonly ApprovalSignal[];
+  syncConflicts?: readonly SyncConflictSignal[];
   backupStatus: "protected" | "due" | "overdue" | "never" | "disabled" | null;
   backupAt: string | null;
   storageUsedBytes: number | null;
@@ -81,6 +97,8 @@ const CAPABILITY: Record<NotificationKind, string> = {
   backup_warning: "view_backups",
   storage_warning: "run_health_check",
   system_warning: "run_health_check",
+  approval_request: "approve_limit_request",
+  sync_conflict: "run_health_check",
 };
 
 function row(
@@ -154,6 +172,15 @@ export function buildOperationalNotifications(
   for (const session of snapshot.stocktakes) {
     if (session.status === "finalized") continue;
     out.push(row("stocktake_open", session.id, session.createdAt, "/inventory/stocktake", session.id));
+  }
+
+  for (const approval of snapshot.approvals ?? []) {
+    if (approval.status !== "pending") continue;
+    out.push(row("approval_request", approval.id, approval.requestedAt, `/approvals/${approval.id}`, approval.number));
+  }
+
+  for (const conflict of snapshot.syncConflicts ?? []) {
+    out.push(row("sync_conflict", conflict.id, conflict.updatedAt, "/sync", conflict.reference));
   }
 
   if (snapshot.backupStatus === "overdue" || snapshot.backupStatus === "never") {

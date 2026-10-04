@@ -217,7 +217,9 @@ test("read-only role can read but never mutate", () => {
     "export_reports",
     "view_cost",
     "view_customers",
+    "view_dashboard",
     "view_inventory",
+    "view_products",
     "view_reports",
     "view_shifts",
   ]);
@@ -373,6 +375,7 @@ test("manager differs from admin only by what admin keeps to itself", () => {
   const onlyAdmin = admin.filter((c) => !manager.includes(c)).sort();
   const onlyManager = manager.filter((c) => !admin.includes(c));
   assert.deepEqual(onlyAdmin, [
+    "execute_data_cleanup",
     "export_backup",
     "manage_roles",
     "manage_settings",

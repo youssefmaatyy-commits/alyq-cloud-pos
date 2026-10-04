@@ -86,13 +86,26 @@ language plpgsql
 as $$
 declare
   v_shift_id uuid;
+  v_opened_by text;
+  v_opening_cash numeric;
   v_uid text := coalesce(p_user_id, nullif(auth.uid()::text, ''), '00000000-0000-4000-8000-0000000000c1');
   v_name text := coalesce((select name from public.profiles where id = v_uid::uuid), 'Karim Cashier');
 begin
-  select id into v_shift_id from public.shifts where status = 'open' and opened_by = v_uid;
-  if found then
+  select id, opened_by, opening_cash into v_shift_id, v_opened_by, v_opening_cash
+    from public.shifts where status = 'open' order by opening_at desc limit 1;
+  if found and v_opened_by = v_uid then
     return v_shift_id;
   end if;
+  -- Phase 2 permits one authoritative drawer per branch. Scenario ownership
+  -- hand-offs therefore close the previous owner's drawer through the same RPC
+  -- production uses instead of inserting a second concurrent open shift.
+  if found then
+    perform pg_temp.become(v_opened_by::uuid, 'authenticated');
+    perform public.close_shift_authoritative(
+      v_shift_id, v_opening_cash, 'Scenario setup drawer hand-off'
+    );
+  end if;
+  perform pg_temp.become(v_uid::uuid, 'authenticated');
   insert into public.shifts (branch, register, opening_cash, opened_by, opened_by_name)
   values ('Main', 'Till 1', 1000, v_uid, v_name)
   returning id into v_shift_id;
@@ -107,17 +120,9 @@ as $$
 begin
   perform set_config('role', 'authenticated', true);
   perform set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-0000000000c1', true);
-  update public.shifts
-     set status         = 'closed',
-         closing_cash   = opening_cash,
-         closed_at      = now(),
-         closed_by      = '00000000-0000-4000-8000-0000000000c1',
-         closed_by_name = 'Karim Cashier',
-         summary        = jsonb_build_object(
-           'expected_cash', opening_cash,
-           'actual_cash',   opening_cash,
-           'difference',    0)
-   where status = 'open';
+  perform public.close_shift_authoritative(s.id, s.opening_cash, 'Scenario setup close')
+    from public.shifts s
+   where s.status = 'open' and s.opened_by = auth.uid()::text;
 end;
 $$;
 
@@ -1756,18 +1761,13 @@ do $$
 declare
   v_shift_id uuid;
   v_rows     integer;
+  v_notes    text;
 begin
   perform pg_temp.become('00000000-0000-4000-8000-0000000000c1');
   select id into v_shift_id from public.shifts where status = 'open';
 
-  update public.shifts
-     set status = 'closed',
-         closing_cash = 1400,
-         closed_at = now(),
-         closed_by = '00000000-0000-4000-8000-0000000000c1',
-         closed_by_name = 'Karim Cashier',
-         summary = '{"expected_cash": 1400, "actual_cash": 1400, "difference": 0}'::jsonb
-   where id = v_shift_id;
+  perform public.close_shift_authoritative(v_shift_id, 1400, 'Scenario close');
+  select notes into v_notes from public.shifts where id = v_shift_id;
 
   -- a closed shift is frozen
   begin
@@ -1797,7 +1797,7 @@ begin
   if v_rows <> 0 then
     raise exception 'RLS let a viewer update a shift (% row(s))', v_rows;
   end if;
-  if (select notes from public.shifts where id = v_shift_id) is not null then
+  if (select notes from public.shifts where id = v_shift_id) is distinct from v_notes then
     raise exception 'the viewer''s note was written';
   end if;
 
@@ -1812,7 +1812,9 @@ declare
   v_expense_id uuid;
 begin
   perform pg_temp.become('00000000-0000-4000-8000-0000000000a1');
-  select id into v_shift_id from public.shifts order by opening_at desc limit 1;
+  select id into v_shift_id from public.shifts
+   where status = 'closed' and adjustment_approved_at is null
+   order by closed_at desc limit 1;
   select id into v_expense_id from public.expenses order by spent_at desc limit 1;
 
   update public.shifts
@@ -2237,6 +2239,7 @@ declare
   v_count     integer;
   v_appr      uuid;
   v_appr_text text;
+  v_sale_payload jsonb;
 begin
   -- the lookup needs oversight: `profiles` is readable as yourself, your own
   -- row, or with `view_audit_log` — a cashier cannot browse the staff list.
@@ -2255,22 +2258,11 @@ begin
   -- decision behind it, so the scenario raises one the way the till does: the
   -- cashier asks, the manager signs, and the sale carries the request's id.
   -- Every number below is unchanged, so the return and refund assertions that
-  -- follow still test what they always tested.
+  -- follow still test what they always tested. The exact sale payload is part of
+  -- the signed request, so changing even its target, amount, tender or lines
+  -- after approval is refused.
   perform pg_temp.become(v_cashier);
-  select (public.submit_approval_request(jsonb_build_object(
-           'kind',        'discount',
-           'entity_type', 'sale',
-           'entity_label','refn-sale-1',
-           'amount',      40.00,
-           'limit_value', 10.00,
-           'reason',      'Damaged packaging, clearing the two units'
-         )) ->> 'request_id')::uuid into v_appr;
-
-  perform pg_temp.become(v_manager);
-  perform public.decide_approval_request(v_appr, 'approved', 'Clear them out');
-
-  perform pg_temp.become(v_cashier);
-  v_sale := public.pos_complete_sale(jsonb_build_object(
+  v_sale_payload := jsonb_build_object(
     'client_ref',    'refn-sale-1',
     'user_id',       v_cashier::text,
     'user_name',     'Karim Cashier',
@@ -2278,7 +2270,22 @@ begin
     'discount_value', 8.00,
     'payments',      jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', 12.00, 'tendered', 20.00)),
     'lines',         jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 2))
-  ), v_appr);
+  );
+  select (public.submit_approval_request(jsonb_build_object(
+           'kind',        'discount',
+           'entity_type', 'sale',
+           'entity_label','refn-sale-1',
+           'amount',      40.00,
+           'limit_value', 10.00,
+           'payload',     v_sale_payload,
+           'reason',      'Damaged packaging, clearing the two units'
+         )) ->> 'request_id')::uuid into v_appr;
+
+  perform pg_temp.become(v_manager);
+  perform public.decide_approval_request(v_appr, 'approved', 'Clear them out');
+
+  perform pg_temp.become(v_cashier);
+  v_sale := public.pos_complete_sale(v_sale_payload, v_appr);
 
   -- the approval is spent, and spent on THIS sale: that is the link requirement
   -- 6 asks about, checked where a real act consumed a real decision.
@@ -2306,8 +2313,10 @@ begin
   if v_row.status <> 'pending' then
     raise exception 'a return recorded as pending produced a % refund', v_row.status;
   end if;
-  if v_row.amount <> 10.00 then
-    raise exception 'the refund is % rather than the 10.00 line price', v_row.amount;
+  -- The invoice's fixed 8.00 discount made the two 10.00 lines worth 6.00
+  -- each. A partial return may never repay the undiscounted list unit.
+  if v_row.amount <> 6.00 then
+    raise exception 'the refund is % rather than the 6.00 net paid unit', v_row.amount;
   end if;
   if v_row.settled_at is not null or v_row.settled_by is not null or v_row.rejection_reason is not null then
     raise exception 'a pending refund carries a settlement stamp';
@@ -2321,22 +2330,9 @@ begin
     raise exception 'the return number is malformed';
   end if;
 
-  -- 2. a pending refund still claims the money: the remaining 2.00 cannot cover
-  --    a second 10.00 return
-  begin
-    perform public.pos_process_return(jsonb_build_object(
-      'sale_id',       v_sale_id::text,
-      'reason',        'And the second one too',
-      'refund_method', 'cash',
-      'refund_status', 'pending',
-      'user_id',       v_cashier::text,
-      'user_name',     'Karim Cashier',
-      'items',         jsonb_build_array(jsonb_build_object('sale_item_id', v_line_id::text, 'quantity', 1))
-    ));
-    raise exception 'a pending refund did not reserve the money';
-  exception when check_violation then
-    null;
-  end;
+  -- 2. The remaining unit is worth its own 6.00 net ceiling. It remains
+  -- returnable, but is deliberately left untouched while this scenario checks
+  -- the pending-refund settlement lifecycle below.
 
   -- 3. the cashier cannot release it, by RPC or by direct write
   begin
@@ -2389,7 +2385,7 @@ begin
   end if;
 
   -- 5. the money is available again: a rejected refund no longer consumes the
-  --    sale's refundable amount, so the same 10.00 return is now allowed
+  --    sale's refundable amount, so the same 6.00 net return is now allowed
   perform pg_temp.become(v_cashier);
   v_return := public.pos_process_return(jsonb_build_object(
     'sale_id',       v_sale_id::text,
@@ -2449,7 +2445,7 @@ begin
   exception when insufficient_privilege then
     null;
   end;
-  if (select amount from public.refund_records where id = v_refund_id) <> 10.00 then
+  if (select amount from public.refund_records where id = v_refund_id) <> 6.00 then
     raise exception 'the refund amount moved anyway';
   end if;
 
@@ -3314,6 +3310,7 @@ declare
   v_text     text;
   v_amt      numeric(14,2);
   v_total    numeric(14,2);
+  v_payload  jsonb;
   v_row      public.approval_requests%rowtype;
 begin
   perform pg_temp.become(v_admin, 'authenticated');
@@ -3335,15 +3332,16 @@ begin
     raise exception 'the fixture product has only % left; the sales below need 10', v_stock;
   end if;
 
-  -- ── the threshold oracle agrees with the four evaluators in the browser ────
-  -- Same conditions, same units, same boundaries: 10% is inside the limit, the
-  -- next cent is not. If these two sides ever drift, one of them is lying about
-  -- what the shop's policy is.
+  -- ── the authoritative oracle enforces permission before threshold ────────
+  -- A zero discount is not an operation. The shipped cashier has no base
+  -- apply_discount permission, so every positive discount needs the policy's
+  -- explicit approval escalation, including a value below the manager's 10%
+  -- no-escalation threshold. This prevents a direct-RPC permission bypass.
   if public.approval_required_for('discount', 0) then
     raise exception 'a discount of 0 was reported as needing approval';
   end if;
-  if public.approval_required_for('discount', 10.00) then
-    raise exception 'a discount at the limit was reported as needing approval';
+  if not public.approval_required_for('discount', 10.00) then
+    raise exception 'a cashier without apply_discount bypassed explicit escalation at the limit';
   end if;
   if not public.approval_required_for('discount', 10.01) then
     raise exception 'a discount above the limit was not reported as needing approval';
@@ -3392,33 +3390,41 @@ begin
     raise exception 'TEST 1 FAILED: the refused discount still wrote % sale row(s)', v_n;
   end if;
 
-  -- ── TEST 6 first, because it needs no approval: a normal sale → SUCCESS ───
-  -- Under the limit, so nothing is asked for. This is the case that proves the
-  -- gate did not simply start refusing discounts.
+  -- ── TEST 6 first: permission controls do not block a normal sale ─────────
+  -- A cashier without apply_discount must still be able to complete a
+  -- full-price sale; only an actual positive discount enters escalation.
   v_sale := public.pos_complete_sale(jsonb_build_object(
     'client_ref',     'p24-t6',
     'user_id',        v_cashier::text,
     'user_name',      'Karim Cashier',
-    'discount_type',  'percent',
-    'discount_value', 5,
-    'payments',       jsonb_build_array(jsonb_build_object('method','cash','amount',9.50,'tendered',10.00)),
+    'payments',       jsonb_build_array(jsonb_build_object('method','cash','amount',10.00,'tendered',10.00)),
     'lines',          jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 1))
   ));
   if (v_sale ->> 'sale_id') is null then
-    raise exception 'TEST 6 FAILED: a discount within the limit was refused';
+    raise exception 'TEST 6 FAILED: an ordinary full-price sale was refused';
   end if;
   select discount_amount, total into v_amt, v_total from public.sales where client_ref = 'p24-t6';
-  if v_amt <> 0.50 or v_total <> 9.50 then
-    raise exception 'TEST 6 FAILED: a discount inside the limit on a 10.00 basket was recorded as % off, total %', v_amt, v_total;
+  if v_amt <> 0 or v_total <> 10.00 then
+    raise exception 'TEST 6 FAILED: an ordinary 10.00 basket was recorded as % off, total %', v_amt, v_total;
   end if;
 
   -- ── TEST 2 · the same 99.9% with a valid approved request → SUCCESS ───────
+  v_payload := jsonb_build_object(
+    'client_ref',     'p24-t2',
+    'user_id',        v_cashier::text,
+    'user_name',      'Karim Cashier',
+    'discount_type',  'percent',
+    'discount_value', 99.9,
+    'payments',       jsonb_build_array(jsonb_build_object('method','cash','amount',0.01,'tendered',0.01)),
+    'lines',          jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 1))
+  );
   select (public.submit_approval_request(jsonb_build_object(
            'kind',         'discount',
            'entity_type',  'sale',
            'entity_label', 'p24-t2',
            'amount',       99.9,
            'limit_value',  10.00,
+           'payload',      v_payload,
            'reason',       'Clearing water damaged in the delivery'
          )) ->> 'request_id')::uuid into v_appr;
   -- requirement 6: the ledger stamps who really asked, whatever the payload said
@@ -3431,15 +3437,7 @@ begin
   perform public.decide_approval_request(v_appr, 'approved', 'Damaged stock, clear it');
   perform pg_temp.become(v_cashier, 'authenticated');
 
-  v_sale := public.pos_complete_sale(jsonb_build_object(
-    'client_ref',     'p24-t2',
-    'user_id',        v_cashier::text,
-    'user_name',      'Karim Cashier',
-    'discount_type',  'percent',
-    'discount_value', 99.9,
-    'payments',       jsonb_build_array(jsonb_build_object('method','cash','amount',0.01,'tendered',0.01)),
-    'lines',          jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 1))
-  ), v_appr);
+  v_sale := public.pos_complete_sale(v_payload, v_appr);
   v_sale_id := (v_sale ->> 'sale_id')::uuid;
   if v_sale_id is null then
     raise exception 'TEST 2 FAILED: an approved over-limit discount was refused';
@@ -3529,10 +3527,20 @@ begin
     raise exception 'TEST 4 FAILED: the refused attempt still consumed the manager''s approval';
   end if;
 
-  -- ── TEST 5 · an approval for a smaller discount → FAIL ────────────────────
+  -- ── TEST 5 · approval is bound to its exact smaller discount → FAIL ───────
+  v_payload := jsonb_build_object(
+    'client_ref',     'p24-t5-ok',
+    'user_id',        v_cashier::text,
+    'user_name',      'Karim Cashier',
+    'discount_type',  'percent',
+    'discount_value', 20,
+    'payments',       jsonb_build_array(jsonb_build_object('method','cash','amount',8.00,'tendered',10.00)),
+    'lines',          jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 1))
+  );
   select (public.submit_approval_request(jsonb_build_object(
-           'kind', 'discount', 'entity_type', 'sale', 'entity_label', 'p24-t5',
-           'amount', 20.00, 'limit_value', 10.00, 'reason', 'A 20% clearance, not a giveaway'
+           'kind', 'discount', 'entity_type', 'sale', 'entity_label', 'p24-t5-ok',
+           'amount', 20.00, 'limit_value', 10.00, 'payload', v_payload,
+           'reason', 'A 20% clearance, not a giveaway'
          )) ->> 'request_id')::uuid into v_small;
   perform pg_temp.become(v_manager, 'authenticated');
   perform public.decide_approval_request(v_small, 'approved', '20% is the most I will sign');
@@ -3548,20 +3556,12 @@ begin
       'lines',          jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 1))
     ), v_small);
     raise exception 'TEST 5 FAILED: an approval for 20 percent was accepted for a 99.9 percent discount';
-  exception when check_violation then
+  exception when insufficient_privilege then
     null;
   end;
-  -- the 20% it WAS signed for still works, which is the difference between a
-  -- gate and a wall
-  v_sale := public.pos_complete_sale(jsonb_build_object(
-    'client_ref',     'p24-t5-ok',
-    'user_id',        v_cashier::text,
-    'user_name',      'Karim Cashier',
-    'discount_type',  'percent',
-    'discount_value', 20,
-    'payments',       jsonb_build_array(jsonb_build_object('method','cash','amount',8.00,'tendered',10.00)),
-    'lines',          jsonb_build_array(jsonb_build_object('product_id', v_product::text, 'qty', 1))
-  ), v_small);
+  -- the exact 20% operation it WAS signed for still works, which is the
+  -- difference between a one-operation approval and a wall.
+  v_sale := public.pos_complete_sale(v_payload, v_small);
   if (v_sale ->> 'sale_id') is null then
     raise exception 'TEST 5 FAILED: the 20 percent discount the approval covers was refused';
   end if;
@@ -4265,7 +4265,9 @@ declare
   v_sale_id   uuid;
   v_row       public.sales%rowtype;
 begin
-  perform pg_temp.ensure_open_shift();
+  -- The branch has one authoritative drawer; this block sells as the cashier
+  -- even though the preceding scenario ended with an admin identity.
+  perform pg_temp.ensure_open_shift(v_cashier::text);
   perform pg_temp.become(v_admin, 'authenticated');
 
   -- the book first: two customers, one with the optional email (0038)
@@ -6759,3 +6761,238 @@ begin
   perform set_config('request.jwt.claim.sub', '', true);
 end
 $$;
+
+-- ─── 0065/0066 · paid refund ceilings and central coupon authority ──────────
+-- These are direct RPC regressions, deliberately below every migration: they
+-- exercise the live function rather than a browser estimate.
+do $phase65_66$
+declare
+  v_admin uuid := '00000000-0000-4000-8000-0000000000a1';
+  v_cashier uuid := '00000000-0000-4000-8000-0000000000c1';
+  v_category uuid;
+  v_round_product uuid := '00000000-0000-4000-8000-0000000f0066';
+  v_coupon_product uuid := '00000000-0000-4000-8000-0000000f0067';
+  v_sale jsonb;
+  v_sale_id uuid;
+  v_item uuid;
+  v_return jsonb;
+  v_amounts numeric[] := '{}';
+  v_out jsonb;
+  v_refunds numeric;
+begin
+  -- Catalogue reads are permission-gated from 0070 onward; establish the
+  -- administrator identity before reading the fixture category.
+  perform pg_temp.become(v_admin, 'authenticated');
+  select id into v_category from public.categories order by id limit 1;
+  if v_category is null then raise exception '0065 fixture needs a category'; end if;
+
+  insert into public.products (
+    id, sku, name_ar, name_en, category_id, selling_price, cost_price,
+    stock_quantity, low_stock_level, active, show_on_website, stock_tracking_enabled
+  ) values
+    (v_round_product, 'SCN65-ROUND', 'تقريب الاسترجاع', 'Refund rounding', v_category, 3.34, 1, 30, 1, true, true, true),
+    (v_coupon_product, 'SCN66-FAM', 'قسيمة العائلة', 'Family coupon', v_category, 10.00, 1, 30, 1, true, true, true)
+  on conflict (id) do update set
+    stock_quantity = 30, selling_price = excluded.selling_price, active = true,
+    show_on_website = true, stock_tracking_enabled = true, variants_enabled = false;
+
+  -- Admin's current Coupons mode writes this central promotion, not legacy
+  -- coupons. Arabic and English names ensure neither locale is a special case.
+  insert into public.promotions (
+    id, enabled, mode, code, channel, name_en, name_ar,
+    discount_type, value, scope, minimum_order_amount, priority, stackable
+  ) values (
+    '00000000-0000-4000-8000-0000000f0068', true, 'coupon', 'FAM', 'both',
+    'Family discount', 'خصم العائلة', 'percent', 20, 'product', 0, 99, false
+  ) on conflict (id) do update set
+    enabled = true, code = 'FAM', channel = 'both', value = 20,
+    scope = 'product', minimum_order_amount = 0, stackable = false;
+  delete from public.promotion_targets where promotion_id = '00000000-0000-4000-8000-0000000f0068';
+  insert into public.promotion_targets (promotion_id, target_kind, target_id)
+  values ('00000000-0000-4000-8000-0000000f0068', 'product', v_coupon_product);
+
+  perform pg_temp.become(null, 'anon');
+  v_out := public.check_storefront_coupon_pricing(
+    ' f a m ', jsonb_build_array(jsonb_build_object('product_id', v_coupon_product, 'qty', 1)), null);
+  if not coalesce((v_out->>'valid')::boolean, false)
+     or (v_out->>'code') <> 'FAM'
+     or (v_out->>'discount')::numeric <> 2 then
+    raise exception '0066 central FAM coupon was not validated by pricing authority: %', v_out;
+  end if;
+  v_out := public.check_storefront_coupon_pricing(
+    'FAM', jsonb_build_array(jsonb_build_object('product_id', v_round_product, 'qty', 1)), null);
+  if coalesce((v_out->>'valid')::boolean, false) or (v_out->>'reason') <> 'not_applicable' then
+    raise exception '0066 target refusal lost its reason: %', v_out;
+  end if;
+  perform pg_temp.become(v_admin, 'authenticated');
+  update public.promotions set enabled = false where id = '00000000-0000-4000-8000-0000000f0068';
+  perform pg_temp.become(null, 'anon');
+  v_out := public.check_storefront_coupon_pricing(
+    'FAM', jsonb_build_array(jsonb_build_object('product_id', v_coupon_product, 'qty', 1)), null);
+  if coalesce((v_out->>'valid')::boolean, false) or (v_out->>'reason') <> 'invalid' then
+    raise exception '0066 disabled central coupon did not become immediately invalid: %', v_out;
+  end if;
+  perform pg_temp.become(v_admin, 'authenticated');
+  update public.promotions set enabled = true where id = '00000000-0000-4000-8000-0000000f0068';
+
+  -- 0068 rebuilds its POS preview from live catalog prices (not supplied price)
+  -- and gives the cashier a coupon-specific result before payment.
+  perform pg_temp.become(v_cashier, 'authenticated');
+  v_out := public.preview_pos_coupon_pricing(' F A M ', jsonb_build_array(
+    jsonb_build_object('product_id', v_coupon_product, 'qty', 1, 'unit_price', .01)
+  ), null);
+  if not coalesce((v_out->>'valid')::boolean, false)
+     or (v_out->>'coupon_discount')::numeric <> 2
+     or (v_out->>'total')::numeric <> 8 then
+    raise exception '0068 POS coupon preview trusted a browser price or lost the coupon: %', v_out;
+  end if;
+  -- 0069 mirrors POS completion's documented rule: a non-stackable promotion
+  -- competes with manual item discount, and invoice discount is last.
+  v_out := public.preview_pos_coupon_pricing('FAM', jsonb_build_array(
+    jsonb_build_object('product_id', v_coupon_product, 'qty', 1, 'discount_type', 'fixed', 'discount_value', 3)
+  ), null, 'none', 0);
+  if (v_out->>'coupon_discount')::numeric <> 0
+     or (v_out->>'manual_item_discount')::numeric <> 3
+     or (v_out->>'total')::numeric <> 7 then
+    raise exception '0069 POS preview did not apply non-stackable manual-item rule: %', v_out;
+  end if;
+
+  -- Rounded partials: 3 × 3.34 less a 0.02 invoice discount = exactly 10.00.
+  -- The three direct RPC returns must be 3.33 + 3.33 + 3.34, never 3 × 3.34.
+  -- This is a refund-rounding fixture, not an approval fixture, so explicitly
+  -- grant the cashier the base discount permission for this one operation and
+  -- restore the shipped role immediately after the sale.
+  perform pg_temp.become(v_admin, 'authenticated');
+  perform public.admin_set_user_exceptions(v_cashier, array['apply_discount']::text[], '{}'::text[]);
+  perform pg_temp.become(v_cashier, 'authenticated');
+  perform pg_temp.ensure_open_shift();
+  v_sale := public.pos_complete_sale(jsonb_build_object(
+    'client_ref', 'scn65-round-paid', 'user_id', v_cashier::text, 'user_name', 'Karim Cashier',
+    'discount_type', 'fixed', 'discount_value', .02,
+    'payments', jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', 10.00, 'tendered', 10.00)),
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_round_product, 'qty', 3))
+  ));
+  v_sale_id := (v_sale->>'sale_id')::uuid;
+  perform pg_temp.become(v_admin, 'authenticated');
+  perform public.admin_set_user_exceptions(v_cashier, '{}'::text[], '{}'::text[]);
+  perform pg_temp.become(v_cashier, 'authenticated');
+  set constraints all immediate;
+  select id into v_item from public.sale_items where sale_id = v_sale_id;
+  if (select refundable_total from public.sale_items where id = v_item) <> 10.00 then
+    raise exception '0065 did not persist the exact new-sale ceiling';
+  end if;
+  for i in 1..3 loop
+    v_return := public.pos_process_return(jsonb_build_object(
+      'sale_id', v_sale_id::text, 'reason', 'rounding regression', 'refund_method', 'cash',
+      'refund_status', 'completed', 'user_id', v_cashier::text, 'user_name', 'Karim Cashier',
+      'items', jsonb_build_array(jsonb_build_object('sale_item_id', v_item::text, 'quantity', 1))
+    ));
+    v_amounts := array_append(v_amounts, (v_return->>'refund_amount')::numeric);
+  end loop;
+  if v_amounts <> array[3.33::numeric, 3.33::numeric, 3.34::numeric]
+     or (select sum(amount) from public.refund_records where sale_id = v_sale_id) <> 10.00 then
+    raise exception '0065 partial rounding over/under-refunded: %', v_amounts;
+  end if;
+  begin
+    perform public.pos_process_return(jsonb_build_object(
+      'sale_id', v_sale_id::text, 'reason', 'must not fit', 'refund_method', 'cash',
+      'user_id', v_cashier::text, 'user_name', 'Karim Cashier',
+      'items', jsonb_build_array(jsonb_build_object('sale_item_id', v_item::text, 'quantity', 1))
+    ));
+    raise exception '0065 accepted a fourth returned unit';
+  exception when check_violation then null;
+  end;
+
+  -- Central coupon at POS also records the paid 8.00 rather than list 10.00.
+  v_sale := public.pos_complete_sale(jsonb_build_object(
+    'client_ref', 'scn65-central-coupon-paid', 'user_id', v_cashier::text, 'user_name', 'Karim Cashier',
+    'promo_code', 'FAM', 'discount_type', 'none', 'discount_value', 0,
+    'payments', jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', 8.00, 'tendered', 8.00)),
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_coupon_product, 'qty', 1))
+  ));
+  v_sale_id := (v_sale->>'sale_id')::uuid;
+  select id into v_item from public.sale_items where sale_id = v_sale_id;
+  v_return := public.pos_process_return(jsonb_build_object(
+    'sale_id', v_sale_id::text, 'reason', 'coupon paid amount', 'refund_method', 'cash',
+    'user_id', v_cashier::text, 'user_name', 'Karim Cashier',
+    'items', jsonb_build_array(jsonb_build_object('sale_item_id', v_item::text, 'quantity', 1))
+  ));
+  select amount into v_refunds from public.refund_records where id = (v_return->>'refund_id')::uuid;
+  if v_refunds <> 8.00 then
+    raise exception '0065 central coupon refund was % instead of 8.00', v_refunds;
+  end if;
+
+  -- 0067: retrying the same network operation must return the same rows, not
+  -- restore stock or create another refund.
+  v_sale := public.pos_complete_sale(jsonb_build_object(
+    'client_ref', 'scn67-return-replay-sale', 'user_id', v_cashier::text, 'user_name', 'Karim Cashier',
+    'discount_type', 'none', 'discount_value', 0,
+    'payments', jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', 3.34, 'tendered', 3.34)),
+    'lines', jsonb_build_array(jsonb_build_object('product_id', v_round_product, 'qty', 1))
+  ));
+  v_sale_id := (v_sale->>'sale_id')::uuid;
+  select id into v_item from public.sale_items where sale_id = v_sale_id;
+  v_return := public.pos_process_return(jsonb_build_object(
+    'client_ref', 'scn67-return-replay', 'sale_id', v_sale_id::text, 'reason', 'retry safe',
+    'refund_method', 'cash', 'user_id', v_cashier::text, 'user_name', 'Karim Cashier',
+    'items', jsonb_build_array(jsonb_build_object('sale_item_id', v_item::text, 'quantity', 1))
+  ));
+  v_out := public.pos_process_return(jsonb_build_object(
+    'client_ref', 'scn67-return-replay', 'sale_id', v_sale_id::text, 'reason', 'retry safe',
+    'refund_method', 'cash', 'user_id', v_cashier::text, 'user_name', 'Karim Cashier',
+    'items', jsonb_build_array(jsonb_build_object('sale_item_id', v_item::text, 'quantity', 1))
+  ));
+  if v_out <> v_return
+     or (select count(*) from public.refund_records where sale_id = v_sale_id) <> 1 then
+    raise exception '0067 duplicate return replay wrote money or stock twice: first %, second %', v_return, v_out;
+  end if;
+
+  delete from public.promotions where id = '00000000-0000-4000-8000-0000000f0068';
+  raise notice '0065/0066/0067 — paid ceilings persist, rounded partials sum to paid money, direct returns cannot exceed quantity/net payment, central coupons validate through pricing authority, and identical return retries write no second financial or stock effect';
+end
+$phase65_66$;
+
+-- ─── 0070 · explicit module reads are assignable and enforced by RLS ──────
+do $phase70$
+declare
+  v_admin uuid := '00000000-0000-4000-8000-0000000000a1';
+  v_viewer uuid := '00000000-0000-4000-8000-0000000000e1';
+  v_role_id uuid;
+  v_n bigint;
+begin
+  perform pg_temp.become(v_admin, 'authenticated');
+  select r.id into v_role_id
+    from public.admin_create_custom_role(
+      'scn_dashboard_only', 'Dashboard only', 'لوحة التحكم فقط', null, null,
+      'viewer'::public.app_role, array['view_dashboard']::text[]
+    ) as r;
+  perform public.admin_set_custom_role(v_viewer, v_role_id);
+
+  perform pg_temp.become(v_viewer);
+  if not public.can('view_dashboard')
+     or public.can('view_products')
+     or public.can('view_sales') then
+    raise exception '0070 custom role did not decide the three explicit reads';
+  end if;
+
+  select count(*) into v_n from public.products;
+  if v_n <> 0 then raise exception '0070 dashboard-only role read products'; end if;
+  select count(*) into v_n from public.categories;
+  if v_n <> 0 then raise exception '0070 dashboard-only role read categories'; end if;
+  select count(*) into v_n from public.sales;
+  if v_n <> 0 then raise exception '0070 dashboard-only role read sales'; end if;
+  select count(*) into v_n from public.sale_items;
+  if v_n <> 0 then raise exception '0070 dashboard-only role read sale items'; end if;
+  select count(*) into v_n from public.sale_payments;
+  if v_n <> 0 then raise exception '0070 dashboard-only role read sale payments'; end if;
+
+  perform pg_temp.become(v_admin);
+  perform public.admin_set_custom_role(v_viewer, null);
+  perform public.admin_set_custom_role_active(v_role_id, false);
+  perform public.admin_upsert_staff_profile(
+    v_viewer, 'viewer', 'Vera Viewer', null, null, 'viewer'::public.app_role, true
+  );
+
+  raise notice '0070 — dashboard, catalogue and sales-history reads are independently assignable; direct catalogue/invoice queries obey the custom-role overlay';
+end
+$phase70$;

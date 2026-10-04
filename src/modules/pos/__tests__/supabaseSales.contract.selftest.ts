@@ -106,6 +106,7 @@ function makeTable(name: string, rows: Row[], calls: string[], errorOn: string[]
 
 function makeStub(options: StubOptions = {}) {
   const calls: string[] = [];
+  const rpcCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
   const tables: Record<string, Row[]> = {
     sales: options.sales ?? [],
     sale_items: options.saleItems ?? [],
@@ -116,8 +117,13 @@ function makeStub(options: StubOptions = {}) {
       calls.push(`from.${name}`);
       return makeTable(name, tables[name] ?? [], calls, options.errorOn ?? []);
     },
+    async rpc(name: string, args: Record<string, unknown>) {
+      calls.push(`rpc.${name}`);
+      rpcCalls.push({ name, args });
+      return { data: { sale_id: "sale-a" }, error: null };
+    },
   };
-  return { client, calls };
+  return { client, calls, rpcCalls };
 }
 
 // ── fixtures: a fresh live sale, exactly as the tables hold it ───────────────
@@ -188,6 +194,38 @@ const repo = (stub: ReturnType<typeof makeStub>) =>
   new SupabaseSalesRepository(stub.client as never);
 
 // ── the contract ─────────────────────────────────────────────────────────────
+test("offline replay uses the evidence-validating RPC while normal sales keep the approval RPC", async () => {
+  const stub = makeStub({ sales: [SALE_A], saleItems: ITEMS_A, salePayments: PAYMENTS });
+  const common = {
+    client_ref: "offline-contract-ref",
+    lines: [{ product_id: "prod-ring", variant_id: "variant-black-42", qty: 1, discount_type: "none" as const, discount_value: 0 }],
+    discount_type: "none" as const,
+    discount_value: 0,
+    payments: [{ method: "cash" as const, amount: 700, status: "paid" as const, tendered: 700 }],
+    user_id: "u-cashier",
+    user_name: "Karim Cashier",
+  };
+  await repo(stub).completeSale({
+    ...common,
+    offline_evidence: {
+      schema_version: 1,
+      branch_id: "branch-a",
+      captured_at: "2026-10-03T10:00:00.000Z",
+      subtotal: 700,
+      discount_amount: 0,
+      total: 700,
+      lines: [{ product_id: "prod-ring", variant_id: "variant-black-42", qty: 1, unit_price: 700, sku: "ALYQ-01-BLK-42", barcode: "629ALYQ0142", color_ar: "أسود", color_en: "Black", size_value: "42" }],
+    },
+  });
+  assert.equal(stub.rpcCalls[0]?.name, "pos_sync_offline_sale");
+  assert.equal((stub.rpcCalls[0]?.args.p_evidence as { branch_id?: string })?.branch_id, "branch-a");
+  assert.equal((stub.rpcCalls[0]?.args.p_payload as { client_ref?: string })?.client_ref, "offline-contract-ref");
+
+  await repo(stub).completeSale({ ...common, client_ref: "online-contract-ref" }, "approval-1");
+  assert.equal(stub.rpcCalls[1]?.name, "pos_complete_sale");
+  assert.equal(stub.rpcCalls[1]?.args.p_approval_request_id, "approval-1");
+});
+
 test("listSales returns each sale with its own lines and payments", async () => {
   const stub = makeStub({ sales: [SALE_A, SALE_B], saleItems: [...ITEMS_A, ...ITEMS_B], salePayments: PAYMENTS });
   const sales = await repo(stub).listSales();

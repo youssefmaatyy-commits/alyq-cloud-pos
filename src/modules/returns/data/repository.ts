@@ -12,6 +12,7 @@ export interface ReturnRepository {
 
   listReturns(): Promise<SalesReturn[]>;
   getReturn(id: string): Promise<SalesReturn>;
+  getReturnsForSale(saleId: string): Promise<SalesReturn[]>;
   createReturn(input: CreateReturnInput): Promise<{ returnRecord: SalesReturn; refundRecord: RefundRecord }>;
 
   listRefunds(): Promise<RefundRecord[]>;

@@ -73,6 +73,12 @@ export function isAppRole(raw: string | null | undefined): raw is AppRole {
 
 /** Every action the app gates on a role. */
 export const CAPABILITIES = [
+  /** Open the operational dashboard and its permission-filtered widgets. */
+  "view_dashboard",
+  /** Browse products, categories and product details without editing them. */
+  "view_products",
+  /** Browse completed sales and invoice details without running the register. */
+  "view_sales",
   /** Read stock levels + the movement ledger. */
   "view_inventory",
   /** Create stock movements (manual adjustments). */
@@ -100,6 +106,10 @@ export const CAPABILITIES = [
   "open_shift",
   /** Close a cashier shift (count the drawer). */
   "close_shift",
+  /** Put genuine non-sale cash into the currently open drawer. */
+  "cash_in",
+  /** Take genuine non-sale cash from the drawer under the branch limit policy. */
+  "cash_out",
   /** Record an expense against the open shift. */
   "add_expense",
   /** Edit an existing expense. */
@@ -140,6 +150,10 @@ export const CAPABILITIES = [
   // It is deliberately NOT part of the Phase 10 granular set below — a custom
   // role cannot be handed the reset switch.
   "manage_system_reset",
+  /** Produce a real-count, dependency-aware selective-cleanup preview. */
+  "preview_data_cleanup",
+  /** Execute one exact, confirmed and non-replayable selective-cleanup preview. */
+  "execute_data_cleanup",
 
   // ── Phase 10: the granular permissions a custom role can be built from ──
   //
@@ -295,6 +309,12 @@ export const CAPABILITIES = [
    * problem and points at the tool that already fixes it.
    */
   "run_health_check",
+  /** Create, activate, deactivate, rename and reassign branch-bound registers. */
+  "manage_registers",
+  /** Select local printer/paper/drawer configuration and submit test jobs. */
+  "configure_hardware",
+  /** Authorize an audited manual drawer-open command on the bound register. */
+  "open_cash_drawer",
 ] as const;
 export type Capability = (typeof CAPABILITIES)[number];
 
@@ -318,6 +338,9 @@ export const ROLE_CAPABILITIES: Record<AppRole, readonly Capability[]> = {
   // Danger Zone: clearing operational data or factory-resetting the
   // installation is the one act reserved to the admin role alone.
   manager: [
+    "view_dashboard",
+    "view_products",
+    "view_sales",
     "view_inventory",
     "adjust_stock",
     "sell",
@@ -329,6 +352,8 @@ export const ROLE_CAPABILITIES: Record<AppRole, readonly Capability[]> = {
     "approve_refund",
     "open_shift",
     "close_shift",
+    "cash_in",
+    "cash_out",
     "add_expense",
     "edit_expense",
     "delete_expense",
@@ -364,8 +389,15 @@ export const ROLE_CAPABILITIES: Record<AppRole, readonly Capability[]> = {
     "view_backups",
     "create_backup",
     "run_health_check",
+    "preview_data_cleanup",
+    "manage_registers",
+    "configure_hardware",
+    "open_cash_drawer",
   ],
   cashier: [
+    "view_dashboard",
+    "view_products",
+    "view_sales",
     "view_inventory",
     "sell",
     "confirm_payment",
@@ -373,6 +405,8 @@ export const ROLE_CAPABILITIES: Record<AppRole, readonly Capability[]> = {
     "process_refund",
     "open_shift",
     "close_shift",
+    "cash_in",
+    "cash_out",
     "add_expense",
     "view_shifts",
     // Works the online queue like the till; may not restyle the website.
@@ -399,6 +433,9 @@ export const ROLE_CAPABILITIES: Record<AppRole, readonly Capability[]> = {
     "change_cost",
   ],
   inventory_clerk: [
+    "view_dashboard",
+    "view_products",
+    "view_sales",
     "view_inventory",
     "adjust_stock",
     "sell",
@@ -407,6 +444,8 @@ export const ROLE_CAPABILITIES: Record<AppRole, readonly Capability[]> = {
     "process_refund",
     "open_shift",
     "close_shift",
+    "cash_in",
+    "cash_out",
     "add_expense",
     "view_shifts",
     "manage_online_orders",
@@ -436,6 +475,8 @@ export const ROLE_CAPABILITIES: Record<AppRole, readonly Capability[]> = {
   // add, edit and delete a customer. That is the one deliberate tightening in
   // this release, and the role-model self-test pins both halves of it.
   viewer: [
+    "view_dashboard",
+    "view_products",
     "view_inventory",
     "view_shifts",
     "export_data",

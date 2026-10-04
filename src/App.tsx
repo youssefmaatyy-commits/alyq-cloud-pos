@@ -10,6 +10,8 @@ import {
   normalizeRecoveryUrl,
 } from "@/lib/auth";
 import { ToastProvider } from "@/components/ui";
+import { BranchProvider } from "@/lib/branch";
+import { RegisterProvider } from "@/modules/registers";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { AppShell } from "@/components/layout/AppShell";
 import { CatalogProvider } from "@/modules/products";
@@ -27,6 +29,8 @@ import {
   StocktakePage,
 } from "@/modules/inventory";
 import { PosPage, PosProvider, SaleDetailPage, SalesHistoryPage } from "@/modules/pos";
+import { SyncCenterPage } from "@/modules/pos/pages/SyncCenterPage";
+import { HealthCenterPage } from "@/modules/system/pages/HealthCenterPage";
 import {
   CustomerDetailPage,
   CustomerProvider,
@@ -58,9 +62,13 @@ import { BackupPage } from "@/modules/backup";
 import { BrandingPage } from "@/modules/settings/pages/BrandingPage";
 import { SettingsHomePage } from "@/modules/settings/pages/SettingsHomePage";
 import { SystemSettingsPage } from "@/modules/settings/pages/SystemSettingsPage";
+import { BranchesPage } from "@/modules/settings/pages/BranchesPage";
+import { RegistersPage } from "@/modules/registers/pages/RegistersPage";
+import { DesktopHardwarePage } from "@/modules/registers/pages/DesktopHardwarePage";
 import { OperationsCenterPage } from "@/modules/operations/pages/OperationsCenterPage";
 import { ImportCenterPage } from "@/modules/import/pages/ImportCenterPage";
 import { StoreManagementHome, SalesHome, CatalogHome, InventoryHome, OnlineHome } from "./components/layout/moduleHomes";
+import { MobileApp } from "@/modules/mobile/MobileApp";
 
 import {
   DeliveryZonesPage,
@@ -230,6 +238,9 @@ export default function App() {
                 <Route path="v2/*" element={<StorefrontV2PreviewRedirect />} />
                 <Route path="*" element={<Navigate to="/store" replace />} />
               </Route>
+              {/* Prompt 6 management application: same auth and business services,
+                  but a purpose-built phone shell rather than the cashier sidebar. */}
+              <Route path="/mobile/*" element={<RequireAuth><MobileApp /></RequireAuth>} />
               <Route path="*" element={<AuthenticatedApp />} />
             </Routes>
           </HashRouter>
@@ -244,6 +255,8 @@ export default function App() {
 function AuthenticatedApp() {
   return (
     <RequireAuth>
+      <BranchProvider>
+      <RegisterProvider>
       <CatalogProvider>
         <ApprovalProvider>
         <InventoryProvider>
@@ -282,6 +295,8 @@ function AuthenticatedApp() {
                                 <PosPage />
                               </ErrorBoundary>
                             } />
+                            <Route path="/sync" element={<SyncCenterPage />} />
+                            <Route path="/system-health" element={<HealthCenterPage />} />
                             {/* Phase 49: the Sales module landing — invoices,
                                 returns, refunds, shifts, expenses and the
                                 approvals inbox behind one door. */}
@@ -356,6 +371,8 @@ function AuthenticatedApp() {
         </InventoryProvider>
         </ApprovalProvider>
       </CatalogProvider>
+      </RegisterProvider>
+      </BranchProvider>
     </RequireAuth>
   );
 }
@@ -376,6 +393,9 @@ function SettingsArea() {
       <Routes>
         <Route index element={<SettingsHomePage />} />
         <Route path="users" element={<UsersPage />} />
+        <Route path="branches" element={<BranchesPage />} />
+        <Route path="registers" element={<RegistersPage />} />
+        <Route path="hardware" element={<DesktopHardwarePage />} />
         <Route path="roles" element={<RolesPage />} />
         {/* Approval thresholds live under Settings because changing them is
             `manage_settings` work — the same capability that owns the rest of

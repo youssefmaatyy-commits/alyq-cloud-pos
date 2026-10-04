@@ -1,7 +1,17 @@
 /**
- * System health (Phase 56). Every line is a fact the caller already has.
+ * System health (Phase 56 + Prompt 4). Every line is a fact the caller already has.
  * A missing probe is unavailable, not a green light and not a guessed count.
+ * The runtime connectivity/queue/storage model is re-exported below so the
+ * existing Operations Center and the dedicated Health Center share one service
+ * boundary rather than growing parallel health engines.
  */
+export {
+  buildOperationalHealth,
+  type OperationalHealthFact,
+  type OperationalHealthInput,
+  type OperationalHealthKey,
+  type OperationalHealthState,
+} from "@/modules/system/services/operationalHealth";
 import { SHIPPED_LATEST_MIGRATION, SHIPPED_MIGRATION_COUNT, type HealthFact } from "../types";
 
 export interface HealthInput {

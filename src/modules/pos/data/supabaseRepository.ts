@@ -11,6 +11,7 @@ import type {
 } from "../types";
 import type { SaleListQuery, SalesRepository } from "./repository";
 import { SALES_ROW_CAP } from "./repository";
+import { getRegisterCredential } from "@/modules/registers/services/registerService";
 
 interface SaleRow {
   id: string;
@@ -28,6 +29,11 @@ interface SaleRow {
   automatic_discount_amount?: number | string | null;
   automatic_promotion_id?: string | null;
   automatic_promotion_name?: string | null;
+  promotion_rule_type?: string | null;
+  promotion_buy_x?: number | string | null;
+  promotion_get_y?: number | string | null;
+  promotion_reward_qty?: number | string | null;
+  promotion_rewarded_units?: unknown;
   total: number | string;
   amount_received: number | string | null;
   change: number | string | null;
@@ -42,10 +48,16 @@ interface SaleRow {
   paid_at: string | null;
   paid_by: string | null;
   paid_by_name: string | null;
+  /** Frozen originating branch (migration 0071). */
+  branch_id?: string | null;
+  branch_name?: string | null;
   /** Present from migration 0017 onward; older rows simply lack it. */
   source?: Sale["source"] | null;
   /** The open shift the till sale was completed under (migration 0040). */
   shift_id?: string | null;
+  register_id?: string | null;
+  register_name?: string | null;
+  notes?: string | null;
 }
 
 interface SalePaymentRow {
@@ -75,6 +87,7 @@ interface SaleItemRow {
   unit_price: number | string;
   quantity: number;
   line_total: number | string;
+  refundable_total?: number | string | null;
   gross_total?: number | string | null;
   discount_type?: SaleItem["discount_type"] | null;
   discount_value?: number | string | null;
@@ -82,6 +95,8 @@ interface SaleItemRow {
   automatic_promotion_id?: string | null;
   automatic_promotion_name?: string | null;
   automatic_discount_amount?: number | string | null;
+  rewarded_qty?: number | string | null;
+  promotion_rule_type?: string | null;
   /** Present from migration 0055 onward; older rows are null (unknown cost). */
   unit_cost?: number | string | null;
 }
@@ -122,6 +137,11 @@ function mapSale(row: SaleRow, items: SaleItemRow[] = [], payments: SalePaymentR
     automatic_discount_amount: row.automatic_discount_amount == null ? undefined : toNumber(row.automatic_discount_amount),
     automatic_promotion_id: row.automatic_promotion_id ?? null,
     automatic_promotion_name: row.automatic_promotion_name ?? null,
+    promotion_rule_type: row.promotion_rule_type ?? null,
+    promotion_buy_x: row.promotion_buy_x == null ? null : toNumber(row.promotion_buy_x),
+    promotion_get_y: row.promotion_get_y == null ? null : toNumber(row.promotion_get_y),
+    promotion_reward_qty: row.promotion_reward_qty == null ? null : toNumber(row.promotion_reward_qty),
+    promotion_rewarded_units: row.promotion_rewarded_units ?? [],
     total: toNumber(row.total),
     amount_received: row.amount_received == null ? null : toNumber(row.amount_received),
     change: row.change == null ? null : toNumber(row.change),
@@ -147,12 +167,15 @@ function mapSale(row: SaleRow, items: SaleItemRow[] = [], payments: SalePaymentR
       quantity: i.quantity,
       gross_total: i.gross_total == null ? undefined : toNumber(i.gross_total),
       line_total: toNumber(i.line_total),
+      refundable_total: i.refundable_total == null ? null : toNumber(i.refundable_total),
       discount_type: i.discount_type ?? "none",
       discount_value: i.discount_value == null ? 0 : toNumber(i.discount_value),
       discount_amount: i.discount_amount == null ? 0 : toNumber(i.discount_amount),
       automatic_promotion_id: i.automatic_promotion_id ?? null,
       automatic_promotion_name: i.automatic_promotion_name ?? null,
       automatic_discount_amount: i.automatic_discount_amount == null ? 0 : toNumber(i.automatic_discount_amount),
+      rewarded_qty: i.rewarded_qty == null ? 0 : toNumber(i.rewarded_qty),
+      promotion_rule_type: i.promotion_rule_type ?? null,
       unit_cost: i.unit_cost == null ? null : toNumber(i.unit_cost),
     })),
     payments: payments.map(mapPayment),
@@ -165,8 +188,13 @@ function mapSale(row: SaleRow, items: SaleItemRow[] = [], payments: SalePaymentR
     paid_at: row.paid_at ?? null,
     paid_by: row.paid_by ?? null,
     paid_by_name: row.paid_by_name ?? null,
+    branch_id: row.branch_id ?? null,
+    branch_name: row.branch_name ?? null,
     source: row.source ?? "pos",
     shift_id: row.shift_id ?? null,
+    register_id: row.register_id ?? null,
+    register_name: row.register_name ?? null,
+    notes: row.notes ?? null,
   };
 }
 
@@ -198,27 +226,62 @@ export class SupabaseSalesRepository implements SalesRepository {
   async completeSale(input: CompleteSaleInput, approvalRequestId?: string | null): Promise<Sale> {
     try {
       const client = this.require();
-      const { data, error } = await client.rpc("pos_complete_sale", {
-        // Migration 0035: an over-limit discount is refused unless a real,
-        // approved, unspent request stands behind it. Validated in the database,
-        // spent in the same transaction as the sale it produced.
-        p_approval_request_id: approvalRequestId ?? null,
-        p_payload: {
-          client_ref: input.client_ref,
-          lines: input.lines,
-          discount_type: input.discount_type,
-          discount_value: input.discount_value,
-          coupon_code: input.coupon_code ?? input.promo_code ?? null,
-          promo_code: input.promo_code ?? input.coupon_code ?? null,
-          payments: input.payments,
-          customer_id: input.customer_id ?? null,
-          customer_name: input.customer_name ?? null,
-          customer_phone: input.customer_phone ?? null,
-          user_id: input.user_id,
-          user_name: input.user_name,
-          source: input.source ?? "pos",
-        },
-      });
+      const payload = {
+        client_ref: input.client_ref,
+        lines: input.lines,
+        discount_type: input.discount_type,
+        discount_value: input.discount_value,
+        coupon_code: input.coupon_code ?? input.promo_code ?? null,
+        promo_code: input.promo_code ?? input.coupon_code ?? null,
+        payments: input.payments,
+        customer_id: input.customer_id ?? null,
+        customer_name: input.customer_name ?? null,
+        customer_phone: input.customer_phone ?? null,
+        notes: input.notes?.trim() || null,
+        user_id: input.user_id,
+        user_name: input.user_name,
+        source: input.source ?? "pos",
+      };
+      const register = await getRegisterCredential();
+      const carriesRegister = Boolean(input.register_id || input.installation_id);
+      if (carriesRegister && !register) {
+        throw new AppError("FORBIDDEN", "The original desktop register binding is unavailable");
+      }
+      if (register && (
+        !input.register_id || !input.installation_id
+        || input.register_id !== register.register_id
+        || input.installation_id !== register.installation_id
+      )) {
+        throw new AppError("FORBIDDEN", "Sale register evidence does not match this installation");
+      }
+      const { data, error } = input.offline_evidence
+        ? register
+          ? await client.rpc("pos_sync_registered_offline_sale", {
+              p_payload: payload,
+              p_evidence: input.offline_evidence,
+              p_installation_id: register.installation_id,
+              p_credential: register.credential,
+              p_register_id: register.register_id,
+            })
+          : await client.rpc("pos_sync_offline_sale", {
+              p_payload: payload,
+              p_evidence: input.offline_evidence,
+            })
+        : register
+          ? await client.rpc("pos_complete_registered_sale", {
+              p_payload: payload,
+              p_approval_request_id: approvalRequestId ?? null,
+              p_installation_id: register.installation_id,
+              p_credential: register.credential,
+              p_register_id: register.register_id,
+            })
+          : await client.rpc("pos_complete_sale", {
+              // Migration 0035: an over-limit discount is refused unless a real,
+              // approved, unspent request stands behind it. Validated in the database,
+              // spent in the same transaction as the sale it produced.
+              p_approval_request_id: approvalRequestId ?? null,
+              p_payload: payload,
+            });
       if (error) throw toAppError(error);
       const saleId = (data as { sale_id?: string } | null)?.sale_id;
       if (!saleId) throw new AppError("DB", "Sale id missing from response");

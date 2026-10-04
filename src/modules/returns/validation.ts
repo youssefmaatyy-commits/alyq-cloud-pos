@@ -26,15 +26,86 @@ export function paidUnitOf(
   return Math.max(0, match.discounted_unit_price);
 }
 
-/** POS returns use the sold net line and allocate the invoice discount
- * proportionally, so a refund can never exceed what was actually paid. */
-export function paidUnitOfSale(sale: Sale, saleItem: Sale["items"][number], paidPrices?: readonly PaidUnitPrice[] | null): number {
-  if (paidPrices) return paidUnitOf(saleItem, paidPrices);
-  const qty = Math.max(1, saleItem.quantity);
-  const lineNet = Number.isFinite(saleItem.line_total) ? Math.max(0, saleItem.line_total) : saleItem.unit_price * qty;
-  const base = sale.items.reduce((sum, item) => sum + Math.max(0, item.line_total), 0);
-  const invoiceFactor = base > 0 ? Math.max(0, 1 - Math.min(Math.max(0, sale.discount_amount), base) / base) : 1;
-  return round2((lineNet / qty) * invoiceFactor);
+/**
+ * The browser mirrors the database's *ceiling* policy (0065): new invoices
+ * carry an exact per-line ceiling; older valid invoices are allocated across
+ * their net lines proportionally in piastres.  This is intentionally only an
+ * estimate — `pos_process_return` remains the authority and refuses an
+ * anomalous invoice with insufficient line evidence.
+ */
+export interface RefundAllocation {
+  totals: Map<string, number>;
+  available: boolean;
+}
+
+export function refundAllocationForSale(sale: Sale): RefundAllocation {
+  const persisted = sale.items.map((item) => item.refundable_total);
+  if (persisted.every((value) => value != null)) {
+    const totals = new Map(
+      sale.items.map((item) => [item.id, Math.max(0, Number(item.refundable_total) || 0)]),
+    );
+    const sum = round2([...totals.values()].reduce((total, value) => total + value, 0));
+    return { totals, available: sum === round2(Math.max(0, sale.total)) };
+  }
+
+  const paidCents = Math.round(Math.max(0, sale.total) * 100);
+  const lines = sale.items
+    .map((item) => ({ item, cents: Math.round(Math.max(0, Number(item.line_total) || 0) * 100) }))
+    .sort((a, b) => a.item.id.localeCompare(b.item.id));
+  const baseCents = lines.reduce((total, line) => total + line.cents, 0);
+  if (paidCents > baseCents || (baseCents === 0 && paidCents !== 0)) {
+    return { totals: new Map(), available: false };
+  }
+  if (baseCents === 0) {
+    return { totals: new Map(lines.map(({ item }) => [item.id, 0])), available: true };
+  }
+
+  const shares = lines.map(({ item, cents }) => {
+    const numerator = paidCents * cents;
+    return {
+      id: item.id,
+      floor: Math.floor(numerator / baseCents),
+      remainder: numerator % baseCents,
+    };
+  });
+  const leftover = paidCents - shares.reduce((total, share) => total + share.floor, 0);
+  shares.sort((a, b) => b.remainder - a.remainder || a.id.localeCompare(b.id));
+  const totals = new Map<string, number>();
+  for (const [index, share] of shares.entries()) {
+    totals.set(share.id, (share.floor + (index < leftover ? 1 : 0)) / 100);
+  }
+  return { totals, available: true };
+}
+
+/** Exact incremental amount for a partial return. The cumulative-floor rule is
+ * the same whole-piastre rule in the live RPC, so repeated partial returns add
+ * up to precisely the line ceiling rather than over-refunding a rounding cent.
+ */
+export function refundAmountForQuantity(
+  lineCeiling: number,
+  soldQuantity: number,
+  alreadyReturned: number,
+  requestedQuantity: number,
+): number {
+  const sold = Math.max(1, Math.trunc(soldQuantity));
+  const before = Math.max(0, Math.trunc(alreadyReturned));
+  const requested = Math.max(0, Math.trunc(requestedQuantity));
+  const ceilingCents = Math.round(Math.max(0, lineCeiling) * 100);
+  const beforeCents = Math.floor((ceilingCents * before) / sold);
+  const afterCents = Math.floor((ceilingCents * Math.min(sold, before + requested)) / sold);
+  return (afterCents - beforeCents) / 100;
+}
+
+/** Retained for callers that need a displayed approximate unit rate.  Refund
+ * documents use `refundAmountForQuantity` for their authoritative line total. */
+export function paidUnitOfSale(
+  sale: Sale,
+  saleItem: Sale["items"][number],
+  _paidPrices?: readonly PaidUnitPrice[] | null,
+): number {
+  const allocation = refundAllocationForSale(sale);
+  const lineCeiling = allocation.totals.get(saleItem.id) ?? 0;
+  return round2(lineCeiling / Math.max(1, saleItem.quantity));
 }
 
 export interface ItemReturnValidation {
@@ -154,8 +225,13 @@ export function validateReturnDraft(
   }
 
   const itemValidations: ItemReturnValidation[] = [];
+  const allocation = refundAllocationForSale(sale);
+  if (!allocation.available) {
+    errors.sale = "refundAllocationUnavailable";
+  }
   let totalRefund = 0;
   let activeReturnCount = 0;
+  const seenSaleItems = new Set<string>();
 
   for (const input of itemsToReturn) {
     const saleItem = sale.items.find((i) => i.id === input.sale_item_id);
@@ -163,6 +239,11 @@ export function validateReturnDraft(
 
     const returnable = returnableMap.get(saleItem.id) ?? 0;
     const qty = Math.trunc(input.quantity || 0);
+    if (seenSaleItems.has(saleItem.id)) {
+      errors[`item_${saleItem.id}`] = "duplicateSaleItem";
+      continue;
+    }
+    seenSaleItems.add(saleItem.id);
 
     if (qty > 0) {
       activeReturnCount++;
@@ -174,7 +255,9 @@ export function validateReturnDraft(
       errors[`item_${saleItem.id}`] = "qtyExceedsSold";
     }
 
-    const itemRefund = round2(paidUnitOfSale(sale, saleItem, paidPrices) * qty);
+    const alreadyReturned = saleItem.quantity - returnable;
+    const lineCeiling = allocation.totals.get(saleItem.id) ?? 0;
+    const itemRefund = refundAmountForQuantity(lineCeiling, saleItem.quantity, alreadyReturned, qty);
     totalRefund += itemRefund;
 
     itemValidations.push({
@@ -191,9 +274,9 @@ export function validateReturnDraft(
       name_en: saleItem.name_en,
       sku: saleItem.sku,
       barcode: saleItem.barcode,
-      unit_price: paidUnitOfSale(sale, saleItem, paidPrices),
+      unit_price: qty > 0 ? round2(itemRefund / qty) : paidUnitOfSale(sale, saleItem, paidPrices),
       sold_quantity: saleItem.quantity,
-      previously_returned: saleItem.quantity - returnable,
+      previously_returned: alreadyReturned,
       returnable_quantity: returnable,
       requested_quantity: qty,
       line_total: itemRefund,

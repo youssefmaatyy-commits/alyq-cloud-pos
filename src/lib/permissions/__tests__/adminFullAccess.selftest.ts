@@ -222,13 +222,15 @@ test("admin is a superset of every other role, and the admin-only set is exact",
       assert.ok(admin.has(capability), `admin must hold everything ${role} holds (${capability})`);
     }
   }
-  // The four oversight acts that decide who holds capabilities, plus the two
-  // backup acts that hold the whole installation. Anything else appearing here
-  // means a role lost a capability nobody noticed.
+  // The four oversight acts that decide who holds capabilities, the two
+  // backup acts that hold the whole installation, and authoritative cleanup
+  // execution. Anything else appearing here means a role lost a capability
+  // nobody noticed.
   const onlyAdmin = CAPABILITIES.filter((capability) => rolesWithCapability(capability).join() === "admin").sort();
   assert.deepEqual(
     onlyAdmin,
     [
+      "execute_data_cleanup",
       "export_backup",
       "manage_roles",
       "manage_settings",

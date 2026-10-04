@@ -45,6 +45,8 @@ export function StoreCartPage() {
     clearCoupon,
     freeDelivery,
     preview,
+    deliveryType,
+    deliveryQuoteReady,
   } = useStoreCart();
 
   const [codeDraft, setCodeDraft] = useState(couponInput);
@@ -250,23 +252,29 @@ export function StoreCartPage() {
                   <dd className="font-bold">−{money(preview?.promoDiscount ?? totals.discount_amount)}</dd>
                 </div>
               ) : null}
-              {(preview?.deliveryFee ?? totals.delivery_fee) > 0 ? (
+              {deliveryType === "delivery" ? (
                 <div className="flex justify-between gap-2">
                   <dt className="text-[var(--store-text-secondary)]">
                     {t("store.cart.deliveryFee")}
-                    {preview?.zoneName ? ` · ${preview.zoneName}` : ""}
+                    {deliveryQuoteReady && preview?.zoneName ? ` · ${preview.zoneName}` : ""}
                   </dt>
-                  <dd className="font-bold text-[var(--store-text-primary)]"><Money value={preview?.deliveryFee ?? totals.delivery_fee} /></dd>
+                  <dd className="font-bold text-[var(--store-text-primary)]">
+                    {deliveryQuoteReady
+                      ? (preview?.deliveryFee ?? totals.delivery_fee) > 0
+                        ? <Money value={preview?.deliveryFee ?? totals.delivery_fee} />
+                        : t("store.checkout.free")
+                      : t("store.cart.deliveryCalculatedAtCheckout")}
+                  </dd>
                 </div>
               ) : null}
-              {(preview?.shippingDiscount ?? 0) > 0 ? (
+              {deliveryQuoteReady && (preview?.shippingDiscount ?? 0) > 0 ? (
                 <div className="flex justify-between gap-2 text-emerald-700">
                   <dt>{t("store.checkout.deliveryDiscount")}</dt>
                   <dd className="font-bold">−{money(preview?.shippingDiscount ?? 0)}</dd>
                 </div>
               ) : null}
               <div className="flex justify-between gap-2 border-t border-[var(--store-border)] pt-2 text-base">
-                <dt className="font-black text-[var(--store-text-primary)]">{t("store.cart.total")}</dt>
+                <dt className="font-black text-[var(--store-text-primary)]">{deliveryType === "delivery" && !deliveryQuoteReady ? t("store.cart.totalBeforeDelivery") : t("store.cart.total")}</dt>
                 <dd className="font-black text-[var(--store-text-primary)]"><Money value={preview?.total ?? totals.total} /></dd>
               </div>
             </dl>

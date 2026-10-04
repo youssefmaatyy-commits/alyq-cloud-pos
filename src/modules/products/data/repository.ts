@@ -6,7 +6,13 @@ import type {
   Product,
   ProductPatch,
 } from "../types";
-import type { NewProductVariant, ProductVariant, ProductVariantPatch } from "../variants";
+import type {
+  NewProductVariant,
+  ProductColorImage,
+  ProductColorImageInput,
+  ProductVariant,
+  ProductVariantPatch,
+} from "../variants";
 
 /** Machine-readable failure codes the UI can react to. */
 export type AppErrorCode =
@@ -101,10 +107,24 @@ export class AppError extends Error {
   }
 }
 
+/** Convert Supabase/fetch's often plain-object failures into a useful message. */
+export function readableErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object") {
+    const value = error as { name?: unknown; message?: unknown };
+    const message = typeof value.message === "string" ? value.message : "";
+    const name = typeof value.name === "string" ? value.name : "";
+    if (name && message) return `${name}: ${message}`;
+    if (message) return message;
+    if (name) return name;
+  }
+  return String(error);
+}
+
 /** Map any thrown value into an AppError. */
 export function toAppError(error: unknown): AppError {
   if (error instanceof AppError) return error;
-  const message = error instanceof Error ? error.message : String(error);
+  const message = readableErrorMessage(error);
   if (message === "SUPABASE_NOT_CONFIGURED") {
     return new AppError("NOT_CONFIGURED", message);
   }
@@ -211,6 +231,10 @@ export interface CatalogRepository {
   deleteVariant(id: string): Promise<void>;
   /** variant id → referenced-row count, so the screen can explain a refusal. */
   listVariantReferences(): Promise<VariantReferenceMap>;
+  /** Ordered image references shared by all sizes of each product colour. */
+  listColorImages(productId?: string): Promise<ProductColorImage[]>;
+  /** Atomically replaces one product's colour galleries; URLs reuse existing storage objects. */
+  replaceColorImages(productId: string, images: readonly ProductColorImageInput[]): Promise<ProductColorImage[]>;
   /**
    * Switch a product to variant stock, distributing what it already holds.
    * Refused with `VARIANTS_STOCK_MISMATCH` unless the opening sums to exactly

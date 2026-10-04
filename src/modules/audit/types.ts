@@ -85,6 +85,7 @@ export const AUDIT_ACTIONS = [
   "category.products_moved",
   "stock.adjusted",
   "stock.corrected",
+  "stock.transferred",
   // Approval limits (Phase 12, requirement 2). Live mode writes these from
   // `submit_approval_request` / `decide_approval_request` / `mark_approval_applied`
   // / `set_approval_rules` (migration 0023); demo mode writes the same five from
@@ -194,6 +195,30 @@ export const AUDIT_ACTIONS = [
   "promo_code.created",
   "promo_code.changed",
   "promo_code.disabled",
+  // Branch authority, policy, PIN evidence, drawer movements and selective cleanup.
+  "branch.created",
+  "branch.access_changed",
+  "branch.switched",
+  "operation_policy.updated",
+  "approval.verification_failed",
+  "manager_pin.changed",
+  "cash.in",
+  "cash.out",
+  "cleanup.previewed",
+  "cleanup.executed",
+  "cleanup.refused",
+  // Desktop register and hardware authority (0082).
+  "register.created",
+  "register.activated",
+  "register.deactivated",
+  "register.renamed",
+  "register.reassigned",
+  "hardware.configured",
+  "hardware.printer_tested",
+  "drawer.open_authorized",
+  // Prompt 6: management phone registration lifecycle. Push tokens are never audit detail.
+  "mobile.installation_registered",
+  "mobile.installation_deactivated",
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -213,6 +238,8 @@ export const AUDIT_ENTITIES = [
   "category",
   /** A stock level and the movement that changed it (`stock_movements`). */
   "stock",
+  /** A completed atomic branch-to-branch transfer (`stock_transfers`). */
+  "stock_transfer",
   /** An over-limit act waiting for a decision (`approval_requests`). */
   "approval_request",
   /** The threshold document itself (`approval_rules`, one row). */
@@ -243,8 +270,25 @@ export const AUDIT_ENTITIES = [
   "promo_code",
   /** A physical count (`stocktakes`) — the session, not each keystroke. */
   "stocktake",
+  "branch",
+  "branch_membership",
+  "operation_policy",
+  "cash_movement",
+  "cleanup_preview",
+  "cleanup_execution",
+  "register",
+  "hardware",
+  "mobile_installation",
 ] as const;
 export type AuditEntity = (typeof AUDIT_ENTITIES)[number];
+
+export type AuditJsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | AuditJsonValue[]
+  | { [key: string]: AuditJsonValue };
 
 export interface AuditLogEntry {
   id: string;
@@ -255,9 +299,19 @@ export interface AuditLogEntry {
   /** Short human-readable label (e.g. "SHF-000004", "Transport"). */
   entity_label: string;
   /** Structured, JSON-safe detail for the expanded row. */
-  details: Record<string, string | number | boolean | null>;
+  details: Record<string, AuditJsonValue>;
   user_id: string;
   user_name: string;
+  approver_id?: string | null;
+  approver_name?: string | null;
+  branch_id?: string | null;
+  branch_name?: string | null;
+  register_id?: string | null;
+  module?: string | null;
+  correlation_id?: string | null;
+  before_state?: Record<string, AuditJsonValue> | null;
+  after_state?: Record<string, AuditJsonValue> | null;
+  reason?: string | null;
   /** ISO timestamp of the action. */
   created_at: string;
 }
@@ -268,9 +322,19 @@ export interface NewAuditLogEntry {
   entity: AuditEntity;
   entity_id: string;
   entity_label: string;
-  details?: Record<string, string | number | boolean | null>;
+  details?: Record<string, AuditJsonValue>;
   user_id: string;
   user_name: string;
+  approver_id?: string | null;
+  approver_name?: string | null;
+  branch_id?: string | null;
+  branch_name?: string | null;
+  register_id?: string | null;
+  module?: string | null;
+  correlation_id?: string | null;
+  before_state?: Record<string, AuditJsonValue> | null;
+  after_state?: Record<string, AuditJsonValue> | null;
+  reason?: string | null;
 }
 
 /**
@@ -290,6 +354,9 @@ export interface AuditFiltersValue {
   entity: AuditEntity | "all";
   /** Matched on `user_id`, so a renamed employee stays one person. */
   user: string | "all";
+  approver: string | "all";
+  branch: string | "all";
+  module: string | "all";
   /** Inclusive `yyyy-mm-dd` bounds; `null`/`""` means open-ended. */
   from: string;
   to: string;
@@ -300,6 +367,9 @@ export const EMPTY_AUDIT_FILTERS: AuditFiltersValue = {
   action: "all",
   entity: "all",
   user: "all",
+  approver: "all",
+  branch: "all",
+  module: "all",
   from: "",
   to: "",
 };

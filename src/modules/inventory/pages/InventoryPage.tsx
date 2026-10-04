@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
+import { useBranch } from "@/lib/branch";
 import { PageHeader } from "@/components/layout/AppShell";
 import { canAct } from "@/lib/permissions/enforce";
 import {
@@ -31,17 +32,21 @@ import {
 } from "../services/inventoryQuery";
 import { StockStatusBadge } from "../components/StockStatusBadge";
 import { StockAdjustmentModal } from "../components/StockAdjustmentModal";
+import { StockTransferModal } from "../components/StockTransferModal";
 import { ROLE_LABEL } from "../permissions";
 import type { StockStatus } from "@/modules/products/types";
 import type { ProductVariant } from "@/modules/products/variants";
 import { sizeLabelOf } from "@/modules/products/variants";
 
 export function InventoryPage() {
-  const { t, pick, num, date } = useI18n();
+  const { t, pick, num, date, isRTL } = useI18n();
+  const branch = useBranch();
   const {
+    mode,
     products,
     movements,
     variantsByProduct,
+    variants,
     loading,
     error,
     refresh,
@@ -53,6 +58,7 @@ export function InventoryPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [adjusting, setAdjusting] = useState<string | null>(null);
+  const [transferring, setTransferring] = useState(false);
 
   // Phase 46: the dashboard's Low/Out tiles land here pre-filtered
   // (`?status=low` / `?status=out`). Hydrated once; unknown values ignored.
@@ -76,7 +82,7 @@ export function InventoryPage() {
   };
 
   const results = useMemo(
-    () => queryInventory(products, filters, nameOf),
+    () => queryInventory(products, filters, nameOf, variants),
     [products, filters],
   );
   const totalPages = totalPagesFor(results.length, pageSize);
@@ -135,6 +141,11 @@ export function InventoryPage() {
               <Link to="/online/reservations">
                 <Button variant="secondary">{t("nav.stockHolds")}</Button>
               </Link>
+            ) : null}
+            {mode === "supabase" && canAdjust && branch.branches.length > 1 ? (
+              <Button variant="secondary" onClick={() => setTransferring(true)} data-testid="open-stock-transfer">
+                {isRTL ? "تحويل بين الفروع" : "Branch transfer"}
+              </Button>
             ) : null}
             {/* Exports `results` — the filtered rows on screen. Category names
                 come from this page's own resolver, which deliberately does not
@@ -346,6 +357,7 @@ export function InventoryPage() {
         open={Boolean(adjusting)}
         onClose={() => setAdjusting(null)}
       />
+      <StockTransferModal open={transferring} onClose={() => setTransferring(false)} />
 
       {/* Local helpers used by JSX above — must be declared after first use */}
     </div>
@@ -459,14 +471,15 @@ function InventoryStockTable({
                     <StockStatusBadge status={status} />
                   </td>
                   <td className="px-4 py-3 text-end">
-                    <Button
-                      variant="primary"
-                      size="sm"
-                      disabled={!canAdjust || !product.stock_tracking_enabled}
-                      onClick={() => onAdjust(product.id)}
-                    >
-                      {t("inventory.adjust")}
-                    </Button>
+                    {canAdjust && product.stock_tracking_enabled ? (
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        onClick={() => onAdjust(product.id)}
+                      >
+                        {t("inventory.adjust")}
+                      </Button>
+                    ) : null}
                   </td>
                 </tr>
                 {/* The breakdown: one row per combination, its OWN shelf. The
@@ -561,17 +574,18 @@ function InventoryStockTable({
                   </p>
                 </div>
               </div>
-              <div className="mt-3">
-                <Button
-                  variant="primary"
-                  size="sm"
-                  className="w-full"
-                  disabled={!canAdjust || !product.stock_tracking_enabled}
-                  onClick={() => onAdjust(product.id)}
-                >
-                  {t("inventory.adjust")}
-                </Button>
-              </div>
+              {canAdjust && product.stock_tracking_enabled ? (
+                <div className="mt-3">
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    className="w-full"
+                    onClick={() => onAdjust(product.id)}
+                  >
+                    {t("inventory.adjust")}
+                  </Button>
+                </div>
+              ) : null}
             </div>
           );
         })}

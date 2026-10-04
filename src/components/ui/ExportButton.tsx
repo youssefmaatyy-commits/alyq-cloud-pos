@@ -108,6 +108,10 @@ export function ExportButton({
     }
   }, [busy, nothingToExport, build, name, lang, t, toast, authority, deniedKey]);
 
+  // Authorization removes the action entirely. State-based unavailability (an
+  // empty result set or an export already running) may still render disabled.
+  if (!allowed) return null;
+
   return (
     <Button
       variant={variant}

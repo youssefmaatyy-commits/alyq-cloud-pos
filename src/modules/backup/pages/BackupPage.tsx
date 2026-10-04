@@ -466,11 +466,7 @@ export function BackupPage() {
         </p>
         {mayCreate ? (
           <p className="mt-1 text-[11px] text-slate-500">{t("backup.create.hint")}</p>
-        ) : (
-          <p className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-[11px] text-slate-600">
-            {t("permissions.denied.create_backup")}
-          </p>
-        )}
+        ) : null}
 
         <div className="mt-4 overflow-x-auto">
           {backups.length === 0 ? (
@@ -491,7 +487,9 @@ export function BackupPage() {
                   <th className="px-2 py-2 text-end font-bold">{t("backup.list.size")}</th>
                   <th className="px-2 py-2 text-start font-bold">{t("backup.list.by")}</th>
                   <th className="px-2 py-2 text-start font-bold">{t("backup.list.checksum")}</th>
-                  <th className="px-2 py-2 text-end font-bold">{t("backup.list.actions")}</th>
+                  {mayExport || mayRestore ? (
+                    <th className="px-2 py-2 text-end font-bold">{t("backup.list.actions")}</th>
+                  ) : null}
                 </tr>
               </thead>
               <tbody>
@@ -531,31 +529,33 @@ export function BackupPage() {
                     <td className="px-2 py-2 font-mono text-[10px] text-slate-500">
                       {manifest.checksum ? manifest.checksum.slice(0, 8) : "—"}
                     </td>
-                    <td className="px-2 py-2">
-                      <div className="flex items-center justify-end gap-1.5">
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          disabled={!mayExport}
-                          loading={downloadingId === manifest.id}
-                          onClick={() => void onDownload(manifest.id)}
-                          title={mayExport ? undefined : t("permissions.denied.export_backup")}
-                        >
-                          <DownloadIcon />
-                          <span className="ms-1">{t("backup.download")}</span>
-                        </Button>
-                        <Button
-                          variant="danger"
-                          size="sm"
-                          disabled={!mayRestore}
-                          onClick={() => openStoredRestore(manifest)}
-                          title={mayRestore ? undefined : t("permissions.denied.restore_backup")}
-                        >
-                          <RestoreIcon />
-                          <span className="ms-1">{t("backup.restore")}</span>
-                        </Button>
-                      </div>
-                    </td>
+                    {mayExport || mayRestore ? (
+                      <td className="px-2 py-2">
+                        <div className="flex items-center justify-end gap-1.5">
+                          {mayExport ? (
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              loading={downloadingId === manifest.id}
+                              onClick={() => void onDownload(manifest.id)}
+                            >
+                              <DownloadIcon />
+                              <span className="ms-1">{t("backup.download")}</span>
+                            </Button>
+                          ) : null}
+                          {mayRestore ? (
+                            <Button
+                              variant="danger"
+                              size="sm"
+                              onClick={() => openStoredRestore(manifest)}
+                            >
+                              <RestoreIcon />
+                              <span className="ms-1">{t("backup.restore")}</span>
+                            </Button>
+                          ) : null}
+                        </div>
+                      </td>
+                    ) : null}
                   </tr>
                 ))}
               </tbody>
@@ -597,11 +597,7 @@ export function BackupPage() {
               ) : null}
             </div>
           </div>
-        ) : (
-          <p className="mt-4 rounded-lg bg-slate-50 px-3 py-2 text-[11px] text-slate-600">
-            {t("permissions.denied.restore_backup")} {t("backup.restore.rollbackHint")}
-          </p>
-        )}
+        ) : null}
       </Card>
 
       {/* ── schedule ──────────────────────────────────────────────────────── */}
@@ -690,15 +686,18 @@ export function BackupPage() {
       </Card>
 
       {/* ── data health ───────────────────────────────────────────────────── */}
-      <HealthPanel
-        report={health}
-        busy={healthBusy}
-        mayRun={mayHealth}
-        needsExport={healthNeedsExport}
-        onRun={() => void onRunHealth()}
-      />
+      {mayHealth ? (
+        <HealthPanel
+          report={health}
+          busy={healthBusy}
+          mayRun
+          needsExport={healthNeedsExport}
+          onRun={() => void onRunHealth()}
+        />
+      ) : null}
 
       {/* ── emergency export ──────────────────────────────────────────────── */}
+      {mayEmergency ? (
       <Card>
         <SectionTitle
           aside={
@@ -706,9 +705,7 @@ export function BackupPage() {
               size="sm"
               variant="secondary"
               loading={exporting}
-              disabled={!mayEmergency}
               onClick={() => void onEmergencyExport()}
-              title={mayEmergency ? undefined : t("permissions.denied.export_data")}
             >
               {exporting ? t("backup.emergency.running") : t("backup.emergency.run")}
             </Button>
@@ -718,12 +715,8 @@ export function BackupPage() {
         </SectionTitle>
         <p className="mt-1 text-xs leading-relaxed text-slate-600">{t("backup.emergency.hint")}</p>
         <p className="mt-2 text-[11px] text-slate-500">{t("backup.emergency.financialNote")}</p>
-        {!mayEmergency ? (
-          <p className="mt-2 rounded-lg bg-slate-50 px-3 py-2 text-[11px] text-slate-600">
-            {t("permissions.denied.export_data")}
-          </p>
-        ) : null}
       </Card>
+      ) : null}
 
       <RestoreDialog
         target={restoreTarget}

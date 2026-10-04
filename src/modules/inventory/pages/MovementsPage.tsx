@@ -39,6 +39,9 @@ export function MovementsPage() {
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<StockMovementType | "all">("all");
   const [reasonFilter, setReasonFilter] = useState<StockReason | "all">("all");
+  const [sourceFilter, setSourceFilter] = useState<NonNullable<StockMovement["source_type"]> | "all">("all");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [direction, setDirection] = useState<"all" | "in" | "out">("all");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
@@ -55,10 +58,16 @@ export function MovementsPage() {
       if (typeFilter !== "all" && m.type !== typeFilter) return false;
       if (reasonFilter !== "all" && m.reason !== reasonFilter) return false;
       if (direction !== "all" && directionLabel(m.type) !== direction) return false;
+      if (sourceFilter !== "all" && m.source_type !== sourceFilter) return false;
+      const movementTime = Date.parse(m.created_at);
+      if (dateFrom && movementTime < new Date(`${dateFrom}T00:00:00`).getTime()) return false;
+      if (dateTo && movementTime > new Date(`${dateTo}T23:59:59.999`).getTime()) return false;
       if (terms.length > 0) {
         const product = productIndex.get(m.product_id);
         const haystack = normalizeText(
-          [m.notes ?? "", m.user_name, m.reason, m.type, product ? product.sku : "", product ? product.name_en : "", product ? product.name_ar : ""].join(" \u0001 "),
+          [m.notes ?? "", m.reference ?? "", m.source_type ?? "", m.user_name, m.reason, m.type,
+            m.variant_color_ar ?? "", m.variant_color_en ?? "", m.variant_size_label ?? m.variant_size ?? "",
+            product ? product.sku : "", product ? product.name_en : "", product ? product.name_ar : ""].join(" \u0001 "),
         );
         for (const term of terms) {
           if (!haystack.includes(term)) return false;
@@ -66,7 +75,7 @@ export function MovementsPage() {
       }
       return true;
     });
-  }, [movements, typeFilter, reasonFilter, direction, search, productIndex]);
+  }, [movements, typeFilter, reasonFilter, sourceFilter, direction, dateFrom, dateTo, search, productIndex]);
 
   const totalPages = totalPagesFor(filtered.length, pageSize);
   const currentPage = Math.min(page, totalPages);
@@ -105,7 +114,7 @@ export function MovementsPage() {
         </div>
       ) : null}
 
-      <Card className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <Card className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
         <TextInput
           value={search}
           leading={<SearchIcon />}
@@ -159,6 +168,20 @@ export function MovementsPage() {
           <option value="in">{t("inventory.status.in")}</option>
           <option value="out">{t("inventory.status.out")}</option>
         </SelectInput>
+        <SelectInput
+          value={sourceFilter}
+          onChange={(e) => { setSourceFilter(e.target.value as typeof sourceFilter); setPage(1); }}
+          aria-label={t("inventory.movementSource")}
+        >
+          <option value="all">{`${t("inventory.movementSource")}: ${t("common.all")}`}</option>
+          {(["sale", "return", "adjustment", "transfer", "stocktake", "receipt"] as const).map((source) => (
+            <option key={source} value={source}>{t(`inventory.source.${source}` as never)}</option>
+          ))}
+        </SelectInput>
+        <input type="date" value={dateFrom} onChange={(event) => { setDateFrom(event.target.value); setPage(1); }}
+          aria-label={t("returns.filterDateFrom")} className="h-10 rounded-xl border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700" />
+        <input type="date" value={dateTo} onChange={(event) => { setDateTo(event.target.value); setPage(1); }}
+          aria-label={t("returns.filterDateTo")} className="h-10 rounded-xl border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700" />
       </Card>
 
       {error ? (
@@ -292,6 +315,15 @@ function MovementRow({
     <tr className="border-b border-slate-50 last:border-0 hover:bg-slate-50/60">
       <td className="px-4 py-3 align-top">
         <span className="block font-medium text-slate-900">{productName}</span>
+        {movement.variant_id ? (
+          <span className="block text-[11px] font-semibold text-slate-600">
+            {[movement.variant_color_ar || movement.variant_color_en, movement.variant_size_label || movement.variant_size].filter(Boolean).join(" / ")}
+          </span>
+        ) : null}
+        {movement.reference ? (
+          sourceRoute(movement) ? <Link to={sourceRoute(movement)!} className="block font-mono text-[10px] font-bold text-indigo-700 hover:underline">{movement.reference}</Link>
+            : <span className="block font-mono text-[10px] text-slate-500">{movement.reference}</span>
+        ) : null}
         <span className="block text-[11px] font-medium text-slate-500">
           {date(movement.created_at)}
         </span>
@@ -347,6 +379,8 @@ function MovementCard({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold text-slate-900">{productName}</p>
+          {movement.variant_id ? <p className="text-[11px] font-semibold text-slate-600">{[movement.variant_color_ar || movement.variant_color_en, movement.variant_size_label || movement.variant_size].filter(Boolean).join(" / ")}</p> : null}
+          {movement.reference ? (sourceRoute(movement) ? <Link to={sourceRoute(movement)!} className="font-mono text-[10px] font-bold text-indigo-700">{movement.reference}</Link> : <p className="font-mono text-[10px] text-slate-500">{movement.reference}</p>) : null}
           <p className="text-[11px] text-slate-600">
             {t(`inventory.type.${movement.type}` as never)} ·{" "}
             {t(`inventory.reason.${movement.reason}` as never)}
@@ -390,6 +424,14 @@ function MovementCard({
       </Badge>
     </div>
   );
+}
+
+function sourceRoute(movement: StockMovement): string | null {
+  if (!movement.source_id) return null;
+  if (movement.source_type === "sale") return `/pos/sales/${movement.source_id}`;
+  if (movement.source_type === "return") return `/returns/${movement.source_id}`;
+  if (movement.source_type === "stocktake") return "/inventory/stocktake";
+  return null;
 }
 
 function deriveStatus(quantity: number): "in" | "out" {

@@ -39,7 +39,9 @@ export function PaymentPanel() {
     dismissApprovalAsk,
     clearCart,
     selectedCustomer,
+    connectivityState,
   } = usePos();
+  const onlineOnlyTenderBlocked = connectivityState === "offline" || connectivityState === "degraded";
 
   // A till sale is drawer money: it needs an open shift to land in (Phase 27).
   // The gate shows the moment the shift list has loaded with nothing open, so
@@ -65,6 +67,14 @@ export function PaymentPanel() {
       setInstapayStatus("paid");
     }
   }, [isEmpty]);
+
+  useEffect(() => {
+    if (!onlineOnlyTenderBlocked) return;
+    setSplit(false);
+    setInstapay("");
+    setVisa("");
+    setInstapayStatus("paid");
+  }, [onlineOnlyTenderBlocked]);
 
   const total = totals.total;
   const cashNum = round2(Number(cash) || 0);
@@ -274,8 +284,10 @@ export function PaymentPanel() {
           type="button"
           role="switch"
           aria-checked={split}
+          disabled={onlineOnlyTenderBlocked}
+          title={onlineOnlyTenderBlocked ? t("pos.offlineCashOnly") : undefined}
           onClick={() => toggleSplit(!split)}
-          className={`relative h-5 w-9 shrink-0 rounded-full transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-400 ${
+          className={`relative h-5 w-9 shrink-0 rounded-full transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-400 disabled:cursor-not-allowed disabled:opacity-40 ${
             split ? "bg-stone-800" : "bg-stone-300"
           }`}
         >
@@ -286,6 +298,7 @@ export function PaymentPanel() {
           />
         </button>
       </div>
+      {onlineOnlyTenderBlocked ? <p className="mt-1 rounded-lg bg-amber-50 px-2 py-1 text-[10px] font-semibold text-amber-900">{t("pos.offlineCashOnly")}</p> : null}
 
       {/* Live summary — always visible, one compact line: who is paying and
           the numbers that decide whether the sale can complete. */}
@@ -351,26 +364,22 @@ export function PaymentPanel() {
         </div>
       ) : null}
 
-      <Button
-        className="mt-1 w-full"
-        size="lg"
-        loading={completing}
-        disabled={!canComplete}
-        onClick={onComplete}
-      >
-        {completing ? t("pos.completing") : `✓ ${t("pos.complete")}`}
-      </Button>
+      {canSell ? (
+        <Button
+          className="mt-1 w-full"
+          size="lg"
+          loading={completing}
+          disabled={!canComplete}
+          onClick={onComplete}
+        >
+          {completing ? t("pos.completing") : `✓ ${t("pos.complete")}`}
+        </Button>
+      ) : null}
       {failure ? (
         <p className="mt-1.5 rounded-lg bg-rose-50 px-2.5 py-1.5 text-[11px] font-semibold text-rose-700">
           {failure}
         </p>
       ) : null}
-      {!canSell ? (
-        <p className="mt-1 text-center text-[11px] font-semibold text-rose-600">
-          {t("pos.discountLocked")}
-        </p>
-      ) : null}
-
       {/* Phase 12: the discount is above the cap this seat may apply alone. The
           sale was not written — send it for approval, or lower the discount and
           ring it up now. */}

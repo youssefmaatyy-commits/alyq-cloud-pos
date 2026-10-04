@@ -137,6 +137,9 @@ components. Two rules keep it maintainable: UI never talks to Supabase directly
 | [`docs/AUTHENTICATION.md`](docs/AUTHENTICATION.md) | Sign-in, sessions, roles |
 | [`docs/AUTHORIZATION.md`](docs/AUTHORIZATION.md) | Capability matrix and enforcement |
 | [`docs/DESIGN_LANGUAGE.md`](docs/DESIGN_LANGUAGE.md) | UI rules |
+| [`docs/desktop-architecture.md`](docs/desktop-architecture.md) | Electron choice, native trust boundary, register/offline model |
+| [`docs/desktop-build.md`](docs/desktop-build.md) | Reproducible Windows package, signing and release requirements |
+| [`docs/desktop-operations.md`](docs/desktop-operations.md) | Register, scanner, printer, drawer, restart and troubleshooting runbook |
 | [`supabase/migrations/README.md`](supabase/migrations/README.md) | Schema reference and migration conventions |
 
 ## Status

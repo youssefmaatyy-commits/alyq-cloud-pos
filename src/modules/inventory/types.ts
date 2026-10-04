@@ -67,6 +67,12 @@ export interface StockMovement {
   user_id: string;
   user_name: string;
   created_at: string;
+  /** Phase 3 operation provenance; null on historical rows. */
+  branch_id?: string | null;
+  client_ref?: string | null;
+  source_type?: "sale" | "return" | "adjustment" | "transfer" | "stocktake" | "receipt" | null;
+  source_id?: string | null;
+  reference?: string | null;
 }
 
 /** Input the UI/CLI sends; the persistence layer fills id, timestamps and the

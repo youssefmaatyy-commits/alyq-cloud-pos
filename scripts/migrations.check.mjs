@@ -58,6 +58,13 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const MIGRATIONS_DIR = path.join(ROOT, "supabase", "migrations");
 const SHIM_FILE = path.join(ROOT, "supabase", "tests", "supabase-shim.sql");
 const SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "scenarios.sql");
+const PHASE2_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "phase2_scenarios.sql");
+const PHASE3_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "phase3_scenarios.sql");
+const PHASE35_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "phase3_5_scenarios.sql");
+const PHASE4_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "phase4_scenarios.sql");
+const PROMPT5_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "prompt5_scenarios.sql");
+const PROMPT6_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "prompt6_scenarios.sql");
+const FINAL_STORE_QA_FILE = path.join(ROOT, "supabase", "tests", "final_store_qa.sql");
 const SEED_FILE = path.join(ROOT, "supabase", "seed.sql");
 const SRC_DIR = path.join(ROOT, "src");
 
@@ -291,11 +298,115 @@ if (!VERIFY_ONLY) {
     );
   }
 
+  if (failures.length === 0 && runScenarios) {
+    console.log(c.bold("\nPhase 2 focused scenarios (branch + approval + shift + cleanup + audit)"));
+    try {
+      const sql = fs.readFileSync(PHASE2_SCENARIOS_FILE, "utf8");
+      await driver.exec(sql, "phase2_scenarios.sql");
+      console.log(`  ${c.green("✓")} every focused Phase 2 scenario passed`);
+      for (const notice of sql.matchAll(/raise notice '([^']+)'/g)) {
+        console.log(c.dim(`      ${notice[1]}`));
+      }
+    } catch (error) {
+      console.log(`  ${c.red("✗")} a focused Phase 2 scenario failed`);
+      if (error?.stack) console.log(c.dim(error.stack));
+      failures.push({ name: "Phase 2 scenarios", phase: "scenario", error: String(error.message) });
+    }
+  }
+
+  if (failures.length === 0 && runScenarios) {
+    console.log(c.bold("\nPhase 3 focused scenarios (inventory + transaction center + promotion authority)"));
+    try {
+      const sql = fs.readFileSync(PHASE3_SCENARIOS_FILE, "utf8");
+      await driver.exec(sql, "phase3_scenarios.sql");
+      console.log(`  ${c.green("✓")} every focused Phase 3 scenario passed`);
+      for (const notice of sql.matchAll(/raise notice '([^']+)'/g)) {
+        console.log(c.dim(`      ${notice[1]}`));
+      }
+    } catch (error) {
+      console.log(`  ${c.red("✗")} a focused Phase 3 scenario failed`);
+      if (error?.stack) console.log(c.dim(error.stack));
+      failures.push({ name: "Phase 3 scenarios", phase: "scenario", error: String(error.message) });
+    }
+  }
+
   // ── development seed ───────────────────────────────────────────────────
   // seed.sql is what a fresh project runs before anybody signs in, so it is
   // verified the way the migrations are: it must apply, it must be idempotent,
   // and its own contract block must pass. Same guard as the scenarios — it
   // creates staff accounts, which nobody should do to a server by accident.
+  if (failures.length === 0 && runScenarios) {
+    console.log(c.bold("\nPhase 3.5 focused scenarios (branch stock + atomic transfers)"));
+    try {
+      const sql = fs.readFileSync(PHASE35_SCENARIOS_FILE, "utf8");
+      await driver.exec(sql, "phase3_5_scenarios.sql");
+      console.log(`  ${c.green("✓")} every focused Phase 3.5 scenario passed`);
+      for (const notice of sql.matchAll(/raise notice '([^']+)'/g)) {
+        console.log(c.dim(`      ${notice[1]}`));
+      }
+    } catch (error) {
+      console.log(`  ${c.red("✗")} a focused Phase 3.5 scenario failed`);
+      if (error?.stack) console.log(c.dim(error.stack));
+      failures.push({ name: "Phase 3.5 scenarios", phase: "scenario", error: String(error.message) });
+    }
+  }
+
+  if (failures.length === 0 && runScenarios) {
+    console.log(c.bold("\nPrompt 4 focused scenarios (offline replay + health)"));
+    try {
+      const sql = fs.readFileSync(PHASE4_SCENARIOS_FILE, "utf8");
+      await driver.exec(sql, "phase4_scenarios.sql");
+      console.log(`  ${c.green("✓")} every focused Prompt 4 scenario passed`);
+      for (const notice of sql.matchAll(/raise notice '([^']+)'/g)) console.log(c.dim(`      ${notice[1]}`));
+    } catch (error) {
+      console.log(`  ${c.red("✗")} a focused Prompt 4 scenario failed`);
+      if (error?.stack) console.log(c.dim(error.stack));
+      failures.push({ name: "Prompt 4 scenarios", phase: "scenario", error: String(error.message) });
+    }
+  }
+
+  if (failures.length === 0 && runScenarios) {
+    console.log(c.bold("\nPrompt 5 focused scenarios (register + desktop authority)"));
+    try {
+      const sql = fs.readFileSync(PROMPT5_SCENARIOS_FILE, "utf8");
+      await driver.exec(sql, "prompt5_scenarios.sql");
+      console.log(`  ${c.green("✓")} every focused Prompt 5 scenario passed`);
+      for (const notice of sql.matchAll(/raise notice '([^']+)'/g)) console.log(c.dim(`      ${notice[1]}`));
+    } catch (error) {
+      console.log(`  ${c.red("✗")} a focused Prompt 5 scenario failed`);
+      if (error?.stack) console.log(c.dim(error.stack));
+      failures.push({ name: "Prompt 5 scenarios", phase: "scenario", error: String(error.message) });
+    }
+  }
+
+  if (failures.length === 0 && runScenarios) {
+    console.log(c.bold("\nPrompt 6 focused scenarios (mobile installation + push custody)"));
+    try {
+      const sql = fs.readFileSync(PROMPT6_SCENARIOS_FILE, "utf8");
+      await driver.exec(sql, "prompt6_scenarios.sql");
+      console.log(`  ${c.green("✓")} every focused Prompt 6 scenario passed`);
+      for (const notice of sql.matchAll(/raise notice '([^']+)'/g)) console.log(c.dim(`      ${notice[1]}`));
+    } catch (error) {
+      console.log(`  ${c.red("✗")} a focused Prompt 6 scenario failed`);
+      if (error?.stack) console.log(c.dim(error.stack));
+      failures.push({ name: "Prompt 6 scenarios", phase: "scenario", error: String(error.message) });
+    }
+  }
+
+  if (failures.length === 0 && runScenarios) {
+    console.log(c.bold("\nFinal Store Simulation QA (cross-prompt retail lifecycle)"));
+    try {
+      const sql = fs.readFileSync(FINAL_STORE_QA_FILE, "utf8");
+      await driver.exec(sql, "final_store_qa.sql");
+      console.log(`  ${c.green("✓")} final store simulation passed`);
+      for (const notice of sql.matchAll(/raise notice '([^']+)'/g)) console.log(c.dim(`      ${notice[1]}`));
+    } catch (error) {
+      console.log(`  ${c.red("✗")} final store simulation failed`);
+      if (error?.stack) console.log(c.dim(error.stack));
+      failures.push({ name: "Final Store QA", phase: "scenario", error: String(error.message) });
+    }
+  }
+
   if (failures.length === 0 && runScenarios) {
     console.log(c.bold("\nDevelopment seed (supabase/seed.sql)"));
     for (const pass of ["apply", "re-apply (idempotency)"]) {

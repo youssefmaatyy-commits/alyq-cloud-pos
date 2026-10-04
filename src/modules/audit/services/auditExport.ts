@@ -19,9 +19,10 @@
  *     entries, so "export the audit for March, for this cashier, for stock
  *     actions" produces exactly the rows on screen and no others.
  *
- * Details are flattened to `key: value` pairs joined with ` · `, the same
- * rendering the page uses, so a row in the file reads like the row it came from.
- * Nothing is truncated: an audit extract that drops fields is worse than none.
+ * Structured details and before/after evidence are serialized as complete JSON.
+ * This preserves nested fields instead of flattening them into ambiguous text or
+ * coercing them to `[object Object]`. Nothing is truncated: an audit extract
+ * that drops fields is worse than none.
  */
 import { buildSheets, toDate, type BuiltSheet, type ExportSheet, type Translate } from "@/lib/export";
 import type { AuditLogEntry } from "../types";
@@ -38,8 +39,17 @@ export interface AuditExportRow {
   action: string;
   entity: string;
   record: string;
-  user: string;
+  entityId: string;
+  actor: string;
+  actorId: string;
+  approver: string;
+  branch: string;
+  module: string;
+  reason: string;
+  correlation: string;
   details: string;
+  beforeState: string;
+  afterState: string;
 }
 
 /** The trail as flat rows, oldest first — a timeline reads downwards. */
@@ -53,10 +63,19 @@ export function auditRowsOf(entries: readonly AuditLogEntry[], t: Translate): Au
       action: t(`audit.action.${entry.action}` as never),
       entity: t(`audit.entity.${entry.entity}` as never),
       record: entry.entity_label,
-      user: entry.user_name,
-      details: Object.entries(entry.details ?? {})
-        .map(([key, value]) => `${key}: ${value ?? ""}`)
-        .join(" · "),
+      entityId: entry.entity_id,
+      actor: entry.user_name,
+      actorId: entry.user_id,
+      approver: entry.approver_name ?? entry.approver_id ?? "",
+      branch: entry.branch_name ?? entry.branch_id ?? "",
+      module: entry.module ?? "",
+      reason: entry.reason ?? "",
+      correlation: entry.correlation_id ?? "",
+      // Preserve nested evidence as JSON instead of coercing objects to
+      // "[object Object]" in a forensic export.
+      details: JSON.stringify(entry.details ?? {}),
+      beforeState: entry.before_state ? JSON.stringify(entry.before_state) : "",
+      afterState: entry.after_state ? JSON.stringify(entry.after_state) : "",
     }));
 }
 
@@ -76,8 +95,17 @@ export function auditSheetOf(input: AuditExportInput): ExportSheet<AuditExportRo
       { header: t("audit.action"), value: (r) => r.action, width: 26 },
       { header: t("audit.entity"), value: (r) => r.entity, width: 16 },
       { header: t("audit.record"), value: (r) => r.record, width: 22 },
-      { header: t("pos.cols.user"), value: (r) => r.user, width: 22 },
+      { header: t("audit.entityId"), value: (r) => r.entityId, width: 38 },
+      { header: t("pos.cols.user"), value: (r) => r.actor, width: 22 },
+      { header: t("audit.actorId"), value: (r) => r.actorId, width: 38 },
+      { header: t("audit.approver"), value: (r) => r.approver, width: 22 },
+      { header: t("audit.branch"), value: (r) => r.branch, width: 22 },
+      { header: t("audit.module"), value: (r) => r.module, width: 18 },
+      { header: t("audit.reason"), value: (r) => r.reason, width: 36 },
+      { header: t("audit.correlation"), value: (r) => r.correlation, width: 38 },
       { header: t("audit.details"), value: (r) => r.details, width: 70 },
+      { header: t("audit.beforeState"), value: (r) => r.beforeState, width: 70 },
+      { header: t("audit.afterState"), value: (r) => r.afterState, width: 70 },
     ],
     notes: [t("export.note.audit")],
   };

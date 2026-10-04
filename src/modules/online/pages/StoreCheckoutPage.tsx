@@ -12,7 +12,7 @@
  * (a campaign ended mid-checkout) the server's number is the one that is written,
  * and the confirmation screen shows it.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { cn } from "@/utils/cn";
@@ -114,6 +114,8 @@ export function StoreCheckoutPage() {
     clearCheckoutError,
     deliveryZoneId,
     setDeliveryZoneId,
+    setDeliveryLocation,
+    deliveryQuoteReady,
     preview,
     couponCode,
     setCouponInput,
@@ -204,6 +206,26 @@ export function StoreCheckoutPage() {
     if (activeZone) return;
     if (deliveryZoneId !== null) setDeliveryZoneId(null);
   }, [activeZone, deliveryZoneId, setDeliveryZoneId]);
+
+  // A quote belongs to the currently typed checkout details, never to a cart
+  // restoration. Centralize that handshake here so edits, a zone change and a
+  // fulfilment switch immediately clear a stale delivery fee.
+  useLayoutEffect(() => {
+    if (deliveryType !== "delivery") {
+      setDeliveryLocation(null);
+      return;
+    }
+    setDeliveryLocation({
+      customer_name: name,
+      customer_phone: phone,
+      city: address.city,
+      area: address.area,
+      street: address.street,
+      zone_ready: enabledZones.length > 0
+        ? Boolean(activeZone)
+        : deliveryAreaSupported(settings.delivery, address.city, address.area),
+    });
+  }, [activeZone, address.area, address.city, address.street, deliveryType, enabledZones.length, name, phone, setDeliveryLocation, settings.delivery]);
 
   // The advisory breakdown when it is fresh, else the local totals. Both read
   // the same engine; the preview additionally knows automatic offers, codes
@@ -389,9 +411,11 @@ export function StoreCheckoutPage() {
                 >
                   <p className="text-sm font-black text-[var(--store-text-primary)]">{t("store.checkout.delivery")}</p>
                   <p className="mt-0.5 text-xs text-[var(--store-text-secondary)]">
-                    {(shown?.deliveryFee ?? totals.delivery_fee) > 0
-                      ? t("store.checkout.deliveryFeeAmount", { amount: money(shown?.deliveryFee ?? activeZone?.shipping_fee ?? settings.delivery.fee) })
-                      : t("store.cart.freeDeliveryReached")}
+                    {!deliveryQuoteReady
+                      ? t("store.cart.deliveryCalculatedAtCheckout")
+                      : (shown?.deliveryFee ?? totals.delivery_fee) > 0
+                        ? t("store.checkout.deliveryFeeAmount", { amount: money(shown?.deliveryFee ?? activeZone?.shipping_fee ?? settings.delivery.fee) })
+                        : t("store.cart.freeDeliveryReached")}
                   </p>
                 </button>
               ) : null}
@@ -812,14 +836,15 @@ export function StoreCheckoutPage() {
                       : t("store.cart.deliveryFee")}
                 </dt>
                 <dd className="font-bold text-[var(--store-text-primary)]">
-                  {(shown?.deliveryFee ?? totals.delivery_fee) > 0 ? (
-                    <Money value={shown?.deliveryFee ?? totals.delivery_fee} />
-                  ) : (
-                    t("store.checkout.free")
-                  )}
+                  {!deliveryQuoteReady && deliveryType === "delivery" ? t("store.cart.deliveryCalculatedAtCheckout")
+                    : (shown?.deliveryFee ?? totals.delivery_fee) > 0 ? (
+                      <Money value={shown?.deliveryFee ?? totals.delivery_fee} />
+                    ) : (
+                      t("store.checkout.free")
+                    )}
                 </dd>
               </div>
-              {(shown?.shippingDiscount ?? 0) > 0 ? (
+              {deliveryQuoteReady && (shown?.shippingDiscount ?? 0) > 0 ? (
                 <div className="flex justify-between gap-2 text-emerald-700">
                   <dt>
                     {t("store.checkout.deliveryDiscount")}
@@ -829,7 +854,7 @@ export function StoreCheckoutPage() {
                 </div>
               ) : null}
               <div className="flex justify-between gap-2 border-t border-[var(--store-border)] pt-2 text-base">
-                <dt className="font-black text-[var(--store-text-primary)]">{t("store.cart.total")}</dt>
+                <dt className="font-black text-[var(--store-text-primary)]">{deliveryType === "delivery" && !deliveryQuoteReady ? t("store.cart.totalBeforeDelivery") : t("store.cart.total")}</dt>
                 <dd className="font-black text-[var(--store-text-primary)]"><Money value={shown?.total ?? totals.total} /></dd>
               </div>
             </dl>

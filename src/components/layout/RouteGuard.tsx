@@ -3,9 +3,9 @@ import { Link, useLocation } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { Button, Card, EmptyState } from "@/components/ui";
 import { ROLE_LABELS } from "@/lib/permissions/roles";
-import { canAct } from "@/lib/permissions/enforce";
+import { can } from "@/lib/permissions/enforce";
 import { getCurrentAuthUser } from "@/lib/auth/services/sessionStore";
-import { isSelfGuardedPath, pathAdmits } from "@/lib/permissions/routes";
+import { isSelfGuardedPath, pathPermits } from "@/lib/permissions/routes";
 import { useInventory } from "@/modules/inventory/hooks/InventoryProvider";
 
 /**
@@ -32,12 +32,9 @@ export function RouteGuard({ children }: { children: ReactNode }) {
   // Screens with a dedicated guard (audit) render their own, more specific denial.
   if (isSelfGuardedPath(location.pathname)) return <>{children}</>;
 
-  // This shared directory serves order operators AND website-only roles.
-  // Child routes still use their original individual guards.
-  if (location.pathname.replace(/\/+$/, "") === "/online" && canAct("manage_website")) return <>{children}</>;
-  // Resolved capabilities, including a path's alternate (operations may open on
-  // the health check or on settings). Hidden navigation is not this check.
-  if (pathAdmits(location.pathname, (capability) => canAct(capability))) return <>{children}</>;
+  // Normalized permissions, including route alternates, drive this same decision
+  // in the sidebar and module cards. Hidden navigation is not this check.
+  if (pathPermits(location.pathname, (permission) => can(permission))) return <>{children}</>;
 
   // Named after what the person actually is. An accountant wearing a custom role
   // should read "Accountant cannot open this screen", not "Manager cannot…".
@@ -52,9 +49,11 @@ export function RouteGuard({ children }: { children: ReactNode }) {
         title={t("perm.denied")}
         description={t("perm.deniedHint", { role: roleLabel })}
         action={
-          <Link to="/">
-            <Button variant="secondary">{t("common.backToDashboard")}</Button>
-          </Link>
+          can("dashboard.view") ? (
+            <Link to="/">
+              <Button variant="secondary">{t("common.backToDashboard")}</Button>
+            </Link>
+          ) : undefined
         }
       />
     </Card>

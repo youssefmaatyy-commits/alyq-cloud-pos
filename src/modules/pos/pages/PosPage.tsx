@@ -11,30 +11,39 @@ import { useBarcodeScanner } from "../hooks/useBarcodeScanner";
 import { PosSearchPanel } from "../components/PosSearchPanel";
 import { CartPanel } from "../components/CartPanel";
 import { SaleCompletedModal } from "../components/SaleCompletedModal";
+import { TransactionLookupModal } from "../components/TransactionLookupModal";
 import { CustomerSearchSelect } from "@/modules/customers/components/CustomerSearchSelect";
+import { useBranch } from "@/lib/branch/BranchProvider";
+import { useInventory } from "@/modules/inventory/hooks/InventoryProvider";
+import { useShifts } from "@/modules/shifts";
+import { useRegister } from "@/modules/registers";
 
 /**
  * POS register screen.
  *
- * Layout: a scan/search-first workspace (~35%) beside ONE Current Sale card
- * (~65%) on desktop — the card holds the fixed header, the scrolling cart
- * line table and the fixed totals/payment footer. There is no browsable
- * product grid, so the left column never scrolls a catalogue. Below lg the
- * search fills the page and checkout moves into the mobile cart sheet.
+ * Layout: a broad catalog/scan workspace (~56%) beside ONE dense Current Sale
+ * card (~44%) on desktop. The product surface is card-oriented for touch and
+ * laptop browsing; the sale card keeps the fixed header, scrolling lines and
+ * payment footer. Below lg checkout moves into the existing mobile cart sheet.
  *
  * Barcode scanners work anywhere on this page (see `useBarcodeScanner`):
  * their rapid keystrokes are detected and added to the cart directly. A scan
  * typed into the focused search box is added by the box itself, exactly once.
  */
 export function PosPage() {
-  const { t } = useI18n();
-  const { addBySku, loading, error, reloadCatalog } = usePos();
+  const { t, pick, date } = useI18n();
+  const { addBySku, loading, error, reloadCatalog, connectivityState, workingFromCache, cachedCatalogAt, syncPendingCount } = usePos();
+  const { current: branch } = useBranch();
+  const { user } = useInventory();
+  const { openShift, loading: shiftsLoading } = useShifts();
+  const { state: registerContext } = useRegister();
   const toast = useToast();
 
   // Where "Open website" goes: the shop built into this bundle by default, or
   // the origin named by VITE_STOREFRONT_URL when the shop is hosted separately.
   const storefront = useMemo(() => resolveStorefrontTarget(), []);
   const configWarningShown = useRef(false);
+  const [lookupOpen, setLookupOpen] = useState(false);
 
   // Re-read the catalog every time the till is opened so stock numbers are
   // fresh (a reset, inventory adjustment or new product is reflected).
@@ -60,6 +69,26 @@ export function PosPage() {
   };
   useBarcodeScanner(onScan);
 
+  // Explicit modifier/function-key shortcuts improve till throughput without
+  // putting payment, hold, return or other state changes behind unsafe single
+  // printable keys. They only focus/open; they never submit a transaction.
+  useEffect(() => {
+    const onShortcut = (event: KeyboardEvent) => {
+      if (event.key === "F2") {
+        event.preventDefault();
+        document.querySelector<HTMLInputElement>('input[data-testid="pos-scan-search"]')?.focus();
+      } else if (event.ctrlKey && event.altKey && event.key.toLowerCase() === "p") {
+        event.preventDefault();
+        document.querySelector<HTMLInputElement>('input[data-testid="cash-input"]')?.focus();
+      } else if (event.ctrlKey && event.altKey && event.key.toLowerCase() === "i") {
+        event.preventDefault();
+        setLookupOpen(true);
+      }
+    };
+    document.addEventListener("keydown", onShortcut);
+    return () => document.removeEventListener("keydown", onShortcut);
+  }, []);
+
   // A storefront URL that was configured but cannot be used is reported once,
   // not swallowed: the control still opens the built-in shop, and the operator
   // learns the deployment setting is wrong instead of wondering why a link they
@@ -74,6 +103,10 @@ export function PosPage() {
   const headerActions = useMemo(
     () => (
       <span className="inline-flex items-center gap-2">
+        <button type="button" onClick={() => setLookupOpen(true)} data-testid="pos-transaction-lookup"
+          className="inline-flex h-8 items-center rounded-xl bg-stone-900 px-3 text-xs font-bold text-white hover:bg-stone-700">
+          <span aria-hidden className="me-1.5">⌕</span>{t("pos.lookup")}
+        </button>
         <span className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-600">
           <span aria-hidden>📷</span>
           {t("pos.scanHint")}
@@ -150,6 +183,41 @@ export function PosPage() {
         {headerActions}
       </div>
 
+      <div
+        className="mb-2 flex min-w-0 flex-wrap items-center gap-1.5 rounded-xl border border-stone-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-stone-600 shadow-sm"
+        data-testid="pos-register-context"
+      >
+        <span className="inline-flex min-w-0 items-center gap-1.5 rounded-lg bg-stone-50 px-2 py-1">
+          <span aria-hidden>⌂</span>
+          <span className="truncate font-bold text-stone-900">
+            {branch ? pick(branch.name_ar, branch.name_en) : t("pos.branchUnavailable")}
+          </span>
+          {branch?.code ? <span className="font-mono text-[10px] text-stone-400">{branch.code}</span> : null}
+        </span>
+        <span className="inline-flex min-w-0 items-center gap-1.5 rounded-lg bg-stone-50 px-2 py-1" data-testid="pos-register-identity">
+          <span aria-hidden>▣</span>
+          <span>{t("pos.registerLabel")}</span>
+          <strong className="max-w-36 truncate text-stone-900">
+            {registerContext?.register?.name ?? (registerContext.kind === "desktop-invalid" ? t("pos.registerUnavailable") : t("pos.webRegister"))}
+          </strong>
+        </span>
+        <span className="inline-flex items-center gap-1.5 rounded-lg bg-stone-50 px-2 py-1">
+          <span aria-hidden>●</span>
+          <span>{t("pos.cashier")}</span>
+          <strong className="text-stone-900">{user.name}</strong>
+        </span>
+        <span className={`inline-flex items-center gap-1.5 rounded-lg px-2 py-1 ${openShift ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-900"}`}>
+          <span className={`h-1.5 w-1.5 rounded-full ${openShift ? "bg-emerald-500" : "bg-amber-500"}`} aria-hidden />
+          {shiftsLoading ? t("common.loading") : openShift ? `${t("pos.shiftOpen")} · ${openShift.shift_number}` : t("pos.shiftClosed")}
+        </span>
+        <span className={`ms-auto inline-flex items-center gap-1.5 rounded-lg px-2 py-1 ${connectivityState === "online" ? "bg-emerald-50 text-emerald-800" : connectivityState === "sync_error" ? "bg-rose-50 text-rose-800" : "bg-amber-50 text-amber-900"}`}>
+          <span className={`h-1.5 w-1.5 rounded-full ${connectivityState === "online" ? "bg-emerald-500" : connectivityState === "syncing" ? "animate-pulse bg-sky-500" : connectivityState === "sync_error" ? "bg-rose-500" : "bg-amber-500"}`} aria-hidden />
+          {connectivityState === "online" ? t("pos.online") : connectivityState === "offline" ? t("pos.offline") : connectivityState === "syncing" ? t("pos.syncing") : connectivityState === "sync_error" ? t("pos.syncError") : t("pos.degraded")}
+          {workingFromCache ? ` · ${t("pos.cachedCatalog")}${cachedCatalogAt ? ` (${date(cachedCatalogAt)})` : ""}` : ""}
+          {syncPendingCount > 0 ? ` · ${t("pos.syncPending")} ${syncPendingCount}` : ""}
+        </span>
+      </div>
+
       {/* The single desktop row must be a definite track, not auto-sized:
           a content-sized row makes the checkout aside's percentage height
           cyclic (it falls back to content height), so the card's flex-1 cart
@@ -157,7 +225,7 @@ export function PosPage() {
           minmax(0,1fr) sizes the row from the shell-derived grid height —
           floored at 0 so a long cart can never inflate it — giving both
           columns a definite height to resolve against. */}
-      <div className="grid min-w-0 flex-1 gap-4 lg:min-h-0 lg:grid-rows-[minmax(0,1fr)] lg:grid-cols-[minmax(0,35fr)_minmax(0,65fr)] lg:rtl:grid-cols-[minmax(0,65fr)_minmax(0,35fr)] lg:items-start">
+      <div className="grid min-w-0 flex-1 gap-4 lg:min-h-0 lg:grid-rows-[minmax(0,1fr)] lg:grid-cols-[minmax(0,56fr)_minmax(22rem,44fr)] lg:rtl:grid-cols-[minmax(22rem,44fr)_minmax(0,56fr)] lg:items-start">
         {/* A zero-minimum track and item stop the search column's intrinsic
             width from pushing the fixed-width checkout off screen. The search
             column holds one input and a compact result dropdown — it never
@@ -187,6 +255,7 @@ export function PosPage() {
       <MobileCartSheet />
 
       <SaleCompletedModal />
+      {lookupOpen ? <TransactionLookupModal onClose={() => setLookupOpen(false)} /> : null}
     </div>
   );
 }

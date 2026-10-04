@@ -217,6 +217,7 @@ export interface StoreCartContextValue {
   clearCoupon: () => void;
 
   deliveryType: DeliveryType;
+  /** Changing fulfilment clears an unconfirmed delivery quote. */
   setDeliveryType: (value: DeliveryType) => void;
   paymentMethod: OnlinePaymentMethod;
   setPaymentMethod: (value: OnlinePaymentMethod) => void;
@@ -226,7 +227,20 @@ export interface StoreCartContextValue {
    * The server prices from the row; no fee ever travels from the browser.
    */
   deliveryZoneId: string | null;
+  /** Choosing another zone deliberately invalidates the old delivery quote. */
   setDeliveryZoneId: (value: string | null) => void;
+  /**
+   * Checkout passes the address only after city, area and street are known.
+   * The cart intentionally stores no address: a reload must not retain a fee
+   * that was calculated for an address the new checkout form has not restored.
+   */
+  setDeliveryLocation: (address: (Pick<CustomerAddress, "city" | "area" | "street"> & {
+    customer_name: string;
+    customer_phone: string;
+    zone_ready: boolean;
+  }) | null) => void;
+  /** A delivery fee/total is final only after checkout supplied a usable location. */
+  deliveryQuoteReady: boolean;
   /**
    * The advisory checkout breakdown — automatic promotion, code, fee, total —
    * refreshed as the cart changes. Null while loading or when the check is
@@ -293,15 +307,51 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
   // silently combines with the automatic promotion.
   const [couponStackable, setCouponStackable] = useState(false);
   const [applyingCoupon, setApplyingCoupon] = useState(false);
-  const [deliveryType, setDeliveryType] = useState<DeliveryType>(stored.deliveryType);
+  const [deliveryType, setDeliveryTypeState] = useState<DeliveryType>(stored.deliveryType);
   const [paymentMethod, setPaymentMethod] = useState<OnlinePaymentMethod>(stored.paymentMethod);
-  const [deliveryZoneId, setDeliveryZoneId] = useState<string | null>(stored.deliveryZoneId);
+  const [deliveryZoneId, setDeliveryZoneIdState] = useState<string | null>(stored.deliveryZoneId);
+  // Address text belongs to checkout's form, never to a shared/local cart. This
+  // small readiness snapshot only gates whether a delivery fee may be shown.
+  // Starting empty on every mount prevents a restored cart from displaying a
+  // stale fee before its required delivery details have been supplied again.
+  const [deliveryLocation, setDeliveryLocationState] = useState<Pick<CustomerAddress, "city" | "area" | "street"> | null>(null);
   const [placing, setPlacing] = useState(false);
   const [checkoutError, setCheckoutError] = useState<OnlineError | null>(null);
   const [lastOrder, setLastOrder] = useState<OnlineOrder | null>(null);
   const [lastWasDuplicate, setLastWasDuplicate] = useState(false);
   const [preview, setPreview] = useState<PricingPreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+
+  const setDeliveryLocation = useCallback((address: (Pick<CustomerAddress, "city" | "area" | "street"> & {
+    customer_name: string;
+    customer_phone: string;
+    zone_ready: boolean;
+  }) | null) => {
+    if (!address || !address.customer_name.trim() || !address.customer_phone.trim() || !address.city.trim() ||
+      !address.area.trim() || !address.street.trim() || !address.zone_ready) {
+      setDeliveryLocationState(null);
+      return;
+    }
+    setDeliveryLocationState({ city: address.city.trim(), area: address.area.trim(), street: address.street.trim() });
+  }, []);
+
+  const setDeliveryType = useCallback((value: DeliveryType) => {
+    setDeliveryTypeState(value);
+    // Pickup never carries a delivery quote, and moving back to delivery must
+    // wait for checkout to provide location details again.
+    setDeliveryLocationState(null);
+    if (value === "pickup") setDeliveryZoneIdState(null);
+  }, []);
+
+  const setDeliveryZoneId = useCallback((value: string | null) => {
+    // A fee belongs to a zone AND an address. Keep neither quote when the zone
+    // changes; the checkout effect will publish the current address again only
+    // when this new selection is valid.
+    setDeliveryZoneIdState(value);
+    setDeliveryLocationState(null);
+  }, []);
+
+  const deliveryQuoteReady = deliveryType === "pickup" || deliveryLocation !== null;
 
   const productsById = useMemo(() => new Map(products.map((product) => [product.id, product])), [
     products,
@@ -459,11 +509,18 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
       ? autoSelection?.promotion.name_en || autoSelection?.promotion.name_ar || null
       : null;
 
-  const deliveryFee = deliveryFeeFor(
-    settings.delivery,
-    deliveryType,
-    round2(subtotal - autoDiscount - discount),
-  );
+  // A cart has no address/zone form. Showing the legacy/global fee here made a
+  // number look final before checkout knew where the order was going. The
+  // provisional cart total therefore contains goods only until checkout has
+  // supplied a complete delivery location; placement still recalculates the
+  // actual fee server-side from the configured zone/rules.
+  const deliveryFee = deliveryQuoteReady
+    ? deliveryFeeFor(
+        settings.delivery,
+        deliveryType,
+        round2(subtotal - autoDiscount - discount),
+      )
+    : 0;
   const totals = useMemo<CartTotals>(
     () => ({
       lines: entries.map((entry) => ({
@@ -649,21 +706,23 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
   // ── coupons ───────────────────────────────────────────────────────────────
 
   /**
-   * Ask the authoritative side about one code, and apply the answer.
-   *
-   * The cart sends its own subtotal and product/category ids; the reply is
-   * advisory, because checkout recomputes everything from the catalogue. Keeping
-   * the check server-side is what stops a visitor reading the code list.
+   * Ask the pricing authority about one code and apply the answer. The complete
+   * cart identity (including variant and quantity) travels with this advisory
+   * check, so Admin's central coupon promotions and legacy coupons follow the
+   * same eligibility path as checkout.
    */
   const verifyCoupon = useCallback(
-    async (rawCode: string, currentSubtotal: number, currentEntries: CartEntry[]) => {
+    async (rawCode: string, currentEntries: CartEntry[]) => {
       const code = normalizeCouponCode(rawCode);
       if (!code) return { valid: false as const, reason: "not_found" as CouponCheckReason };
       const result = await verifyCode({
         code,
-        subtotal: round2(currentSubtotal),
-        productIds: currentEntries.map((entry) => entry.product.id),
-        categoryIds: currentEntries.map((entry) => entry.product.category_id ?? ""),
+        lines: currentEntries.map((entry) => ({
+          product_id: entry.product.id,
+          variant_id: entry.variant?.id ?? null,
+          qty: entry.quantity,
+        })),
+        customerKey: customer?.id ?? null,
       });
       if (result.valid) {
         setCouponCode(result.code);
@@ -678,7 +737,7 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
       }
       return result;
     },
-    [verifyCode],
+    [customer?.id, verifyCode],
   );
 
   const applyCoupon = useCallback(
@@ -695,7 +754,7 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
       setApplyingCoupon(true);
       setCouponError(null);
       try {
-        const result = await verifyCoupon(raw, subtotal, entries);
+        const result = await verifyCoupon(raw, entries);
         if (result.valid) setCouponInput(result.code);
         return result.valid;
       } catch (caught) {
@@ -707,7 +766,7 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
         setApplyingCoupon(false);
       }
     },
-    [couponInput, entries, isEmpty, subtotal, verifyCoupon],
+    [couponInput, entries, isEmpty, verifyCoupon],
   );
 
   const clearCoupon = useCallback(() => {
@@ -725,7 +784,7 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!couponCode || subtotal <= 0) return;
     const timer = window.setTimeout(() => {
-      recheck.current = verifyCoupon(couponCode, subtotal, entries).catch(() => null);
+      recheck.current = verifyCoupon(couponCode, entries).catch(() => null);
     }, 350);
     return () => window.clearTimeout(timer);
   }, [couponCode, entries, subtotal, verifyCoupon]);
@@ -813,7 +872,7 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
   // different order, and reusing the key would return the previous one.
   useEffect(() => {
     clientRefRef.current = null;
-  }, [lines, couponCode, deliveryType, paymentMethod, deliveryZoneId]);
+  }, [lines, couponCode, deliveryLocation, deliveryType, paymentMethod, deliveryZoneId]);
 
   // Advisory pricing refresh: the full breakdown (automatic promotion, code,
   // zone fee) recomputed as the cart changes. Debounced like the coupon
@@ -836,9 +895,13 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
           variant_id: line.variant_id,
         })),
         couponCode,
-        deliveryZoneId: deliveryType === "delivery" ? deliveryZoneId : null,
+        // Before a complete location is supplied, request a goods-only
+        // advisory breakdown. This avoids rendering a legacy/global delivery
+        // amount as a final quote; once ready, the authoritative preview gets
+        // the selected zone and returns the configured fee.
+        deliveryZoneId: deliveryQuoteReady && deliveryType === "delivery" ? deliveryZoneId : null,
         customerKey: customer?.id ?? null,
-        deliveryType,
+        deliveryType: deliveryQuoteReady ? deliveryType : "pickup",
       })
         .then((result) => setPreview(result))
         .catch(() => setPreview(null))
@@ -847,7 +910,7 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
     return () => {
       if (previewTimer.current !== null) window.clearTimeout(previewTimer.current);
     };
-  }, [couponCode, customer?.id, deliveryType, deliveryZoneId, isEmpty, lines, previewPricing]);
+  }, [couponCode, customer?.id, deliveryQuoteReady, deliveryType, deliveryZoneId, isEmpty, lines, previewPricing]);
 
   const value = useMemo<StoreCartContextValue>(
     () => ({
@@ -881,6 +944,8 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
       freeDelivery,
       deliveryZoneId,
       setDeliveryZoneId,
+      setDeliveryLocation,
+      deliveryQuoteReady,
       preview,
       previewLoading,
       placing,
@@ -906,9 +971,12 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
       couponError,
       couponInput,
       decrease,
+      deliveryQuoteReady,
       deliveryType,
       deliveryZoneId,
+      setDeliveryLocation,
       setDeliveryZoneId,
+      setDeliveryType,
       preview,
       previewLoading,
       discount,

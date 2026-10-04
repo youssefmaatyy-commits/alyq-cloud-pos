@@ -52,16 +52,16 @@ export function HealthPanel({
     <Card>
       <SectionTitle
         aside={
-          <Button
-            variant={report ? "secondary" : "primary"}
-            size="sm"
-            loading={busy}
-            disabled={!mayRun || (needsExport && !busy)}
-            onClick={onRun}
-            title={needsExport ? t("backup.health.needsExport") : undefined}
-          >
-            {report ? t("backup.health.run") : t("backup.health.run")}
-          </Button>
+          mayRun && !needsExport ? (
+            <Button
+              variant={report ? "secondary" : "primary"}
+              size="sm"
+              loading={busy}
+              onClick={onRun}
+            >
+              {t("backup.health.run")}
+            </Button>
+          ) : null
         }
       >
         {t("backup.health.title")}
@@ -72,12 +72,6 @@ export function HealthPanel({
       {needsExport ? (
         <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-900">
           {t("backup.health.needsExport")}
-        </p>
-      ) : null}
-
-      {!mayRun ? (
-        <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-[11px] text-slate-600">
-          {t("permissions.denied.run_health_check")}
         </p>
       ) : null}
 

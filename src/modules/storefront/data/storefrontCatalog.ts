@@ -21,6 +21,18 @@ import type { Product, Category } from "@/modules/products/types";
 import type { StoreVariant } from "@/modules/online/services/pricing";
 import { getDemoRepository } from "@/modules/products/data/demoRepository";
 
+
+export interface StoreColorImage {
+  id: string;
+  product_id: string;
+  color_key: string;
+  image_url: string;
+  alt_ar: string | null;
+  alt_en: string | null;
+  sort_order: number;
+  is_primary: boolean;
+}
+
 /**
  * What `storefront_catalogue()` returns: every `Product` column except the two
  * that are internal to the business. Both are filled in by {@link toProduct}
@@ -106,6 +118,7 @@ export async function fetchStorefrontCatalog(): Promise<{
    * as they did before this existed.
    */
   variants: StoreVariant[];
+  colorImages: StoreColorImage[];
   mode: "supabase" | "demo";
 }> {
   if (isSupabaseConfigured) {
@@ -118,10 +131,11 @@ export async function fetchStorefrontCatalog(): Promise<{
     // decided in the database, and it is the public shape — colour, size,
     // swatch, price override, stock on hand — never cost, never a threshold,
     // never an unpublished product or an archived combination.
-    const [productResult, categoryResult, variantResult] = await Promise.all([
+    const [productResult, categoryResult, variantResult,colorImageResult] = await Promise.all([
       client.rpc("storefront_catalogue"),
       client.rpc("storefront_categories_v2"),
-      client.rpc("storefront_product_variants"),
+      client.rpc("storefront_branch_product_variants"),
+      client.rpc("storefront_color_images"),
     ]);
 
     if (productResult.error) throw productResult.error;
@@ -140,6 +154,7 @@ export async function fetchStorefrontCatalog(): Promise<{
       ),
       categories: ((categoryResult.data ?? []) as StorefrontCategoryV2Row[]).map(toPublicCategory),
       variants: liveVariants,
+      colorImages: (colorImageResult.error ? [] : (colorImageResult.data ?? [])) as StoreColorImage[],
       mode: "supabase",
     };
   }
@@ -149,10 +164,11 @@ export async function fetchStorefrontCatalog(): Promise<{
   // live RPC shapes them: no cost, no threshold. The storefront has no use for
   // either, and demo should not render one either.
   const repo = getDemoRepository();
-  const [allProducts, allCategories, allVariants] = await Promise.all([
+  const [allProducts, allCategories, allVariants,allColorImages] = await Promise.all([
     repo.listProducts(),
     repo.listCategories(),
     repo.listVariants(),
+    repo.listColorImages(),
   ]);
 
   const visible = new Set(
@@ -170,6 +186,8 @@ export async function fetchStorefrontCatalog(): Promise<{
       color_hex: v.color_hex,
       size: v.size,
       size_label: v.size_label,
+      size_value: v.size_value,
+      size_sort_order: v.size_sort_order,
       image_url: v.image_url,
       price_override: v.price_override,
       stock_quantity: v.stock_quantity,
@@ -181,6 +199,7 @@ export async function fetchStorefrontCatalog(): Promise<{
     products: allProducts.filter((p) => p.active && p.show_on_website),
     categories: allCategories.filter((c) => c.active),
     variants,
+    colorImages: allColorImages.filter((image)=>visible.has(image.product_id)),
     mode: "demo",
   };
 }

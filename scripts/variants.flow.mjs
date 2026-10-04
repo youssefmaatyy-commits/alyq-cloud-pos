@@ -556,7 +556,7 @@ async function main() {
   const qtyOnLine = () =>
     [...document.querySelectorAll('[data-testid^="cart-line-"]')]
       .find((l) => (l.textContent ?? "").includes("Gold / 17"))
-      ?.querySelector('[data-testid^="cart-quantity-"]')?.textContent ?? null;
+      ?.querySelector('[data-testid^="cart-quantity-"]')?.value ?? null;
   await waitFor(() => qtyOnLine() === "1", { label: "the cart line to show one ring" });
   await searchFor("Variant Ring");
   await waitFor(() => row(), { label: "the ring row again" });

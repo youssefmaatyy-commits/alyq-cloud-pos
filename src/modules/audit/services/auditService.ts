@@ -95,10 +95,13 @@ export function queryAuditLog(
     if (filters.action !== "all" && entry.action !== filters.action) return false;
     if (filters.entity !== "all" && entry.entity !== filters.entity) return false;
     if (filters.user !== "all" && entry.user_id !== filters.user) return false;
+    if (filters.approver !== "all" && entry.approver_id !== filters.approver) return false;
+    if (filters.branch !== "all" && entry.branch_id !== filters.branch) return false;
+    if (filters.module !== "all" && entry.module !== filters.module) return false;
     if (!withinDateRange(entry.created_at, filters.from || null, filters.to || null)) return false;
     if (terms.length === 0) return true;
     const haystack = normalizeText(
-      `${entry.entity_label} ${entry.action} ${entry.user_name} ${Object.values(entry.details ?? {}).join(" ")}`,
+      `${entry.entity_label} ${entry.entity_id} ${entry.action} ${entry.user_name} ${entry.approver_name ?? ""} ${entry.module ?? ""} ${entry.correlation_id ?? ""} ${entry.reason ?? ""} ${JSON.stringify(entry.details ?? {})}`,
     );
     return terms.every((term) => haystack.includes(term));
   });

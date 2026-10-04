@@ -18,7 +18,7 @@ import {
 } from "@/components/ui";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { useAuth } from "@/lib/auth/hooks/AuthProvider";
-import { canAct } from "@/lib/permissions/enforce";
+import { can } from "@/lib/permissions/enforce";
 import { APP_ROLES } from "@/lib/permissions/roles";
 import { useSettings } from "../hooks/SettingsProvider";
 import { queryUsers, sortUsers, summarizeUsers } from "../services/userQuery";
@@ -72,7 +72,7 @@ export function UsersPage() {
 
   const visible = useMemo(() => sortUsers(queryUsers(users, filters), sort), [users, filters, sort]);
   const summary = useMemo(() => summarizeUsers(users), [users]);
-  const canManage = canAct("manage_users");
+  const canManage = can("users.manage");
 
   function toggleSort(key: UserSortKey) {
     setSort((current) =>
@@ -175,16 +175,17 @@ export function UsersPage() {
             <Button variant="secondary" onClick={() => void refresh()} title={t("common.retry")}>
               ⟳
             </Button>
-            <Button
-              disabled={!canManage}
-              onClick={() => {
-                setEditing(null);
-                setFormOpen(true);
-              }}
-            >
-              <PlusIcon />
-              {t("settings.users.add")}
-            </Button>
+            {canManage ? (
+              <Button
+                onClick={() => {
+                  setEditing(null);
+                  setFormOpen(true);
+                }}
+              >
+                <PlusIcon />
+                {t("settings.users.add")}
+              </Button>
+            ) : null}
           </>
         }
       />
@@ -367,56 +368,57 @@ export function UsersPage() {
                     </td>
                     <td className="px-3 py-2.5">
                       <div className="flex flex-wrap items-center gap-1.5">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          disabled={!canManage}
-                          title={t("settings.users.edit")}
-                          onClick={() => {
-                            setEditing(user);
-                            setFormOpen(true);
-                          }}
-                        >
-                          <EditIcon />
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          disabled={!canManage}
-                          title={t("settings.users.reset.title")}
-                          onClick={() => setResetting(user)}
-                        >
-                          🔑
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          disabled={!canManage}
-                          title={t("settings.users.exceptions.open")}
-                          onClick={() => setExceptionsFor(user)}
-                        >
-                          ⚖
-                          {user.extra_capabilities.length + user.denied_capabilities.length > 0 ? (
-                            <span className="ms-1 rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] font-black tabular-nums text-indigo-800">
-                              {num(user.extra_capabilities.length + user.denied_capabilities.length)}
-                            </span>
-                          ) : null}
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant={user.active ? "ghost" : "subtle"}
-                          // The self-lockout guardrail is visible, not discovered
-                          // after a refused request.
-                          disabled={!canManage || isSelf}
-                          title={
-                            user.active
-                              ? t("settings.users.deactivateConfirmTitle")
-                              : t("settings.users.activateConfirmTitle")
-                          }
-                          onClick={() => setPendingToggle(user)}
-                        >
-                          {user.active ? t("common.deactivate") : t("common.activate")}
-                        </Button>
+                        {canManage ? (
+                          <>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              title={t("settings.users.edit")}
+                              onClick={() => {
+                                setEditing(user);
+                                setFormOpen(true);
+                              }}
+                            >
+                              <EditIcon />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              title={t("settings.users.reset.title")}
+                              onClick={() => setResetting(user)}
+                            >
+                              🔑
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              title={t("settings.users.exceptions.open")}
+                              onClick={() => setExceptionsFor(user)}
+                            >
+                              ⚖
+                              {user.extra_capabilities.length + user.denied_capabilities.length > 0 ? (
+                                <span className="ms-1 rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] font-black tabular-nums text-indigo-800">
+                                  {num(user.extra_capabilities.length + user.denied_capabilities.length)}
+                                </span>
+                              ) : null}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant={user.active ? "ghost" : "subtle"}
+                              // The self-lockout guardrail is visible, not discovered
+                              // after a refused request.
+                              disabled={isSelf}
+                              title={
+                                user.active
+                                  ? t("settings.users.deactivateConfirmTitle")
+                                  : t("settings.users.activateConfirmTitle")
+                              }
+                              onClick={() => setPendingToggle(user)}
+                            >
+                              {user.active ? t("common.deactivate") : t("common.activate")}
+                            </Button>
+                          </>
+                        ) : null}
                       </div>
                     </td>
                   </tr>

@@ -47,7 +47,7 @@ export function V2CartTotals({ showDelivery = false }: { showDelivery?: boolean 
   const { t, pick, money } = useI18n();
   const { settings } = useStorefront();
   const { totals, preview, previewLoading, deliveryType, deliveryZoneId, freeDelivery,
-    couponCode } = useStoreCart();
+    couponCode, deliveryQuoteReady } = useStoreCart();
   const zone = useStorefront().deliveryZones.find((entry) => entry.id === deliveryZoneId && entry.enabled);
   // The advisory preview is debounced, so for a moment after a coupon is
   // applied (or removed) it still describes the PREVIOUS coupon state — and
@@ -68,18 +68,21 @@ export function V2CartTotals({ showDelivery = false }: { showDelivery?: boolean 
       </dt><dd>−{money(shown?.promoDiscount ?? totals.discount_amount)}</dd></div> : null}
       {showDelivery ? <div><dt>{deliveryType === "pickup" ? t("store.checkout.pickup") :
         zone ? pick(zone.name_ar, zone.name_en) : t("store.cart.deliveryFee")}</dt>
-        <dd>{(shown?.deliveryFee ?? totals.delivery_fee) > 0
-          ? money(shown?.deliveryFee ?? totals.delivery_fee) : t("store.checkout.free")}</dd></div> : null}
-      {showDelivery && (shown?.shippingDiscount ?? 0) > 0 ? <div className="v2-totals-discount"><dt>
+        <dd>{!deliveryQuoteReady && deliveryType === "delivery"
+          ? t("store.cart.deliveryCalculatedAtCheckout")
+          : (shown?.deliveryFee ?? totals.delivery_fee) > 0
+            ? money(shown?.deliveryFee ?? totals.delivery_fee) : t("store.checkout.free")}</dd></div> : null}
+      {showDelivery && deliveryQuoteReady && (shown?.shippingDiscount ?? 0) > 0 ? <div className="v2-totals-discount"><dt>
         {t("store.checkout.deliveryDiscount")}</dt><dd>−{money(shown?.shippingDiscount ?? 0)}</dd></div> : null}
-      <div className="v2-totals-grand"><dt>{t("store.cart.total")}</dt>
+      <div className="v2-totals-grand"><dt>{showDelivery && !deliveryQuoteReady && deliveryType === "delivery"
+        ? t("store.cart.totalBeforeDelivery") : t("store.cart.total")}</dt>
         <dd>{money(shown?.total ?? totals.total)}</dd></div>
     </dl>
     {freeDelivery && deliveryType === "delivery" && !freeDelivery.eligible ?
       <p className="v2-small">{t("store.cart.freeDeliveryRemaining", { amount: money(freeDelivery.remaining) })}</p> : null}
     {previewLoading ? <p className="v2-small" role="status">{t("store.v2.journey.checkingPrices")}</p> : null}
-    <p className="v2-small">{t("store.v2.journey.advisoryTotal")}{settings.delivery.enabled && !zone &&
-      deliveryType === "delivery" ? ` · ${t("store.v2.journey.zoneEstimate")}` : ""}</p>
+    <p className="v2-small">{t("store.v2.journey.advisoryTotal")}{settings.delivery.enabled && !deliveryQuoteReady &&
+      deliveryType === "delivery" ? ` · ${t("store.cart.deliveryCalculatedAtCheckout")}` : ""}</p>
   </div>;
 }
 

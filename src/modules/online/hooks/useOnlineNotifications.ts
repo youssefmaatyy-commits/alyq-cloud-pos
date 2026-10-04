@@ -20,11 +20,9 @@
  * not. That ordering matters: realtime is an optimisation, and the poll is what
  * makes a dropped socket cost freshness rather than a missed order.
  *
- * Nothing about the announcement changes, which is what keeps it from double-
- * chiming. "Only a rise is news" is measured against the last count this hook
- * saw, and every path — event, interval, manual refresh — goes through the same
- * `refresh`, so whichever arrives first sets the baseline and the other sees no
- * rise to announce.
+ * Every transport goes through the same `refresh`. It compares a bounded,
+ * identity-only pending snapshot with a session set of order IDs, so a realtime
+ * payload and its polling confirmation stay one announcement rather than two.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRealtimeWatch } from "@/lib/supabase/useRealtimeWatch";
@@ -34,7 +32,12 @@ import {
   reservationAlertSignature,
   type ReservationAlert,
 } from "../services/reservationRepair";
-import { EMPTY_ORDER_COUNTS, toOnlineError, type OrderCounts } from "../data/repository";
+import {
+  EMPTY_ORDER_COUNTS,
+  toOnlineError,
+  type OrderCounts,
+  type PendingOrderAlert,
+} from "../data/repository";
 
 const PREFS_KEY = "alyq.online.notify.v1";
 
@@ -52,19 +55,35 @@ export const POLL_CHOICES = [10_000, 20_000, 60_000] as const;
 export const SAFETY_NET_POLL_MS = 120_000;
 
 /**
- * How many orders just arrived, or `null` when there is nothing to announce.
- *
- * Only a rise is news. A fall means somebody worked the queue, and a first
- * reading is a baseline — announcing eleven orders that were already waiting
- * would train staff to ignore the chime. This is also what keeps a realtime event
- * and the safety-net poll from announcing the same order twice: whichever runs
- * first moves the baseline, and the other then sees no rise. Extracted from the
- * refresh so the rule is tested rather than trusted.
+ * The former count-only arrival rule, retained for callers/tests that only have
+ * a count. The notifier below deliberately uses stable order IDs instead:
+ * counts cannot distinguish one resolved order plus one new order from no change.
  */
 export function arrivalsOf(previous: number | null, pending: number): number | null {
   if (previous === null) return null;
   if (pending <= previous) return null;
   return pending - previous;
+}
+
+/**
+ * Pending orders that are genuinely new to this browser session.
+ *
+ * Realtime sends a table event and the safety-net poll sees the same row soon
+ * afterwards. IDs, rather than a count increase, make that pair one arrival.
+ * `sessionStartedAt` prevents an older pending order that merely enters the
+ * bounded alert window later from being announced as though it were new.
+ */
+export function newPendingAlertsOf(
+  alerts: readonly PendingOrderAlert[],
+  seenIds: ReadonlySet<string>,
+  sessionStartedAt: string,
+): PendingOrderAlert[] {
+  const started = Date.parse(sessionStartedAt);
+  return alerts.filter((alert) => {
+    if (seenIds.has(alert.id)) return false;
+    const created = Date.parse(alert.createdAt);
+    return !Number.isFinite(started) || !Number.isFinite(created) || created >= started;
+  });
 }
 
 /**
@@ -243,7 +262,12 @@ export function useOnlineNotifications(enabled: boolean): OnlineNotificationStat
   );
   const [newOrderNumbers, setNewOrderNumbers] = useState<string[]>([]);
 
-  const previousPending = useRef<number | null>(null);
+  // Stable IDs are the announcement baseline. They are intentionally kept for
+  // the mounted session even after the banner is dismissed, so refreshes and
+  // duplicate realtime payloads can never re-chime one order.
+  const seenPendingIds = useRef<Set<string>>(new Set());
+  const alertBaselineReady = useRef(false);
+  const sessionStartedAt = useRef(new Date().toISOString());
   const mounted = useRef(true);
 
   useEffect(() => {
@@ -257,26 +281,31 @@ export function useOnlineNotifications(enabled: boolean): OnlineNotificationStat
     if (!enabled) return;
     try {
       const repository = getOnlineOrdersRepository();
-      const next = await repository.counts();
+      // The alert read is deliberately tiny (IDs/numbers/timestamps only), so
+      // this does not turn a safety-net check into an items-and-timeline read.
+      const [next, alerts] = await Promise.all([
+        repository.counts(),
+        repository.listPendingOrderAlerts(100),
+      ]);
       if (!mounted.current) return;
 
-      const before = previousPending.current;
-      previousPending.current = next.pending;
+      let fresh: PendingOrderAlert[] = [];
+      if (!alertBaselineReady.current) {
+        // The first view is context, not an interruption. Staff should never
+        // get a chime for orders that were already waiting when they signed in.
+        for (const alert of alerts) seenPendingIds.current.add(alert.id);
+        alertBaselineReady.current = true;
+      } else {
+        fresh = newPendingAlertsOf(alerts, seenPendingIds.current, sessionStartedAt.current);
+        for (const alert of alerts) seenPendingIds.current.add(alert.id);
+      }
 
-      const arrived = arrivalsOf(before, next.pending);
-      if (arrived !== null) {
+      if (fresh.length > 0) {
         if (prefs.sound) playOrderChime();
-        try {
-          const recent = await repository.listOrders({ status: "pending", limit: arrived });
-          if (mounted.current) {
-            setNewOrderNumbers((previous) => [
-              ...recent.map((order) => order.order_number),
-              ...previous,
-            ].slice(0, 12));
-          }
-        } catch {
-          // The badge already knows; the list is a convenience.
-        }
+        setNewOrderNumbers((previous) => {
+          const numbers = [...fresh.map((alert) => alert.orderNumber), ...previous];
+          return [...new Set(numbers)].slice(0, 12);
+        });
       }
 
       setCounts(next);

@@ -69,6 +69,8 @@ export function buildShiftDetailSheets(input: {
       { label: t("shifts.instapaySales"), count: null, amount: summary?.instapay_sales ?? 0, note: null },
       { label: t("shifts.visaSales"), count: null, amount: summary?.visa_sales ?? 0, note: null },
       { label: t("shifts.cashRefunds"), count: null, amount: summary?.cash_refunds ?? 0, note: null },
+      { label: t("shifts.cashIn"), count: null, amount: summary?.cash_in ?? 0, note: null },
+      { label: t("shifts.cashOut"), count: null, amount: summary?.cash_out ?? 0, note: null },
       { label: t("shifts.cashExpenses"), count: null, amount: summary?.cash_expenses ?? 0, note: null },
       { label: t("shifts.expectedCash"), count: null, amount: summary?.expected_cash ?? 0, note: t("shifts.expectedCashHint") },
       {

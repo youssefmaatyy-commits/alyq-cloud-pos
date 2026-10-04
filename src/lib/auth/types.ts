@@ -42,6 +42,11 @@ export interface AuthUser {
   /** Admin-defined role overlay (Phase 10), when one is assigned and active. */
   custom_role_id?: string | null;
   custom_role_name?: string | null;
+  /** Active branch authority resolved server-side for this session. */
+  active_branch_id?: string | null;
+  active_branch_code?: string | null;
+  active_branch_name_en?: string | null;
+  active_branch_name_ar?: string | null;
   /**
    * The capabilities that apply to this person, resolved at sign-in:
    * the custom role's list when one is worn, otherwise the system matrix for

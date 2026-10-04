@@ -48,12 +48,13 @@ import {
   buildReturnReceiptHtml,
   customerInfoIssue,
   paymentMethodDisplayName,
-  RECEIPT_LOGO_SRC,
 } from "../services/receipt";
 import { salesReceiptStrings, returnReceiptStrings } from "../services/receiptStrings";
 import { en, ar } from "@/lib/i18n/dictionary";
 import { lineKey, type CartLine, type SalePaymentInput } from "../types";
 import { addCartLine, changeCartQuantity, discountCartLine, removeCartLine } from "../services/cartOperations";
+import { computeShiftSummary } from "@/modules/shifts/services/shiftCalculations";
+import { getDemoShiftRepository } from "@/modules/shifts/data/demoRepository";
 
 function money2(value: number): string {
   return value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -93,6 +94,11 @@ const cash = (amount: number, tendered?: number): SalePaymentInput => ({
 });
 const insta = (amount: number, status: "paid" | "pending" = "paid"): SalePaymentInput => ({
   method: "instapay",
+  amount,
+  status,
+});
+const visa = (amount: number, status: "paid" | "pending" = "pending"): SalePaymentInput => ({
+  method: "visa",
   amount,
   status,
 });
@@ -533,6 +539,67 @@ test("InstaPay-only sale can be marked pending", async () => {
   assert.equal(sale.paid_at, null);
 });
 
+test("Visa-only sale is paid immediately and its receipt records Visa", async () => {
+  const ring = await bySku("ALYQ-1002");
+  const sale = await repo.completeSale({
+    client_ref: `visa-only-${Date.now()}`,
+    lines: [{ product_id: ring.id, qty: 1 }],
+    discount_type: "none",
+    discount_value: 0,
+    // A stale client may send pending; the terminal card payment is paid,
+    // matching the live pos_complete_sale RPC.
+    payments: [visa(ring.selling_price, "pending")],
+    user_id: "u1",
+    user_name: "Tester",
+  });
+  assert.equal(sale.status, "completed");
+  assert.equal(sale.payment_status, "paid");
+  assert.deepEqual(sale.payments.map((payment) => [payment.method, payment.status, payment.amount]), [["visa", "paid", ring.selling_price]]);
+  assert.equal(sale.amount_received, null, "Visa must not masquerade as drawer cash");
+  assert.equal(sale.change, null);
+  const html = buildReceiptHtml({
+    sale,
+    direction: "ltr",
+    strings: salesReceiptStrings(((key: string) => (en as Record<string, string>)[key] ?? key) as never),
+  });
+  assert.ok(html.includes("Visa"), "receipt names the card method");
+  const shift = (await getDemoShiftRepository().listShifts()).find((entry) => entry.id === sale.shift_id);
+  assert.ok(shift, "the Visa sale is assigned to the active till");
+  const summary = computeShiftSummary(shift!, { sales: [sale], returns: [], refunds: [], expenses: [] });
+  assert.equal(summary.visa_sales, sale.total, "Visa is reported as card takings");
+  assert.equal(summary.cash_sales, 0, "Visa-only never inflates the drawer");
+  assert.equal(summary.expected_cash, shift!.opening_cash);
+});
+
+test("Cash + Visa is a completed split payment with exact payment records", async () => {
+  const ring = await bySku("ALYQ-1002");
+  const sale = await repo.completeSale({
+    client_ref: `cash-visa-${Date.now()}`,
+    lines: [{ product_id: ring.id, qty: 2 }],
+    discount_type: "none",
+    discount_value: 0,
+    payments: [cash(10), visa(ring.selling_price * 2 - 10)],
+    user_id: "u1",
+    user_name: "Tester",
+  });
+  assert.equal(sale.total, ring.selling_price * 2);
+  assert.equal(sale.status, "completed");
+  assert.equal(sale.payment_status, "paid");
+  assert.equal(sumPayments(sale.payments), sale.total);
+  assert.deepEqual(sale.payments.map((payment) => [payment.method, payment.status, payment.amount]), [
+    ["cash", "paid", 10],
+    ["visa", "paid", ring.selling_price * 2 - 10],
+  ]);
+  assert.equal(sale.amount_received, 10);
+  assert.equal(sale.change, 0);
+  const shift = (await getDemoShiftRepository().listShifts()).find((entry) => entry.id === sale.shift_id);
+  assert.ok(shift);
+  const summary = computeShiftSummary(shift!, { sales: [sale], returns: [], refunds: [], expenses: [] });
+  assert.equal(summary.cash_sales, 10, "only the cash leg enters the drawer");
+  assert.equal(summary.visa_sales, sale.total - 10, "the Visa leg is reported separately");
+  assert.equal(summary.expected_cash, shift!.opening_cash + 10);
+});
+
 test("mixed Cash + InstaPay split payment", async () => {
   const bracelet = await bySku("ALYQ-1020"); // 11.5 × 4 = 46
   const sale = await repo.completeSale({
@@ -694,7 +761,7 @@ test("receipt lists every split payment", async () => {
   assert.ok(html.includes("272.00"), "grand total shown");
 });
 
-test("receipt branding: logo, boutique header, paid/remaining/change, contacts", async () => {
+test("receipt branding: compact textual identity, paid/remaining/change, contacts", async () => {
   const ring = await bySku("ALYQ-1002"); // price 68, high stock
   const sale = await repo.completeSale({
     client_ref: `brand-${Date.now()}`,
@@ -730,9 +797,8 @@ test("receipt branding: logo, boutique header, paid/remaining/change, contacts",
   };
   const html = buildReceiptHtml({ sale, direction: "ltr", strings });
 
-  // brand block: official logo file (centered, fixed print size) + wordmark + tagline
-  assert.ok(html.includes(RECEIPT_LOGO_SRC), "official logo referenced");
-  assert.ok(html.includes('class="logo"'), "logo has print sizing class");
+  // Thermal paper carries a compact text identity rather than a large image.
+  assert.ok(!html.includes('<img class="logo"'), "no large logo image is printed");
   assert.ok(html.includes("ALYQ | أَلِــيْـــق"), "bilingual wordmark shown");
   // The unapproved slogan was removed, not replaced: assert its absence, so
   // re-introducing it — or any substitute invented in its place — fails here.
@@ -809,6 +875,7 @@ test("full flow: sales + return receipt data matches the transaction records", a
     customer_id: "cust-verify",
     customer_name: "Test Customer",
     customer_phone: "Test Phone Number",
+    notes: "Gift wrap requested & confirmed",
     user_id: "u-verify",
     user_name: "Verify Cashier",
   });
@@ -826,6 +893,8 @@ test("full flow: sales + return receipt data matches the transaction records", a
   // customer name + phone
   assert.ok(salesHtml.includes("Test Customer"), "sales: customer name");
   assert.ok(salesHtml.includes("Test Phone Number"), "sales: customer phone");
+  assert.equal(sale.notes, "Gift wrap requested & confirmed", "sales: authoritative note snapshot");
+  assert.ok(salesHtml.includes("Gift wrap requested &amp; confirmed"), "sales: stored note is escaped on reprint");
   // items, quantities, prices, line totals
   const itemName = sale.items[0].name_en || sale.items[0].name_ar;
   assert.ok(salesHtml.includes(itemName), "sales: item name");
@@ -1074,8 +1143,8 @@ test("return receipt reuses the shared design and carries return + invoice data"
     strings,
   });
 
-  // same shared shell/design as the sales receipt
-  assert.ok(html.includes(RECEIPT_LOGO_SRC), "official logo referenced");
+  // same shared compact text shell/design as the sales receipt
+  assert.ok(!html.includes('<img class="logo"'), "return receipt has no large logo image");
   assert.ok(html.includes("ALYQ | أَلِــيْـــق"), "boutique wordmark shown");
   // The unapproved slogan was removed, not replaced: assert its absence, so
   // re-introducing it — or any substitute invented in its place — fails here.

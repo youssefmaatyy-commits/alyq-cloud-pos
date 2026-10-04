@@ -274,8 +274,9 @@ async function main() {
   // ── 3 · every route, through the module's own filters ─────────────────────
   clickTestid("kpi-today-sales");
   await waitFor(() => ux.dom.window.location.hash.startsWith("#/pos/sales"), { label: "the sales route" });
-  await waitFor(() => testid("sales-today-toggle")?.checked === true, { label: "the today filter to hydrate" });
-  console.log("  ✓ Sales tile → sales history with the Today filter ON");
+  const today = new Date().toISOString().slice(0, 10);
+  await waitFor(() => testid("sales-date-from")?.value === today && testid("sales-date-to")?.value === today, { label: "the today date range to hydrate" });
+  console.log("  ✓ Sales tile → Invoice Center with today's server date range");
 
   await navigate("#/", 600);
   await waitFor(() => testid("kpi-web-orders"), { label: "the KPI row again" });
@@ -417,8 +418,8 @@ async function main() {
   assert.ok(!testid("web-section"), "no website block without the capability");
   assert.ok(!testid("dash-qa-website"), "no website quick action");
   assert.ok(!testid("web-kpi-pending"), "no pending-review tile");
-  assert.ok(testid("kpi-today-sales"), "the day's revenue still shows (reports-readable)");
-  assert.ok(testid("kpi-today-sales").tagName !== "A", "but the till deep link is gone");
+  assert.ok(!testid("kpi-today-sales"), "sales-history KPIs are hidden without sales.view");
+  assert.ok(bodyText().includes("Business performance"), "the separately-authorized reports section remains visible");
   assert.ok(testid("kpi-low-stock"), "the inventory view they own still renders");
   assert.ok(!document.querySelector('a[href="#/online/website"]'), "no website-builder link in the sidebar");
   assert.ok(!document.querySelector('a[href="#/settings/branding"]'), "no Branding link in the sidebar");

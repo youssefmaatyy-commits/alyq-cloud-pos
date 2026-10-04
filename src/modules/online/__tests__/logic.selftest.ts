@@ -69,6 +69,7 @@ import {
   requiresReason,
 } from "../services/orderWorkflow";
 import { bestSellerIds, campaignBadgeText, isNewArrival, productBadges, unitsSold } from "../services/badges";
+import { operationalStageLabelKey, operationalStageOf, queueAgeOf } from "../services/orderOperations";
 import {
   brandFacet,
   categoryFacet,
@@ -1235,6 +1236,26 @@ test("delivery wording follows the status and the fulfilment type", () => {
   assert.equal(deliveryHintKey({ status: "pending", delivery_type: "delivery" }), "store.track.hint.pending");
   assert.equal(deliveryHintKey({ status: "cancelled", delivery_type: "delivery" }), "store.track.hint.cancelled");
   assert.equal(t(deliveryHintKey({ status: "ready", delivery_type: "delivery" })), "Your order is ready and on its way to you.");
+});
+
+test("the staff queue projects delivery and pickup without adding stored states", () => {
+  assert.equal(operationalStageOf(makeOrder({ status: "pending" })), "new");
+  assert.equal(operationalStageOf(makeOrder({ status: "ready", delivery_type: "delivery" })), "out_for_delivery");
+  assert.equal(operationalStageOf(makeOrder({ status: "ready", delivery_type: "pickup" })), "ready_for_pickup");
+  assert.equal(operationalStageOf(makeOrder({ status: "completed", delivery_type: "delivery" })), "delivered");
+  assert.equal(operationalStageOf(makeOrder({ status: "completed", delivery_type: "pickup" })), "collected");
+  assert.equal(operationalStageOf(makeOrder({ status: "cancelled", approved_at: null })), "rejected");
+  assert.equal(operationalStageOf(makeOrder({ status: "cancelled", approved_at: "2026-05-01T09:00:00.000Z" })), "cancelled");
+  assert.equal(operationalStageLabelKey("out_for_delivery"), "online.operations.outForDelivery");
+});
+
+test("queue ages are elapsed, non-negative and do not invent a store SLA", () => {
+  const now = Date.parse("2026-05-01T12:00:00.000Z");
+  assert.deepEqual(queueAgeOf("2026-05-01T11:58:30.000Z", now), { value: 1, unit: "minutes" });
+  assert.deepEqual(queueAgeOf("2026-05-01T10:00:00.000Z", now), { value: 2, unit: "hours" });
+  assert.deepEqual(queueAgeOf("2026-04-29T12:00:00.000Z", now), { value: 2, unit: "days" });
+  assert.deepEqual(queueAgeOf("2026-05-02T12:00:00.000Z", now), { value: 0, unit: "minutes" });
+  assert.equal(queueAgeOf("not-a-date", now), null);
 });
 
 // ── badges & demand ─────────────────────────────────────────────────────────

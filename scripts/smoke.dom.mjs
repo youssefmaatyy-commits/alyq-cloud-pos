@@ -983,6 +983,7 @@ async function main() {
   // ── Phase 4 · POS + Sales ──
   // Reset the catalog so the till sees the pristine seeded stock.
   await navigate("#/products");
+  await waitFor(() => [...document.querySelectorAll("button, a")].some((node) => (node.textContent ?? "").trim().includes("Reset")), { label: "products reset control" });
   click("Reset");
   await sleep(400);
 
@@ -1075,9 +1076,9 @@ async function main() {
   await navigate("#/pos");
   assert.ok(bodyText().includes("Register"), "POS screen renders");
   assert.ok(posScanBox(), "scan/search box renders");
-  assert.ok(document.querySelector('[data-testid="pos-search-empty"]'), "idle hint renders, not a catalogue");
-  assert.ok(!document.querySelector('[data-testid="pos-grid"]'), "no product-card grid");
-  assert.equal(document.querySelectorAll('[data-testid^="pos-product-"]').length, 0, "no product cards");
+  assert.ok(document.querySelector('[data-testid="pos-catalog"]'), "catalog renders, with a browseable catalogue");
+  assert.ok(!document.querySelector('[data-testid="pos-grid"]'), "no legacy product grid");
+  assert.ok(document.querySelectorAll('[data-testid^="pos-catalog-product-"]').length > 0, "catalogue cards");
   console.log("  ✓ POS screen loads scan-first: one search box, no grid");
 
   // Search by name / SKU / barcode
@@ -1126,10 +1127,10 @@ async function main() {
   assert.ok(plus && minus, "accessible quantity controls appear on the exact cart row");
   plus.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
   await sleep(200);
-  assert.equal(cartItem.querySelector('[data-testid^="cart-quantity-"]')?.textContent, "2", "qty increased");
+  assert.equal(cartItem.querySelector('[data-testid^="cart-quantity-"]')?.value, "2", "qty increased");
   minus.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
   await sleep(200);
-  assert.equal(cartItem.querySelector('[data-testid^="cart-quantity-"]')?.textContent, "1", "qty decreased");
+  assert.equal(cartItem.querySelector('[data-testid^="cart-quantity-"]')?.value, "1", "qty decreased");
   console.log("  ✓ cart add / increase / decrease");
 
   // Discount (percent) — admin is allowed
@@ -1173,7 +1174,7 @@ async function main() {
   await sleep(300);
   assert.equal(printedDocs.length, beforeReceiptPrints + 1, "receipt document opened");
   const receipt = printedDocs[printedDocs.length - 1];
-  assert.ok(receipt.includes('src="/alyq-logo.png"'), "receipt embeds official logo");
+  assert.ok(!receipt.includes('<img class="logo"'), "receipt omits the large official logo image");
   assert.ok(receipt.includes("ALYQ | أَلِــيْـــق"), "receipt has boutique wordmark");
   // Assembled from parts so the retired slogan appears nowhere in the tree,
   // not even in the assertion that forbids it.
@@ -1254,13 +1255,13 @@ async function main() {
 
   // Sales history + detail + stock deduction
   await navigate("#/pos/sales");
-  assert.ok(bodyText().includes("Sales history"), "sales history renders");
+  assert.ok(bodyText().includes("Invoice & Return Center"), "invoice and return center renders");
   assert.ok((bodyText().match(/INV-\d{6}/g) || []).length >= 2, "both sales listed");
   assert.ok(bodyText().includes("Pending"), "pending status visible");
 
   // The pending InstaPay sale — confirm it directly from history.
-  const pendingRow = [...document.querySelectorAll("tbody tr")].find((tr) =>
-    (tr.textContent ?? "").includes("Pending"),
+  const pendingRow = [...document.querySelectorAll('[data-testid^="transaction-"]')].find((card) =>
+    (card.textContent ?? "").includes("Pending"),
   );
   assert.ok(pendingRow, "a pending sale is listed");
   // assert the history exposes the authorized quick-confirm action
@@ -1273,7 +1274,7 @@ async function main() {
   const pendingLink = pendingRow.querySelector("a[href*='/pos/sales/']");
   assert.ok(pendingLink, "pending row links to detail");
   const pendingHref = pendingLink.getAttribute("href");
-  const totalOnList = pendingRow.querySelectorAll("td")[3]?.textContent?.trim();
+  const pendingInvoice = pendingLink.textContent?.trim();
   await navigate(pendingHref);
 
   // Detail shows the pending InstaPay state with a confirm action, method unchanged.
@@ -1333,8 +1334,8 @@ async function main() {
 
   // History updates and no duplicate sale is created; totals stay identical.
   await navigate("#/pos/sales");
-  const refreshedRow = [...document.querySelectorAll("tbody tr")].find((tr) =>
-    (tr.textContent ?? "").includes(totalOnList ?? "__never__"),
+  const refreshedRow = [...document.querySelectorAll('[data-testid^="transaction-"]')].find((card) =>
+    (card.textContent ?? "").includes(pendingInvoice ?? "__never__"),
   );
   assert.ok(refreshedRow, "same sale still listed (no duplicate created)");
   assert.ok(!(refreshedRow?.textContent ?? "").includes("Pending"), "history shows it completed");
@@ -1373,14 +1374,16 @@ async function main() {
   // register at every width (jsdom has no CSS geometry; Chromium checks
   // pixels separately). There is no product grid left to be responsive.
   await navigate("#/pos");
+  setField('[data-testid="pos-scan-search"]', "");
+  await sleep(80);
   const posResponsive = [...document.querySelectorAll("main *")].some((el) =>
     [...el.classList].some((c) => c.startsWith("sm:") || c.startsWith("lg:")),
   );
   assert.ok(posResponsive, "POS uses responsive breakpoints");
   assert.ok(posScanBox(), "the scan/search box owns the register's product column");
   assert.ok(document.querySelector('[data-testid="pos-checkout-panel"]'), "the checkout owns the sale column");
-  assert.ok(!document.querySelector('[data-testid="pos-grid"]'), "no product-card grid renders");
-  assert.equal(document.querySelectorAll('[data-testid^="pos-product-"]').length, 0, "no product cards");
+  assert.ok(!document.querySelector('[data-testid="pos-grid"]'), "no legacy product grid renders");
+  await waitFor(() => document.querySelectorAll('[data-testid^="pos-catalog-product-"]').length > 0, { label: "catalogue cards" });
   console.log("  ✓ POS responsive layout contract");
 
   // ── Phase 7 · Customers + Returns + Refunds ──
@@ -1440,6 +1443,13 @@ async function main() {
   const clearItems = document.querySelector('aside [data-testid="pos-clear-cart"]');
   if (clearItems) {
     clearItems.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+    await sleep(150);
+    const clearDialog = [...document.querySelectorAll('[role="dialog"]')].pop();
+    const confirmClear = [...(clearDialog?.querySelectorAll("button") ?? [])].find((button) =>
+      (button.textContent ?? "").includes("Clear items"),
+    );
+    assert.ok(confirmClear, "clear-cart confirmation protects a populated sale");
+    confirmClear.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
     await sleep(200);
   }
   assert.equal(document.querySelectorAll('aside [data-testid^="cart-line-"]').length, 0, "old cart lines cleared before the linked sale");
@@ -1639,7 +1649,7 @@ async function main() {
     returnReceipt.includes("0599111222"),
     "return receipt shows the customer phone (inherited from the invoice)",
   );
-  assert.ok(returnReceipt.includes('src="/alyq-logo.png"'), "return receipt embeds the official logo");
+  assert.ok(!returnReceipt.includes('<img class="logo"'), "return receipt omits the large official logo image");
   assert.ok(returnReceipt.includes("ALYQ | أَلِــيْـــق"), "return receipt has the boutique wordmark");
   assert.ok(returnReceipt.includes("<svg"), "return receipt embeds the return barcode");
   assert.ok(/ALYQ-\d{4}/.test(returnReceipt), "return receipt lists the returned item SKU");
@@ -1747,12 +1757,12 @@ async function main() {
   // Empty submit is blocked.
   clickEl([...openDialog.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === "Open shift"));
   await sleep(250);
-  assert.ok(openDialog.textContent.includes("Branch is required"), "branch is required");
+  assert.ok(!openDialog.textContent.includes("Branch is required"), "active branch is supplied authoritatively");
   assert.ok(openDialog.textContent.includes("Enter the opening cash"), "opening cash is required");
 
   const dialogInputs = [...openDialog.querySelectorAll("input")];
-  const branchInput = dialogInputs.find((i) => !i.readOnly && i.type === "text");
-  typeInto(branchInput, "Main branch");
+  const branchInput = dialogInputs.find((i) => i.readOnly && i.type === "text" && /main/i.test(i.value));
+  assert.ok(branchInput, "active branch is shown read-only");
   const cashOpeningInput = dialogInputs.find((i) => i.inputMode === "decimal");
   typeInto(cashOpeningInput, "1000");
   await sleep(200);
@@ -1906,7 +1916,7 @@ async function main() {
 
   // ── POS sales are untouched by the shift ──
   await navigate("#/pos/sales");
-  for (let i = 0; i < 10 && !bodyText().includes("Sales history"); i += 1) await sleep(300);
+  for (let i = 0; i < 10 && !bodyText().includes("Invoice & Return Center"); i += 1) await sleep(300);
   const invoiceNumbers = bodyText().match(/INV-\d{6}/g) ?? [];
   assert.ok(
     new Set(invoiceNumbers).size >= salesCountInShift,
@@ -1915,7 +1925,7 @@ async function main() {
   assert.ok(invoiceNumbers.includes(cashInvoice), "the cash sale is still listed");
   assert.ok(invoiceNumbers.includes(instapayInvoice), "the InstaPay sale is still listed");
   const salesRow = (invoice) =>
-    [...document.querySelectorAll("tbody tr")].find((tr) => (tr.textContent ?? "").includes(invoice));
+    [...document.querySelectorAll('[data-testid^="transaction-"]')].find((card) => (card.textContent ?? "").includes(invoice));
   const cashRow = salesRow(cashInvoice);
   const instapayRow = salesRow(instapayInvoice);
   assert.ok(cashRow && instapayRow, "both shift sales have history rows");
@@ -1929,8 +1939,8 @@ async function main() {
   );
   await navigate("#/pos/sales");
   await sleep(400);
-  assert.ok(!bodyText().includes("Shift #"), "POS sales table has no shift columns");
-  console.log("  ✓ POS sales unaffected by the shift lifecycle");
+  assert.ok(bodyText().includes("Shift #"), "Invoice Center keeps authoritative shift linkage");
+  console.log("  ✓ POS sales and shift linkage unaffected by the shift lifecycle");
 
   // ── Audit log records every shift/expense action ──
   await navigate("#/audit");
@@ -2676,7 +2686,7 @@ async function main() {
   assert.ok(!bodyText().includes("Complete sale"), "no untranslated POS copy in RTL");
 
   await navigate("#/pos/sales");
-  assert.ok(bodyText().includes("سجل المبيعات"), "sales history in Arabic");
+  assert.ok(bodyText().includes("مركز الفواتير والمرتجعات"), "invoice and return center in Arabic");
   assert.ok(/INV-\d{6}/.test(bodyText()), "sale numbers stay LTR-safe in RTL");
   console.log("  ✓ POS Arabic RTL");
 

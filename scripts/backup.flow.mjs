@@ -500,10 +500,17 @@ await step(5, "The health check reads relationships and reports", async () => {
 
 // ── STEP 6 · the schedule is a policy an admin sets ───────────────────────
 await step(6, "The schedule is a policy an admin sets", async () => {
-  const select = app.document.querySelector("select");
+  // The shell now also has an active-branch selector. Target the schedule by
+  // its complete option contract rather than assuming the first select on the
+  // page belongs to this card.
+  const expectedOptions = ["off", "daily", "weekly"];
+  const select = [...app.document.querySelectorAll("select")].find((candidate) => {
+    const values = [...candidate.options].map((option) => option.value);
+    return expectedOptions.every((value) => values.includes(value));
+  });
   if (!select) throw new Error("the schedule has no frequency control");
   const options = [...select.options].map((option) => option.value);
-  for (const expected of ["off", "daily", "weekly"]) {
+  for (const expected of expectedOptions) {
     if (!options.includes(expected)) throw new Error(`the schedule cannot be set to ${expected}`);
   }
   app.typeInto(select, "weekly");
@@ -645,25 +652,18 @@ await step(8, "A manager may protect the installation, not replace it", async ()
   await app.signIn("manager");
   await app.openPanel();
 
-  // The app's convention for a control the seat may not use is to render it
-  // disabled with the reason as its title, not to hide it — so the assertion is
-  // about being able to use it, and about the controls that are genuinely gone.
+  // Permission-denied actions are omitted rather than rendered as dead controls.
+  // State-based unavailability may still disable an action the seat owns.
   for (const label of ["Take a snapshot", "Run the health check", "Export everything"]) {
     const control = app.byLabel(label);
     if (!control) throw new Error(`a manager cannot ${label.toLowerCase()}`);
     if (control.disabled) throw new Error(`"${label}" is disabled for a manager`);
   }
   for (const label of ["Restore", "Download"]) {
-    const control = app.byLabel(label);
-    if (!control) throw new Error(`the snapshot row does not render "${label}" at all`);
-    if (!control.disabled) throw new Error(`a manager could press "${label}"`);
-    if (!control.getAttribute("title")) throw new Error(`"${label}" does not say why it is disabled`);
+    if (app.byLabel(label)) throw new Error(`a manager was shown the unauthorized "${label}" action`);
   }
   if (app.byLabel("Save schedule")) throw new Error("a manager was offered the schedule form");
   if (app.byLabel("Choose a backup file")) throw new Error("a manager was offered restore-from-file");
-  if (!app.bodyText().includes("To undo a restore, restore the pre-restore snapshot")) {
-    throw new Error("a manager is not told how rollback works");
-  }
   if (app.snapshotStore().manifests.length === 0) throw new Error("the manager cannot see the snapshots that exist");
   if (!app.bodyText().includes("Pre-restore")) throw new Error("the manager cannot see the rollback point");
 
@@ -676,8 +676,8 @@ await step(8, "A manager may protect the installation, not replace it", async ()
   });
   return [
     "manager → may take a snapshot, run the health check, and export",
-    "manager → Restore and Download render disabled, each saying why",
-    "manager → no schedule form and no restore-from-file card",
+    "manager → Restore and Download are not rendered",
+    "manager → no schedule form and no restore-from-file action",
     "the manager still sees every snapshot, including the rollback point",
   ];
 });

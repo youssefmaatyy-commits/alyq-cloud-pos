@@ -167,12 +167,12 @@ const printBtn = buttons().find((b) => (b.textContent ?? "").includes("Print rec
 clickEl(printBtn);
 await sleep(800);
 const receiptHtml = documentWrites.join("\n");
-assert.ok(receiptHtml.includes(LOGO_URL), "the receipt HTML embeds the brand logo");
-// the receipt's PRINTED NAME stays the receipt.businessName setting (the P45
-// combined bilingual) — the brand display name is a screen identity, and the
-// two are deliberately one document apart, not a second logo/name split.
+assert.ok(!receiptHtml.includes('<img class="logo"'), "the thermal receipt omits the large brand logo image");
+// The receipt's printed name stays the receipt.businessName setting (the P45
+// combined bilingual). Thermal paper has compact textual identity, not another
+// image/name split.
 assert.ok(receiptHtml.includes("ALYQ"), "the receipt still names the house");
-console.log("  ✓ the receipt prints the brand logo (name stays the receipt setting)");
+console.log("  ✓ the receipt prints compact textual identity without a large logo");
 
 // ── 7 · the login screen carries the brand ─────────────────────────────────
 await signOut();

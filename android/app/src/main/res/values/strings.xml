@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">ALYQ Mobile</string>
+    <string name="title_activity_main">ALYQ Mobile</string>
+    <string name="package_name">eg.alyq.management</string>
+    <string name="custom_url_scheme">eg.alyq.management</string>
+</resources>

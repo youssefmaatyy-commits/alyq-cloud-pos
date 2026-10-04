@@ -12,6 +12,7 @@ import type { ReturnRepository } from "./repository";
 
 interface ReturnRow {
   id: string;
+  client_ref?: string | null;
   return_number: string;
   sale_id: string;
   sale_number: string;
@@ -62,6 +63,7 @@ interface RefundRow {
   settled_at: string | null;
   settled_by: string | null;
   settled_by_name: string | null;
+  settlement_shift_id: string | null;
 }
 
 function toNumber(value: number | string | null | undefined): number {
@@ -73,6 +75,7 @@ function toNumber(value: number | string | null | undefined): number {
 function mapReturn(row: ReturnRow, items: ReturnItemRow[] = []): SalesReturn {
   return {
     id: row.id,
+    client_ref: row.client_ref ?? null,
     return_number: row.return_number,
     sale_id: row.sale_id,
     sale_number: row.sale_number,
@@ -168,6 +171,35 @@ export class SupabaseReturnRepository implements ReturnRepository {
     }
   }
 
+  async getReturnsForSale(saleId: string): Promise<SalesReturn[]> {
+    try {
+      const client = this.require();
+      const { data: returnsData, error } = await client
+        .from("sales_returns")
+        .select("*")
+        .eq("sale_id", saleId)
+        .order("created_at", { ascending: true });
+      if (error) throw toAppError(error);
+      const rows = (returnsData as ReturnRow[] | null) ?? [];
+      if (rows.length === 0) return [];
+      const { data: itemsData, error: itemsError } = await client
+        .from("return_items")
+        .select("*")
+        .in("return_id", rows.map((row) => row.id));
+      if (itemsError) throw toAppError(itemsError);
+      const grouped = new Map<string, ReturnItemRow[]>();
+      for (const item of (itemsData as ReturnItemRow[] | null) ?? []) {
+        const list = grouped.get(item.return_id) ?? [];
+        list.push(item);
+        grouped.set(item.return_id, list);
+      }
+      return rows.map((row) => mapReturn(row, grouped.get(row.id) ?? []));
+    } catch (err) {
+      if (err instanceof AppError) throw err;
+      throw toAppError(err);
+    }
+  }
+
   async getReturn(id: string): Promise<SalesReturn> {
     try {
       const client = this.require();
@@ -198,6 +230,10 @@ export class SupabaseReturnRepository implements ReturnRepository {
       const client = this.require();
       const { data, error } = await client.rpc("pos_process_return", {
         p_payload: {
+          // The current live RPC remains authoritative for idempotency/lifecycle;
+          // retaining this key in the payload keeps future server replay support
+          // compatible with the demo retry contract.
+          client_ref: input.client_ref ?? null,
           sale_id: input.sale_id,
           reason: input.reason.trim(),
           refund_method: input.refund_method,

@@ -32,7 +32,7 @@ import {
   type ReactNode,
 } from "react";
 import type { Category, Product } from "@/modules/products/types";
-import { fetchStorefrontCatalog } from "@/modules/storefront/data/storefrontCatalog";
+import { fetchStorefrontCatalog, type StoreColorImage } from "@/modules/storefront/data/storefrontCatalog";
 import { getOnlineMode, getOnlineOrdersRepository, getWebsiteRepository } from "../data";
 import { toOnlineError, type CouponCheckInput, type CouponCheckResult, type OnlineMode, type PricingPreview, type PricingPreviewInput } from "../data/repository";
 import type {
@@ -83,6 +83,9 @@ export interface StorefrontContextValue {
   variants: StoreVariant[];
   /** The combinations of one product, display order. */
   variantsOf: (productId: string) => StoreVariant[];
+  colorImages: StoreColorImage[];
+  /** Selected-colour gallery; empty means fall back to the parent product gallery. */
+  colorGalleryFor: (productId: string,colorKey: string|null) => StoreColorImage[];
   contents: ProductContent[];
   contentByProduct: Map<string, ProductContent>;
   faqs: StoreFaq[];
@@ -176,6 +179,7 @@ export function StorefrontProvider({ children }: { children: ReactNode }) {
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [variants, setVariants] = useState<StoreVariant[]>([]);
+  const [colorImages,setColorImages]=useState<StoreColorImage[]>([]);
   const [bestSellers, setBestSellers] = useState<{ product_id: string; units: number }[]>([]);
   const [reservedList, setReservedList] = useState<
     { product_id: string; variant_id: string | null; quantity: number; status: string }[]
@@ -190,6 +194,7 @@ export function StorefrontProvider({ children }: { children: ReactNode }) {
         website.bestSellers(8),
       ]);
       setVariants(sortStoreVariants(catalog.variants));
+      setColorImages(catalog.colorImages);
 
       // Reservations are staff rows in live mode; asking for them as a visitor
       // would be refused, so only demo mode reads them.
@@ -310,6 +315,10 @@ export function StorefrontProvider({ children }: { children: ReactNode }) {
     [variantsByProduct],
   );
 
+  const colorGalleryFor=useCallback((productId:string,colorKey:string|null)=>
+    colorImages.filter((image)=>image.product_id===productId && image.color_key===(colorKey??""))
+      .sort((a,b)=>Number(b.is_primary)-Number(a.is_primary)||a.sort_order-b.sort_order),[colorImages]);
+
   const catalogContext = useMemo<CatalogContext>(
     () => ({
       campaigns: snapshot.campaigns,
@@ -388,6 +397,8 @@ export function StorefrontProvider({ children }: { children: ReactNode }) {
       categories,
       variants,
       variantsOf,
+      colorImages,
+      colorGalleryFor,
       contents: snapshot.contents,
       contentByProduct,
       faqs: snapshot.faqs,
@@ -423,6 +434,8 @@ export function StorefrontProvider({ children }: { children: ReactNode }) {
       categories,
       variants,
       variantsOf,
+      colorImages,
+      colorGalleryFor,
       contentByProduct,
       bestSellers,
       units,

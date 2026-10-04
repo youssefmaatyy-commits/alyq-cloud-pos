@@ -29,6 +29,9 @@ import {
   matchStockToProducts,
 } from "../services/stockImport";
 import type { Product } from "@/modules/products/types";
+import type { ProductVariant } from "@/modules/products/variants";
+import { queryInventory } from "../services/inventoryQuery";
+import { withActiveBranchProductStock, withActiveBranchVariantStock } from "../data/branchStock";
 import type { StockMovement } from "../types";
 
 type TestCase = { name: string; fn: () => void | Promise<void> };
@@ -80,6 +83,49 @@ function movement(partial: Partial<StockMovement> & { id: string; product_id: st
     ...partial,
   } as StockMovement;
 }
+
+// ── Exact-variant inventory search/status ──────────────────────────────────
+
+test("inventory query finds exact variant SKU/barcode and exposes low/out shelves", () => {
+  const owner = product({ id: "variant-owner", variants_enabled: true, stock_quantity: 8, low_stock_level: 2 });
+  const variants = [
+    { id: "v-low", product_id: owner.id, sku: "RING-GOLD-17", barcode: "99170001", color_en: "Gold", color_ar: "ذهبي", size: 17, size_label: null, stock_quantity: 1, low_stock_level: 2, active: true },
+    { id: "v-out", product_id: owner.id, sku: "RING-SILVER-18", barcode: "99180001", color_en: "Silver", color_ar: "فضي", size: 18, size_label: null, stock_quantity: 0, low_stock_level: 2, active: true },
+  ] as ProductVariant[];
+  const base = { categoryId: "all" as const };
+  assert.deepEqual(queryInventory([owner], { ...base, search: "99170001", status: "all" }, () => "", variants).map((p) => p.id), [owner.id]);
+  assert.equal(queryInventory([owner], { ...base, search: "RING-SILVER-18", status: "out" }, () => "", variants).length, 1);
+  assert.equal(queryInventory([owner], { ...base, search: "Gold 17", status: "low" }, () => "", variants).length, 1);
+  assert.equal(queryInventory([owner], { ...base, search: "", status: "in" }, () => "", variants).length, 0);
+});
+
+test("active branch shelf overlay replaces compatibility aggregates for products and exact variants", () => {
+  const plain = product({ id: "plain", stock_quantity: 99, low_stock_level: 99 });
+  const owner = product({ id: "alyq-01", variants_enabled: true, stock_quantity: 20, low_stock_level: 9 });
+  const black42 = {
+    id: "black-42", product_id: owner.id, sku: "ALYQ-01-BLK-42", barcode: "629ALYQ0142",
+    color_key: "black", color_ar: "أسود", color_en: "Black", color_hex: "#000000",
+    size: 42, size_label: null, size_value: "42", size_sort_order: 2,
+    image_url: null, price_override: null, cost_override: null,
+    stock_quantity: 13, low_stock_level: 8, active: true, sort_order: 2,
+    created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z",
+  } satisfies ProductVariant;
+  const stock = {
+    branchId: "branch-a",
+    productShelves: new Map([[plain.id, { quantity: 4, reorderLevel: 2 }]]),
+    variantShelves: new Map([[black42.id, { quantity: 7, reorderLevel: 3 }]]),
+    variantTotals: new Map([[owner.id, 7]]),
+  };
+  assert.deepEqual(
+    { quantity: withActiveBranchProductStock(plain, stock).stock_quantity, reorder: withActiveBranchProductStock(plain, stock).low_stock_level },
+    { quantity: 4, reorder: 2 },
+  );
+  assert.equal(withActiveBranchProductStock(owner, stock).stock_quantity, 7);
+  assert.deepEqual(
+    { quantity: withActiveBranchVariantStock(black42, stock).stock_quantity, reorder: withActiveBranchVariantStock(black42, stock).low_stock_level },
+    { quantity: 7, reorder: 3 },
+  );
+});
 
 // ── Stock Valuation ─────────────────────────────────────────────────────────
 

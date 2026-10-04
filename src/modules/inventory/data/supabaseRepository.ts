@@ -3,8 +3,12 @@ import type { ProductVariant } from "@/modules/products/variants";
 import { AppError, toAppError } from "@/modules/products/data/repository";
 import type { StockMovement } from "../types";
 import type { AdjustStockArgs, InventoryRepository } from "./repository";
-import { signedDelta } from "../types";
 import { getSupabaseClient } from "@/lib/supabase/client";
+import {
+  readActiveBranchStock,
+  withActiveBranchProductStock,
+  withActiveBranchVariantStock,
+} from "./branchStock";
 
 interface MovementRow {
   id: string;
@@ -13,6 +17,7 @@ interface MovementRow {
   variant_color_ar?: string | null;
   variant_color_en?: string | null;
   variant_size?: number | string | null;
+  variant_size_label?: string | null;
   delta: number;
   quantity_before: number;
   quantity_after: number;
@@ -22,6 +27,11 @@ interface MovementRow {
   user_id: string;
   user_name: string;
   created_at: string;
+  branch_id?: string | null;
+  client_ref?: string | null;
+  source_type?: StockMovement["source_type"];
+  source_id?: string | null;
+  reference?: string | null;
 }
 
 interface VariantRow {
@@ -35,6 +45,8 @@ interface VariantRow {
   color_hex: string | null;
   size: number | string | null;
   size_label: string | null;
+  size_value: string | null;
+  size_sort_order: number | string | null;
   image_url: string | null;
   price_override: number | string | null;
   cost_override: number | string | null;
@@ -63,6 +75,8 @@ function mapVariant(row: VariantRow): ProductVariant {
     color_hex: row.color_hex ?? null,
     size: numberOrNull(row.size),
     size_label: row.size_label ?? null,
+    size_value: row.size_value ?? row.size_label ?? (row.size == null ? null : String(row.size)),
+    size_sort_order: toNumber(row.size_sort_order),
     image_url: row.image_url ?? null,
     price_override: numberOrNull(row.price_override),
     cost_override: numberOrNull(row.cost_override),
@@ -89,7 +103,7 @@ function mapMovement(row: MovementRow): StockMovement {
     variant_color_ar: row.variant_color_ar ?? null,
     variant_color_en: row.variant_color_en ?? null,
     variant_size: row.variant_size === null || row.variant_size === undefined ? null : toNumber(row.variant_size),
-    variant_size_label: (row as MovementRow & { variant_size_label?: string | null }).variant_size_label ?? null,
+    variant_size_label: row.variant_size_label ?? null,
     delta: toNumber(row.delta),
     quantity_before: toNumber(row.quantity_before),
     quantity_after: toNumber(row.quantity_after),
@@ -99,11 +113,16 @@ function mapMovement(row: MovementRow): StockMovement {
     user_id: row.user_id,
     user_name: row.user_name,
     created_at: row.created_at,
+    branch_id: row.branch_id ?? null,
+    client_ref: row.client_ref ?? null,
+    source_type: row.source_type ?? null,
+    source_id: row.source_id ?? null,
+    reference: row.reference ?? null,
   };
 }
 
 const PRODUCTS_SELECT =
-  "id, sku, name_en, name_ar, stock_quantity, stock_tracking_enabled, low_stock_level, variants_enabled";
+  "id, sku, barcode, name_en, name_ar, category_id, active, stock_quantity, stock_tracking_enabled, low_stock_level, variants_enabled";
 const MOVEMENTS_SELECT = "*";
 const VARIANTS_SELECT = "*";
 
@@ -121,46 +140,40 @@ export class SupabaseInventoryRepository implements InventoryRepository {
   async listProducts(): Promise<Product[]> {
     const client = getSupabaseClient();
     if (!client) throw new AppError("NOT_CONFIGURED");
-    const { data, error } = await client.from("products").select(PRODUCTS_SELECT);
-    if (error) throw toAppError(error);
-    return (data as Product[] | null) ?? [];
+    const [catalogue, stock] = await Promise.all([
+      client.from("products").select(PRODUCTS_SELECT),
+      readActiveBranchStock(client),
+    ]);
+    if (catalogue.error) throw toAppError(catalogue.error);
+    return ((catalogue.data as Product[] | null) ?? [])
+      .map((product) => withActiveBranchProductStock(product, stock));
   }
 
-  async updateProductStock(productId: string, patch: ProductPatch): Promise<Product> {
-    const client = getSupabaseClient();
-    if (!client) throw new AppError("NOT_CONFIGURED");
-    const { data, error } = await client
-      .from("products")
-      .update(patch)
-      .eq("id", productId)
-      .select(PRODUCTS_SELECT)
-      .single();
-    if (error) throw toAppError(error);
-    return data as Product;
+  async updateProductStock(_productId: string, _patch: ProductPatch): Promise<Product> {
+    throw new AppError(
+      "VALIDATION",
+      "Live stock is branch-authoritative; use the atomic inventory adjustment operation",
+    );
   }
 
   async listVariants(): Promise<ProductVariant[]> {
     const client = getSupabaseClient();
     if (!client) throw new AppError("NOT_CONFIGURED");
-    const { data, error } = await client.from("product_variants").select(VARIANTS_SELECT);
-    if (error) throw toAppError(error);
-    return ((data as VariantRow[] | null) ?? []).map(mapVariant);
+    const [variants, stock] = await Promise.all([
+      client.from("product_variants").select(VARIANTS_SELECT),
+      readActiveBranchStock(client),
+    ]);
+    if (variants.error) throw toAppError(variants.error);
+    return ((variants.data as VariantRow[] | null) ?? [])
+      .map(mapVariant)
+      .map((variant) => withActiveBranchVariantStock(variant, stock));
   }
 
-  async updateVariantStock(variantId: string, quantity: number): Promise<ProductVariant> {
-    const client = getSupabaseClient();
-    if (!client) throw new AppError("NOT_CONFIGURED");
-    const { data, error } = await client
-      .from("product_variants")
-      // The rollup trigger on `product_variants` moves the product total; this
-      // statement must never touch `products.stock_quantity` itself, and the
-      // database would refuse it if it did.
-      .update({ stock_quantity: Math.max(0, Math.trunc(quantity)) })
-      .eq("id", variantId)
-      .select(VARIANTS_SELECT)
-      .single();
-    if (error) throw toAppError(error);
-    return mapVariant(data as VariantRow);
+  async updateVariantStock(_variantId: string, _quantity: number): Promise<ProductVariant> {
+    throw new AppError(
+      "VALIDATION",
+      "Live variant stock is branch-authoritative; use the atomic inventory adjustment operation",
+    );
   }
 
   async listMovements(): Promise<StockMovement[]> {
@@ -220,89 +233,36 @@ export function getSupabaseInventoryRepository(): SupabaseInventoryRepository {
 }
 
 /**
- * Two-step live adjustment. The movement is inserted first; if the subsequent
- * stock update fails we re-raise so the caller can decide to roll back.
+ * Live adjustment adapter. One RPC locks and moves the exact shelf, appends the
+ * existing ledger and audit rows, and replays safely by client reference.
  */
 export async function applySupabaseAdjustment(
   args: AdjustStockArgs,
-  products: Product[],
+  _products: Product[],
   repo = getSupabaseInventoryRepository(),
 ): Promise<{ product: Product; movement: StockMovement }> {
-  const current = products.find((p) => p.id === args.productId);
-  if (!current) throw new AppError("NOT_FOUND");
-  if (!current.stock_tracking_enabled) {
-    throw new AppError("VALIDATION", "Stock tracking is disabled for this product", "quantity");
-  }
-
-  // ── Phase 43: a variant product's movement moves the EXACT variant ────────
-  if (current.variants_enabled) {
-    const variants = await repo.listVariants();
-    const variant = variants.find((v) => v.id === args.variantId && v.product_id === current.id);
-    if (!variant) {
-      throw new AppError(
-        args.variantId ? "VARIANT_NOT_FOUND" : "VARIANT_REQUIRED",
-        args.variantId
-          ? `Variant ${args.variantId} does not belong to ${current.sku}`
-          : `${current.sku} sells by variant — say which colour and size moved`,
-        "variant_id",
-      );
-    }
-    const variantBefore = variant.stock_quantity;
-    const variantAfter = Math.max(0, variantBefore + signedDelta(args.type, args.quantity));
-    const movement = await repo.recordMovement({
-      product_id: current.id,
-      variant_id: variant.id,
-      variant_color_ar: variant.color_ar,
-      variant_color_en: variant.color_en,
-      variant_size: variant.size,
-      variant_size_label: variant.size_label,
-      delta: args.quantity,
-      type: args.type,
-      reason: args.reason,
-      notes: args.notes,
-      user_id: args.userId,
-      user_name: args.userName,
-    });
-    await repo.updateVariantStock(variant.id, variantAfter);
-    const product = (await repo.listProducts()).find((p) => p.id === current.id) ?? current;
-    return {
-      product,
-      movement: { ...movement, quantity_before: variantBefore, quantity_after: variantAfter },
-    };
-  }
-
-  const quantityBefore = current.stock_quantity;
-  const newQty = Math.max(0, quantityBefore + signedDelta(args.type, args.quantity));
-
-  const movement = await repo.recordMovement({
-    product_id: current.id,
-    variant_id: null,
-    variant_color_ar: null,
-    variant_color_en: null,
-    variant_size: null,
-    variant_size_label: null,
-    delta: args.quantity,
-    type: args.type,
-    reason: args.reason,
-    notes: args.notes,
-    user_id: args.userId,
-    user_name: args.userName,
-  });
-
-  // Patch the just-inserted row with the snapshot (Supabase has no RETURNING
-  // trick here, so we update by id). Single round-trip.
   const client = getSupabaseClient();
-  if (client) {
-    const { error: patchErr } = await client
-      .from("stock_movements")
-      .update({ quantity_before: quantityBefore, quantity_after: newQty })
-      .eq("id", movement.id);
-    if (patchErr) throw toAppError(patchErr);
+  if (!client) throw new AppError("NOT_CONFIGURED");
+  const clientRef = args.clientRef ?? (
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? `adjust-${crypto.randomUUID()}`
+      : `adjust-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  );
+  const { data, error } = await client.rpc("inventory_adjust_stock", {
+    p_client_ref: clientRef,
+    p_product_id: args.productId,
+    p_variant_id: args.variantId ?? null,
+    p_type: args.type,
+    p_reason: args.reason,
+    p_quantity: Math.trunc(args.quantity),
+    p_notes: args.notes,
+  });
+  if (error) throw toAppError(error);
+  const envelope = data as { ok?: boolean; movement?: MovementRow } | null;
+  if (!envelope?.ok || !envelope.movement) {
+    throw new AppError("DB", "Authoritative inventory adjustment returned no movement");
   }
-
-  const product = await repo.updateProductStock(current.id, { stock_quantity: newQty });
-  return {
-    product,
-    movement: { ...movement, quantity_before: quantityBefore, quantity_after: newQty },
-  };
+  const product = (await repo.listProducts()).find((item) => item.id === args.productId);
+  if (!product) throw new AppError("NOT_FOUND");
+  return { product, movement: mapMovement(envelope.movement) };
 }

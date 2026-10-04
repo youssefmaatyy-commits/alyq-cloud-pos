@@ -1,4 +1,9 @@
 import { getSupabaseClient } from "@/lib/supabase/client";
+import {
+  readActiveBranchStock,
+  withActiveBranchProductStock,
+  withActiveBranchVariantStock,
+} from "@/modules/inventory/data/branchStock";
 import type {
   Category,
   CategoryPatch,
@@ -7,7 +12,14 @@ import type {
   Product,
   ProductPatch,
 } from "../types";
-import { colorKeyOf, type NewProductVariant, type ProductVariant, type ProductVariantPatch } from "../variants";
+import {
+  colorKeyOf,
+  type NewProductVariant,
+  type ProductColorImage,
+  type ProductColorImageInput,
+  type ProductVariant,
+  type ProductVariantPatch,
+} from "../variants";
 import {
   AppError,
   toAppError,
@@ -117,6 +129,8 @@ interface VariantRow {
   color_hex: string | null;
   size: number | string | null;
   size_label: string | null;
+  size_value: string | null;
+  size_sort_order: number | string | null;
   image_url: string | null;
   price_override: number | string | null;
   cost_override: number | string | null;
@@ -146,6 +160,8 @@ function mapVariant(row: VariantRow): ProductVariant {
     color_hex: row.color_hex ?? null,
     size: toNullableNumber(row.size),
     size_label: row.size_label ?? null,
+    size_value: row.size_value ?? row.size_label ?? (row.size == null ? null : String(row.size)),
+    size_sort_order: toNumber(row.size_sort_order),
     image_url: row.image_url ?? null,
     price_override: toNullableNumber(row.price_override),
     cost_override: toNullableNumber(row.cost_override),
@@ -175,6 +191,16 @@ export class SupabaseRepository implements CatalogRepository {
     const client = this.client ?? getSupabaseClient();
     if (!client) throw new AppError("NOT_CONFIGURED");
     return client;
+  }
+
+  private async mapActiveProduct(row: ProductRow): Promise<Product> {
+    const stock = await readActiveBranchStock(this.require());
+    return withActiveBranchProductStock(mapProduct(row), stock);
+  }
+
+  private async mapActiveVariant(row: VariantRow): Promise<ProductVariant> {
+    const stock = await readActiveBranchStock(this.require());
+    return withActiveBranchVariantStock(mapVariant(row), stock);
   }
 
   private rethrow(error: unknown, field?: string): never {
@@ -219,12 +245,15 @@ export class SupabaseRepository implements CatalogRepository {
 
   async listProducts(): Promise<Product[]> {
     try {
-      const { data, error } = await this.require()
-        .from("products")
-        .select(PRODUCTS_SELECT)
-        .order("name_en", { ascending: true });
-      if (error) this.rethrow(error);
-      return (data as ProductRow[] | null ?? []).map(mapProduct);
+      const client = this.require();
+      const [catalogue, stock] = await Promise.all([
+        client.from("products").select(PRODUCTS_SELECT).order("name_en", { ascending: true }),
+        readActiveBranchStock(client),
+      ]);
+      if (catalogue.error) this.rethrow(catalogue.error);
+      return ((catalogue.data as ProductRow[] | null) ?? [])
+        .map(mapProduct)
+        .map((product) => withActiveBranchProductStock(product, stock));
     } catch (error) {
       this.rethrow(error);
     }
@@ -238,7 +267,7 @@ export class SupabaseRepository implements CatalogRepository {
         .select(PRODUCTS_SELECT)
         .single();
       if (error) this.rethrow(error);
-      return mapProduct(data as ProductRow);
+      return await this.mapActiveProduct(data as ProductRow);
     } catch (error) {
       this.rethrow(error);
     }
@@ -253,7 +282,7 @@ export class SupabaseRepository implements CatalogRepository {
         .select(PRODUCTS_SELECT)
         .single();
       if (error) this.rethrow(error);
-      return mapProduct(data as ProductRow);
+      return await this.mapActiveProduct(data as ProductRow);
     } catch (error) {
       this.rethrow(error);
     }
@@ -279,7 +308,7 @@ export class SupabaseRepository implements CatalogRepository {
         .eq("id", id)
         .single();
       if (readError) this.rethrow(readError);
-      return mapProduct(data as ProductRow);
+      return await this.mapActiveProduct(data as ProductRow);
     } catch (error) {
       this.rethrowLifecycle(error);
     }
@@ -385,9 +414,13 @@ export class SupabaseRepository implements CatalogRepository {
         .select(VARIANTS_SELECT)
         .order("product_id", { ascending: true })
         .order("color_key", { ascending: true })
-        .order("size", { ascending: true, nullsFirst: false });
+        .order("size_sort_order", { ascending: true })
+        .order("size_value", { ascending: true, nullsFirst: false });
       if (error) this.rethrowVariant(error);
-      return (data as VariantRow[] | null ?? []).map(mapVariant);
+      const stock = await readActiveBranchStock(this.require());
+      return ((data as VariantRow[] | null) ?? [])
+        .map(mapVariant)
+        .map((variant) => withActiveBranchVariantStock(variant, stock));
     } catch (error) {
       this.rethrowVariant(error);
     }
@@ -407,7 +440,7 @@ export class SupabaseRepository implements CatalogRepository {
         .select(VARIANTS_SELECT)
         .single();
       if (error) this.rethrowVariant(error);
-      return mapVariant(data as VariantRow);
+      return await this.mapActiveVariant(data as VariantRow);
     } catch (error) {
       this.rethrowVariant(error);
     }
@@ -437,7 +470,7 @@ export class SupabaseRepository implements CatalogRepository {
         .select(VARIANTS_SELECT)
         .single();
       if (error) this.rethrowVariant(error);
-      return mapVariant(data as VariantRow);
+      return await this.mapActiveVariant(data as VariantRow);
     } catch (error) {
       this.rethrowVariant(error);
     }
@@ -454,7 +487,7 @@ export class SupabaseRepository implements CatalogRepository {
       const { data, error: readError } = await this.require().from("product_variants")
         .select(VARIANTS_SELECT).eq("id", id).single();
       if (readError) this.rethrowVariant(readError);
-      return mapVariant(data as VariantRow);
+      return await this.mapActiveVariant(data as VariantRow);
     } catch (error) {
       this.rethrowVariant(error);
     }
@@ -467,6 +500,34 @@ export class SupabaseRepository implements CatalogRepository {
     } catch (error) {
       this.rethrowVariant(error);
     }
+  }
+
+  async listColorImages(productId?: string): Promise<ProductColorImage[]> {
+    try {
+      let query = this.require().from("product_color_images").select("*")
+        .order("color_key", { ascending: true })
+        .order("is_primary", { ascending: false })
+        .order("sort_order", { ascending: true });
+      if (productId) query = query.eq("product_id", productId);
+      const { data, error } = await query;
+      if (error) this.rethrowVariant(error);
+      return ((data ?? []) as ProductColorImage[]).map((row) => ({
+        ...row, sort_order: toNumber(row.sort_order), is_primary: Boolean(row.is_primary),
+      }));
+    } catch (error) { this.rethrowVariant(error); }
+  }
+
+  async replaceColorImages(productId: string, images: readonly ProductColorImageInput[]): Promise<ProductColorImage[]> {
+    try {
+      const { data, error } = await this.require().rpc("replace_product_color_images", {
+        p_product_id: productId,
+        p_images: images,
+      });
+      if (error) this.rethrowVariant(error);
+      return ((data ?? []) as ProductColorImage[]).map((row) => ({
+        ...row, sort_order: toNumber(row.sort_order), is_primary: Boolean(row.is_primary),
+      }));
+    } catch (error) { this.rethrowVariant(error); }
   }
 
   async listVariantReferences(): Promise<VariantReferenceMap> {
@@ -533,7 +594,7 @@ export class SupabaseRepository implements CatalogRepository {
       .eq("id", id)
       .single();
     if (error) this.rethrow(error);
-    return mapProduct(data as ProductRow);
+    return await this.mapActiveProduct(data as ProductRow);
   }
 
   // ── categories ─────────────────────────────────────────────────────────

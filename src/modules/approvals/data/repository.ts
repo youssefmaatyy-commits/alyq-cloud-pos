@@ -33,6 +33,8 @@ export interface ApprovalRepository {
   ): Promise<{ request: ApprovalRequest; alreadyDecided: boolean }>;
   /** Withdraw a pending request. Only its own requester (or an approver). */
   cancelRequest(id: string): Promise<ApprovalRequest>;
+  /** Verify one same-branch manager PIN for one exact pending request. Live only. */
+  approveWithManagerPin(id: string, username: string, pin: string): Promise<ApprovalRequest>;
   /**
    * Record what an approved request produced, once. This is what stops the same
    * decision being executed twice.

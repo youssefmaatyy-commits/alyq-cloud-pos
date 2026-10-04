@@ -156,11 +156,11 @@ const checks = [
   },
   {
     path: "#/pos/sales",
-    name: "Sales history",
+    name: "Invoice / Return Center",
     check: () => {
-      assert.ok(document.querySelector('input[type="checkbox"], [role="switch"]'), "sales: the Today toggle renders");
-      assert.ok([...document.querySelectorAll("th")].some((th) => (th.textContent ?? "").toLowerCase().includes("sale")),
-        "sales: the invoice table renders");
+      assert.ok(testid("sales-date-from") && testid("sales-date-to"), "sales: the authoritative date range renders");
+      assert.ok(document.querySelector('[data-testid^="transaction-"]'),
+        "sales: the linked transaction cards render");
     },
   },
   {

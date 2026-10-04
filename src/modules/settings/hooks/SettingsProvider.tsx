@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { AppError } from "@/modules/products/data/repository";
-import { canAct } from "@/lib/permissions/enforce";
+import { can } from "@/lib/permissions/enforce";
 import type { CustomRole } from "@/lib/permissions/customRoles";
 import { getSettingsMode, getSettingsRepository } from "../data";
 import type { SettingsRepository } from "../data/repository";
@@ -84,8 +84,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const repository = useMemo(() => getSettingsRepository(), []);
   const mode = getSettingsMode();
 
-  const canManageUsers = canAct("manage_users");
-  const canManageRoles = canAct("manage_roles");
+  const canManageUsers = can("users.manage");
+  const canManageRoles = can("roles.manage");
 
   // Mirrors so callbacks can read the current lists without being re-created on
   // every change (and so a mutation validates against what is on screen).

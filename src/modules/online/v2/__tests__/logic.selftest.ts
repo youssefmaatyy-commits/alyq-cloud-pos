@@ -44,29 +44,29 @@ function test(name: string, run: () => void) {
 
 test("color + size targets the one published variant UUID; unavailable combinations are not invented", () => {
   const model = variantModel([gold17, gold18, silver17, silverXS]);
-  assert.equal(model.exact("gold", "number:17")?.id, gold17.id);
-  assert.equal(model.exact("silver", "number:17")?.id, silver17.id);
-  assert.equal(model.exact("gold", "number:18"), null, "sold-out option remains visible but cannot be selected");
-  assert.equal(model.exact(null, "number:17"), null, "no implicit color");
+  assert.equal(model.exact("gold", "size:17")?.id, gold17.id);
+  assert.equal(model.exact("silver", "size:17")?.id, silver17.id);
+  assert.equal(model.exact("gold", "size:18"), null, "sold-out option remains visible but cannot be selected");
+  assert.equal(model.exact(null, "size:17"), null, "no implicit color");
   assert.equal(model.exact("gold", null), null, "no implicit size");
-  assert.equal(model.exact("gold", "label:xs"), null, "not a cross-product matrix");
+  assert.equal(model.exact("gold", "size:xs"), null, "not a cross-product matrix");
   assert.equal(model.sizesFor("gold").length, 2);
   assert.equal(model.sizesFor("gold")[1].available, 0);
 });
 
 test("letter, numeric and one-size labels all derive from data and sort without a fixed size list", () => {
-  assert.equal(sizeKeyOf({ size: 16.5, size_label: null }), "number:16.5");
-  assert.equal(sizeKeyOf(silverXS), "label:xs");
-  assert.equal(sizeKeyOf(silverOne), "label:one size");
+  assert.equal(sizeKeyOf({ size: 16.5, size_label: null }), "size:16.5");
+  assert.equal(sizeKeyOf(silverXS), "size:xs");
+  assert.equal(sizeKeyOf(silverOne), "size:one size");
   const model = variantModel([silverXS, silverOne, silver17, variant("half", { color_key: "silver", size: 16.5 })]);
   assert.deepEqual(model.sizesFor("silver").map((option) => option.label), ["16.5", "17", "One Size", "XS"]);
-  assert.equal(model.exact("silver", "label:one size")?.id, silverOne.id);
+  assert.equal(model.exact("silver", "size:one size")?.id, silverOne.id);
 });
 
 test("reservation holds, disabled tracking and non-active variants never become Quick Add substitutes", () => {
   const held = variantModel([gold17, silver17], new Map([[gold17.id, 2]]));
   assert.equal(held.remaining(gold17), 0);
-  assert.equal(held.exact("gold", "number:17"), null);
+  assert.equal(held.exact("gold", "size:17"), null);
   assert.equal(held.soleQuickAdd(), null, "even one surviving shelf still requires an explicit choice");
   assert.equal(variantModel([gold17]).soleQuickAdd()?.id, gold17.id);
   assert.equal(variantModel([gold17], new Map(), false).soleQuickAdd(), null);

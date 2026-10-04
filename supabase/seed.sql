@@ -135,28 +135,28 @@ insert into public.custom_roles (
     'Sales Manager', 'مدير مبيعات',
     'Full control of the till, returns and the online queue — without user or system settings.',
     'سيطرة كاملة على نقطة البيع والمرتجعات وطلبات الأونلاين — دون إعدادات المستخدمين أو النظام.',
-    '{view_inventory,sell,apply_discount,void_sale,confirm_payment,process_return,process_refund,approve_refund,open_shift,close_shift,view_shifts,approve_shift_adjustment,manage_online_orders,edit_sale,export_data,approve_return,view_reports,export_reports}'
+    '{view_dashboard,view_products,view_sales,view_inventory,sell,apply_discount,void_sale,confirm_payment,process_return,process_refund,approve_refund,open_shift,close_shift,view_shifts,approve_shift_adjustment,manage_online_orders,edit_sale,export_data,approve_return,view_reports,export_reports}'
   ),
   (
     '22222222-2222-4222-8222-222222220002', 'inventory_manager', 'manager',
     'Inventory Manager', 'مدير مخازن',
     'Stock and products, including imports, adjustments and the reports that follow them.',
     'المخزون والمنتجات، بما في ذلك الاستيراد والتسويات والتقارير المرتبطة بها.',
-    '{view_inventory,adjust_stock,add_product,edit_product,change_price,delete_product,import_data,export_data,view_reports,export_reports}'
+    '{view_dashboard,view_products,view_inventory,adjust_stock,add_product,edit_product,change_price,delete_product,import_data,export_data,view_reports,export_reports}'
   ),
   (
     '22222222-2222-4222-8222-222222220003', 'accountant', 'viewer',
     'Accountant', 'محاسب',
     'Sales, shift and expense reports, exports and the audit trail — nothing else.',
     'تقارير المبيعات والورديات والمصروفات والتصدير وسجل التدقيق — لا شيء آخر.',
-    '{view_inventory,process_refund,approve_refund,add_expense,edit_expense,view_shifts,view_audit_log,export_data,view_reports,export_reports,approve_expense}'
+    '{view_dashboard,view_products,view_inventory,process_refund,approve_refund,add_expense,edit_expense,view_shifts,view_audit_log,export_data,view_reports,export_reports,approve_expense}'
   ),
   (
     '22222222-2222-4222-8222-222222220004', 'warehouse_employee', 'inventory_clerk',
     'Warehouse Employee', 'موظف مخزن',
     'Receive and adjust stock, no pricing, no selling and no reports.',
     'استلام وتسوية المخزون، دون تسعير أو بيع أو تقارير.',
-    '{view_inventory,adjust_stock,import_data,export_data}'
+    '{view_dashboard,view_products,view_inventory,adjust_stock,import_data,export_data}'
   )
 on conflict (key) do update
   set base_role      = excluded.base_role,

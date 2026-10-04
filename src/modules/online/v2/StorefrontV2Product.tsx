@@ -48,7 +48,7 @@ export function StorefrontV2Product() {
 function V2Detail({ product, entry }: { product: Product; entry: CatalogProduct }) {
   const { t, pick, lang } = useI18n();
   const { settings, contentByProduct, products, catalogContext, categories, mode,
-    variantsOf, campaigns, promotions, promotionTargets, reviews } = useStorefront();
+    variantsOf, colorGalleryFor, campaigns, promotions, promotionTargets, reviews } = useStorefront();
   const { add, setQuantity, lines } = useStoreCart();
   const { inWishlist, toggleWishlist } = useStoreAccount();
   const content: ProductContent | null = contentByProduct.get(product.id) ?? null;
@@ -82,8 +82,10 @@ function V2Detail({ product, entry }: { product: Product; entry: CatalogProduct 
     const original = [product.image_url, ...product.images,
       ...(content?.media?.slice().sort((a, b) => a.sort_order - b.sort_order).map((item) => item.url) ?? [])]
       .filter((url): url is string => Boolean(url?.trim()));
-    return [...new Set(selected?.image_url ? [selected.image_url, ...original] : original)];
-  }, [product.image_url, product.images, content?.media, selected?.image_url]);
+    const colorGallery = color ? colorGalleryFor(product.id, color).map((image) => image.image_url) : [];
+    const selectedFallback = selected?.image_url ? [selected.image_url] : [];
+    return [...new Set(colorGallery.length ? colorGallery : [...selectedFallback, ...original])];
+  }, [product.id,product.image_url, product.images, content?.media, selected?.image_url,color,colorGalleryFor]);
   const sections = productContentSections(content);
   const hasSizeGuide = sections.some((section) => section.key === "dimensions");
   const available = product.variants_enabled ? selected ? model.remaining(selected) : 0 : entry.available ?? 0;
@@ -93,6 +95,8 @@ function V2Detail({ product, entry }: { product: Product; entry: CatalogProduct 
   const related = useMemo(() => relatedProducts(product, products, catalogContext, 4),
     [product, products, catalogContext]);
   const productReviews = reviews.filter((review) => review.visible && review.product_id === product.id);
+
+  useEffect(()=>setImageIndex(0),[color]);
 
   useEffect(() => {
     const baseUrl = window.location.href.split("#")[0];

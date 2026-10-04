@@ -13,7 +13,7 @@ import {
   STOCK_DEFAULT_BY_TYPE,
 } from "../constants";
 import { PRODUCT_TYPES, marginPct, stockStatus, suggestSku, type Product, type ProductType } from "../types";
-import { colorKeyOf, type ProductVariant } from "../variants";
+import { colorKeyOf, variantSizeValue, type ProductVariant } from "../variants";
 import {
   EMPTY_PRODUCT_FORM,
   fieldErrorKey,
@@ -34,7 +34,7 @@ import { buildBarcodeLabelHtml } from "../services/barcodeLabel";
 import { StockBadge } from "./ProductTable";
 import { ProductVariantsForm, EMPTY_PRODUCT_VARIANT_FORM, type ProductVariantFormValue } from "./ProductVariantsForm";
 import { validateVariantDraft, variantDraftTotal } from "../services/variantDraft";
-import { enableVariants, listVariants, saveVariant } from "../services/variantService";
+import { enableVariants, listVariants, replaceColorImages, saveVariant } from "../services/variantService";
 
 export function ProductForm({ productId }: { productId?: string }) {
   const { t, pick, money, num, isRTL } = useI18n();
@@ -278,12 +278,13 @@ export function ProductForm({ productId }: { productId?: string }) {
     const created: ProductVariant[] = (await listVariants()).filter((variant) => variant.product_id === result.product.id);
     const ordered: ProductVariant[] = [];
     for (const row of variantConfig.rows) {
-      const size = row.size.trim() ? Number(row.size.replace(",", ".")) : null;
-      const label = size === null ? row.size_label.trim() : "";
+      const sizeValue = row.size.trim() || null;
+      const numericSize = sizeValue && /^[0-9]+(?:\.[0-9]{1,2})?$/.test(sizeValue)
+        ? Number(sizeValue) : null;
       const colorKey = row.color_key || colorKeyOf(row);
       const previous = created.find((variant) => variant.id === resume.ids.get(row.id)) ?? created.find(
-        (variant) => variant.color_key === colorKey && variant.size === size &&
-          (size !== null || (variant.size_label ?? "") === label),
+        (variant) => variant.color_key === colorKey &&
+          variantSizeValue(variant).toLocaleLowerCase() === (sizeValue ?? "").toLocaleLowerCase(),
       );
       const rowValues = {
         sku: row.sku, barcode: row.barcode.trim() || null,
@@ -291,8 +292,9 @@ export function ProductForm({ productId }: { productId?: string }) {
         color_ar: row.color_ar.trim() || null,
         color_en: row.color_en.trim() || null,
         color_hex: row.color_hex.trim() || null,
-        size, size_label: label || null,
-        image_url: row.image_url.trim() || variantConfig.colors.find((color) => color.id === row.color_id)?.image_url || null,
+        size: numericSize, size_label: sizeValue, size_value: sizeValue,
+        size_sort_order: row.size_sort_order,
+        image_url: row.image_url.trim() || null,
         price_override: row.price_override.trim() ? Number(row.price_override) : null,
         cost_override: canAct("change_cost") && row.cost_override.trim() ? Number(row.cost_override) : null,
         stock_quantity: 0, low_stock_level: Number(row.low_stock_level),
@@ -304,6 +306,8 @@ export function ProductForm({ productId }: { productId?: string }) {
         previous.sku !== rowValues.sku || previous.barcode !== rowValues.barcode ||
         previous.color_ar !== rowValues.color_ar || previous.color_en !== rowValues.color_en ||
         previous.color_hex !== rowValues.color_hex || previous.image_url !== rowValues.image_url ||
+        variantSizeValue(previous) !== (rowValues.size_value ?? "") ||
+        (previous.size_sort_order ?? 0) !== rowValues.size_sort_order ||
         previous.price_override !== rowValues.price_override || previous.cost_override !== rowValues.cost_override ||
         previous.low_stock_level !== rowValues.low_stock_level || previous.active !== rowValues.active
       );
@@ -324,6 +328,17 @@ export function ProductForm({ productId }: { productId?: string }) {
         quantity: Number(variantConfig.rows[index].stock_quantity),
       })),
     );
+    await replaceColorImages(result.product.id, variantConfig.colors.flatMap((color) => {
+      const colorKey = color.id && !color.id.startsWith("color:") ? color.id : colorKeyOf(color);
+      return color.image_urls.map((image_url,index) => ({
+        color_key: colorKey,
+        image_url,
+        alt_ar: color.color_ar.trim() || null,
+        alt_en: color.color_en.trim() || null,
+        sort_order: index,
+        is_primary: index===0,
+      }));
+    }));
     await refresh();
     variantBootstrap.current = null;
     setBootstrapPending(false);

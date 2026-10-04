@@ -1,0 +1,14 @@
+{
+  "name": "ALYQ Mobile Management",
+  "short_name": "ALYQ Mobile",
+  "id": "/#/mobile",
+  "start_url": "/#/mobile",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f4f6f8",
+  "theme_color": "#111827",
+  "description": "Management and operational monitoring for the ALYQ system",
+  "icons": [
+    { "src": "/alyq-logo.png", "sizes": "192x192", "type": "image/png", "purpose": "any" }
+  ]
+}

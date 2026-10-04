@@ -1,5 +1,6 @@
+import { useState } from "react";
 import { useI18n } from "@/lib/i18n/I18nProvider";
-import { Button, TextInput } from "@/components/ui";
+import { Button, ConfirmDialog, TextInput } from "@/components/ui";
 import { variantLabel } from "@/modules/products/variants";
 import { CustomerSearchSelect } from "@/modules/customers/components/CustomerSearchSelect";
 import { lineKey, type CartLine } from "../types";
@@ -37,11 +38,22 @@ const CART_COLS = "xl:grid-cols-[minmax(0,1fr)_5rem_10rem_7.5rem_6rem_2.25rem]";
 export function CartPanel() {
   const { t, num } = useI18n();
   const {
-    lines, totals, discount, setDiscount, increase, decrease, removeLine,
+    lines, totals, discount, setDiscount, increase, setQuantity, decrease, removeLine,
     setLineDiscount, clearCart, canDiscount, selectedCustomer, setSelectedCustomer,
+    heldCarts, holdCurrentCart, restoreHeldCart, cancelHeldCart, saleNote, setSaleNote,
+    couponInput, setCouponInput, appliedCouponCode, couponDiscountAmount, couponError, applyingCoupon, applyCoupon, removeCoupon,
+    connectivity, workingFromCache, syncPendingCount, syncErrorCount, syncConflictCount, retrySync,
   } = usePos();
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [noteOpen, setNoteOpen] = useState(false);
   const discountError = validateDiscount(discount.type, discount.value);
   const count = lines.reduce((sum, line) => sum + line.qty, 0);
+  const automaticPromotionDiscount = Math.max(0, (totals.promoDiscountAmount ?? 0) - couponDiscountAmount);
+  const syncLabel = syncConflictCount > 0
+    ? `${t("pos.syncConflict")} (${syncConflictCount})`
+    : syncErrorCount > 0
+      ? `${t("pos.syncFailed")} (${syncErrorCount})`
+      : syncPendingCount > 0 ? `${t("pos.syncPending")} (${syncPendingCount})` : t("pos.synced");
 
   return (
     <div
@@ -60,17 +72,37 @@ export function CartPanel() {
               {count}
             </span>
           </p>
-          {lines.length > 0 && (
-            <button
-              type="button"
-              onClick={clearCart}
-              className="text-xs font-semibold text-stone-600 underline-offset-2 hover:text-rose-700 hover:underline"
-              data-testid="pos-clear-cart"
-            >
-              {t("pos.clearCart")}
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            {lines.length > 0 && (
+              <button
+                type="button"
+                onClick={() => { void holdCurrentCart(); }}
+                className="text-xs font-semibold text-amber-800 underline-offset-2 hover:underline"
+                data-testid="pos-hold-cart"
+              >
+                {t("pos.holdCart")}
+              </button>
+            )}
+            {lines.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setConfirmClear(true)}
+                className="text-xs font-semibold text-stone-600 underline-offset-2 hover:text-rose-700 hover:underline"
+                data-testid="pos-clear-cart"
+              >
+                {t("pos.clearCart")}
+              </button>
+            )}
+          </div>
         </div>
+        {(connectivity === "offline" || syncPendingCount + syncErrorCount + syncConflictCount > 0) && (
+          <div className={`mt-2 flex items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-[11px] font-semibold ${connectivity === "offline" ? "bg-amber-50 text-amber-900" : "bg-stone-100 text-stone-700"}`} data-testid="pos-sync-status">
+            <span>{connectivity === "offline" ? t("pos.offline") : syncLabel}{workingFromCache ? ` · ${t("pos.cachedCatalog")}` : ""}</span>
+            {connectivity === "online" && (
+              <button type="button" onClick={() => { void retrySync(); }} className="underline">{t("pos.retrySync")}</button>
+            )}
+          </div>
+        )}
         {/* Customer selector + quick-add + walk-in clear, in the fixed header:
             adding many products never pushes it away. */}
         <div className="mt-2">
@@ -79,6 +111,30 @@ export function CartPanel() {
             onSelect={(customer) => setSelectedCustomer(customer)}
           />
         </div>
+        {heldCarts.length > 0 && (
+          <div className="mt-2 flex flex-wrap items-center gap-1.5" data-testid="pos-held-carts">
+            <span className="text-[11px] font-bold text-stone-500">{t("pos.heldCarts")}</span>
+            {heldCarts.map((held) => (
+              <span key={held.id} className="inline-flex items-center gap-1 rounded-lg bg-amber-50 px-1.5 py-1 text-[11px] font-semibold text-amber-900 ring-1 ring-inset ring-amber-200">
+                <button
+                  type="button"
+                  onClick={() => { void restoreHeldCart(held.id); }}
+                  disabled={lines.length > 0}
+                  className="disabled:cursor-not-allowed disabled:opacity-50"
+                  title={held.customer?.name ?? held.created_at}
+                >
+                  {t("pos.restoreCart")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { void cancelHeldCart(held.id); }}
+                  aria-label={t("pos.cancelHeldCart")}
+                  className="text-rose-700"
+                >×</button>
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       {lines.length === 0 ? (
@@ -119,6 +175,7 @@ export function CartPanel() {
                 canDiscount={canDiscount}
                 onIncrease={increase}
                 onDecrease={decrease}
+                onQuantity={setQuantity}
                 onRemove={removeLine}
                 onDiscount={setLineDiscount}
               />
@@ -134,14 +191,39 @@ export function CartPanel() {
             <span>{t("pos.subtotal")}</span>
             <span className="tabular-nums" dir="ltr">{num(totals.subtotal, 2)}</span>
           </div>
-          {totals.promoDiscountAmount > 0 && (
+          {automaticPromotionDiscount > 0 && (
             <div className="mt-0.5 flex items-center justify-between text-emerald-700">
               <span className="flex items-center gap-1 font-medium">
                 <span className="text-xs">🏷️</span> {t("online.promos.title")}
               </span>
-              <span className="tabular-nums" dir="ltr">−{num(totals.promoDiscountAmount, 2)}</span>
+              <span className="tabular-nums" dir="ltr">−{num(automaticPromotionDiscount, 2)}</span>
             </div>
           )}
+          <div className="mt-2 rounded-lg border border-stone-200 bg-stone-50 p-2" data-testid="pos-coupon-control">
+            {appliedCouponCode ? (
+              <div className="flex items-center justify-between gap-2 text-xs">
+                <span className="font-semibold text-emerald-800">{t("pos.couponApplied")} <b dir="ltr">{appliedCouponCode}</b> · −{num(couponDiscountAmount, 2)}</span>
+                <button type="button" onClick={removeCoupon} className="font-bold text-stone-600 underline hover:text-stone-900">{t("pos.removeCoupon")}</button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5">
+                <TextInput
+                  dir="ltr"
+                  autoComplete="off"
+                  value={couponInput}
+                  onChange={(event) => setCouponInput(event.target.value.toUpperCase())}
+                  onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void applyCoupon(); } }}
+                  placeholder={t("pos.couponPlaceholder")}
+                  aria-label={t("pos.coupon")}
+                  className="h-8 min-w-0 flex-1 py-0.5 text-xs uppercase"
+                />
+                <button type="button" disabled={applyingCoupon || !couponInput.trim() || lines.length === 0} onClick={() => { void applyCoupon(); }} className="h-8 rounded-md bg-stone-900 px-2 text-xs font-bold text-white disabled:opacity-50">
+                  {applyingCoupon ? t("common.loading") : t("pos.applyCoupon")}
+                </button>
+              </div>
+            )}
+            {couponError && <p className="mt-1 text-[11px] font-medium text-rose-700" role="alert">{couponError}</p>}
+          </div>
           {totals.itemDiscountAmount > 0 && (
             <div className="mt-0.5 flex items-center justify-between text-stone-600">
               <span>{t("pos.itemDiscountsTotal")}</span>
@@ -150,12 +232,13 @@ export function CartPanel() {
           )}
           {/* Invoice-level discount: a separate control from خصم القطعة; both
               feed the same existing pricing engine and never overwrite each other. */}
+          {canDiscount ? (
+            <>
           <div className="mt-1.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
             <span className="flex min-w-0 flex-wrap items-center gap-1.5">
               <span className="text-xs font-bold text-stone-700">{t("pos.invoiceDiscount")}</span>
               <select
                 aria-label={t("pos.invoiceDiscount")}
-                disabled={!canDiscount}
                 value={discount.type}
                 onChange={(event) => setDiscount({ ...discount, type: event.target.value as typeof discount.type })}
                 className="h-8 rounded-lg border border-stone-200 bg-white px-1.5 text-xs font-semibold text-stone-800 focus:border-stone-400"
@@ -168,8 +251,7 @@ export function CartPanel() {
                 <TextInput
                   dir="ltr"
                   inputMode="decimal"
-                  disabled={!canDiscount}
-                  value={String(discount.value)}
+                    value={String(discount.value)}
                   invalid={Boolean(discountError)}
                   onChange={(event) => setDiscount({ ...discount, value: Number(event.target.value) })}
                   placeholder={t("pos.discountValue")}
@@ -189,7 +271,28 @@ export function CartPanel() {
               {t(discountError === "tooHigh" ? "pos.discountTooHigh" : "pos.discountInvalid")}
             </p>
           )}
-          {!canDiscount && <p className="mt-1 text-xs text-stone-600">{t("pos.discountLocked")}</p>}
+          </>
+          ) : null}
+          <div className="mt-1.5" data-testid="pos-sale-note">
+            <button
+              type="button"
+              onClick={() => setNoteOpen((open) => !open)}
+              className="text-xs font-bold text-stone-600 underline-offset-2 hover:text-stone-900 hover:underline"
+              aria-expanded={noteOpen}
+            >
+              {saleNote ? `📝 ${t("pos.notesAdded")}` : `＋ ${t("pos.addNote")}`}
+            </button>
+            {noteOpen ? (
+              <TextInput
+                value={saleNote}
+                maxLength={500}
+                onChange={(event) => setSaleNote(event.target.value)}
+                placeholder={t("pos.notesPlaceholder")}
+                aria-label={t("pos.saleNote")}
+                className="mt-1 h-8 text-xs"
+              />
+            ) : null}
+          </div>
           <div className="mt-1.5 flex items-center justify-between border-t border-stone-200 pt-1.5 text-base font-extrabold text-stone-900">
             <span>{t("pos.total")}</span>
             <span className="tabular-nums" dir="ltr">{num(totals.total, 2)}</span>
@@ -200,6 +303,19 @@ export function CartPanel() {
             area — the cashier always sees how the sale is being settled. */}
         <PaymentPanel />
       </div>
+      <ConfirmDialog
+        open={confirmClear}
+        title={t("pos.clearCart")}
+        body={t("pos.clearCartConfirm")}
+        confirmLabel={t("pos.clearCart")}
+        cancelLabel={t("common.cancel")}
+        tone="danger"
+        onCancel={() => setConfirmClear(false)}
+        onConfirm={() => {
+          clearCart();
+          setConfirmClear(false);
+        }}
+      />
     </div>
   );
 }
@@ -214,6 +330,7 @@ function CartRow({
   canDiscount,
   onIncrease,
   onDecrease,
+  onQuantity,
   onRemove,
   onDiscount,
 }: {
@@ -221,6 +338,7 @@ function CartRow({
   canDiscount: boolean;
   onIncrease: (key: string) => void;
   onDecrease: (key: string) => void;
+  onQuantity: (key: string, quantity: number) => void;
   onRemove: (key: string) => void;
   onDiscount: (key: string, discount: { type: "none" | "percent" | "fixed"; value: number }) => void;
 }) {
@@ -297,10 +415,10 @@ function CartRow({
         </div>
 
         {/* خصم القطعة — بدون / % / مبلغ ثابت, on the existing engine */}
+        {canDiscount ? (
         <div className="flex min-w-0 items-center gap-1">
           <select
             aria-label={t("pos.lineDiscount")}
-            disabled={!canDiscount}
             value={type}
             onChange={(event) =>
               onDiscount(key, {
@@ -321,7 +439,6 @@ function CartRow({
                 type="number"
                 min="0"
                 max={type === "percent" ? 100 : undefined}
-                disabled={!canDiscount}
                 value={line.item_discount?.value ?? 0}
                 onChange={(event) =>
                   onDiscount(key, { type: type as "percent" | "fixed", value: Number(event.target.value) })
@@ -332,7 +449,6 @@ function CartRow({
               <button
                 type="button"
                 onClick={() => onDiscount(key, { type: "none", value: 0 })}
-                disabled={!canDiscount}
                 aria-label={t("pos.itemDiscountReset")}
                 title={t("pos.itemDiscountReset")}
                 className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-xs font-bold text-stone-400 transition hover:bg-stone-100 hover:text-stone-700"
@@ -342,6 +458,7 @@ function CartRow({
             </>
           )}
         </div>
+        ) : null}
       </div>
 
       {/* الكمية + الإجمالي + حذف (mobile row 2) → grid columns 4–6 on desktop */}
@@ -362,9 +479,18 @@ function CartRow({
           >
             −
           </Button>
-          <span className="w-7 text-center text-sm font-bold tabular-nums text-stone-900" data-testid={`cart-quantity-${key}`}>
-            {line.qty}
-          </span>
+          <input
+            type="number"
+            inputMode="numeric"
+            min={1}
+            max={line.max_qty}
+            value={line.qty}
+            onChange={(event) => onQuantity(key, Number(event.target.value))}
+            onFocus={(event) => event.currentTarget.select()}
+            aria-label={`${name} · ${t("pos.quantity")}`}
+            className="h-9 w-11 rounded-lg border border-stone-200 bg-white text-center text-sm font-bold tabular-nums text-stone-900 outline-none focus:border-stone-500"
+            data-testid={`cart-quantity-${key}`}
+          />
           <Button
             type="button"
             variant="secondary"

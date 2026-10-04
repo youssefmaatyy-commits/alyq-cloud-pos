@@ -45,6 +45,9 @@ export function ReturnsPage({ initialTab = "returns" }: { initialTab?: "returns"
     let instapayRefunded = 0;
 
     for (const ref of refundsList) {
+      // Pending is money still owed and rejected is money never paid. Financial
+      // totals include only completed settlement records.
+      if (ref.status !== "completed") continue;
       totalRefunded += ref.amount;
       if (ref.payment_method === "cash") cashRefunded += ref.amount;
       if (ref.payment_method === "instapay") instapayRefunded += ref.amount;

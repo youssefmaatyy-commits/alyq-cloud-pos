@@ -3,11 +3,16 @@ import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { useCatalog } from "@/modules/products/hooks/CatalogProvider";
 import { useInventory } from "@/modules/inventory/hooks/InventoryProvider";
+import { usePos } from "@/modules/pos/hooks/PosProvider";
 import { useAuth } from "@/lib/auth";
+import { useBranch } from "@/lib/branch";
+import { desktopApi, getDesktopConfig } from "@/lib/desktop/bridge";
+import { useRegister } from "@/modules/registers";
+import { sendRegisterHeartbeat } from "@/modules/registers/services/registerService";
 import { ROLE_LABELS } from "@/lib/permissions/roles";
-import { canAct } from "@/lib/permissions/enforce";
+import { can } from "@/lib/permissions/enforce";
 import { openStorefrontRoute } from "@/lib/storefront/storefrontLink";
-import { pathAdmits } from "@/lib/permissions/routes";
+import { pathPermits } from "@/lib/permissions/routes";
 import { useOnlineNotificationState } from "@/modules/online/hooks/OnlineNotificationsProvider";
 import { useOptionalApprovals } from "@/modules/approvals";
 import { normalizeText } from "@/modules/products/services/productQuery";
@@ -22,7 +27,6 @@ import {
   GlobeIcon,
   GridIcon,
   MenuIcon,
-  PlusCircleIcon,
   ShoppingCartIcon,
   ReportIcon,
 } from "@/components/ui";
@@ -153,17 +157,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // the same capability table the route guard reads allows the screen.
   const { user } = useInventory();
   const { signOut, signOutEverywhere, endReason, user: sessionUser } = useAuth();
+  const branch = useBranch();
+  const registerContext = useRegister();
+  const pos = usePos();
   const navigate = useNavigate();
   const brand = useBrand();
   const canOpen = (path: string) =>
     // Same answer as the route guard, alternates included. A module door that
     // has no open child is hidden by the callers below — not by a role name.
-    pathAdmits(path, (capability) => canAct(capability));
-  const canManageOnline = canAct("manage_online_orders");
-  const canManageWebsite = canAct("manage_website");
-  const canManageUsers = canAct("manage_users");
-  const canManageRoles = canAct("manage_roles");
-  const canManageSettings = canAct("manage_settings");
+    pathPermits(path, (permission) => can(permission));
+  const canManageOnline = can("orders.view");
+  const canManageWebsite = can("website.manage");
+  const canManageUsers = can("users.manage");
+  const canManageRoles = can("roles.manage");
+  const canManageSettings = can("settings.manage");
+  const canSearchProducts = can("products.view");
   // Approval limits (Phase 12): the badge is the inbox's pending count, read
   // from the provider the shell is mounted inside. `useOptional` because the
   // storefront and the login screen render without it.
@@ -178,6 +186,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const online = useOnlineNotificationState();
   const location = useLocation();
   const [open, setOpen] = useState(false);
+  const [desktopFullscreen, setDesktopFullscreen] = useState<boolean | null>(null);
   const [collapsed, setCollapsed] = useState(() => {
     try {
       return window.localStorage.getItem(COLLAPSE_KEY) === "1";
@@ -189,6 +198,50 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     setOpen(false);
   }, [location.pathname]);
+
+  useEffect(() => {
+    const api = desktopApi();
+    if (!api) return;
+    void api.getContext().then((context) => setDesktopFullscreen(context.fullscreen));
+    return api.onFullscreenChanged((enabled) => setDesktopFullscreen(enabled));
+  }, []);
+
+  // Desktop closure warnings and register heartbeats reuse the durable outbox
+  // facts. No payload, customer detail, credential or printer name leaves the
+  // process in diagnostics/metadata.
+  useEffect(() => {
+    const api = desktopApi();
+    if (!api) return;
+    void api.setRuntimeState({
+      pending: pos.syncPendingCount + pos.syncErrorCount + pos.syncDeferredCount,
+      conflicts: pos.syncConflictCount,
+    });
+  }, [pos.syncConflictCount, pos.syncDeferredCount, pos.syncErrorCount, pos.syncPendingCount]);
+
+  useEffect(() => {
+    if (registerContext.state.kind !== "desktop-ready") return;
+    let stopped = false;
+    const report = async () => {
+      try {
+        const config = await getDesktopConfig();
+        if (!config || stopped) return;
+        await sendRegisterHeartbeat({
+          pending: pos.syncPendingCount + pos.syncErrorCount + pos.syncDeferredCount,
+          conflicts: pos.syncConflictCount,
+          hardware: {
+            printer_configured: Boolean(config.hardware.printerName),
+            paper_width_mm: config.hardware.paperWidthMm,
+            drawer_mode: config.hardware.drawerMode,
+          },
+        });
+      } catch {
+        // Heartbeat is operational metadata, never a reason to stop the till.
+      }
+    };
+    void report();
+    const timer = window.setInterval(() => { void report(); }, 60_000);
+    return () => { stopped = true; window.clearInterval(timer); };
+  }, [registerContext.state.kind, pos.syncConflictCount, pos.syncDeferredCount, pos.syncErrorCount, pos.syncPendingCount]);
 
   const toggleCollapsed = () => {
     setCollapsed((current) => {
@@ -253,7 +306,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     const needle = query.trim();
     if (!needle) return;
     setSearchOpen(false);
-    navigate(`/products?q=${encodeURIComponent(needle)}`);
+    navigate(
+      canSearchProducts
+        ? `/products?q=${encodeURIComponent(needle)}`
+        : `/online/orders?search=${encodeURIComponent(needle)}`,
+    );
   };
 
   const notificationTotal = pendingApprovals + online.counts.pending;
@@ -344,16 +401,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           }
           collapsed={navCollapsed}
         />
-        <NavItem
-          to="/online/discounts"
-          icon={<PlusCircleIcon />}
-          label={t("online.promos.title")}
-          visible={canOpen("/online/discounts")}
-          active={location.pathname === "/online/discounts" || location.pathname.startsWith("/online/discounts/")}
-          collapsed={navCollapsed}
-        />
         <NavItem to="/reports" icon={<ReportIcon />} label={t("nav.reports")} visible={canOpen("/reports")} collapsed={navCollapsed} />
-        {canManageUsers || canManageRoles || canManageSettings || canOpen("/settings/backup") || canOpen("/settings/operations") || canOpen("/audit") || canAct("manage_system_reset") || canManageWebsite ? (
+        {canManageUsers || canManageRoles || canManageSettings || canOpen("/settings/backup") || canOpen("/settings/operations") || canOpen("/audit") || can("system.reset") || canManageWebsite ? (
           <NavItem
             to="/settings"
             icon={<ArchiveIcon />}
@@ -500,7 +549,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <MenuIcon />
           </button>
 
-          {/* Global search — real entities only (see above). */}
+          {/* Global search — only modules this identity may open contribute results. */}
+          {canSearchProducts || canManageOnline ? (
           <div ref={searchRef} className="relative min-w-0 flex-1 max-w-md">
             <div className="flex items-center gap-2 rounded-xl border border-stone-200 bg-white px-3 shadow-sm focus-within:border-stone-400">
               <span aria-hidden className="text-stone-400">
@@ -538,7 +588,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 className="absolute inset-x-0 top-11 z-40 overflow-hidden rounded-xl border border-stone-200 bg-white shadow-xl"
                 data-testid="global-search-panel"
               >
-                {productMatches.length > 0 ? (
+                {canSearchProducts && productMatches.length > 0 ? (
                   productMatches.map((product) => (
                     <Link
                       key={product.id}
@@ -555,11 +605,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                       </span>
                     </Link>
                   ))
-                ) : (
+                ) : canSearchProducts ? (
                   <p className="px-3 py-2 text-xs font-medium text-stone-400">
                     {t("admin.shell.searchNoProducts")}
                   </p>
-                )}
+                ) : null}
                 {canOpen("/online/orders") && (canManageOnline || canManageWebsite) ? (
                   <button
                     type="button"
@@ -576,6 +626,67 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </div>
             ) : null}
           </div>
+          ) : <div className="flex-1" />}
+
+          {desktopFullscreen !== null && location.pathname === "/pos" ? (
+            <button
+              type="button"
+              data-testid="cashier-fullscreen"
+              title={desktopFullscreen ? "Exit cashier full screen" : "Cashier full screen"}
+              aria-label={desktopFullscreen ? "Exit cashier full screen" : "Cashier full screen"}
+              onClick={() => {
+                const api = desktopApi();
+                if (!api) return;
+                void api.setFullscreen(!desktopFullscreen).then((result) => setDesktopFullscreen(result.fullscreen));
+              }}
+              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-stone-200 bg-white text-sm font-black text-stone-700 shadow-sm"
+            >⛶</button>
+          ) : null}
+
+          {/* One application-wide connectivity model. A compact dot remains on
+              small screens; the state and queue count link to safe detail. */}
+          {canOpen("/sync") ? (
+            <Link
+              to="/sync"
+              data-testid="operational-status"
+              aria-label={`${pos.connectivityState}; ${pos.syncPendingCount} pending sync operations`}
+              className={cn(
+                "inline-flex h-9 shrink-0 items-center gap-1.5 rounded-xl border px-2 text-[11px] font-black uppercase",
+                pos.connectivityState === "online" && "border-emerald-200 bg-emerald-50 text-emerald-800",
+                pos.connectivityState === "syncing" && "border-sky-200 bg-sky-50 text-sky-800",
+                pos.connectivityState === "offline" && "border-stone-300 bg-stone-100 text-stone-700",
+                pos.connectivityState === "degraded" && "border-amber-200 bg-amber-50 text-amber-800",
+                pos.connectivityState === "sync_error" && "border-rose-200 bg-rose-50 text-rose-800",
+              )}
+            >
+              <span className={cn("h-2 w-2 rounded-full", pos.connectivityState === "online" ? "bg-emerald-500" : pos.connectivityState === "syncing" ? "animate-pulse bg-sky-500" : pos.connectivityState === "sync_error" ? "bg-rose-500" : pos.connectivityState === "degraded" ? "bg-amber-500" : "bg-stone-500")} />
+              <span className="hidden sm:inline">{pos.connectivityState === "online" ? t("pos.online") : pos.connectivityState === "offline" ? t("pos.offline") : pos.connectivityState === "syncing" ? t("pos.syncing") : pos.connectivityState === "degraded" ? t("pos.degraded") : t("pos.syncError")}</span>
+              {pos.syncPendingCount + pos.syncErrorCount + pos.syncDeferredCount + pos.syncConflictCount > 0 ? <span className="rounded-full bg-white/80 px-1 tabular-nums">{pos.syncPendingCount + pos.syncErrorCount + pos.syncDeferredCount + pos.syncConflictCount}</span> : null}
+            </Link>
+          ) : null}
+
+          {/* Branch is an authority boundary, not a cosmetic store filter. The
+              RPC refuses unassigned ids; a successful switch remounts every
+              business provider and refreshes the synchronous capability set. */}
+          {branch.current ? (
+            <label className="relative flex min-w-0 max-w-28 items-center sm:max-w-40" title={branch.current.code}>
+              <span className="sr-only">{lang === "ar" ? "الفرع النشط" : "Active branch"}</span>
+              <select
+                data-testid="branch-switcher"
+                value={branch.current.id}
+                disabled={branch.switching || branch.loading || branch.branches.length < 2 || pos.connectivitySnapshot.backend !== "reachable" || pos.connectivitySnapshot.session !== "usable"}
+                onChange={(event) => { void branch.switchBranch(event.target.value); }}
+                className="h-9 max-w-44 appearance-none truncate rounded-xl border border-stone-200 bg-white py-0 ps-3 pe-8 text-xs font-bold text-stone-700 outline-none hover:bg-stone-50 disabled:cursor-default disabled:opacity-80"
+              >
+                {branch.branches.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {lang === "ar" ? item.name_ar : item.name_en}
+                  </option>
+                ))}
+              </select>
+              <ChevronIcon className="pointer-events-none absolute end-2.5 h-3 w-3 -rotate-90 text-stone-400" />
+            </label>
+          ) : null}
 
           {/* Notifications — one menu for the two inboxes the sidebar badges
               already count. A viewer with neither inbox sees no button at all
@@ -648,6 +759,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </span>
           ) : null}
         </header>
+        {(pos.connectivityState === "offline" || pos.connectivityState === "degraded") ? (
+          <Link to={canOpen("/sync") ? "/sync" : location.pathname} className="block border-b border-amber-200 bg-amber-50 px-4 py-2 text-center text-xs font-bold text-amber-950" data-testid="offline-authority-banner">
+            {t("pos.offlineCashOnly")} · {t("pos.cachedCatalog")}
+          </Link>
+        ) : null}
 
         <main className="mx-auto w-full max-w-7xl px-3 py-4 sm:px-6 sm:py-6 lg:px-8">
           <RouteGuard>{children}</RouteGuard>

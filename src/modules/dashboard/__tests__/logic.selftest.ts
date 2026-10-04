@@ -327,6 +327,19 @@ test("returns: pending refunds counted", () => {
   assert.equal(kpis.pendingRefunds, 2);
 });
 
+test("returns: rejected or pending settlements never count as refunded money", () => {
+  const returns = [
+    salesReturn({ id: "done", refund_amount: 100, refund_status: "completed" }),
+    salesReturn({ id: "waiting", refund_amount: 80, refund_status: "pending" }),
+    salesReturn({ id: "declined", refund_amount: 60, refund_status: "rejected" }),
+  ];
+  const kpis = computeReturnsKpis(returns, []);
+  assert.equal(kpis.todayCount, 2, "completed and pending returns remain operational work");
+  assert.equal(kpis.totalCount, 2, "a rejected return is not a completed return");
+  assert.equal(kpis.todayTotal, 100, "only completed money is shown as refunded");
+  assert.equal(kpis.totalRefunded, 100);
+});
+
 // ── Expenses KPIs ───────────────────────────────────────────────────────────
 
 test("expenses: empty yields zeroes", () => {

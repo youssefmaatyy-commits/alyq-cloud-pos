@@ -6,8 +6,10 @@ import type {
   Product,
   ProductPatch,
 } from "../types";
-import type { NewProductVariant, ProductVariant, ProductVariantPatch } from "../variants";
-import { colorKeyOf, variantLabel } from "../variants";
+import type {
+  NewProductVariant, ProductColorImage, ProductColorImageInput, ProductVariant, ProductVariantPatch,
+} from "../variants";
+import { colorKeyOf, compareVariants, variantLabel, variantSizeValue } from "../variants";
 import {
   AppError,
   type CatalogRepository,
@@ -51,6 +53,7 @@ interface DemoState {
    * on this same key so an existing snapshot keeps restoring.
    */
   variants: ProductVariant[];
+  color_images: ProductColorImage[];
   /** Stamp of the default range this state came from — see SEED_REVISION. */
   seed_revision?: number;
 }
@@ -89,7 +92,11 @@ export class DemoRepository implements CatalogRepository {
           // A blob written by a build that predates variants on the same
           // revision would leave the key undefined; normalise rather than
           // crash on the first `listVariants()`.
-          return { ...parsed, variants: Array.isArray(parsed.variants) ? parsed.variants : [] };
+          return {
+            ...parsed,
+            variants: Array.isArray(parsed.variants) ? parsed.variants : [],
+            color_images: Array.isArray(parsed.color_images) ? parsed.color_images : [],
+          };
         }
         /* Otherwise fall through: the blob is either damaged, or it holds a
            default range this build has since replaced. */
@@ -101,6 +108,7 @@ export class DemoRepository implements CatalogRepository {
       categories: buildDemoCategories(),
       products: buildDemoProducts(),
       variants: [],
+      color_images: [],
       seed_revision: SEED_REVISION,
     };
     this.persist(seeded);
@@ -224,6 +232,39 @@ export class DemoRepository implements CatalogRepository {
     return delay([...this.state.variants].sort(compareVariantRows));
   }
 
+  listColorImages(productId?: string): Promise<ProductColorImage[]> {
+    const rows = this.state.color_images
+      .filter((image) => !productId || image.product_id === productId)
+      .sort((a,b) => a.color_key.localeCompare(b.color_key) || Number(b.is_primary)-Number(a.is_primary) || a.sort_order-b.sort_order);
+    return delay([...rows]);
+  }
+
+  replaceColorImages(productId: string, images: readonly ProductColorImageInput[]): Promise<ProductColorImage[]> {
+    if (!this.state.products.some((product) => product.id === productId)) {
+      throw new AppError("NOT_FOUND", `Product ${productId} not found`);
+    }
+    const now=nowIso();
+    const next=images.map((image,index):ProductColorImage=>({
+      ...image,
+      id:this.newId("cimg"),
+      product_id:productId,
+      color_key:image.color_key.trim().toLocaleLowerCase(),
+      image_url:image.image_url.trim(),
+      sort_order:index,
+      is_primary:index===0 || image.is_primary,
+      created_at:now,
+      updated_at:now,
+    }));
+    const primary=new Set<string>();
+    for(const image of next){
+      if(primary.has(image.color_key)) image.is_primary=false;
+      else { image.is_primary=true; primary.add(image.color_key); }
+    }
+    this.state.color_images=[...this.state.color_images.filter((image)=>image.product_id!==productId),...next];
+    this.persist();
+    return delay(next);
+  }
+
   async createVariant(input: NewProductVariant): Promise<ProductVariant> {
     const product = this.state.products.find((p) => p.id === input.product_id);
     if (!product) throw new AppError("NOT_FOUND", `Product ${input.product_id} not found`);
@@ -242,6 +283,8 @@ export class DemoRepository implements CatalogRepository {
       color_key: input.color_key?.trim() || colorKeyOf(input),
       stock_quantity: Math.max(0, Math.trunc(input.stock_quantity)),
       low_stock_level: Math.max(0, Math.trunc(input.low_stock_level)),
+      size_value: (input.size_value ?? input.size_label ?? (input.size == null ? "" : String(input.size))).trim() || null,
+      size_sort_order: Math.max(0, Math.trunc(input.size_sort_order ?? input.sort_order)),
       ...timestamps(),
       id: this.newId("var"),
     };
@@ -296,8 +339,7 @@ export class DemoRepository implements CatalogRepository {
     }
     const identityChanged =
       next.color_key !== current.color_key ||
-      next.size !== current.size ||
-      (next.size_label ?? "") !== (current.size_label ?? "");
+      variantSizeValue(next).toLocaleLowerCase() !== variantSizeValue(current).toLocaleLowerCase();
     if (identityChanged) {
       // A combination IS its colour and size; editing those would move the row
       // onto another shelf. Archive it and create the right one.
@@ -458,6 +500,7 @@ export class DemoRepository implements CatalogRepository {
       );
     }
     this.state.variants = this.state.variants.filter((v) => v.product_id !== productId);
+    this.state.color_images = this.state.color_images.filter((image) => image.product_id !== productId);
     return this.patchProduct(productId, { variants_enabled: false, stock_quantity: total });
   }
 
@@ -576,12 +619,7 @@ export class DemoRepository implements CatalogRepository {
         v.id !== excludeId &&
         v.product_id === variant.product_id &&
         v.color_key === variant.color_key &&
-        (v.size ?? null) === (variant.size ?? null) &&
-        // Two textual sizes ("One Size" vs a blank label) are different
-        // combinations only when neither carries a number.
-        (v.size !== null ||
-          variant.size !== null ||
-          (v.size_label ?? "").trim() === (variant.size_label ?? "").trim()),
+        variantSizeValue(v).toLocaleLowerCase() === variantSizeValue(variant).toLocaleLowerCase(),
     );
     if (clash) {
       throw new AppError(
@@ -750,6 +788,7 @@ export class DemoRepository implements CatalogRepository {
       categories: buildDemoCategories(),
       products: buildDemoProducts(),
       variants: [],
+      color_images: [],
       seed_revision: SEED_REVISION,
     };
     this.persist();
@@ -785,12 +824,7 @@ export class DemoRepository implements CatalogRepository {
 /** Colour identity, then NUMERIC size — never a string sort. */
 function compareVariantRows(a: ProductVariant, b: ProductVariant): number {
   if (a.product_id !== b.product_id) return a.product_id.localeCompare(b.product_id);
-  if (a.color_key !== b.color_key) return a.color_key.localeCompare(b.color_key);
-  if (a.size !== null && b.size !== null && a.size !== b.size) return a.size - b.size;
-  if (a.size === null && b.size !== null) return 1;
-  if (a.size !== null && b.size === null) return -1;
-  if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
-  return a.sku.localeCompare(b.sku);
+  return compareVariants(a,b);
 }
 
 function timestamps(): { created_at: string; updated_at: string } {

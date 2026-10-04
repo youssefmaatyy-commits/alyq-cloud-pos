@@ -1,15 +1,17 @@
 import { getSupabaseClient } from "@/lib/supabase/client";
 import { AppError, toAppError } from "@/modules/products/data/repository";
 import { roundMoney } from "@/modules/expenses/validation";
-import { cashDifference } from "../services/shiftCalculations";
 import type { CloseShiftInput, NewShift, Shift, ShiftSummary } from "../types";
 import type { ShiftRepository } from "./repository";
+import { getRegisterCredential } from "@/modules/registers/services/registerService";
 
 interface ShiftRow {
   id: string;
   shift_number: string;
   branch: string;
+  branch_id: string;
   register: string;
+  register_id?: string | null;
   status: string;
   opening_cash: number;
   opening_at: string;
@@ -33,7 +35,9 @@ function mapShift(row: ShiftRow): Shift {
     id: row.id,
     shift_number: row.shift_number,
     branch: row.branch,
+    branch_id: row.branch_id,
     register: row.register,
+    register_id: row.register_id ?? null,
     status: row.status === "closed" ? "closed" : "open",
     opening_cash: Number(row.opening_cash),
     opening_at: row.opening_at,
@@ -106,7 +110,18 @@ export class SupabaseShiftRepository implements ShiftRepository {
 
   async openShift(input: NewShift): Promise<Shift> {
     try {
-      const { data, error } = await this.require()
+      const client = this.require();
+      const register = await getRegisterCredential();
+      if (register) {
+        const { data, error } = await client.rpc("open_registered_shift", {
+          p_opening_cash: roundMoney(input.opening_cash),
+          p_installation_id: register.installation_id,
+          p_credential: register.credential,
+        });
+        if (error) throw toAppError(error);
+        return mapShift(data as ShiftRow);
+      }
+      const { data, error } = await client
         .from("shifts")
         .insert({
           branch: input.branch,
@@ -129,27 +144,14 @@ export class SupabaseShiftRepository implements ShiftRepository {
 
   async closeShift(id: string, input: CloseShiftInput): Promise<Shift> {
     try {
-      const closedAt = input.closed_at ?? new Date().toISOString();
-      const summary: ShiftSummary = {
-        ...input.summary,
-        actual_cash: roundMoney(input.closing_cash),
-        difference: cashDifference(input.closing_cash, input.summary.expected_cash),
-      };
-      const { data, error } = await this.require()
-        .from("shifts")
-        .update({
-          status: "closed",
-          closing_cash: roundMoney(input.closing_cash),
-          closed_at: closedAt,
-          closed_by: input.closed_by,
-          closed_by_name: input.closed_by_name,
-          notes: input.notes?.trim() ? input.notes.trim() : null,
-          summary,
-          updated_at: closedAt,
-        })
-        .eq("id", id)
-        .select("*")
-        .single();
+      // The server derives all tender/refund/movement totals from authoritative
+      // allocations under the shift lock. Client `summary` is intentionally not
+      // sent and cannot become the frozen reconciliation snapshot.
+      const { data, error } = await this.require().rpc("close_shift_authoritative", {
+        p_shift_id: id,
+        p_actual_cash: input.closing_cash,
+        p_reason: input.notes?.trim() || null,
+      });
       if (error) throw toAppError(error);
       return mapShift(data as ShiftRow);
     } catch (err) {

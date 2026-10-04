@@ -64,6 +64,8 @@ export interface SaleItem {
   /** Gross line total before manual item discount. */
   gross_total?: number;
   line_total: number;
+  /** Exact refund ceiling persisted by the live database after migration 0065. */
+  refundable_total?: number | null;
   discount_type?: DiscountType;
   discount_value?: number;
   discount_amount?: number;
@@ -155,6 +157,10 @@ export interface Sale {
   paid_at: string | null;
   paid_by: string | null;
   paid_by_name: string | null;
+  /** Originating branch frozen on the invoice and used by return tenancy. */
+  branch_id?: string | null;
+  /** Human branch label frozen on new sales for historical receipts. */
+  branch_name?: string | null;
   /** `pos` unless an approved online order created it. */
   source?: SaleSource;
   /**
@@ -162,6 +168,43 @@ export interface Sale {
    * `null` for online-channel sales and for rows before the column existed.
    */
   shift_id?: string | null;
+  /** Immutable desktop register evidence; legacy/web sales remain null. */
+  register_id?: string | null;
+  register_name?: string | null;
+  /** Cashier note frozen with the transaction; never recomputed on reprint. */
+  notes?: string | null;
+  /** Client-only sync state for a cash sale accepted while the till was offline. */
+  offline_sync_status?: "pending" | "syncing" | "synced" | "failed" | "deferred" | "conflict";
+  offline_last_error?: string | null;
+  offline_last_error_kind?: "network" | "conflict" | "permission" | "branch" | "schema" | "rejected" | null;
+}
+
+/**
+ * Frozen evidence attached only to a supported offline cash sale. The server
+ * compares it with its own current catalogue and promotion calculation; it is
+ * never accepted as price authority.
+ */
+export interface OfflinePricingEvidence {
+  schema_version: 1;
+  branch_id: string;
+  /** Original desktop identity. The server verifies both against its credential. */
+  register_id?: string | null;
+  installation_id?: string | null;
+  captured_at: string;
+  subtotal: number;
+  discount_amount: number;
+  total: number;
+  lines: Array<{
+    product_id: string;
+    variant_id: string | null;
+    qty: number;
+    unit_price: number;
+    sku: string;
+    barcode: string | null;
+    color_ar: string | null;
+    color_en: string | null;
+    size_value: string | null;
+  }>;
 }
 
 /** Payload the cart sends to complete a sale. */
@@ -188,8 +231,16 @@ export interface CompleteSaleInput {
   customer_id?: string | null;
   customer_name?: string | null;
   customer_phone?: string | null;
+  /** Optional cashier note, trimmed and capped server-side. */
+  notes?: string | null;
   user_id: string;
   user_name: string;
+  /** Original desktop binding evidence; authority is credential-resolved server-side. */
+  register_id?: string | null;
+  installation_id?: string | null;
+  register_name?: string | null;
+  /** Present only on durable offline cash sales; see `pos_sync_offline_sale`. */
+  offline_evidence?: OfflinePricingEvidence;
   /** Omitted by the till; set to `online` when an order approval creates it. */
   source?: SaleSource;
 }
