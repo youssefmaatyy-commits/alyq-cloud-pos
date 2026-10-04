@@ -232,6 +232,39 @@ password. On a live project follow the steps below instead.
    admin activates or promotes the account afterwards with
    `upsert_staff_profile()` — or from the staff screen, once it exists.
 
+   **Forgot the metadata on a brand-new project?** Before migration `0085`
+   that was a dead end twice over: the fail-closed viewer row could not even
+   be *inserted* (the `0059` guard refused a directory with nobody holding
+   `manage_users`), and nothing could promote it afterwards, because every
+   staff RPC is admin-gated and there was no admin yet. `0085` fixes both,
+   without opening anything on a managed installation:
+
+   - the `0059` guard now ignores INSERTs — a new row can only ever *add* a
+     capability holder, so the first fail-closed account may exist;
+   - `bootstrap_first_admin()` promotes the **caller** to an active admin,
+     **exactly once**, and only while the directory has never been managed —
+     it refuses while any admin profile row exists (active or not) or while
+     anyone holds `manage_users`, serializes concurrent callers with an
+     advisory lock, and writes the promotion to the audit trail
+     (`user.role_changed`).
+
+   Sign in as the stranded account (authentication works even while the
+   profile is inactive) and call the RPC with that session's access token:
+
+   ```bash
+   curl -X POST "$SUPABASE_URL/rest/v1/rpc/bootstrap_first_admin" \
+     -H "apikey: $SUPABASE_ANON_KEY" \
+     -H "Authorization: Bearer $USER_ACCESS_TOKEN" \
+     -H "Content-Type: application/json" -d '{}'
+   ```
+
+   The SQL editor is not a way around the guard: the function refuses a
+   session without `auth.uid()`, so it cannot be run anonymously, and the
+   anon role holds no EXECUTE on it. Run the bootstrap **before** enabling
+   any public sign-up — on a never-managed directory the function promotes
+   whichever authenticated caller reaches it first; that is the point, and
+   also the reason the door closes forever the moment one admin row exists.
+
 2. **Seed the rest, on a development project.** As the admin:
 
    ```sql

@@ -10,7 +10,7 @@ Build staging artifacts from the same frozen SHA with staging-only client-safe v
 
 1. Restore a production-like backup into isolated staging.
 2. Verify pre-migration counts/checksums and historical evidence.
-3. Apply pending migrations through `0084_role_aliases_rls_hardening.sql` using the exact operator procedure.
+3. Apply pending migrations through `0085_first_admin_bootstrap.sql` using the exact operator procedure.
 4. Verify users/roles, branches, variants, branch balances, registers, installations, invoices/returns and audit survive.
 5. Record RPO/RTO measurements and restore/migration logs.
 

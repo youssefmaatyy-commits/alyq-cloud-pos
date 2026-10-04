@@ -8,7 +8,7 @@ Current application version is `6.0.0`; Desktop 5.0.0 remains a historical miles
 - Desktop: package version + `ALYQ_BUILD_SHA`; Windows x64 NSIS target.
 - Android: `versionName` follows release version; monotonically increase `versionCode`.
 - iOS: `CFBundleShortVersionString` follows release version; monotonically increase `CFBundleVersion`.
-- Schema: exact highest successfully applied migration, currently expected `0084`.
+- Schema: exact highest successfully applied migration, currently expected `0085`.
 
 ## Reproducible sequence
 
@@ -49,7 +49,7 @@ release_version: TBD
 release_date_utc: TBD
 git_sha: TBD
 migration_max_before: TBD
-migration_max_after: 0084_role_aliases_rls_hardening.sql
+migration_max_after: 0085_first_admin_bootstrap.sql
 backup_id: TBD
 backup_verified_by: TBD
 restore_drill_id: TBD

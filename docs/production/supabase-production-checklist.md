@@ -5,7 +5,7 @@ Nothing in this checklist is performed automatically.
 ## Before migration
 
 - [ ] Confirm project ID, organization, region and environment label are **Production**; use a second-person check.
-- [ ] Freeze release SHA and expected migration maximum `0084_role_aliases_rls_hardening.sql`.
+- [ ] Freeze release SHA and expected migration maximum `0085_first_admin_bootstrap.sql`.
 - [ ] Export current migration ledger/schema and compare to the repository; stop on unknown drift.
 - [ ] Complete and verify the backup record in `backup-restore.md`.
 - [ ] Confirm maintenance window, operator, observer, rollback authority and application hold page/version.
@@ -13,7 +13,7 @@ Nothing in this checklist is performed automatically.
 
 ## Database security
 
-- [ ] Apply migrations strictly `0001` through `0084`, skipping already-recorded matching migrations only.
+- [ ] Apply migrations strictly `0001` through `0085`, skipping already-recorded matching migrations only.
 - [ ] Do not edit an applied migration or improvise a down migration.
 - [ ] Verify repository tables have RLS enabled and expected policies.
 - [ ] Verify anon/authenticated grants and RPC execution grants against `npm run db:check` output.

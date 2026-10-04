@@ -1658,6 +1658,95 @@ begin
 end
 $scn_checkout$;
 
+-- ─── 0085 · first-admin bootstrap — open on a virgin directory, closed the
+-- moment the installation is managed. Runs as owner (before the one-way role
+-- switch) because it must empty the directory of admins and restore it; the
+-- function under test is SECURITY DEFINER, so its logic is identical for the
+-- authenticated role.
+do $scn_bootstrap$
+declare
+  v_admin   uuid := '00000000-0000-4000-8000-0000000000a1';
+  v_founder uuid := '00000000-0000-4000-8000-000000000b85';
+  v_row     public.profiles;
+  v_n       bigint;
+begin
+  -- a managed directory refuses the bootstrap, even for the admin
+  perform pg_temp.become(v_admin);
+  begin
+    perform public.bootstrap_first_admin();
+    raise exception '0085 bootstrap ran while an admin exists';
+  exception when check_violation then null;
+  end;
+
+  -- a metadata-less account CAN be created on a directory with no admin (the
+  -- 0059 guard no longer blocks the INSERT) and arrives fail-closed: an
+  -- inactive viewer, exactly as 0014 promises
+  insert into auth.users (id, email) values (v_founder, 'founder@alyq.local')
+  on conflict (id) do nothing;
+  select * into v_row from public.profiles where id = v_founder;
+  if v_row.id is null or v_row.role is distinct from 'viewer' or v_row.active then
+    raise exception '0085 a metadata-less account must become an inactive viewer, got %/%',
+      v_row.role, v_row.active;
+  end if;
+
+  -- no session, no seat
+  perform pg_temp.become(null);
+  begin
+    perform public.bootstrap_first_admin();
+    raise exception '0085 bootstrap answered an anonymous caller';
+  exception when insufficient_privilege then null;
+  end;
+
+  -- empty the directory of admins (owner write; restored below, so the
+  -- deferred manage_users guard judges the restored state at commit)
+  create temporary table if not exists scn85_admins (id uuid primary key);
+  delete from scn85_admins;
+  insert into scn85_admins select p.id from public.profiles p where p.role = 'admin';
+  update public.profiles set role = 'viewer'
+   where id in (select id from scn85_admins);
+
+  -- the founder claims the seat: active admin, full capability resolution
+  perform pg_temp.become(v_founder);
+  select * into v_row from public.bootstrap_first_admin();
+  if v_row.role is distinct from 'admin' or not v_row.active then
+    raise exception '0085 bootstrap did not produce an active admin, got %/%',
+      v_row.role, v_row.active;
+  end if;
+  if public.current_user_role() is distinct from 'admin'
+     or not public.can('manage_users') then
+    raise exception '0085 the bootstrapped admin does not resolve to admin capabilities';
+  end if;
+
+  -- exactly once: the seat is taken, the door is closed
+  begin
+    perform public.bootstrap_first_admin();
+    raise exception '0085 bootstrap handed out a second admin seat';
+  exception when check_violation then null;
+  end;
+
+  -- and the claim is on the audit trail, attributed to the founder
+  select count(*) into v_n
+    from public.audit_log
+   where action = 'user.role_changed'
+     and entity_id = v_founder::text
+     and details->>'via' = 'bootstrap_first_admin'
+     and user_id = v_founder::text;
+  if v_n <> 1 then
+    raise exception '0085 bootstrap wrote % audit rows, expected exactly 1', v_n;
+  end if;
+
+  -- restore the fixtures
+  update public.profiles set role = 'admin'
+   where id in (select id from scn85_admins);
+  drop table scn85_admins;
+  delete from public.profiles where id = v_founder;
+  delete from auth.users where id = v_founder;
+  perform pg_temp.become(null);
+
+  raise notice '0085 — first-admin bootstrap: closed while any admin row exists, refused without a session, lets a fail-closed first account exist, promotes exactly one founder on a virgin directory, and audits the claim';
+end
+$scn_bootstrap$;
+
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Phase C onwards — as `authenticated`, the role the browser gets.
 -- The role is switched once here and never switched back.

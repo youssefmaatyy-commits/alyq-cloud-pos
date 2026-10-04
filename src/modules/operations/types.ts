@@ -97,5 +97,5 @@ export const RETENTION_PHRASE = "APPLY RETENTION";
 export const DEFAULT_RETENTION_DAYS = 30;
 
 /** Shipped with this build. Not a claim about what a remote database has applied. */
-export const SHIPPED_MIGRATION_COUNT = 84;
-export const SHIPPED_LATEST_MIGRATION = "0084_role_aliases_rls_hardening.sql";
+export const SHIPPED_MIGRATION_COUNT = 85;
+export const SHIPPED_LATEST_MIGRATION = "0085_first_admin_bootstrap.sql";
