@@ -117,6 +117,11 @@ const SUITES = [
     title: "Admin navigation (Phase 49): six primary areas, grouped settings, module homes, breadcrumbs, deep links, permissions, Arabic drawer",
   },
   {
+    id: "sidebar",
+    file: "scripts/sidebar.flow.mjs",
+    title: "Sidebar collapse/expand bug fix: collapse, expand after collapse, repeated toggling, active item + route preserved, no reload, RTL/LTR",
+  },
+  {
     id: "dangerzone",
     file: "scripts/dangerzone.flow.mjs",
     title: "Danger Zone (Phase 47): admin-only cards, wizard gates, preview, re-auth, phrase, operational clear, factory reset, audit survival",

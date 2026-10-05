@@ -330,9 +330,24 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const sidebar = (navCollapsed: boolean) => (
     <div className="flex h-full flex-col gap-5 overflow-hidden p-3.5">
       {/* Brand — the shared brand source; the wordmark is the fallback. Click
-          always goes to the dashboard. */}
-      <div className="flex shrink-0 items-center gap-2 px-0.5">
-        <Link to="/" className="flex min-w-0 flex-1 items-center gap-3 rounded-xl" title={brandName}>
+          always goes to the dashboard.
+          The expand/collapse control used to be rendered only while expanded
+          (`{!navCollapsed ? <button>…</button> : null}`), which meant that
+          once the sidebar collapsed, its own toggle vanished from the DOM
+          with it — there was nothing left to click to bring it back. It is
+          now rendered unconditionally in both states (desktop only, via the
+          same `lg:grid` breakpoint as before) and the row switches to a
+          centered column when collapsed so it still fits the narrow rail
+          without being clipped by this container's `overflow-hidden`. */}
+      <div className={cn("flex shrink-0 items-center gap-2 px-0.5", navCollapsed && "flex-col")}>
+        <Link
+          to="/"
+          className={cn(
+            "flex min-w-0 items-center gap-3 rounded-xl",
+            navCollapsed ? "justify-center" : "flex-1",
+          )}
+          title={brandName}
+        >
           {brandTile}
           {!navCollapsed ? (
             <span className="min-w-0" data-testid="shell-brand">
@@ -345,17 +360,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </span>
           ) : null}
         </Link>
-        {!navCollapsed ? (
-          <button
-            type="button"
-            onClick={toggleCollapsed}
-            title={t("admin.shell.collapse")}
-            aria-label={t("admin.shell.collapse")}
-            className="hidden h-7 w-7 shrink-0 place-items-center rounded-lg text-stone-500 hover:bg-white/5 hover:text-stone-200 lg:grid"
-          >
-            <ChevronIcon className="h-3.5 w-3.5 rotate-180 rtl:rotate-0" />
-          </button>
-        ) : null}
+        <button
+          type="button"
+          onClick={toggleCollapsed}
+          title={navCollapsed ? t("admin.shell.expand") : t("admin.shell.collapse")}
+          aria-label={navCollapsed ? t("admin.shell.expand") : t("admin.shell.collapse")}
+          data-testid="sidebar-toggle"
+          className="relative z-10 hidden h-7 w-7 shrink-0 place-items-center rounded-lg text-stone-500 hover:bg-white/5 hover:text-stone-200 lg:grid"
+        >
+          <ChevronIcon
+            className={cn(
+              "h-3.5 w-3.5",
+              navCollapsed ? "rotate-0 rtl:rotate-180" : "rotate-180 rtl:rotate-0",
+            )}
+          />
+        </button>
       </div>
 
       <nav className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto" aria-label={t("nav.menu")}>
