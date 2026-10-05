@@ -39,9 +39,9 @@ let bootCount = 0;
  * import URL is unique), so a scenario can start from a clean, seeded state —
  * the only way to observe what happens *on boot* with an existing session.
  */
-async function boot({ seedSession = null } = {}) {
+async function boot({ url = "http://localhost/#/login", seedSession = null } = {}) {
   const dom = new JSDOM('<!doctype html><html lang="en"><body><div id="root"></div></body></html>', {
-    url: "http://localhost/",
+    url,
     pretendToBeVisual: true,
     runScripts: "outside-only",
   });
@@ -192,6 +192,9 @@ function makeHarness(dom, consoleErrors) {
     return raw ? JSON.parse(raw) : null;
   };
   const signIn = async (username, password = DEMO_PASSWORD) => {
+    if (!usernameField()) {
+      await navigate("#/login");
+    }
     for (let i = 0; i < 25 && !usernameField(); i += 1) await sleep(200);
     typeInto(usernameField(), username);
     typeInto(passwordField(), password);
@@ -227,7 +230,7 @@ function makeHarness(dom, consoleErrors) {
     signOut,
     /** Add the first product to the cart and fill the exact cash amount. */
     stageSale: async () => {
-      await navigate("#/pos");
+      await navigate("#/dashboard/pos");
       let scanBox = null;
       for (let i = 0; i < 12 && !(scanBox = document.querySelector('[data-testid="pos-scan-search"]')); i += 1) {
         await sleep(300);
@@ -302,7 +305,9 @@ await step(2, "Verify login screen appears", async () => {
   await app.navigate("#/pos");
   const hash = decodeURIComponent(app.dom.window.location.hash);
   if (!app.usernameField()) throw new Error("a protected route was served without a session");
-  if (!hash.includes("next=/pos")) throw new Error(`attempted route not preserved (hash: ${hash})`);
+  if (!hash.includes("next=") || (!hash.includes("/pos") && !hash.includes("/dashboard/pos"))) {
+    throw new Error(`attempted route not preserved (hash: ${hash})`);
+  }
   return [
     "login screen: username + password + remember-me + sign-in button",
     `direct #/pos redirects to ${hash}`,
@@ -334,15 +339,15 @@ await step(3, "Enter valid username/password", async () => {
 
 // ── STEP 4 · user enters the dashboard ────────────────────────────────────
 await step(4, "Verify user enters dashboard", async () => {
-  await app.navigate("#/");
+  await app.navigate("#/dashboard");
   for (let i = 0; i < 10 && !app.bodyText().includes("Dashboard"); i += 1) await sleep(300);
   if (!app.bodyText().includes("Dashboard")) throw new Error("dashboard did not render");
-  const kpis = app.document.querySelectorAll(".alyq-kpi").length;
-  await app.navigate("#/pos");
+  const kpis = app.document.querySelectorAll(".alyq-kpi, [data-testid^='kpi-'], [data-testid^='web-kpi-']").length;
+  await app.navigate("#/dashboard/pos");
   const restored = decodeURIComponent(app.dom.window.location.hash);
   return [
     `dashboard rendered (${kpis} KPI tiles) after signing in`,
-    `deep link from step 2 (#/pos) still reachable once signed in: ${restored === "#/pos"}`,
+    `deep link from step 2 still reachable once signed in: ${restored.includes("/pos")}`,
     `shell identifies the user: ${app.bodyText().includes("ALYQ Admin")}`,
   ];
 });
@@ -358,7 +363,7 @@ await step(5, "Verify cashier permissions", async () => {
   // The till: the cashier must be able to sell. Phase 27 — a till sale needs
   // the drawer open first, and the cashier holds open_shift, so the cashier
   // opens the shift through the shifts screen.
-  await app.navigate("#/shifts");
+  await app.navigate("#/dashboard/shifts");
   for (let i = 0; i < 12 && !app.bodyText().includes("No shift is currently open"); i += 1) await sleep(300);
   if (!app.bodyText().includes("No shift is currently open")) throw new Error("expected a closed drawer");
   app.clickEl(app.byText("Open shift"));
@@ -389,11 +394,11 @@ await step(5, "Verify cashier permissions", async () => {
 
   // Returns / refunds / shifts / expenses are part of the till tier.
   for (const [route, label, expected] of [
-    ["#/returns", "Returns", true],
-    ["#/refunds", "Refunds", true],
-    ["#/shifts", "Shift", true],
-    ["#/expenses", "Expenses", true],
-    ["#/audit", "Audit", false],
+    ["#/dashboard/returns", "Returns", true],
+    ["#/dashboard/refunds", "Refunds", true],
+    ["#/dashboard/shifts", "Shift", true],
+    ["#/dashboard/expenses", "Expenses", true],
+    ["#/dashboard/audit", "Audit", false],
   ]) {
     await app.navigate(route);
     await sleep(500);
@@ -405,7 +410,7 @@ await step(5, "Verify cashier permissions", async () => {
 
   // Manager-level actions stay out of reach.
   const navOut = app.navHrefs();
-  if (navOut.includes("#/audit")) throw new Error("the audit entry was offered to a cashier");
+  if (navOut.some((h) => h.includes("/audit"))) throw new Error("the audit entry was offered to a cashier");
   out.push("no audit entry in the sidebar; stock adjustments remain read-only");
   return out;
 });
@@ -418,22 +423,22 @@ await step(6, "Try unauthorized action and confirm it is blocked", async () => {
   if (!app.isSignedIn()) throw new Error("the viewer account could not sign in");
 
   const nav = app.navHrefs();
-  for (const hidden of ["#/pos", "#/returns", "#/refunds", "#/audit"]) {
-    if (nav.includes(hidden)) throw new Error(`${hidden} was offered to a viewer`);
+  for (const hidden of ["/pos", "/returns", "/refunds", "/audit"]) {
+    if (nav.some((h) => h.includes(hidden))) throw new Error(`${hidden} was offered to a viewer`);
   }
   out.push(`viewer sidebar: ${nav.join(", ")}`);
 
-  await app.navigate("#/audit");
+  await app.navigate("#/dashboard/audit");
   await sleep(500);
   const auditDenied = app.bodyText().includes("Audit log is restricted");
   const leaked = /EXP-\d{6}/.test(app.bodyText());
   if (!auditDenied) throw new Error("the audit route was not denied for a viewer");
   if (leaked) throw new Error("audit records leaked to an unauthorized role");
-  out.push(`#/audit denied: ${auditDenied} · records leaked: ${leaked}`);
+  out.push(`#/dashboard/audit denied: ${auditDenied} · records leaked: ${leaked}`);
 
   // Mutations: the register is not even reachable, and nothing may be written.
   const salesBefore = app.dom.window.localStorage.getItem("alyq.demo.sales.v1");
-  await app.navigate("#/pos");
+  await app.navigate("#/dashboard/pos");
   await sleep(500);
   if (!app.denied()) throw new Error("the register was served to a viewer");
   if (app.bodyText().includes("ALYQ-1001")) throw new Error("POS data leaked into the viewer's denial");
@@ -443,7 +448,7 @@ await step(6, "Try unauthorized action and confirm it is blocked", async () => {
   if (complete) throw new Error("a viewer was offered the Complete sale control");
   out.push("register denied outright — no cart, no Complete sale control");
 
-  await app.navigate("#/inventory/stock");
+  await app.navigate("#/dashboard/inventory/stock");
   await sleep(600);
   const adjust = [...app.document.querySelectorAll("main button")].find(
     (b) => (b.textContent ?? "").trim() === "Adjust stock",
@@ -465,7 +470,7 @@ await step(7, "Logout and verify session is closed", async () => {
   if (!app.usernameField()) throw new Error("sign-out did not return to the login screen");
   if (app.notice() !== "signed_out") throw new Error("the user was not told the session ended");
   if (app.readSession()) throw new Error("the stored session survived sign-out");
-  await app.navigate("#/pos");
+  await app.navigate("#/dashboard/pos");
   await sleep(600);
   if (!app.usernameField()) throw new Error("a deep link after sign-out was served without credentials");
   return [
@@ -506,11 +511,11 @@ await step(9, "Verify session expiry ends the session", async () => {
 
   // (a) A session that lapses while the app is open: boot on a live session
   //     that expires in two seconds, then touch the app the way a user would.
-  const live = await boot({ seedSession: seededSession({ expiresInMs: 2_000 }) });
+  const live = await boot({ url: "http://localhost/#/dashboard", seedSession: seededSession({ expiresInMs: 2_000 }) });
   if (!live.isSignedIn()) throw new Error("a valid seeded session was not restored on boot");
   out.push("restored a live session from storage on boot");
   await sleep(2_400);
-  await live.navigate("#/inventory");
+  await live.navigate("#/dashboard/inventory");
   await sleep(400);
   if (!live.usernameField()) throw new Error("the lapsed session was not ended on navigation");
   if (live.notice() !== "expired") throw new Error("expiry was not explained to the user");
@@ -518,7 +523,7 @@ await step(9, "Verify session expiry ends the session", async () => {
   out.push("session lapsed while running → ended on the next navigation, record cleared");
 
   // (b) A session that had already lapsed before the app started.
-  const stale = await boot({ seedSession: seededSession({ expiresInMs: -60_000 }) });
+  const stale = await boot({ url: "http://localhost/#/dashboard", seedSession: seededSession({ expiresInMs: -60_000 }) });
   if (stale.isSignedIn()) throw new Error("an expired session was restored");
   if (!stale.usernameField()) throw new Error("an expired session did not fall back to the login screen");
   if (stale.notice() !== "expired") throw new Error("boot-time expiry was not explained");
@@ -526,7 +531,7 @@ await step(9, "Verify session expiry ends the session", async () => {
   out.push("session already expired at boot → cleared, login screen shown with the expiry notice");
 
   // (c) Remember-me changes where the session lives, not whether it expires.
-  const remembered = await boot({ seedSession: seededSession({ expiresInMs: 3_600_000, remember: true }) });
+  const remembered = await boot({ url: "http://localhost/#/dashboard", seedSession: seededSession({ expiresInMs: 3_600_000, remember: true }) });
   if (!remembered.isSignedIn()) throw new Error("a remembered session was not restored");
   const stored = remembered.readSession();
   if (stored?.persistence !== "local") throw new Error("the remembered session is not in localStorage");
@@ -541,7 +546,7 @@ await step(9, "Verify session expiry ends the session", async () => {
 // ── STEP 10 · the forgot screen never silently turns a session into authority ─
 await step(10, "A signed-in user is notified, not silently redirected, on the forgot screen", async () => {
   const out = [];
-  const reached = await boot({ seedSession: seededSession({ expiresInMs: 3_600_000 }) });
+  const reached = await boot({ url: "http://localhost/#/dashboard", seedSession: seededSession({ expiresInMs: 3_600_000 }) });
   if (!reached.isSignedIn()) throw new Error("the seeded session was not restored for this step");
   await reached.navigate("#/forgot-password");
   await sleep(700);
@@ -572,7 +577,7 @@ await step(11, "Direct reset never opens from a session; change-password wants t
   // (a) A perfectly valid NORMAL session cannot open the reset form. The
   //     session comes from a REAL login — a seeded record alone carries no
   //     directory identity for the re-proof below.
-  const holder = await boot();
+  const holder = await boot({ url: "http://localhost/#/login" });
   await holder.signIn("admin");
   await holder.navigate("#/reset-password");
   await sleep(800);

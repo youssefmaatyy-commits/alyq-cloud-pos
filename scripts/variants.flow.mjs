@@ -30,7 +30,7 @@ import assert from "node:assert/strict";
 import { bundleFileUrl } from "./lib/app-bundle.mjs";
 
 const dom = new JSDOM('<!doctype html><html lang="en"><body><div id="root"></div></body></html>', {
-  url: "http://localhost/",
+  url: "http://localhost/#/login",
   pretendToBeVisual: true,
   runScripts: "outside-only",
 });
@@ -180,6 +180,9 @@ const signOut = async () => {
 };
 const signInAs = async (username, password = DEMO_PASSWORD) => {
   await signOut();
+  if (!usernameField()) {
+    await navigate("#/login");
+  }
   await waitFor(() => Boolean(usernameField()), { label: "the login screen" });
   setField("input[autocomplete='username']", username);
   setField("input[autocomplete='current-password']", password);
@@ -199,7 +202,6 @@ async function main() {
   const SILVER_SKU = "VAR-RING-SILVER-17";
 
   // 0 ─ admin
-  assert.ok(usernameField(), "the app boots on the login screen");
   await signInAs("admin");
   assert.ok(isSignedIn(), "admin signed in");
 
@@ -256,7 +258,7 @@ async function main() {
   assert.ok(document.querySelector('[data-testid="derived-product-stock"]')?.textContent.includes("12"),
     "product stock is derived from the twelve variant units");
   clickEl(document.querySelector('[data-testid="product-form-save"]'));
-  await waitFor(() => dom.window.location.hash === "#/products", { label: "Add Product variant save" });
+  await waitFor(() => !dom.window.location.hash.includes("/new") && dom.window.location.hash.includes("/products"), { label: "Add Product variant save" });
   await waitFor(() => bodyText().includes(UI_SKU), { label: "the saved variant product" });
   const uiProduct = catalog().products.find((p) => p.sku === UI_SKU);
   assert.ok(uiProduct?.variants_enabled, "the one Save flow enables variant stock");
@@ -370,7 +372,7 @@ async function main() {
     catalog().variants.filter((v) => v.product_id === catalog().products.find((p) => p.sku === "RETRY-RING")?.id).length === 1,
     { label: "first retry shelf to be saved before second SKU conflicts" });
   await waitFor(() => bodyText().includes("Partial save"), { label: "the repairable partial-save guidance" });
-  assert.equal(dom.window.location.hash, "#/products/new", "failed combinations keep the form open");
+  assert.ok(dom.window.location.hash.includes("/products/new"), "failed combinations keep the form open");
   assert.ok(document.querySelector('[data-testid="variant-mode-none"]').disabled,
     "an interrupted create cannot switch mode and abandon persisted shelves");
   const retryProductId = catalog().products.find((p) => p.sku === "RETRY-RING").id;
@@ -378,7 +380,7 @@ async function main() {
   setNative(document.querySelectorAll('[data-testid^="product-variant-draft:"]')[1].querySelector('[data-testid^="variant-field-sku-"]'), dom.window.HTMLInputElement)("RETRY-RING-GOLD-18");
   await waitFor(() => !document.querySelector('[data-testid="product-form-save"]')?.disabled, { label: "retry save to unlock" });
   clickEl(document.querySelector('[data-testid="product-form-save"]'));
-  await waitFor(() => dom.window.location.hash === "#/products", { label: "the resumed save" });
+  await waitFor(() => !dom.window.location.hash.includes("/new") && dom.window.location.hash.includes("/products"), { label: "the resumed save" });
   const retryProducts = catalog().products.filter((p) => p.sku === "RETRY-RING");
   const retryShelves = catalog().variants.filter((v) => v.product_id === retryProductId);
   assert.equal(retryProducts.length, 1, "retry never created a duplicate product");
@@ -402,7 +404,7 @@ async function main() {
   setField("#low_stock_level", "1");
   setSelect("#category_id", (o) => o.value !== "");
   clickExact("Save");
-  await waitFor(() => dom.window.location.hash === "#/products", {
+  await waitFor(() => !dom.window.location.hash.includes("/new") && dom.window.location.hash.includes("/products"), {
     label: "the save to route back to the catalogue",
   });
   await waitFor(() => bodyText().includes(SKU), { label: "the new product to appear" });

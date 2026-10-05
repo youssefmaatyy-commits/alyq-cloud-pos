@@ -190,10 +190,10 @@ export function SystemSettingsPage() {
     if (stage !== "done" || !result) return;
     const timer = window.setTimeout(() => {
       if (result.needsReload) {
-        window.location.hash = "#/";
+        window.location.hash = "#/dashboard";
         window.location.reload();
       } else {
-        navigate("/", { replace: true });
+        navigate("/dashboard", { replace: true });
       }
     }, 2500);
     return () => window.clearTimeout(timer);
@@ -214,8 +214,8 @@ export function SystemSettingsPage() {
       <PageHeader
         title={t("dz.title")}
         subtitle={t("dz.subtitle")}
-        crumbs={[{ label: t("home.breadcrumb.settings"), to: "/settings" }, { label: t("dz.title") }]}
-        backTo="/settings"
+        crumbs={[{ label: t("home.breadcrumb.settings"), to: "/dashboard/settings" }, { label: t("dz.title") }]}
+        backTo="/dashboard/settings"
         backLabel={t("common.back")}
       />
 
@@ -229,7 +229,7 @@ export function SystemSettingsPage() {
               <p className="text-sm font-black text-stone-900">{t("dz.backup.title")}</p>
               <p className="mt-0.5 text-xs font-medium text-stone-600">{t("dz.backup.hint")}</p>
             </div>
-            <Link to="/settings/backup">
+            <Link to="/dashboard/settings/backup">
               <Button variant="secondary" size="sm" data-testid="dz-create-backup">
                 {t("dz.backup.cta")}
               </Button>

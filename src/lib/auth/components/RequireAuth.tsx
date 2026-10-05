@@ -12,11 +12,47 @@ import { LoginPage } from "./LoginPage";
  * public, and an already signed-in visitor is sent straight back into the app.
  */
 
-/** Safe post-login destination: internal paths only, never an external URL. */
+/** Safe post-login destination: internal /dashboard paths only, never an external URL. */
 export function resolveNextTarget(raw: string | null): string {
-  if (!raw) return "/";
-  if (!raw.startsWith("/") || raw.startsWith("//")) return "/";
-  return raw;
+  if (!raw) return "/dashboard";
+  let target = raw.trim();
+  try {
+    const decoded = decodeURIComponent(target);
+    if (decoded !== target) {
+      target = decoded;
+    }
+  } catch {
+    return "/dashboard";
+  }
+  // Open redirect guards: must start with single '/', not '//', '/\', '\\', and must not contain protocol
+  if (!target.startsWith("/") || target.startsWith("//") || target.startsWith("/\\") || target.includes("://")) {
+    return "/dashboard";
+  }
+  // Disallow javascript:, data:, vbscript: or control characters
+  if (/[\r\n\0]|javascript:|data:|vbscript:/i.test(target)) {
+    return "/dashboard";
+  }
+  // If target points back to auth screens, bounce to /dashboard
+  if (
+    target === "/login" ||
+    target.startsWith("/login?") ||
+    target.startsWith("/login/") ||
+    target.startsWith("/forgot-password") ||
+    target.startsWith("/reset-password") ||
+    target.startsWith("/change-password")
+  ) {
+    return "/dashboard";
+  }
+  // If already under /dashboard
+  if (target === "/dashboard" || target.startsWith("/dashboard/") || target.startsWith("/dashboard?")) {
+    return target;
+  }
+  // If target is root or relative, map it under /dashboard
+  if (target === "/" || target.startsWith("/?")) {
+    return "/dashboard";
+  }
+  // For legacy staff paths like /pos, /products, /inventory, etc.
+  return `/dashboard${target}`;
 }
 
 /** Shown for the single frame before the persisted session is restored. */
@@ -44,7 +80,7 @@ export function RequireAuth({ children }: { children: ReactNode }) {
     // Remember where the user was heading (internal paths only; `resolveNextTarget`
     // re-checks it after sign-in) so a deep link survives the login detour.
     const target = `${location.pathname}${location.search}`;
-    const next = target === "/" ? "" : `?next=${encodeURIComponent(target)}`;
+    const next = target === "/" || target === "/dashboard" ? "" : `?next=${encodeURIComponent(target)}`;
     return <Navigate to={`/login${next}`} replace />;
   }
 

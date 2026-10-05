@@ -45,8 +45,9 @@ await waitFor(() => catalog()?.products?.length > 0, { label: "the demo catalogu
 // participate in the test. 26 created + 5 sellable seeds = 31 matches for a
 // one-letter query, which also proves the result list stays capped.
 for (let i = 1; i <= 26; i += 1) {
-  await navigate("#/products/new", 80);
+  await navigate("#/products/new", 200);
   await waitFor(() => document.querySelector("#sku"), { label: `product form ${i}` });
+  await waitFor(() => (document.querySelector("#category_id")?.options?.length ?? 0) > 1, { label: `categories ${i}` });
   setField("#name_ar", `سوار التمرير ${i}`);
   setField("#name_en", `Scroll Test Bracelet ${i}`);
   setField("#sku", `POS-SCROLL-${i}`);
@@ -55,10 +56,13 @@ for (let i = 1; i <= 26; i += 1) {
   setField("#tax_rate", "0");
   setField("#stock_quantity", "12");
   const category = document.querySelector("#category_id");
-  const firstCategory = [...category.options].find((option) => option.value);
-  if (firstCategory) setReactValue(category, firstCategory.value);
-  clickEl(testid("product-form-save"));
-  await waitFor(() => dom.window.location.hash === "#/products", { label: `saved product ${i}` });
+  if (category) {
+    const firstCategory = [...category.options].find((option) => option.value !== "");
+    if (firstCategory) setReactValue(category, firstCategory.value);
+  }
+  await sleep(50);
+  clickExact("Save");
+  await waitFor(() => !dom.window.location.hash.includes("/new") && dom.window.location.hash.includes("/products"), { label: `saved product ${i}` });
 }
 const idOf = (sku) => catalog().products.find((p) => p.sku === sku)?.id;
 assert.ok(idOf("POS-SCROLL-5"), "the created products are in the catalogue");

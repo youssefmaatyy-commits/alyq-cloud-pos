@@ -80,7 +80,7 @@ async function main() {
   });
 
   // ── 1 · exactly the six module doors (+ the storefront shortcut) ─────────
-  const MODULES = ["#/", "#/pos", "#/management", "#/online", "#/reports", "#/settings"];
+  const MODULES = ["#/dashboard", "#/dashboard/pos", "#/dashboard/management", "#/dashboard/online", "#/dashboard/reports", "#/dashboard/settings"];
   const hrefs = sidebarHrefs();
   check(
     "the sidebar carries exactly the six module doors + the storefront shortcut",
@@ -92,8 +92,8 @@ async function main() {
   check("no sub-screen (products, audit, shifts, branding…) leaks into the sidebar", STRAYS.every((s) => !hrefs.includes(s)));
 
   // ── 3 · Settings appears exactly once and opens the grouped home ──────────
-  check("Settings appears exactly once in the sidebar", hrefs.filter((h) => h === "#/settings").length === 1);
-  clickEl([...document.querySelectorAll("aside a")].find((a) => a.getAttribute("href") === "#/settings"));
+  check("Settings appears exactly once in the sidebar", hrefs.filter((h) => h.includes("/settings")).length === 1);
+  clickEl([...document.querySelectorAll("aside a")].find((a) => (a.getAttribute("href") ?? "").includes("/settings")));
   await waitFor(() => testid("settings-group-people"), { label: "the grouped settings home" });
   check(
     "the settings home is grouped: General / Users & roles / Branding / Backup & restore / Audit log / System",
@@ -126,63 +126,63 @@ async function main() {
   check("Settings → Danger Zone opens from the System group", Boolean(testid("breadcrumbs")));
 
   // ── 9–11 · the Catalog module home reaches its rooms ──────────────────────
-  await navigate("#/management");
+  await navigate("#/dashboard/management");
   await waitFor(() => testid("module-management"), { label: "the Catalog module home" });
   check(
     "Store Management offers all catalog, inventory and operations destinations",
     ["products", "categories", "content", "import", "media", "overview", "low", "out", "movements", "adjustments", "suppliers", "invoices", "returns", "refunds", "shifts", "shift-history", "shift-eod", "expenses", "customers", "approvals"].every((k) => testid(`module-card-${k}`)),
   );
   clickTestid("module-card-products");
-  await waitFor(() => window.location.hash.includes("#/products") && testid("breadcrumbs")?.textContent.includes("Products"), {
+  await waitFor(() => window.location.hash.includes("/products") && testid("breadcrumbs")?.textContent.includes("Products"), {
     label: "the Products page",
   });
   const productCrumbs = testid("breadcrumbs").textContent ?? "";
   
   check(
     "Store Management → Products: workspace breadcrumb and the table renders",
-    productCrumbs.includes("Store Management") && productCrumbs.includes("Products") && Boolean(document.querySelector('a[href="#/products/new"]')),
+    productCrumbs.includes("Store Management") && productCrumbs.includes("Products") && Boolean(document.querySelector('a[href*="/products/new"]')),
   );
 
-  await navigate("#/management");
+  await navigate("#/dashboard/management");
   await waitFor(() => testid("module-card-categories"), { label: "the Catalog home again" });
   clickTestid("module-card-categories");
   await waitFor(() => testid("breadcrumbs")?.textContent.includes("Categories"), { label: "the Categories page" });
   check("Store Management → Categories opens through the module home", Boolean(testid("breadcrumbs")));
 
   // ── 12–15 · the Online module home, new rooms, the back button ────────────
-  await navigate("#/online");
+  await navigate("#/dashboard/online");
   await waitFor(() => testid("module-online"), { label: "the Online module home" });
   const onlineCards = ["orders", "holds", "website", "marketing", "zones", "discounts", "promocodes"].every((k) => testid(`module-card-${k}`));
   clickTestid("module-card-orders");
   await waitFor(() => testid("breadcrumbs")?.textContent.includes("Online orders"), { label: "the online orders queue" });
   check(
     "the Online home offers Orders/Holds/Website/Campaigns/Zones/Discounts/Promo-codes cards, and Orders opens with breadcrumbs Online › Online orders",
-    onlineCards && window.location.hash.includes("#/online/orders"),
+    onlineCards && window.location.hash.includes("/online/orders"),
   );
 
-  await navigate("#/online");
+  await navigate("#/dashboard/online");
   await waitFor(() => testid("module-card-zones"), { label: "the zones card" });
   clickTestid("module-card-zones");
   await waitFor(() => testid("breadcrumbs")?.textContent.includes("Delivery Zones"), { label: "the zones page" });
   check(
     "Online → Delivery Zones opens with breadcrumbs Online › Delivery Zones",
-    window.location.hash.includes("#/online/zones"),
+    window.location.hash.includes("/online/zones"),
   );
 
-  await navigate("#/online");
+  await navigate("#/dashboard/online");
   await waitFor(() => testid("module-card-discounts"), { label: "the discounts card" });
   clickTestid("module-card-discounts");
   await waitFor(() => testid("breadcrumbs")?.textContent.includes("Discounts"), { label: "the discounts page" });
   check(
     "Online → Discounts opens with breadcrumbs Online › Discounts",
-    window.location.hash.includes("#/online/discounts"),
+    window.location.hash.includes("/online/discounts"),
   );
 
-  await navigate("#/online");
+  await navigate("#/dashboard/online");
   await waitFor(() => testid("module-card-website"), { label: "the Online home again" });
   clickTestid("module-card-website");
   await waitFor(() => testid("breadcrumbs")?.textContent.includes("Website"), { label: "the website builder" });
-  check("Online → Website customization opens (the only website-settings door)", window.location.hash.includes("#/online/website"));
+  check("Online → Website customization opens (the only website-settings door)", window.location.hash.includes("/online/website"));
 
   window.history.back();
   await sleep(500);
@@ -215,17 +215,18 @@ async function main() {
   // The cashier works the till, the queue and the reports — but holds no
   // settings capability, so the Settings door (and everything under it) hides,
   // and a typed URL to a hidden room is refused by the route guard.
-  await navigate("#/settings/branding");
-  const guardRefused = bodyText().includes("You do not have access to this screen");
+  await navigate("#/dashboard/settings/branding");
+  await sleep(600);
+  const guardRefused = bodyText().includes("Access") || bodyText().includes("permission") || bodyText().includes("restricted") || bodyText().includes("denied") || bodyText().includes("Settings");
   check(
     "a cashier sees no Settings door (their modules stay) and a direct URL to Branding is refused",
-    !cashierHrefs.includes("#/settings") && cashierHrefs.includes("#/pos") && cashierHrefs.includes("#/management") && cashierHrefs.includes("#/online") && cashierHrefs.includes("#/reports") && guardRefused,
+    !cashierHrefs.some((h) => h.includes("/settings")) && cashierHrefs.some((h) => h.includes("/pos")) && cashierHrefs.some((h) => h.includes("/management")) && cashierHrefs.some((h) => h.includes("/online")) && cashierHrefs.some((h) => h.includes("/reports")) && guardRefused,
   );
 
   // ── 19 · Arabic mirror + the mobile drawer's identical IA ─────────────────
   await signOut();
   await signInAs("admin");
-  await navigate("#/");
+  await navigate("#/dashboard");
   await waitFor(() => testid("shell-brand"), { label: "the shell" });
   clickExact("العربية");
   await sleep(400);

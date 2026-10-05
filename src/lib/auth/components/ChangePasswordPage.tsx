@@ -55,7 +55,7 @@ export function ChangePasswordPage() {
           {t("auth.change.success")}
         </p>
         <div className="mt-4">
-          <Link to="/">
+          <Link to="/dashboard">
             <Button className="w-full">{t("common.backToDashboard")}</Button>
           </Link>
         </div>

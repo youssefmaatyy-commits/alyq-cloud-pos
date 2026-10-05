@@ -110,13 +110,13 @@ await waitFor(
 console.log("  ✓ the sidebar re-branded live: new name + logo, no reload");
 
 // ── 5 · the dashboard shows the same brand ─────────────────────────────────
-await navigate("#/", 700);
+await navigate("#/dashboard", 700);
 await waitFor(() => testid("dash-kpi-row"), { label: "the dashboard" });
 assert.ok(document.body.textContent.includes(NAME_EN), "the dashboard surface carries the display name");
 console.log("  ✓ the dashboard shows the same brand source");
 
 // ── 6 · the receipt prints the brand logo while the toggle is on ───────────
-await navigate("#/settings/branding", 800);
+await navigate("#/dashboard/settings/branding", 800);
 // ToggleSwitch renders a <button id="branding-receipt-toggle" role="switch">
 const receiptToggle = () => document.querySelector('#branding-receipt-toggle');
 await waitFor(() => receiptToggle(), { label: "the receipt toggle" });
@@ -129,7 +129,7 @@ if (receiptToggle().getAttribute("aria-checked") !== "true") {
 assert.equal(settingsDoc().settings?.brand?.receipt_logo_enabled, true, "receipt printing is on");
 
 // a sale, then its receipt
-await navigate("#/shifts", 700);
+await navigate("#/dashboard/shifts", 700);
 await waitFor(() => bodyText().includes("No shift is currently open"), { label: "a closed drawer" });
 click("Open shift");
 await sleep(400);
@@ -140,7 +140,7 @@ setInputValue(shiftInputs.find((i) => i.inputMode === "decimal"), "100");
 clickEl([...shiftDialog.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === "Open shift"));
 await waitFor(() => /SH-\d{6}/.test(bodyText()), { label: "the shift to open" });
 
-await navigate("#/pos", 700);
+await navigate("#/dashboard/pos", 700);
 const plain = (ux.readJson("alyq.demo.catalog.v1")?.products ?? []).find(
   (p) => p.active && p.stock_tracking_enabled && !p.variants_enabled && p.stock_quantity > 0,
 );
@@ -185,7 +185,7 @@ console.log("  ✓ the login screen carries the brand (signed OUT)");
 
 // ── 8 · removing the logos degrades to the shipped ALYQ identity ───────────
 await signInAs("admin");
-await navigate("#/settings/branding", 900);
+await navigate("#/dashboard/settings/branding", 900);
 await waitFor(() => testid("branding-save"), { label: "the Branding screen again" });
 const removeButtons = buttons().filter((b) => (b.textContent ?? "").trim() === "Remove");
 assert.ok(removeButtons.length >= 2, "both logo fields offer Remove");
@@ -211,12 +211,12 @@ console.log("  ✓ removed logos degrade every surface to the shipped ALYQ wordm
 // ── 9 · a role without manage_website cannot open Branding ─────────────────
 await signOut();
 await signInAs("cashier");
-await navigate("#/settings/branding", 900);
+await navigate("#/dashboard/settings/branding", 900);
 await sleep(700);
 assert.ok(!testid("branding-save"), "no Branding screen for a cashier");
 assert.ok(!document.body.textContent.includes("Compact mark"), "no branding fields either");
 console.log("  ✓ the cashier is refused at /settings/branding (guard, not hiding)");
 
-await navigate("#/");
+await navigate("#/dashboard");
 await sleep(400);
 ux.finish("Branding");

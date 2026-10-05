@@ -31,7 +31,7 @@ function check(label, condition) { assert.ok(condition, label); console.log(`  â
 function save() { check("draft is ready for a single Save", saveButton() && !saveButton().disabled); clickEl(saveButton()); }
 
 await signInAs("admin");
-await navigate("#/online/website?tab=v2", 850);
+await navigate("#/dashboard/online/website?tab=v2", 850);
 await waitFor(() => testid("v2-studio") && root(), { label: "V2 studio and draft preview" });
 check("a missing V2 group resolves without a migration", Boolean(testid("v2-mobile-columns")));
 check("V2-only and Legacy + V2 shared settings have separate labels",
@@ -124,11 +124,11 @@ await waitFor(() => settings()?.storefront_v2?.header_bg === null, { label: "V2 
 check("saved V2-only reset preserves shared announcement, theme and grid",
   settings().announcement.mode === "scroll" && settings().product_card.mobile_columns === 1 &&
   settings().theme.primary_color === "#202427");
-await navigate("#/online/website?tab=theme", 500);
+await navigate("#/dashboard/online/website?tab=theme", 500);
 check("shared Appearance tab is labelled and old preview is not mislabelled V2",
   Boolean(testid("shared-setting-scope")) && document.body.textContent.includes("Legacy storefront draft preview (not V2)"));
 await ux.signInAs("cashier");
-await navigate("#/online/website?tab=v2", 650);
+await navigate("#/dashboard/online/website?tab=v2", 650);
 check("cashier lacks permission to enter the V2 editor", !testid("v2-studio"));
 console.log(`\n${passed} Phase 2 Admin/Storefront V2 checks passed.`);
 ux.finish("Storefront V2 Phase 2 Admin saved/reloaded/reset/shared scope and route isolation");

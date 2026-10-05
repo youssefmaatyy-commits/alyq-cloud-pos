@@ -27,7 +27,7 @@ import { DEFAULT_BUNDLE, bundleFileUrl } from "./lib/app-bundle.mjs";
 const BUNDLE = DEFAULT_BUNDLE;
 const DEMO_PASSWORD = "alyq1234";
 const SESSION_KEY = "alyq.auth.session.v1";
-const PANEL = "#/settings/backup";
+const PANEL = "#/dashboard/settings/backup";
 
 /** Every network attempt made during the run — demo mode must make none. */
 const networkCalls = [];
@@ -219,6 +219,9 @@ function makeHarness(dom, consoleErrors, downloads, reloads, navigations) {
   };
 
   const signIn = async (username, password = DEMO_PASSWORD) => {
+    if (!usernameField()) {
+      await navigate("#/login");
+    }
     for (let i = 0; i < 25 && !usernameField(); i += 1) await sleep(200);
     typeInto(usernameField(), username);
     typeInto(passwordField(), password);
@@ -307,7 +310,9 @@ await step(1, "The panel is behind a permission", async () => {
   await app.navigate(PANEL);
   if (!app.usernameField()) throw new Error("the backup panel was served without a session");
   const hash = decodeURIComponent(app.dom.window.location.hash);
-  if (!hash.includes("next=/settings/backup")) throw new Error(`attempted route not preserved (hash: ${hash})`);
+  if (!hash.includes("next=") || (!hash.includes("/settings/backup") && !hash.includes("/dashboard/settings/backup"))) {
+    throw new Error(`attempted route not preserved (hash: ${hash})`);
+  }
   out.push(`signed out → ${PANEL} redirects to ${hash}`);
 
   // A cashier holds none of the five capabilities, so the link is not there and
@@ -325,10 +330,10 @@ await step(1, "The panel is behind a permission", async () => {
   // saying which mode it is in.
   await app.signOut();
   await app.signIn("admin");
-  if (!app.navHrefs().some((href) => href === "#/settings")) {
+  if (!app.navHrefs().some((href) => href.includes("/settings"))) {
     throw new Error("the sidebar does not offer the Settings module to an admin");
   }
-  await app.navigate("#/settings");
+  await app.navigate("#/dashboard/settings");
   await app.waitFor(() => app.dom.window.document.querySelector('[data-testid="settings-card-backup"]'), { what: "the backup card on the settings home" });
   await app.dom.window.document.querySelector('[data-testid="settings-card-backup"]').dispatchEvent(
     new app.dom.window.MouseEvent("click", { bubbles: true, cancelable: true }),

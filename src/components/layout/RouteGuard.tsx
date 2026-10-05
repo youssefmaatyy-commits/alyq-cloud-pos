@@ -50,7 +50,7 @@ export function RouteGuard({ children }: { children: ReactNode }) {
         description={t("perm.deniedHint", { role: roleLabel })}
         action={
           can("dashboard.view") ? (
-            <Link to="/">
+            <Link to="/dashboard">
               <Button variant="secondary">{t("common.backToDashboard")}</Button>
             </Link>
           ) : undefined

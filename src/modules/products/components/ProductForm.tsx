@@ -346,7 +346,7 @@ export function ProductForm({ productId }: { productId?: string }) {
   };
 
   const goBack = useCallback(() => {
-    navigate(productId ? `/products/${productId}` : "/products");
+    navigate(productId ? `/dashboard/products/${productId}` : "/dashboard/products");
   }, [navigate, productId]);
 
   const handleSaveAndEditVariants = async () => {
@@ -367,9 +367,9 @@ export function ProductForm({ productId }: { productId?: string }) {
       const { product, isNew } = await saveDraftAndVariants();
       toast.success(t(isNew ? "products.createdToast" : "products.updatedToast"));
       if (isNew) {
-        navigate(`/products/${product.id}/edit`);
+        navigate(`/dashboard/products/${product.id}/edit`);
       } else {
-        navigate(`/products/${productId}`);
+        navigate(`/dashboard/products/${productId}`);
       }
     } catch (error) {
       if (isApprovalRequired(error)) {
@@ -406,7 +406,7 @@ export function ProductForm({ productId }: { productId?: string }) {
     try {
       const { isNew } = await saveDraftAndVariants();
       toast.success(t(isNew ? "products.createdToast" : "products.updatedToast"));
-      navigate(isNew ? "/products" : `/products/${productId}`);
+      navigate(isNew ? "/dashboard/products" : `/dashboard/products/${productId}`);
     } catch (error) {
       // Phase 12: the shop requires a second signature on price moves. Nothing
       // was written — offer to file the change, carrying the draft verbatim so
@@ -441,7 +441,7 @@ export function ProductForm({ productId }: { productId?: string }) {
       <Card className="text-sm font-medium text-slate-700">
         {t("common.notFound")}
         <div className="mt-3">
-          <Button variant="secondary" onClick={() => navigate("/products")}>
+          <Button variant="secondary" onClick={() => navigate("/dashboard/products")}>
             {t("common.back")}
           </Button>
         </div>

@@ -64,7 +64,8 @@ const toggle = () => testid("sidebar-toggle");
  *  `bg-white/10` row style both NavLink's own match and an explicit `active`
  *  prop produce — this is the same class the shell actually paints with. */
 const activeLink = (href) => {
-  const link = aside()?.querySelector(`a[href="${href}"]`);
+  const target = href.startsWith("#/dashboard") ? href : `#/dashboard${href.replace(/^#/, "")}`;
+  const link = aside()?.querySelector(`a[href="${href}"]`) || aside()?.querySelector(`a[href="${target}"]`);
   return Boolean(link && link.className.includes("bg-white/10"));
 };
 const sidebarWidthClass = () => [...(aside()?.classList ?? [])].find((c) => c.startsWith("w-"));
@@ -75,7 +76,7 @@ async function main() {
 
   // ── 0 · sign in and land on a route with a distinct active nav item ───────
   await signInAs("admin");
-  await navigate("#/settings", 500);
+  await navigate("#/dashboard/settings", 500);
   await waitFor(() => aside(), { label: "the desktop sidebar" });
   await waitFor(() => testid("sidebar-toggle"), { label: "the sidebar toggle" });
 
@@ -113,7 +114,7 @@ async function main() {
   );
 
   // ── 4 · expand — restores the sidebar, the active item, and the route ───
-  check("the route is unchanged while the sidebar is collapsed", dom.window.location.hash === "#/settings");
+  check("the route is unchanged while the sidebar is collapsed", dom.window.location.hash.includes("/settings"));
   clickEl(toggle());
   await sleep(250);
   check(
@@ -121,7 +122,7 @@ async function main() {
     sidebarWidthClass() === "w-64" && aside().textContent.includes("Settings"),
   );
   check("the active nav item survives the collapse → expand cycle", activeLink("#/settings"));
-  check("the current route/hash is unchanged — expanding did not navigate", dom.window.location.hash === "#/settings");
+  check("the current route/hash is unchanged — expanding did not navigate", dom.window.location.hash.includes("/settings"));
   check(
     "no page reload occurred across the cycle (window state survived)",
     dom.window.__alyqSidebarTestSentinel === sentinel,

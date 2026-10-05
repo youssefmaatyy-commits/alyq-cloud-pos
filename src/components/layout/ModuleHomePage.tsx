@@ -61,7 +61,7 @@ export function ModuleHomePage({
       </div> : <PageHeader
         title={title}
         subtitle={subtitle}
-        crumbs={crumbs ?? [{ label: t("nav.dashboard"), to: "/" }, { label: title }]}
+        crumbs={crumbs ?? [{ label: t("nav.dashboard"), to: "/dashboard" }, { label: title }]}
       />}
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {visible.map((card) => (

@@ -38,58 +38,58 @@ export function SalesHome({ embedded = false }: { embedded?: boolean }) {
   return (
     <ModuleHomePage
       embedded={embedded}
-      crumbs={[{ label: t("home.management.title"), to: "/management" }, { label: t("home.breadcrumb.sales") }]}
+      crumbs={[{ label: t("home.management.title"), to: "/dashboard/management" }, { label: t("home.breadcrumb.sales") }]}
       moduleKey="sales"
       title={embedded ? t("home.management.operations") : t("home.breadcrumb.sales")}
       subtitle={t("home.sales.subtitle")}
       cards={[
         {
           key: "invoices",
-          to: "/pos/sales",
+          to: "/dashboard/pos/sales",
           icon: <ReceiptIcon />,
           title: t("nav.sales"),
           description: t("home.sales.invoices.desc"),
         },
         {
           key: "returns",
-          to: "/returns",
+          to: "/dashboard/returns",
           icon: <RotateCcwIcon />,
           title: t("nav.returns"),
           description: t("home.sales.returns.desc"),
         },
         {
           key: "refunds",
-          to: "/refunds",
+          to: "/dashboard/refunds",
           icon: <RotateCcwIcon />,
           title: t("nav.refunds"),
           description: t("home.sales.refunds.desc"),
         },
         {
           key: "shifts",
-          to: "/shifts",
+          to: "/dashboard/shifts",
           icon: <WalletIcon />,
           title: t("nav.shiftDashboard"),
           description: t("home.sales.shifts.desc"),
         },
         {
           key: "expenses",
-          to: "/expenses",
+          to: "/dashboard/expenses",
           icon: <ReceiptIcon />,
           title: t("nav.expenses"),
           description: t("home.sales.expenses.desc"),
         },
         {
           key: "approvals",
-          to: "/approvals",
+          to: "/dashboard/approvals",
           icon: <ClipboardIcon />,
           title: t("nav.approvals"),
           description: t("home.sales.approvals.desc"),
           badge: pending,
           badgeLabel: t("approvals.pendingHint"),
         },
-        { key: "customers", to: "/customers", icon: <ClipboardIcon />, title: t("nav.customers"), description: t("home.management.customers") },
-        { key: "shift-history", to: "/shifts/history", icon: <HistoryIcon />, title: t("nav.shiftHistory"), description: t("home.sales.shifts.desc") },
-        { key: "shift-eod", to: "/shifts/eod", icon: <ReportIcon />, title: t("nav.shiftEod"), description: t("home.sales.eod.desc") },
+        { key: "customers", to: "/dashboard/customers", icon: <ClipboardIcon />, title: t("nav.customers"), description: t("home.management.customers") },
+        { key: "shift-history", to: "/dashboard/shifts/history", icon: <HistoryIcon />, title: t("nav.shiftHistory"), description: t("home.sales.shifts.desc") },
+        { key: "shift-eod", to: "/dashboard/shifts/eod", icon: <ReportIcon />, title: t("nav.shiftEod"), description: t("home.sales.eod.desc") },
       ]}
     />
   );
@@ -101,28 +101,28 @@ export function CatalogHome({ embedded = false }: { embedded?: boolean }) {
   return (
     <ModuleHomePage
       embedded={embedded}
-      crumbs={[{ label: t("home.management.title"), to: "/management" }, { label: t("home.breadcrumb.catalog") }]}
+      crumbs={[{ label: t("home.management.title"), to: "/dashboard/management" }, { label: t("home.breadcrumb.catalog") }]}
       moduleKey="catalog"
       title={t("home.breadcrumb.catalog")}
       subtitle={t("home.catalog.subtitle")}
       cards={[
         {
           key: "products",
-          to: "/products",
+          to: "/dashboard/products",
           icon: <BoxIcon />,
           title: t("nav.products"),
           description: t("home.catalog.products.desc"),
         },
         {
           key: "categories",
-          to: "/categories",
+          to: "/dashboard/categories",
           icon: <LayersIcon />,
           title: t("nav.categories"),
           description: t("home.catalog.categories.desc"),
         },
         {
           key: "content",
-          to: "/online/website?tab=productContent",
+          to: "/dashboard/online/website?tab=productContent",
           permission: "website.manage",
           icon: <EditIcon />,
           title: t("online.ws.productContent"),
@@ -131,14 +131,14 @@ export function CatalogHome({ embedded = false }: { embedded?: boolean }) {
         ...(importOpen
           ? [{
               key: "import",
-              to: "/products/import",
+              to: "/dashboard/products/import",
               permission: "data.import" as const,
               icon: <PlusCircleIcon />,
               title: t("nav.importExport"),
               description: t("home.catalog.import.desc"),
             }]
           : []),
-        { key: "media", to: "/online/website?tab=productContent", permission: "website.manage", icon: <EditIcon />, title: t("home.management.media"), description: t("home.management.media.desc") },
+        { key: "media", to: "/dashboard/online/website?tab=productContent", permission: "website.manage", icon: <EditIcon />, title: t("home.management.media"), description: t("home.management.media.desc") },
       ]}
     />
   );
@@ -147,52 +147,52 @@ export function CatalogHome({ embedded = false }: { embedded?: boolean }) {
 export function InventoryHome({ embedded = false }: { embedded?: boolean }) {
   const { t } = useI18n();
   const location = useLocation();
-  if (!embedded && new URLSearchParams(location.search).has("status")) return <Navigate to={`/inventory/stock${location.search}`} replace />;
+  if (!embedded && new URLSearchParams(location.search).has("status")) return <Navigate to={`/dashboard/inventory/stock${location.search}`} replace />;
   return (
     <ModuleHomePage
       embedded={embedded}
-      crumbs={[{ label: t("home.management.title"), to: "/management" }, { label: t("home.breadcrumb.inventory") }]}
+      crumbs={[{ label: t("home.management.title"), to: "/dashboard/management" }, { label: t("home.breadcrumb.inventory") }]}
       moduleKey="inventory"
       title={t("home.breadcrumb.inventory")}
       subtitle={t("home.inventory.subtitle")}
       cards={[
         {
           key: "overview",
-          to: "/inventory/stock",
+          to: "/dashboard/inventory/stock",
           icon: <LayersIcon />,
           title: t("nav.inventory"),
           description: t("home.inventory.overview.desc"),
         },
         {
           key: "low",
-          to: "/inventory/stock?status=low",
+          to: "/dashboard/inventory/stock?status=low",
           icon: <LayersIcon />,
           title: t("nav.lowStock"),
           description: t("home.inventory.low.desc"),
         },
         {
           key: "out",
-          to: "/inventory/stock?status=out",
+          to: "/dashboard/inventory/stock?status=out",
           icon: <LayersIcon />,
           title: t("nav.outOfStock"),
           description: t("home.inventory.out.desc"),
         },
         {
           key: "movements",
-          to: "/inventory/movements",
+          to: "/dashboard/inventory/movements",
           icon: <HistoryIcon />,
           title: t("nav.movements"),
           description: t("home.inventory.movements.desc"),
         },
         {
           key: "stocktake",
-          to: "/inventory/stocktake",
+          to: "/dashboard/inventory/stocktake",
           icon: <ClipboardIcon />,
           title: t("inventory.stocktake.title"),
           description: t("inventory.stocktake.subtitle"),
         },
-        { key: "adjustments", to: "/inventory/stock", permission: "inventory.adjust", icon: <EditIcon />, title: t("inventory.adjust"), description: t("home.management.adjustments") },
-        { key: "suppliers", to: "/reports?section=suppliers", icon: <ClipboardIcon />, title: t("reports.suppliersTitle"), description: t("reports.suppliersHint") },
+        { key: "adjustments", to: "/dashboard/inventory/stock", permission: "inventory.adjust", icon: <EditIcon />, title: t("inventory.adjust"), description: t("home.management.adjustments") },
+        { key: "suppliers", to: "/dashboard/reports?section=suppliers", icon: <ClipboardIcon />, title: t("reports.suppliersTitle"), description: t("reports.suppliersHint") },
       ]}
     />
   );
@@ -209,7 +209,7 @@ export function OnlineHome() {
       cards={[
         {
           key: "orders",
-          to: "/online/orders",
+          to: "/dashboard/online/orders",
           permission: "orders.view",
           icon: <GlobeIcon />,
           title: t("nav.onlineOrders"),
@@ -222,7 +222,7 @@ export function OnlineHome() {
         },
         {
           key: "holds",
-          to: "/online/reservations",
+          to: "/dashboard/online/reservations",
           permission: "orders.view",
           icon: <LayersIcon />,
           title: t("nav.stockHolds"),
@@ -232,7 +232,7 @@ export function OnlineHome() {
         },
         {
           key: "website",
-          to: "/online/website",
+          to: "/dashboard/online/website",
           permission: "website.manage",
           icon: <EditIcon />,
           title: t("nav.websiteSettings"),
@@ -240,7 +240,7 @@ export function OnlineHome() {
         },
         {
           key: "marketing",
-          to: "/online/marketing",
+          to: "/dashboard/online/marketing",
           permission: "website.manage",
           icon: <PlusCircleIcon />,
           title: t("nav.marketing"),
@@ -248,7 +248,7 @@ export function OnlineHome() {
         },
         {
           key: "content",
-          to: "/online/content",
+          to: "/dashboard/online/content",
           permission: "website.manage",
           icon: <ClipboardIcon />,
           title: t("nav.websiteContent"),
@@ -256,7 +256,7 @@ export function OnlineHome() {
         },
         {
           key: "delivery",
-          to: "/online/website?tab=delivery",
+          to: "/dashboard/online/website?tab=delivery",
           permission: "website.manage",
           icon: <WalletIcon />,
           title: t("online.ws.delivery"),
@@ -264,7 +264,7 @@ export function OnlineHome() {
         },
         {
           key: "zones",
-          to: "/online/zones",
+          to: "/dashboard/online/zones",
           permission: "website.manage",
           icon: <GlobeIcon />,
           title: t("online.zones.title"),
@@ -272,7 +272,7 @@ export function OnlineHome() {
         },
         {
           key: "discounts",
-          to: "/online/discounts",
+          to: "/dashboard/online/discounts",
           permission: "website.manage",
           icon: <PlusCircleIcon />,
           title: t("online.promos.title"),
@@ -280,7 +280,7 @@ export function OnlineHome() {
         },
         {
           key: "promocodes",
-          to: "/online/marketing",
+          to: "/dashboard/online/marketing",
           permission: "website.manage",
           icon: <EditIcon />,
           title: t("online.marketing.promoCodes"),
@@ -288,17 +288,17 @@ export function OnlineHome() {
         },
         {
           key: "reports",
-          to: "/online/reports",
+          to: "/dashboard/online/reports",
           permission: "orders.view",
           icon: <ReportIcon />,
           title: t("nav.onlineReports"),
           description: t("home.online.reports.desc"),
         },
         ...(["social", "checkout", "confirmation"] as const).map((tab) => ({
-          key: tab, to: `/online/website?tab=${tab}`, permission: "website.manage" as const,
+          key: tab, to: `/dashboard/online/website?tab=${tab}`, permission: "website.manage" as const,
           icon: <EditIcon />, title: t(`online.ws.${tab}`), description: t("home.online.configure"),
         })),
-        { key: "verification", to: "/online/orders", icon: <WalletIcon />, title: t("home.online.verification"), description: t("home.online.verification.desc") },
+        { key: "verification", to: "/dashboard/online/orders", icon: <WalletIcon />, title: t("home.online.verification"), description: t("home.online.verification.desc") },
       ]}
     />
   );
@@ -309,7 +309,7 @@ export function StoreManagementHome() {
   const { t } = useI18n();
   return <div data-testid="module-management">
     <PageHeader title={t("home.management.title")} subtitle={t("home.management.subtitle")}
-      crumbs={[{ label: t("nav.dashboard"), to: "/" }, { label: t("home.management.title") }]} />
+      crumbs={[{ label: t("nav.dashboard"), to: "/dashboard" }, { label: t("home.management.title") }]} />
     <div className="space-y-9">
       <CatalogHome embedded />
       <InventoryHome embedded />

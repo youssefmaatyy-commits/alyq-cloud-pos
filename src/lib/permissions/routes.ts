@@ -109,6 +109,8 @@ export const ROUTE_PERMISSIONS: ReadonlyArray<readonly [string, Permission]> = [
   ["/online/zones", "website.manage"],
   ["/online/discounts", "website.manage"],
   ["/audit", "audit.view"],
+  ["/orders", "orders.view"],
+  ["/users", "users.manage"],
   // Settings (Phase 10). Three capabilities rather than one, so a role can be
   // given the area without being given the directory inside it: `manage_settings`
   // opens the hub, `manage_users` the accounts, `manage_roles` the permission
@@ -198,6 +200,8 @@ export const ROUTE_PERMISSION_ALTERNATES: ReadonlyArray<readonly [string, Permis
   ["/management", "inventory.view"],
   ["/management", "orders.view"],
   ["/management", "reports.view"],
+  ["/orders", "website.manage"],
+  ["/users", "roles.manage"],
 ];
 
 /** Compatibility projection for capability-based previews and older helpers. */
@@ -240,11 +244,14 @@ function routePatternMatches(path: string, pattern: string): boolean {
   return expected.every((segment, index) => segment.startsWith(":") || segment === actual[index]);
 }
 
-/** Trailing slash and query-free comparison form. */
+/** Trailing slash and query-free comparison form. Maps /dashboard and /dashboard/* to canonical route keys. */
 function normalizePath(pathname: string): string {
   const withoutQuery = pathname.split("?")[0].split("#")[0];
   const trimmed = withoutQuery.replace(/\/+$/, "");
-  return trimmed === "" ? "/" : trimmed;
+  const normalized = trimmed === "" ? "/" : trimmed;
+  if (normalized === "/dashboard") return "/";
+  if (normalized.startsWith("/dashboard/")) return normalized.slice("/dashboard".length);
+  return normalized;
 }
 
 /**

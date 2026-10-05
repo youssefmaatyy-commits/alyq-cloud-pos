@@ -51,7 +51,7 @@ export function SettingsHomePage() {
       labelKey: "admin.settings.group.general",
       cards: [
         {
-          to: "/online/website?tab=general",
+          to: "/dashboard/online/website?tab=general",
           permission: "website.manage",
           icon: "🛍",
           titleKey: "online.ws.general",
@@ -59,7 +59,7 @@ export function SettingsHomePage() {
           testId: "settings-card-online",
         },
         {
-          to: "/settings/approvals",
+          to: "/dashboard/settings/approvals",
           permission: "settings.manage",
           icon: "✓",
           titleKey: "admin.settings.card.approvals.title",
@@ -67,7 +67,7 @@ export function SettingsHomePage() {
           testId: "settings-card-approvals",
         },
         {
-          to: "/settings/registers",
+          to: "/dashboard/settings/registers",
           permission: "registers.manage",
           icon: "▣",
           titleKey: "admin.settings.card.registers.title",
@@ -75,7 +75,7 @@ export function SettingsHomePage() {
           testId: "settings-card-registers",
         },
         {
-          to: "/settings/hardware",
+          to: "/dashboard/settings/hardware",
           permission: "hardware.configure",
           icon: "⌁",
           titleKey: "admin.settings.card.hardware.title",
@@ -89,7 +89,7 @@ export function SettingsHomePage() {
       labelKey: "admin.settings.group.people",
       cards: [
         {
-          to: "/settings/users",
+          to: "/dashboard/settings/users",
           permission: "users.manage",
           icon: "👥",
           titleKey: "admin.settings.card.users.title",
@@ -97,7 +97,7 @@ export function SettingsHomePage() {
           testId: "settings-card-users",
         },
         {
-          to: "/settings/branches",
+          to: "/dashboard/settings/branches",
           permission: "users.manage",
           icon: "⌂",
           titleKey: "admin.settings.card.branches.title",
@@ -105,7 +105,7 @@ export function SettingsHomePage() {
           testId: "settings-card-branches",
         },
         {
-          to: "/settings/roles",
+          to: "/dashboard/settings/roles",
           permission: "roles.manage",
           icon: "🛡",
           titleKey: "admin.settings.permissions",
@@ -119,7 +119,7 @@ export function SettingsHomePage() {
       labelKey: "admin.settings.group.branding",
       cards: [
         {
-          to: "/settings/branding",
+          to: "/dashboard/settings/branding",
           permission: "website.manage",
           icon: "◆",
           titleKey: "admin.settings.card.branding.title",
@@ -133,7 +133,7 @@ export function SettingsHomePage() {
       labelKey: "admin.settings.group.backup",
       cards: [
         {
-          to: "/settings/backup",
+          to: "/dashboard/settings/backup",
           permission: "backups.view",
           icon: "⬇",
           titleKey: "admin.settings.card.backup.title",
@@ -147,7 +147,7 @@ export function SettingsHomePage() {
       labelKey: "admin.settings.group.audit",
       cards: [
         {
-          to: "/audit",
+          to: "/dashboard/audit",
           permission: "audit.view",
           icon: "☰",
           titleKey: "admin.settings.card.audit.title",
@@ -161,7 +161,7 @@ export function SettingsHomePage() {
       labelKey: "admin.settings.group.system",
       cards: [
         {
-          to: "/system-health",
+          to: "/dashboard/system-health",
           permission: "reports.view",
           icon: "●",
           titleKey: "admin.settings.card.health.title",
@@ -169,7 +169,7 @@ export function SettingsHomePage() {
           testId: "settings-card-health",
         },
         {
-          to: "/settings/operations",
+          to: "/dashboard/settings/operations",
           permission: "system.health_check",
           icon: "◎",
           titleKey: "admin.settings.card.operations.title",
@@ -179,7 +179,7 @@ export function SettingsHomePage() {
         {
           // Phase 47: the Danger Zone lives last and reads differently on
           // purpose — a card for the acts you must never reach by accident.
-          to: "/settings/system",
+          to: "/dashboard/settings/system",
           permission: "system.preview_cleanup",
           icon: "⚠",
           titleKey: "admin.settings.card.system.title",

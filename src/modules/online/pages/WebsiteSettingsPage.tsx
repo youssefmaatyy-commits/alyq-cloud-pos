@@ -249,8 +249,9 @@ export function WebsiteSettingsPage() {
   const requestedTab = searchParams.get("tab");
   const tab: Tab = TABS.find((entry) => entry.key === requestedTab)?.key ?? "general";
   const setTab = (next: Tab) => setSearchParams((current) => {
-    current.set("tab", next);
-    return current;
+    const params = new URLSearchParams(current);
+    params.set("tab", next);
+    return params;
   });
 
   useEffect(() => {

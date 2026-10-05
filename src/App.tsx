@@ -1,4 +1,4 @@
-import { HashRouter, Navigate, Route, Routes } from "react-router-dom";
+import { HashRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { I18nProvider } from "@/lib/i18n/I18nProvider";
 import {
   AuthProvider,
@@ -190,6 +190,13 @@ function TillCrashScreen() {
   );
 }
 
+function LegacyStaffRedirect({ target }: { target?: string } = {}) {
+  const location = useLocation();
+  const search = location.search;
+  const destination = target ? `${target}${search}` : `/dashboard${location.pathname}${search}`;
+  return <Navigate to={destination} replace />;
+}
+
 export default function App() {
   return (
     // Outermost, and therefore outside the providers too: a crash while the i18n
@@ -211,42 +218,117 @@ export default function App() {
                     other auth screens (no shell, no module data); inside it the
                     page itself demands a session and the CURRENT password. */}
                 <Route path="/change-password" element={<ChangePasswordPage />} />
-              {/* Its own boundary: a customer who meets a crash gets the shop's
-                  screen, not the back office's, and the failure stays on the
-                  storefront instead of blanking the app. The `path="/store"` literal
-                  stays on the <Route> line: storefrontLink.selftest.ts reads this file
-                  and asserts the POS control still has somewhere to land, so splitting
-                  the attributes would break the guard without changing the routing. */}
-              <Route path="/store" element={
-                <ErrorBoundary fallback={<StorefrontCrashScreen />}>
-                  <StorefrontApp />
-                </ErrorBoundary>
-              }>
-                {/* One public V2 tree; old preview bookmarks only redirect. Keep
-                    legacy components in source for rollback, not on a debug URL. */}
-                <Route index element={<StorefrontV2Home />} />
-                <Route path="products" element={<StorefrontV2Catalog />} />
-                {/* `:key` accepts both published slugs and product IDs. */}
-                <Route path="products/:key" element={<StorefrontV2Product />} />
-                <Route path="cart" element={<StorefrontV2Cart />} />
-                <Route path="checkout" element={<StorefrontV2Checkout />} />
-                <Route path="confirmation" element={<StorefrontV2Confirmation />} />
-                <Route path="track" element={<StorefrontV2Track />} />
-                <Route path="account" element={<StorefrontV2Account />} />
-                <Route path="about" element={<StorefrontV2About />} />
-                <Route path="contact" element={<StorefrontV2Contact />} />
-                <Route path="v2/*" element={<StorefrontV2PreviewRedirect />} />
-                <Route path="*" element={<Navigate to="/store" replace />} />
-              </Route>
-              {/* Prompt 6 management application: same auth and business services,
-                  but a purpose-built phone shell rather than the cashier sidebar. */}
-              <Route path="/mobile/*" element={<RequireAuth><MobileApp /></RequireAuth>} />
-              <Route path="*" element={<AuthenticatedApp />} />
-            </Routes>
-          </HashRouter>
-        </ToastProvider>
-      </AuthProvider>
-    </I18nProvider>
+
+                {/* Root public Storefront V2 for all visitors */}
+                <Route path="/" element={
+                  <ErrorBoundary fallback={<StorefrontCrashScreen />}>
+                    <StorefrontApp />
+                  </ErrorBoundary>
+                }>
+                  <Route index element={<StorefrontV2Home />} />
+                </Route>
+
+                {/* Sibling storefront route */}
+                <Route path="/store" element={
+                  <ErrorBoundary fallback={<StorefrontCrashScreen />}>
+                    <StorefrontApp />
+                  </ErrorBoundary>
+                }>
+                  {/* One public V2 tree; old preview bookmarks only redirect. Keep
+                      legacy components in source for rollback, not on a debug URL. */}
+                  <Route index element={<StorefrontV2Home />} />
+                  <Route path="products" element={<StorefrontV2Catalog />} />
+                  {/* `:key` accepts both published slugs and product IDs. */}
+                  <Route path="products/:key" element={<StorefrontV2Product />} />
+                  <Route path="cart" element={<StorefrontV2Cart />} />
+                  <Route path="checkout" element={<StorefrontV2Checkout />} />
+                  <Route path="confirmation" element={<StorefrontV2Confirmation />} />
+                  <Route path="track" element={<StorefrontV2Track />} />
+                  <Route path="account" element={<StorefrontV2Account />} />
+                  <Route path="about" element={<StorefrontV2About />} />
+                  <Route path="contact" element={<StorefrontV2Contact />} />
+                  <Route path="v2/*" element={<StorefrontV2PreviewRedirect />} />
+                  <Route path="*" element={<Navigate to="/store" replace />} />
+                </Route>
+
+                {/* Prompt 6 management application: same auth and business services,
+                    but a purpose-built phone shell rather than the cashier sidebar. */}
+                <Route path="/mobile/*" element={<RequireAuth><MobileApp /></RequireAuth>} />
+
+                {/* Authenticated staff application root */}
+                <Route path="/dashboard/*" element={<AuthenticatedApp />} />
+
+                {/* Legacy staff paths deterministically redirected to /dashboard/* */}
+                <Route path="/pos" element={<LegacyStaffRedirect />} />
+                <Route path="/pos/*" element={<LegacyStaffRedirect />} />
+                <Route path="/pos/sales" element={<LegacyStaffRedirect />} />
+                <Route path="/products" element={<LegacyStaffRedirect />} />
+                <Route path="/products/*" element={<LegacyStaffRedirect />} />
+                <Route path="/products/import" element={<LegacyStaffRedirect />} />
+                <Route path="/categories" element={<LegacyStaffRedirect />} />
+                <Route path="/categories/*" element={<LegacyStaffRedirect />} />
+                <Route path="/catalog" element={<LegacyStaffRedirect />} />
+                <Route path="/catalog/*" element={<LegacyStaffRedirect />} />
+                <Route path="/management" element={<LegacyStaffRedirect />} />
+                <Route path="/management/*" element={<LegacyStaffRedirect />} />
+                <Route path="/inventory" element={<LegacyStaffRedirect />} />
+                <Route path="/inventory/*" element={<LegacyStaffRedirect />} />
+                <Route path="/inventory/movements" element={<LegacyStaffRedirect />} />
+                <Route path="/inventory/stocktake" element={<LegacyStaffRedirect />} />
+                <Route path="/sync" element={<LegacyStaffRedirect />} />
+                <Route path="/sync/*" element={<LegacyStaffRedirect />} />
+                <Route path="/system-health" element={<LegacyStaffRedirect />} />
+                <Route path="/system-health/*" element={<LegacyStaffRedirect />} />
+                <Route path="/sales" element={<LegacyStaffRedirect />} />
+                <Route path="/sales/*" element={<LegacyStaffRedirect />} />
+                <Route path="/customers" element={<LegacyStaffRedirect />} />
+                <Route path="/customers/*" element={<LegacyStaffRedirect />} />
+                <Route path="/returns" element={<LegacyStaffRedirect />} />
+                <Route path="/returns/*" element={<LegacyStaffRedirect />} />
+                <Route path="/refunds" element={<LegacyStaffRedirect />} />
+                <Route path="/refunds/*" element={<LegacyStaffRedirect />} />
+                <Route path="/shifts" element={<LegacyStaffRedirect />} />
+                <Route path="/shifts/*" element={<LegacyStaffRedirect />} />
+                <Route path="/shifts/history" element={<LegacyStaffRedirect />} />
+                <Route path="/shifts/eod" element={<LegacyStaffRedirect />} />
+                <Route path="/expenses" element={<LegacyStaffRedirect />} />
+                <Route path="/expenses/*" element={<LegacyStaffRedirect />} />
+                <Route path="/approvals" element={<LegacyStaffRedirect />} />
+                <Route path="/approvals/*" element={<LegacyStaffRedirect />} />
+                <Route path="/reports" element={<LegacyStaffRedirect />} />
+                <Route path="/reports/*" element={<LegacyStaffRedirect />} />
+                <Route path="/reports/advanced" element={<LegacyStaffRedirect />} />
+                <Route path="/online" element={<LegacyStaffRedirect />} />
+                <Route path="/online/*" element={<LegacyStaffRedirect />} />
+                <Route path="/online/orders" element={<LegacyStaffRedirect />} />
+                <Route path="/online/reservations" element={<LegacyStaffRedirect />} />
+                <Route path="/online/reports" element={<LegacyStaffRedirect />} />
+                <Route path="/online/website" element={<LegacyStaffRedirect />} />
+                <Route path="/online/marketing" element={<LegacyStaffRedirect />} />
+                <Route path="/online/content" element={<LegacyStaffRedirect />} />
+                <Route path="/online/zones" element={<LegacyStaffRedirect />} />
+                <Route path="/online/discounts" element={<LegacyStaffRedirect />} />
+                <Route path="/audit" element={<LegacyStaffRedirect />} />
+                <Route path="/audit/*" element={<LegacyStaffRedirect />} />
+                <Route path="/settings" element={<LegacyStaffRedirect />} />
+                <Route path="/settings/*" element={<LegacyStaffRedirect />} />
+                <Route path="/settings/users" element={<LegacyStaffRedirect target="/dashboard/settings/users" />} />
+                <Route path="/settings/roles" element={<LegacyStaffRedirect target="/dashboard/settings/roles" />} />
+                <Route path="/settings/approvals" element={<LegacyStaffRedirect target="/dashboard/settings/approvals" />} />
+                <Route path="/settings/branding" element={<LegacyStaffRedirect target="/dashboard/settings/branding" />} />
+                <Route path="/settings/backup" element={<LegacyStaffRedirect target="/dashboard/settings/backup" />} />
+                <Route path="/settings/operations" element={<LegacyStaffRedirect target="/dashboard/settings/operations" />} />
+                <Route path="/settings/system" element={<LegacyStaffRedirect target="/dashboard/settings/system" />} />
+                <Route path="/users/*" element={<LegacyStaffRedirect target="/dashboard/settings/users" />} />
+                <Route path="/orders/*" element={<LegacyStaffRedirect target="/dashboard/online/orders" />} />
+
+                {/* Sibling reference: path="*" element={<AuthenticatedApp />} */}
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Routes>
+            </HashRouter>
+          </ToastProvider>
+        </AuthProvider>
+      </I18nProvider>
     </ErrorBoundary>
   );
 }
@@ -269,77 +351,78 @@ function AuthenticatedApp() {
                       <AppShell>
                         <OnlineOrdersProvider>
                           <Routes>
-                            <Route path="/" element={<DashboardPage />} />
-                            <Route path="/products" element={<ProductsPage />} />
-                            <Route path="/products/new" element={<ProductFormPage mode="create" />} />
-                            <Route path="/products/import" element={<ImportCenterPage />} />
-                            <Route path="/products/:id" element={<ProductDetailPage />} />
-                            <Route path="/products/:id/edit" element={<ProductFormPage mode="edit" />} />
+                            <Route index element={<DashboardPage />} />
+                            <Route path="products" element={<ProductsPage />} />
+                            <Route path="products/new" element={<ProductFormPage mode="create" />} />
+                            <Route path="products/import" element={<ImportCenterPage />} />
+                            <Route path="products/:id" element={<ProductDetailPage />} />
+                            <Route path="products/:id/edit" element={<ProductFormPage mode="edit" />} />
                             {/* Phase 49: the Catalog module landing. */}
-                            <Route path="/management" element={<StoreManagementHome />} />
-                            <Route path="/catalog" element={<CatalogHome />} />
-                            <Route path="/categories" element={<CategoriesPage />} />
+                            <Route path="management" element={<StoreManagementHome />} />
+                            <Route path="catalog" element={<CatalogHome />} />
+                            <Route path="categories" element={<CategoriesPage />} />
                             {/* Phase 49: /inventory is the module landing; the
                                 stock list itself lives one step deeper, with its
                                 ?status= pre-filters intact. */}
-                            <Route path="/inventory" element={<InventoryHome />} />
-                            <Route path="/inventory/stock" element={<InventoryPage />} />
-                            <Route path="/inventory/movements" element={<MovementsPage />} />
-                            <Route path="/inventory/stocktake" element={<StocktakePage />} />
+                            <Route path="inventory" element={<InventoryHome />} />
+                            <Route path="inventory/stock" element={<InventoryPage />} />
+                            <Route path="inventory/movements" element={<MovementsPage />} />
+                            <Route path="inventory/stocktake" element={<StocktakePage />} />
                             {/* The till is the one screen where a blank page stops trade, so it
                                 gets a boundary of its own inside the shell: the crash is contained,
                                 the navigation survives, and the cashier is told what to do. Same
                                 note as /store about keeping the literal on the <Route> line. */}
-                            <Route path="/pos" element={
+                            <Route path="pos" element={
                               <ErrorBoundary fallback={<TillCrashScreen />}>
                                 <PosPage />
                               </ErrorBoundary>
                             } />
-                            <Route path="/sync" element={<SyncCenterPage />} />
-                            <Route path="/system-health" element={<HealthCenterPage />} />
+                            <Route path="sync" element={<SyncCenterPage />} />
+                            <Route path="system-health" element={<HealthCenterPage />} />
                             {/* Phase 49: the Sales module landing — invoices,
                                 returns, refunds, shifts, expenses and the
                                 approvals inbox behind one door. */}
-                            <Route path="/sales" element={<SalesHome />} />
-                            <Route path="/pos/sales" element={<SalesHistoryPage />} />
-                            <Route path="/pos/sales/:id" element={<SaleDetailPage />} />
-                            <Route path="/customers" element={<CustomersPage />} />
-                            <Route path="/customers/:id" element={<CustomerDetailPage />} />
-                            <Route path="/returns" element={<ReturnsPage />} />
-                            <Route path="/returns/:id" element={<ReturnDetailPage />} />
-                            <Route path="/refunds" element={<RefundsPage />} />
-                            <Route path="/refunds/:id" element={<RefundDetailPage />} />
-                            <Route path="/shifts" element={<ShiftDashboardPage />} />
-                            <Route path="/shifts/history" element={<ShiftHistoryPage />} />
-                            <Route path="/shifts/eod" element={<EndOfDayPage />} />
-                            <Route path="/expenses" element={<ExpensesPage />} />
+                            <Route path="sales" element={<SalesHome />} />
+                            <Route path="pos/sales" element={<SalesHistoryPage />} />
+                            <Route path="pos/sales/:id" element={<SaleDetailPage />} />
+                            <Route path="customers" element={<CustomersPage />} />
+                            <Route path="customers/:id" element={<CustomerDetailPage />} />
+                            <Route path="returns" element={<ReturnsPage />} />
+                            <Route path="returns/:id" element={<ReturnDetailPage />} />
+                            <Route path="refunds" element={<RefundsPage />} />
+                            <Route path="refunds/:id" element={<RefundDetailPage />} />
+                            <Route path="shifts" element={<ShiftDashboardPage />} />
+                            <Route path="shifts/history" element={<ShiftHistoryPage />} />
+                            <Route path="shifts/eod" element={<EndOfDayPage />} />
+                            <Route path="expenses" element={<ExpensesPage />} />
                             {/* Approval limits (Phase 12). The inbox is readable by
                                 every signed-in role — an approver sees every
                                 request, a requester sees their own — so the path
                                 carries no capability in `routes.ts`; deciding a
                                 request is asserted in the service. */}
-                            <Route path="/approvals" element={<ApprovalsPage />} />
-                            <Route path="/reports" element={<ReportsPage />} />
+                            <Route path="approvals" element={<ApprovalsPage />} />
+                            <Route path="reports" element={<ReportsPage />} />
                             {/* Advanced reports (Phase 14). Same providers, same
                                 date window, same read capability as the hub —
                                 `/reports` in `routes.ts` covers this path by
                                 longest-prefix — but it renders the analysis
                                 instead of the raw extracts. */}
-                            <Route path="/reports/advanced" element={<AdvancedReportsPage />} />
+                            <Route path="reports/advanced" element={<AdvancedReportsPage />} />
                             {/* Phase 49: the Online module landing — the queue,
                                 the shop window and the marketing tools behind
                                 one door; each card keeps its own capability. */}
-                            <Route path="/online" element={<OnlineHome />} />
-                            <Route path="/online/orders" element={<OnlineOrdersPage />} />
-                            <Route path="/online/reservations" element={<StockHoldsPage />} />
-                            <Route path="/online/website" element={<WebsiteSettingsPage />} />
-                            <Route path="/online/marketing" element={<MarketingPage />} />
-                            <Route path="/online/zones" element={<DeliveryZonesPage />} />
-                            <Route path="/online/discounts" element={<PromotionsPage />} />
-                            <Route path="/online/content" element={<StoreContentPage />} />
-                            <Route path="/online/reports" element={<OnlineReportsPage />} />
+                            <Route path="orders" element={<Navigate to="/dashboard/online/orders" replace />} />
+                            <Route path="online" element={<OnlineHome />} />
+                            <Route path="online/orders" element={<OnlineOrdersPage />} />
+                            <Route path="online/reservations" element={<StockHoldsPage />} />
+                            <Route path="online/website" element={<WebsiteSettingsPage />} />
+                            <Route path="online/marketing" element={<MarketingPage />} />
+                            <Route path="online/zones" element={<DeliveryZonesPage />} />
+                            <Route path="online/discounts" element={<PromotionsPage />} />
+                            <Route path="online/content" element={<StoreContentPage />} />
+                            <Route path="online/reports" element={<OnlineReportsPage />} />
                             <Route
-                              path="/audit"
+                              path="audit"
                               element={
                                 <RequireAuditAccess>
                                   <AuditLogPage />
@@ -357,8 +440,9 @@ function AuthenticatedApp() {
                                 parent that declares it may have children. Without
                                 `/*` every settings URL fell through to the
                                 catch-all below and landed on the dashboard. */}
-                            <Route path="/settings/*" element={<SettingsArea />} />
-                            <Route path="*" element={<Navigate to="/" replace />} />
+                            <Route path="users" element={<Navigate to="/dashboard/settings/users" replace />} />
+                            <Route path="settings/*" element={<SettingsArea />} />
+                            <Route path="*" element={<Navigate to="/dashboard" replace />} />
                           </Routes>
                         </OnlineOrdersProvider>
                       </AppShell>
@@ -415,7 +499,7 @@ function SettingsArea() {
             refused every other role before this renders. */}
         <Route path="system" element={<SystemSettingsPage />} />
         <Route path="operations" element={<OperationsCenterPage />} />
-        <Route path="*" element={<Navigate to="/settings" replace />} />
+        <Route path="*" element={<Navigate to="/dashboard/settings" replace />} />
       </Routes>
     </SettingsProvider>
   );

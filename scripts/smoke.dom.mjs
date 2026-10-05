@@ -25,7 +25,7 @@ import assert from "node:assert/strict";
 import { bundleFileUrl } from "./lib/app-bundle.mjs";
 
 const dom = new JSDOM('<!doctype html><html lang="en"><body><div id="root"></div></body></html>', {
-  url: "http://localhost/",
+  url: "http://localhost/#/login",
   pretendToBeVisual: true,
   runScripts: "outside-only",
 });
@@ -2264,7 +2264,7 @@ async function main() {
   assert.ok(bodyText().includes("Advanced reports"), "the advanced reports screen renders");
   // Phase 49: the sidebar carries the Reports module; the advanced screen is
   // its own route (bookmarked URLs still resolve — proven by this navigate).
-  assert.ok(navHrefs().includes("#/reports"), "and the sidebar offers the Reports module");
+  assert.ok(navHrefs().some((h) => h.includes("/reports")), "and the sidebar offers the Reports module");
   assert.ok(bodyText().includes("Date range"), "with the one window every tab reads");
   assert.ok(bodyText().includes("Sales by employee"), "the sales analysis leads the screen");
   /** Rows on screen — the analysis is tables, so "has data" means "has rows". */
@@ -2383,7 +2383,7 @@ async function main() {
   console.log("  ✓ advanced reports: every tab over one window, real workbooks, empty range explained");
 
   // ── Phase 14 · Dashboard: KPI cards and four SVG charts, behind the gate ──
-  await navigate("#/");
+  await navigate("#/dashboard");
   for (let i = 0; i < 30 && !bodyText().includes("Business performance"); i += 1) await sleep(300);
   assert.ok(bodyText().includes("Today's revenue"), "the dashboard keeps the tiles it already had");
   assert.ok(bodyText().includes("Business performance"), "and grows a performance section");
@@ -2426,7 +2426,7 @@ async function main() {
   for (let i = 0; i < 25 && !bodyText().includes("Sales by employee"); i += 1) await sleep(300);
   assert.ok(bodyText().includes("Sales by employee"), "a viewer reads the analysis");
   assert.ok(!denied(), "and is not refused the screen the capability matrix grants");
-  await navigate("#/");
+  await navigate("#/dashboard");
   for (let i = 0; i < 25 && !bodyText().includes("Business performance"); i += 1) await sleep(300);
   assert.ok(bodyText().includes("Business performance"), "the dashboard performance section too");
   console.log("  ✓ advanced reports and the dashboard stay readable for a read-only role");
@@ -2439,7 +2439,7 @@ async function main() {
   // Authentication phase: the acting role now comes from the session, so the
   // check signs in as each user instead of flipping a demo role switcher.
   await signInAs("viewer");
-  assert.ok(!navHrefs().includes("#/audit"), "viewer does not see the audit log in the sidebar");
+  assert.ok(!navHrefs().some((h) => h.includes("/audit")), "viewer does not see the audit log in the sidebar");
   await navigate("#/audit");
   for (let i = 0; i < 10 && !bodyText().includes("Audit log is restricted"); i += 1) await sleep(300);
   assert.ok(bodyText().includes("Audit log is restricted"), "viewer is denied when typing #/audit directly");
@@ -2450,7 +2450,7 @@ async function main() {
 
   await signInAs("manager");
   // Phase 49: the trail is reached from the Settings home's System group.
-  assert.ok(navHrefs().includes("#/settings"), "manager sees the Settings door");
+  assert.ok(navHrefs().some((h) => h.includes("/settings")), "manager sees the Settings door");
   await navigate("#/settings");
   for (let i = 0; i < 12 && !document.querySelector('[data-testid="settings-card-audit"]'); i += 1) await sleep(300);
   assert.ok(document.querySelector('[data-testid="settings-card-audit"]'), "manager sees the audit log entry on the settings home");
@@ -2499,7 +2499,9 @@ async function main() {
   await navigate("#/expenses");
   assert.ok(usernameField(), "protected screens are unreachable signed out");
   assert.ok(
-    decodeURIComponent(dom.window.location.hash).includes("next=/expenses"),
+    decodeURIComponent(dom.window.location.hash).includes("next=") &&
+      (decodeURIComponent(dom.window.location.hash).includes("/expenses") ||
+        decodeURIComponent(dom.window.location.hash).includes("/dashboard/expenses")),
     "the attempted route is remembered in the login URL",
   );
   console.log("  ✓ logout clears the session and protected routes redirect to login");
@@ -2529,17 +2531,17 @@ async function main() {
   await signInAs("cashier");
   assert.ok(isSignedIn(), "cashier signed in");
   const cashierNav = navHrefs();
-  assert.ok(cashierNav.includes("#/pos"), "cashier sees the register");
+  assert.ok(cashierNav.some((h) => h.includes("/pos")), "cashier sees the register");
   // Phase 49+: catalog, sales, inventory and customers hang off the Store
   // Management workspace — the cashier sees the door; the rooms are its
   // cards, each route still its own gate.
-  assert.ok(cashierNav.includes("#/management"), "cashier sees the Store Management door");
-  assert.ok(!cashierNav.includes("#/returns") && !cashierNav.includes("#/refunds"), "no returns/refunds leaves in the sidebar");
+  assert.ok(cashierNav.some((h) => h.includes("/management")), "cashier sees the Store Management door");
+  assert.ok(!cashierNav.some((h) => h.includes("/returns")) && !cashierNav.some((h) => h.includes("/refunds")), "no returns/refunds leaves in the sidebar");
   await navigate("#/management");
   for (let i = 0; i < 12 && !document.querySelector('[data-testid="module-card-returns"]'); i += 1) await sleep(300);
   assert.ok(document.querySelector('[data-testid="module-card-returns"]'), "cashier sees returns on the Sales home");
   assert.ok(document.querySelector('[data-testid="module-card-refunds"]'), "cashier sees refunds on the Sales home");
-  assert.ok(!cashierNav.includes("#/audit"), "cashier does not see the audit log");
+  assert.ok(!cashierNav.some((h) => h.includes("/audit")), "cashier does not see the audit log");
   await navigate("#/pos");
   await waitFor(() => posScanBox(), { label: "the scan/search box" });
   assert.ok(posScanBox(), "cashier can open the register (sell capability)");
@@ -2561,11 +2563,11 @@ async function main() {
   // ── Viewer: read-only, and no till at all ──
   await signInAs("viewer");
   const viewerNav = navHrefs();
-  assert.ok(!viewerNav.includes("#/pos"), "viewer does not see the register");
-  assert.ok(!viewerNav.includes("#/returns"), "viewer does not see returns");
-  assert.ok(!viewerNav.includes("#/refunds"), "viewer does not see refunds");
-  assert.ok(!viewerNav.includes("#/audit"), "viewer does not see the audit log");
-  assert.ok(viewerNav.includes("#/management"), "viewer keeps workspace access (inventory lives inside)");
+  assert.ok(!viewerNav.some((h) => h.includes("/pos")), "viewer does not see the register");
+  assert.ok(!viewerNav.some((h) => h.includes("/returns")), "viewer does not see returns");
+  assert.ok(!viewerNav.some((h) => h.includes("/refunds")), "viewer does not see refunds");
+  assert.ok(!viewerNav.some((h) => h.includes("/audit")), "viewer does not see the audit log");
+  assert.ok(viewerNav.some((h) => h.includes("/management")), "viewer keeps workspace access (inventory lives inside)");
   for (const route of ["#/pos", "#/returns", "#/refunds", "#/audit"]) {
     await navigate(route);
     await sleep(400);
@@ -2629,13 +2631,13 @@ async function main() {
 
   await signInAs("admin");
   // Phase 49: oversight screens live behind the Settings home — the door, not the leaf.
-  assert.ok(navHrefs().includes("#/settings"), "admin restored the oversight door");
+  assert.ok(navHrefs().some((h) => h.includes("/settings")), "admin restored the oversight door");
   console.log("  ✓ role changes are driven by the signed-in session, not a demo switcher");
 
   // ── Explicit Sidebar Navigation Verification ──
   // Six-door IA: Customers has no global door — it is a card of the Store
   // Management workspace. Click the workspace door, then its Customers card.
-  const managementNav = [...document.querySelectorAll("aside nav a")].find((a) => (a.getAttribute("href") ?? "") === "#/management");
+  const managementNav = [...document.querySelectorAll("aside nav a")].find((a) => (a.getAttribute("href") ?? "").includes("/management"));
   assert.ok(managementNav, "Store Management door exists in sidebar");
   managementNav.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
   await sleep(350);
@@ -2873,7 +2875,7 @@ async function main() {
   // admin session — the shop is public, it does not sign anyone out — so
   // navigate back inside the shell rather than re-authenticating: `signInAs`
   // starts by signing out, and the storefront has no sign-out control.
-  await navigate("#/online/website");
+  await navigate("#/dashboard/online/website");
   await sleep(900);
   const settingsShopLink = document.querySelector('a[data-testid="settings-open-store"]');
   assert.ok(settingsShopLink, "the website settings screen offers Open store");

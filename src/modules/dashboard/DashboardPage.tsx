@@ -297,28 +297,28 @@ export function DashboardPage() {
       {/* ── Quick actions — each routes to a real operation ─────────────────── */}
       <div className="mb-4 flex flex-wrap gap-2" data-testid="dash-quick-actions">
         {maySell ? (
-          <Link to="/pos">
+          <Link to="/dashboard/pos">
             <Button variant="primary" size="sm" data-testid="dash-qa-new-sale">
               <ShoppingCartIcon /> {t("dashboard.qaNewSale")}
             </Button>
           </Link>
         ) : null}
         {mayAddProducts ? (
-          <Link to="/products/new">
+          <Link to="/dashboard/products/new">
             <Button variant="secondary" size="sm" data-testid="dash-qa-add-product">
               <BoxIcon /> {t("dashboard.qaAddProduct")}
             </Button>
           </Link>
         ) : null}
         {mayOpenInventory ? (
-          <Link to="/inventory/stock">
+          <Link to="/dashboard/inventory/stock">
             <Button variant="secondary" size="sm" data-testid="dash-qa-stock">
               <WarehouseIcon /> {t("dashboard.qaStock")}
             </Button>
           </Link>
         ) : null}
         {canSeeWebsite ? (
-          <Link to="/online/website">
+          <Link to="/dashboard/online/website">
             <Button variant="secondary" size="sm" data-testid="dash-qa-website">
               <GlobeIcon /> {t("dashboard.qaWebsite")}
             </Button>
@@ -339,7 +339,7 @@ export function DashboardPage() {
               count: num(todayInvoices, 0),
               average: money(todayAov),
             })}
-            to="/pos/sales?today=1"
+            to="/dashboard/pos/sales?today=1"
             testId="kpi-today-sales"
           />
         ) : null}
@@ -350,7 +350,7 @@ export function DashboardPage() {
             tone="info"
             icon={<GlobeIcon />}
             hint={money(onlineKpis.salesToday)}
-            to="/online/orders"
+            to="/dashboard/online/orders"
             testId="kpi-web-orders"
           />
         ) : null}
@@ -361,7 +361,7 @@ export function DashboardPage() {
             tone="warning"
             icon={<WarehouseIcon />}
             hint={`${inventoryAlerts.outCount} ${t("dashboard.outOfStock").toLowerCase()}`}
-            to="/inventory/stock?status=low"
+            to="/dashboard/inventory/stock?status=low"
             testId="kpi-low-stock"
           />
         ) : null}
@@ -372,7 +372,7 @@ export function DashboardPage() {
             tone="neutral"
             icon={<RotateCcwIcon />}
             hint={t("dashboard.todayRefunded", { amount: money(todayRefunded) })}
-            to="/returns"
+            to="/dashboard/returns"
             testId="kpi-returns"
           />
         ) : null}
@@ -387,7 +387,7 @@ export function DashboardPage() {
                 ? `${money(snapshot.shiftSummary.cash_sales)} · ${snapshot.shiftSummary.sales_count}`
                 : t("dashboard.noOpenShift")
             }
-            to="/shifts"
+            to="/dashboard/shifts"
             testId="kpi-open-shift"
           />
         ) : null}
@@ -418,7 +418,7 @@ export function DashboardPage() {
             value={String(snapshot.customerCount)}
             tone="info"
             icon={<UsersIcon />}
-            to="/customers"
+            to="/dashboard/customers"
             hint={t("dashboard.customersHint")}
           />
         ) : null}
@@ -488,7 +488,7 @@ export function DashboardPage() {
               <p className="mt-0.5 text-xs font-medium text-stone-500">{t("dashboard.webSectionHint")}</p>
             </div>
             {mayOpenOrders ? (
-              <Link to="/online/orders" className="text-xs font-bold text-stone-600 hover:text-stone-900">
+              <Link to="/dashboard/online/orders" className="text-xs font-bold text-stone-600 hover:text-stone-900">
                 {t("dashboard.viewAll")} →
               </Link>
             ) : null}
@@ -499,14 +499,14 @@ export function DashboardPage() {
               label={t("dashboard.pendingReview")}
               value={String(onlineKpis.pendingReview)}
               tone={onlineKpis.pendingReview > 0 ? "warning" : "success"}
-              to={mayOpenOrders ? "/online/orders?status=pending" : undefined}
+              to={mayOpenOrders ? "/dashboard/online/orders?status=pending" : undefined}
               testId="web-kpi-pending"
             />
             <KpiTile
               label={t("dashboard.instapayAwaiting")}
               value={String(onlineKpis.instapayAwaiting)}
               tone={onlineKpis.instapayAwaiting > 0 ? "danger" : "success"}
-              to={mayOpenOrders ? "/online/orders?payment=verification_required" : undefined}
+              to={mayOpenOrders ? "/dashboard/online/orders?payment=verification_required" : undefined}
               testId="web-kpi-instapay"
             />
             <KpiTile
@@ -514,14 +514,14 @@ export function DashboardPage() {
               value={String(onlineKpis.deliveryActive)}
               tone="info"
               hint={money(onlineKpis.deliveryFees)}
-              to={mayOpenOrders ? "/online/orders" : undefined}
+              to={mayOpenOrders ? "/dashboard/online/orders" : undefined}
               testId="web-kpi-delivery"
             />
             <KpiTile
               label={t("dashboard.webPickup")}
               value={String(onlineKpis.pickupActive)}
               tone="info"
-              to={mayOpenOrders ? "/online/orders" : undefined}
+              to={mayOpenOrders ? "/dashboard/online/orders" : undefined}
               testId="web-kpi-pickup"
             />
             <KpiTile
@@ -541,7 +541,7 @@ export function DashboardPage() {
               label={t("dashboard.webCancelled")}
               value={String(onlineKpis.cancelled)}
               tone={onlineKpis.cancelled > 0 ? "warning" : "neutral"}
-              to={mayOpenOrders ? "/online/orders?status=cancelled" : undefined}
+              to={mayOpenOrders ? "/dashboard/online/orders?status=cancelled" : undefined}
               testId="web-kpi-cancelled"
             />
             <KpiTile
@@ -549,7 +549,7 @@ export function DashboardPage() {
               value={`${websiteVisible.visible} / ${websiteVisible.hidden}`}
               tone="neutral"
               hint={t("dashboard.webVisibilityHint")}
-              to={mayOpenProducts ? "/products" : undefined}
+              to={mayOpenProducts ? "/dashboard/products" : undefined}
               testId="web-kpi-visibility"
             />
           </div>
@@ -690,7 +690,7 @@ export function DashboardPage() {
               </p>
             </div>
             <Link
-              to="/reports/advanced"
+              to="/dashboard/reports/advanced"
               className="text-xs font-bold text-stone-600 hover:text-stone-900"
             >
               {t("dashboard.viewAdvanced")} →
@@ -732,7 +732,7 @@ export function DashboardPage() {
               tone={(approvals?.summary.pending ?? 0) > 0 ? "warning" : "success"}
               icon={<ClipboardIcon />}
               hint={t("approvals.pendingHint")}
-              to="/approvals"
+              to="/dashboard/approvals"
             />
             {canManageOnline ? (
               <StatTile
@@ -825,7 +825,7 @@ export function DashboardPage() {
                 </p>
               </div>
               <Link
-                to="/reports/advanced"
+                to="/dashboard/reports/advanced"
                 className="text-xs font-bold text-stone-600 hover:text-stone-900"
               >
                 {t("nav.advancedReports")} →
@@ -866,7 +866,7 @@ export function DashboardPage() {
         <Card className="mt-4" testId="dash-stock-alerts">
           <div className="mb-2 flex items-center justify-between">
             <h2 className="text-base font-black text-stone-900">{t("dashboard.alertsTitle")}</h2>
-            <Link to="/inventory/stock?status=low" className="text-xs font-bold text-stone-600 hover:text-stone-900">
+            <Link to="/dashboard/inventory/stock?status=low" className="text-xs font-bold text-stone-600 hover:text-stone-900">
               {t("nav.inventory")} →
             </Link>
           </div>
@@ -925,7 +925,7 @@ export function DashboardPage() {
                 </p>
               </div>
               {mayOpenShifts ? (
-                <Link to="/shifts" className="self-center">
+                <Link to="/dashboard/shifts" className="self-center">
                   <Button variant="secondary" size="sm">{t("dashboard.viewAll")}</Button>
                 </Link>
               ) : null}
@@ -945,7 +945,7 @@ export function DashboardPage() {
           <h2 className="text-base font-black text-stone-900">{t("dashboard.recentSales")}</h2>
           {mayOpenSales ? (
             <Link
-              to="/pos/sales?today=1"
+              to="/dashboard/pos/sales?today=1"
               className="text-xs font-bold text-stone-600 hover:text-stone-900"
             >
               {t("nav.sales")} →

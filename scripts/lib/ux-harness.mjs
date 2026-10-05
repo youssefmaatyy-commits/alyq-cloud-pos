@@ -241,6 +241,9 @@ export async function createUxHarness({ beforeImport } = {}) {
   };
   const signInAs = async (username, password = DEMO_PASSWORD) => {
     await signOut();
+    if (!usernameField()) {
+      await navigate("#/login", 500);
+    }
     await waitFor(() => Boolean(usernameField()), { label: "the login screen" });
     setField("input[autocomplete='username']", username);
     setField("input[autocomplete='current-password']", password);

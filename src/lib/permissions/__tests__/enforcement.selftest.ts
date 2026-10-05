@@ -516,7 +516,7 @@ test("the reservation monitoring surfaces are gated by the capabilities they act
   // the reservations row carried; a role with neither sees no badge at all.
   const shell = read("src/components/layout/AppShell.tsx");
   assert.ok(
-    /to="\/online"[\s\S]{0,400}?visible=\{canOpen\("\/online\/orders"\) \|\| canManageWebsite\}[\s\S]{0,400}?badge=\{online\.counts\.pending\}/.test(
+    /to="(?:\/dashboard)?\/online"[\s\S]{0,800}?visible=\{canOpen\("(?:\/dashboard)?\/online\/orders"\) \|\| canManageWebsite\}[\s\S]{0,800}?badge=\{online\.counts\.pending\}/.test(
       shell,
     ),
     "the online badge is on the capability-gated module door, not beside it",

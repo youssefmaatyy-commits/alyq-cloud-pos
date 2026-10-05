@@ -101,7 +101,7 @@ function NavItem({
   // antique-gold detail the storefront theme already speaks, quiet enough to
   // stay premium rather than shout like a template.
   const marker = ({ isActive }: { isActive: boolean }) =>
-    isActive ? (
+    (active ?? isActive) ? (
       <span
         aria-hidden
         className="absolute inset-y-1.5 start-0 w-0.5 rounded-full bg-[#b08d57]"
@@ -308,8 +308,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     setSearchOpen(false);
     navigate(
       canSearchProducts
-        ? `/products?q=${encodeURIComponent(needle)}`
-        : `/online/orders?search=${encodeURIComponent(needle)}`,
+        ? `/dashboard/products?q=${encodeURIComponent(needle)}`
+        : `/dashboard/online/orders?search=${encodeURIComponent(needle)}`,
     );
   };
 
@@ -341,7 +341,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           without being clipped by this container's `overflow-hidden`. */}
       <div className={cn("flex shrink-0 items-center gap-2 px-0.5", navCollapsed && "flex-col")}>
         <Link
-          to="/"
+          to="/dashboard"
           className={cn(
             "flex min-w-0 items-center gap-3 rounded-xl",
             navCollapsed ? "justify-center" : "flex-1",
@@ -379,10 +379,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       <nav className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto" aria-label={t("nav.menu")}>
         {/* Six primary areas; desktop and mobile share this exact navigation. */}
-        <NavItem to="/" icon={<GridIcon />} label={t("nav.dashboard")} end collapsed={navCollapsed} />
-        <NavItem to="/pos" icon={<ShoppingCartIcon />} label={t("home.pos.title")} end visible={canOpen("/pos")} collapsed={navCollapsed} />
+        <NavItem to="/dashboard" icon={<GridIcon />} label={t("nav.dashboard")} end collapsed={navCollapsed} />
+        <NavItem to="/dashboard/pos" icon={<ShoppingCartIcon />} label={t("home.pos.title")} end visible={canOpen("/dashboard/pos")} collapsed={navCollapsed} />
         <NavItem
-          to="/management"
+          to="/dashboard/management"
           icon={<BoxIcon />}
           label={t("home.management.title")}
           // Derived from real capabilities, never from a role name: the door
@@ -393,25 +393,25 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           // child (e.g. a website-only role) sees no door at all. Admin holds
           // everything, so the door is always there for an admin.
           visible={
-            canOpen("/sales") ||
-            canOpen("/inventory") ||
-            canOpen("/returns") ||
-            canOpen("/refunds") ||
-            canOpen("/shifts") ||
-            canOpen("/expenses") ||
-            canOpen("/customers")
+            canOpen("/dashboard/sales") ||
+            canOpen("/dashboard/inventory") ||
+            canOpen("/dashboard/returns") ||
+            canOpen("/dashboard/refunds") ||
+            canOpen("/dashboard/shifts") ||
+            canOpen("/dashboard/expenses") ||
+            canOpen("/dashboard/customers")
           }
-          active={["/management", "/catalog", "/products", "/categories", "/inventory", "/sales", "/pos/sales", "/returns", "/refunds", "/shifts", "/expenses", "/customers", "/approvals"].some((path) => location.pathname === path || location.pathname.startsWith(`${path}/`))}
+          active={["/dashboard/management", "/dashboard/catalog", "/dashboard/products", "/dashboard/categories", "/dashboard/inventory", "/dashboard/sales", "/dashboard/pos/sales", "/dashboard/returns", "/dashboard/refunds", "/dashboard/shifts", "/dashboard/expenses", "/dashboard/customers", "/dashboard/approvals", "/management", "/catalog", "/products", "/categories", "/inventory", "/sales", "/pos/sales", "/returns", "/refunds", "/shifts", "/expenses", "/customers", "/approvals"].some((path) => location.pathname === path || location.pathname.startsWith(`${path}/`))}
           badge={pendingApprovals}
           badgeLabel={t("approvals.pendingHint")}
           collapsed={navCollapsed}
         />
         <NavItem
-          to="/online"
+          to="/dashboard/online"
           icon={<GlobeIcon />}
           label={t("home.breadcrumb.online")}
-          visible={canOpen("/online/orders") || canManageWebsite}
-          active={["/online/orders", "/online/reservations", "/online/website", "/online/marketing", "/online/zones", "/online/content", "/online/reports"].some((path) => location.pathname === path || location.pathname.startsWith(`${path}/`)) || location.pathname === "/online"}
+          visible={canOpen("/dashboard/online/orders") || canManageWebsite}
+          active={["/dashboard/online/orders", "/dashboard/online/reservations", "/dashboard/online/website", "/dashboard/online/marketing", "/dashboard/online/zones", "/dashboard/online/content", "/dashboard/online/reports", "/dashboard/online", "/online/orders", "/online/reservations", "/online/website", "/online/marketing", "/online/zones", "/online/content", "/online/reports", "/online"].some((path) => location.pathname === path || location.pathname.startsWith(`${path}/`)) || location.pathname === "/dashboard/online" || location.pathname === "/online"}
           badge={online.counts.pending}
           badgeLabel={
             online.counts.needs_payment > 0
@@ -420,13 +420,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           }
           collapsed={navCollapsed}
         />
-        <NavItem to="/reports" icon={<ReportIcon />} label={t("nav.reports")} visible={canOpen("/reports")} collapsed={navCollapsed} />
-        {canManageUsers || canManageRoles || canManageSettings || canOpen("/settings/backup") || canOpen("/settings/operations") || canOpen("/audit") || can("system.reset") || canManageWebsite ? (
+        <NavItem to="/dashboard/reports" icon={<ReportIcon />} label={t("nav.reports")} visible={canOpen("/dashboard/reports")} collapsed={navCollapsed} />
+        {canManageUsers || canManageRoles || canManageSettings || canOpen("/dashboard/settings/backup") || canOpen("/dashboard/settings/operations") || canOpen("/dashboard/audit") || can("system.reset") || canManageWebsite ? (
           <NavItem
-            to="/settings"
+            to="/dashboard/settings"
             icon={<ArchiveIcon />}
             label={t("nav.settings")}
-            active={location.pathname.startsWith("/settings") || location.pathname === "/audit"}
+            active={location.pathname.startsWith("/dashboard/settings") || location.pathname === "/dashboard/audit" || location.pathname.startsWith("/settings") || location.pathname === "/audit"}
             visible
             collapsed={navCollapsed}
           />
@@ -611,7 +611,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   productMatches.map((product) => (
                     <Link
                       key={product.id}
-                      to={`/products/${product.id}`}
+                      to={`/dashboard/products/${product.id}`}
                       role="option"
                       aria-selected={false}
                       onClick={() => setSearchOpen(false)}
@@ -629,12 +629,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     {t("admin.shell.searchNoProducts")}
                   </p>
                 ) : null}
-                {canOpen("/online/orders") && (canManageOnline || canManageWebsite) ? (
+                {canOpen("/dashboard/online/orders") && (canManageOnline || canManageWebsite) ? (
                   <button
                     type="button"
                     onClick={() => {
                       setSearchOpen(false);
-                      navigate(`/online/orders?search=${encodeURIComponent(query.trim())}`);
+                      navigate(`/dashboard/online/orders?search=${encodeURIComponent(query.trim())}`);
                     }}
                     className="flex w-full items-center gap-2 border-t border-stone-100 px-3 py-2 text-xs font-semibold text-stone-600 hover:bg-stone-100"
                   >
@@ -647,7 +647,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
           ) : <div className="flex-1" />}
 
-          {desktopFullscreen !== null && location.pathname === "/pos" ? (
+          {desktopFullscreen !== null && (location.pathname === "/dashboard/pos" || location.pathname === "/pos") ? (
             <button
               type="button"
               data-testid="cashier-fullscreen"
@@ -664,9 +664,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
           {/* One application-wide connectivity model. A compact dot remains on
               small screens; the state and queue count link to safe detail. */}
-          {canOpen("/sync") ? (
+          {canOpen("/dashboard/sync") ? (
             <Link
-              to="/sync"
+              to="/dashboard/sync"
               data-testid="operational-status"
               aria-label={`${pos.connectivityState}; ${pos.syncPendingCount} pending sync operations`}
               className={cn(
@@ -732,7 +732,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 <div className="absolute end-0 top-11 z-40 w-64 overflow-hidden rounded-xl border border-stone-200 bg-white shadow-xl">
                   {pendingApprovals > 0 ? (
                     <Link
-                      to="/approvals"
+                      to="/dashboard/approvals"
                       onClick={() => setNotificationsOpen(false)}
                       className="flex items-center justify-between gap-2 px-3 py-2.5 text-xs font-semibold text-stone-700 hover:bg-stone-100"
                     >
@@ -742,9 +742,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                       </span>
                     </Link>
                   ) : null}
-                  {online.counts.pending > 0 && canOpen("/online/orders") && (canManageOnline || canManageWebsite) ? (
+                  {online.counts.pending > 0 && canOpen("/dashboard/online/orders") && (canManageOnline || canManageWebsite) ? (
                     <Link
-                      to={{ pathname: "/online/orders", search: "?status=pending" }}
+                      to={{ pathname: "/dashboard/online/orders", search: "?status=pending" }}
                       onClick={() => setNotificationsOpen(false)}
                       className="flex items-center justify-between gap-2 px-3 py-2.5 text-xs font-semibold text-stone-700 hover:bg-stone-100"
                     >
@@ -779,7 +779,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           ) : null}
         </header>
         {(pos.connectivityState === "offline" || pos.connectivityState === "degraded") ? (
-          <Link to={canOpen("/sync") ? "/sync" : location.pathname} className="block border-b border-amber-200 bg-amber-50 px-4 py-2 text-center text-xs font-bold text-amber-950" data-testid="offline-authority-banner">
+          <Link to={canOpen("/dashboard/sync") ? "/dashboard/sync" : location.pathname} className="block border-b border-amber-200 bg-amber-50 px-4 py-2 text-center text-xs font-bold text-amber-950" data-testid="offline-authority-banner">
             {t("pos.offlineCashOnly")} · {t("pos.cachedCatalog")}
           </Link>
         ) : null}

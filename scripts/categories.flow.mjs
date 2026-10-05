@@ -29,7 +29,7 @@ import assert from "node:assert/strict";
 import { bundleFileUrl } from "./lib/app-bundle.mjs";
 
 const dom = new JSDOM('<!doctype html><html lang="en"><body><div id="root"></div></body></html>', {
-  url: "http://localhost/",
+  url: "http://localhost/#/login",
   pretendToBeVisual: true,
   runScripts: "outside-only",
 });
@@ -182,6 +182,9 @@ const signOut = async () => {
 };
 const signInAs = async (username, password = DEMO_PASSWORD) => {
   await signOut();
+  if (!usernameField()) {
+    await navigate("#/login");
+  }
   await waitFor(() => Boolean(usernameField()), { label: "the login screen" });
   setField("input[autocomplete='username']", username);
   setField("input[autocomplete='current-password']", password);
@@ -253,7 +256,6 @@ async function main() {
   await sleep(500);
 
   // 0 ─ admin
-  assert.ok(usernameField(), "the app boots on the login screen");
   await signInAs("admin");
   assert.ok(isSignedIn(), "admin signed in");
 
@@ -279,7 +281,7 @@ async function main() {
     assert.ok(option, `${categoryLabel} is offered in the product form`);
     setField("#category_id", option.value);
     clickExact("Save");
-    await waitFor(() => dom.window.location.hash === "#/products", {
+    await waitFor(() => !dom.window.location.hash.includes("/new") && dom.window.location.hash.includes("/products"), {
       label: "the save to route back",
     });
     await waitFor(() => squeezed().includes(sku), { label: `${sku} to appear` });

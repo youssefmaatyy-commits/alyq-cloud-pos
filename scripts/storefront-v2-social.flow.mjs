@@ -32,7 +32,7 @@ let passed = 0;
 function check(name, condition) { assert.ok(condition, name); console.log(`  ✓ ${++passed}. ${name}`); }
 
 await signInAs("admin");
-await navigate("#/online/website?tab=v2", 750);
+await navigate("#/dashboard/online/website?tab=v2", 750);
 await waitFor(() => group("facebook") && testid("v2-draft-preview"), { label: "shared channel editor and V2 preview" });
 check("all four channels editable in the V2 Studio, labelled Legacy + V2",
   ["facebook", "instagram", "tiktok", "whatsapp"].every((platform) => group(platform)) &&
@@ -57,7 +57,7 @@ check("malformed profile blocks the entire save and leaves previous settings int
 // must now name the exact platform, jump the admin to the Social tab to fix
 // it, and leave every other still-invalid draft field (their unsaved store
 // name edit included) exactly where they left it — nothing is saved half way.
-await navigate("#/online/website?tab=general", 500);
+await navigate("#/dashboard/online/website?tab=general", 500);
 const storeNameInput = () => [...document.querySelectorAll("label")]
   .find((label) => label.textContent?.trim().startsWith("Store name (English)"))
   ?.closest("div")?.querySelector("input");
@@ -66,11 +66,12 @@ setReactValue(storeNameInput(), "ALYQ Rebrand Draft");
 await save();
 check("an unrelated tab's Save is refused with the exact broken platform named, not a generic message",
   document.querySelector('[aria-live="polite"]')?.textContent?.includes("Instagram") ?? false);
+await waitFor(() => dom.window.location.hash.includes("tab=social"), { label: "tab switched to social" });
 check("refusal switches the admin straight to the Social tab that needs fixing",
   dom.window.location.hash.includes("tab=social"));
 check("previous saved settings are untouched by the refused cross-tab save — no half-applied write",
   JSON.stringify(saved()) === first);
-await navigate("#/online/website?tab=v2", 500);
+await navigate("#/dashboard/online/website?tab=v2", 500);
 
 value("instagram", "https://www.instagram.com/new.shop/");
 toggle("instagram");

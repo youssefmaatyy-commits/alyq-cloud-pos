@@ -88,7 +88,7 @@ if (categorySelect) {
   if (option) setReactValue(categorySelect, option.value);
 }
 clickExact("Save");
-await waitFor(() => ux.dom.window.location.hash === "#/products", { label: "the save to land" });
+await waitFor(() => !ux.dom.window.location.hash.includes("/new") && ux.dom.window.location.hash.includes("/products"), { label: "the save to land" });
 const productId = catalog().products.find((p) => p.sku === SKU)?.id;
 assert.ok(productId, "the ring is in the catalogue");
 
