@@ -117,6 +117,21 @@ export function SyncCenterPage() {
         {totals.map(([label, value, tone]) => <Card key={label}><Badge tone={tone}>{label}</Badge><p className="mt-2 text-2xl font-black tabular-nums text-stone-900">{value}</p></Card>)}
       </div>
 
+      {!pos.connectivitySnapshot.storageDurable ? (
+        <div
+          className="mt-3 rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs font-semibold text-amber-950 shadow-sm"
+          data-testid="sync-storage-durability-warning"
+        >
+          <div className="flex items-start gap-2">
+            <span className="text-base" aria-hidden>⚠️</span>
+            <div>
+              <p className="font-bold">{ar ? "تنبيه: التخزين المحلي غير الدائم نشط (ذاكرة مؤقتة)" : "Warning: Non-durable local storage active (in-memory fallback)"}</p>
+              <p className="mt-0.5 text-amber-900">{ar ? "قاعدة بيانات المتصفح IndexedDB غير متاحة. المبيعات غير المتزامنة مخزنة في ذاكرة الجلسة فقط وستُفقد إذا تم إغلاق التبويب أو إعادة تحميل الصفحة قبل إعادة الاتصال." : "IndexedDB is unavailable in this browser environment. Queued offline sales are held in session memory only and will not survive a tab reload or browser restart before syncing."}</p>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {pos.workingFromCache ? <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900">{copy.cached} {pos.cachedCatalogAt ? `${date(pos.cachedCatalogAt)}` : ""}</p> : null}
 
       <Card className="mt-4">

@@ -176,7 +176,7 @@ export interface Sale {
   /** Client-only sync state for a cash sale accepted while the till was offline. */
   offline_sync_status?: "pending" | "syncing" | "synced" | "failed" | "deferred" | "conflict";
   offline_last_error?: string | null;
-  offline_last_error_kind?: "network" | "conflict" | "permission" | "branch" | "schema" | "rejected" | null;
+  offline_last_error_kind?: "network" | "conflict" | "permission" | "branch" | "schema" | "rejected" | "shift" | "auth" | null;
 }
 
 /**
@@ -190,6 +190,7 @@ export interface OfflinePricingEvidence {
   /** Original desktop identity. The server verifies both against its credential. */
   register_id?: string | null;
   installation_id?: string | null;
+  shift_id?: string | null;
   captured_at: string;
   subtotal: number;
   discount_amount: number;
@@ -235,6 +236,8 @@ export interface CompleteSaleInput {
   notes?: string | null;
   user_id: string;
   user_name: string;
+  /** Shift identity frozen at checkout or replay time. */
+  shift_id?: string | null;
   /** Original desktop binding evidence; authority is credential-resolved server-side. */
   register_id?: string | null;
   installation_id?: string | null;

@@ -1,3 +1,5 @@
+import { getStorageKind, isStorageDurable } from "./db";
+
 /**
  * Shared application connectivity facts.
  *
@@ -16,6 +18,8 @@ export interface ConnectivitySnapshot {
   browserOnline: boolean | null;
   backend: BackendReachability;
   session: SessionUsability;
+  storage: "indexeddb" | "memory";
+  storageDurable: boolean;
   syncing: boolean;
   syncError: boolean;
   pending: number;
@@ -61,8 +65,20 @@ function applicationState(): ApplicationConnectivityState {
 
 function snapshot(): ConnectivitySnapshot {
   return {
-    state: applicationState(), browserOnline, backend, session, syncing, syncError,
-    pending, failed, deferred, conflicts, lastBackendSuccessAt, lastBackendFailureAt,
+    state: applicationState(),
+    browserOnline,
+    backend,
+    session,
+    storage: getStorageKind(),
+    storageDurable: isStorageDurable(),
+    syncing,
+    syncError,
+    pending,
+    failed,
+    deferred,
+    conflicts,
+    lastBackendSuccessAt,
+    lastBackendFailureAt,
   };
 }
 

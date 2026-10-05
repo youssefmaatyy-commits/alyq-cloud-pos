@@ -201,7 +201,21 @@ let singleton: OfflineDb | null = null;
 
 /** True when a real, persistent IndexedDB is available in this runtime. */
 export function hasPersistentOfflineStorage(): boolean {
-  return typeof indexedDB !== "undefined";
+  try {
+    return typeof indexedDB !== "undefined" && indexedDB !== null;
+  } catch {
+    return false;
+  }
+}
+
+/** True when the active storage backend provides durable cross-session persistence. */
+export function isStorageDurable(): boolean {
+  return hasPersistentOfflineStorage();
+}
+
+/** Which storage backend is currently in use. */
+export function getStorageKind(): "indexeddb" | "memory" {
+  return hasPersistentOfflineStorage() ? "indexeddb" : "memory";
 }
 
 /**

@@ -150,7 +150,10 @@ export function PaymentPanel() {
       // `null` means the discount crossed an approval limit: nothing was
       // written, and `approvalAsk` now carries the draft the register can send
       // for approval instead.
-      await completeSale(payments);
+      await completeSale(payments, {
+        shiftId: openShift?.id ?? null,
+        shiftNumber: openShift?.shift_number ?? null,
+      });
     } catch (err) {
       // The race where the shift closes between render and submit: the RPC
       // (or the demo repository) is the authority, and its code comes back

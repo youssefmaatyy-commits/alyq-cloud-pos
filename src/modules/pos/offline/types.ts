@@ -74,7 +74,7 @@ export const OFFLINE_CATALOG_SCHEMA_VERSION = 2;
 
 /** One normalized lifecycle shared by the queue, history, status indicator and support UI. */
 export type OfflineSyncStatus = "pending" | "syncing" | "synced" | "failed" | "deferred" | "conflict";
-export type OfflineSyncErrorKind = "network" | "conflict" | "permission" | "branch" | "schema" | "rejected";
+export type OfflineSyncErrorKind = "network" | "conflict" | "permission" | "branch" | "schema" | "rejected" | "shift" | "auth";
 
 export type { OfflinePricingEvidence } from "../types";
 
@@ -98,6 +98,9 @@ export interface OfflineSaleRecord {
   /** Original desktop register identity (credential remains outside IndexedDB). */
   register_id?: string | null;
   installation_id?: string | null;
+  /** Original shift context captured when the offline sale was made. */
+  shift_id?: string | null;
+  shift_number?: string | null;
   input: CompleteSaleInput;
   /** Precomputed for display — the exact numbers the cashier saw at the till. */
   subtotal: number;
@@ -138,6 +141,9 @@ export interface SyncOutboxEntry {
   branch_id?: string | null;
   register_id?: string | null;
   installation_id?: string | null;
+  user_id?: string | null;
+  user_name?: string | null;
+  shift_id?: string | null;
   created_at: string;
   /** Currently only cash sale completion is supported offline. */
   operation_type?: "sale.complete";
@@ -158,6 +164,8 @@ export interface SafeSyncOperation {
   operation_type: "sale.complete";
   branch_id: string | null;
   register_id: string | null;
+  user_id?: string | null;
+  shift_id?: string | null;
   /** Captured staff display name only; no auth/session identifier or customer PII. */
   user_name: string;
   created_at: string;
@@ -288,7 +296,7 @@ export function offlineSaleToDisplaySale(record: OfflineSaleRecord, lines: Offli
     register_id: record.register_id ?? record.input.register_id ?? null,
     register_name: record.input.register_name ?? null,
     source: "pos",
-    shift_id: null,
+    shift_id: record.shift_id ?? null,
     offline_sync_status: record.sync_status,
     offline_last_error: record.last_error,
     offline_last_error_kind: record.last_error_kind,

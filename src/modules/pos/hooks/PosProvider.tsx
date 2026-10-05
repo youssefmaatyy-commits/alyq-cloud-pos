@@ -146,7 +146,10 @@ export interface PosContextValue {
    * (Phase 12). `approvalAsk` then carries the rule that fired and the exact
    * draft an approver will replay.
    */
-  completeSale: (payments: SalePaymentInput[]) => Promise<SaleModel | null>;
+  completeSale: (
+    payments: SalePaymentInput[],
+    options?: { shiftId?: string | null; shiftNumber?: string | null },
+  ) => Promise<SaleModel | null>;
   dismissCompleted: () => void;
   approvalAsk: { requirement: ApprovalRequirement; input: CompleteSaleInput } | null;
   dismissApprovalAsk: () => void;
@@ -337,7 +340,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
   }, [activeBranchId]);
 
   const refreshSyncSummary = useCallback(async () => {
-    const [summary, lastSync] = await Promise.all([getSyncSummary(activeBranchId), getLastSyncedAt()]);
+    const [summary, lastSync] = await Promise.all([getSyncSummary(activeBranchId, user?.id), getLastSyncedAt()]);
     setSyncPendingCount(summary.pendingCount);
     setSyncErrorCount(summary.failedCount);
     setSyncDeferredCount(summary.deferredCount);
@@ -349,7 +352,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
       deferred: summary.deferredCount,
       conflicts: summary.conflictCount,
     });
-  }, [activeBranchId]);
+  }, [activeBranchId, user?.id]);
 
   useEffect(() => {
     reportSessionUsability(authStatus === "authenticated" ? "usable" : authStatus === "anonymous" ? "expired" : "unknown");
@@ -391,10 +394,11 @@ export function PosProvider({ children }: { children: ReactNode }) {
       recovery: !manual,
       clientRef,
       branchId: activeBranchId,
+      userId: user?.id,
     });
     await refreshSyncSummary();
     await loadCatalog().catch(() => undefined);
-  }, [activeBranchId, loadCatalog, mode, refreshBranches, refreshIdentity, refreshSyncSummary]);
+  }, [activeBranchId, loadCatalog, mode, refreshBranches, refreshIdentity, refreshSyncSummary, user?.id]);
 
   const retrySync = useCallback(() => synchronizeAfterCheck(true), [synchronizeAfterCheck]);
   const retrySyncItem = useCallback((clientRef: string) => synchronizeAfterCheck(true, clientRef), [synchronizeAfterCheck]);
@@ -881,7 +885,10 @@ export function PosProvider({ children }: { children: ReactNode }) {
   // ── completion ──────────────────────────────────────────────────────────
 
   const completeSale = useCallback(
-    async (payments: SalePaymentInput[]) => {
+    async (
+      payments: SalePaymentInput[],
+      options?: { shiftId?: string | null; shiftNumber?: string | null },
+    ) => {
       if (!canSell) throw new AppError("FORBIDDEN", "You cannot complete sales");
       if (completing) throw new AppError("VALIDATION", "A sale is already being processed");
       if (lines.length === 0) throw new AppError("VALIDATION", "Cart is empty");
@@ -916,6 +923,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
           notes: saleNote.trim() || null,
           user_id: user.id,
           user_name: user.name,
+          shift_id: options?.shiftId ?? null,
           register_id: registerEvidence?.register_id ?? null,
           installation_id: registerEvidence?.installation_id ?? null,
           register_name: registerEvidence?.register_name ?? null,
@@ -963,6 +971,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
             total: totals.total,
             branch_id: activeBranchId,
             branch_name: currentBranch?.name_en ?? null,
+            shift_id: options?.shiftId ?? null,
+            shift_number: options?.shiftNumber ?? null,
           },
           inventory.writes,
         );

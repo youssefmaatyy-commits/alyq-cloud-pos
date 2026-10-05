@@ -66,6 +66,7 @@ export async function ensureOfflineSchema(): Promise<OfflineSchemaHealth> {
             schema_version: OFFLINE_BUSINESS_SCHEMA_VERSION,
             register_id: sale.register_id ?? sale.input?.register_id ?? null,
             installation_id: sale.installation_id ?? sale.input?.installation_id ?? null,
+            shift_id: (sale as any).shift_id ?? sale.input?.shift_id ?? null,
             sync_attempts: sale.sync_attempts ?? entries.find((entry) => entry.local_sale_id === sale.id)?.attempts ?? 0,
             last_attempt_at: sale.last_attempt_at ?? entries.find((entry) => entry.local_sale_id === sale.id)?.last_attempt_at ?? null,
             sync_status: sale.sync_status === "error"
@@ -73,19 +74,25 @@ export async function ensureOfflineSchema(): Promise<OfflineSchemaHealth> {
               : (sale.sync_status ?? "pending"),
           },
         })),
-        ...entries.map((entry) => ({
-          store: "sync_outbox" as const,
-          value: {
-            ...entry,
-            operation_type: "sale.complete" as const,
-            schema_version: OFFLINE_BUSINESS_SCHEMA_VERSION,
-            register_id: entry.register_id ?? sales.find((sale) => sale.id === entry.local_sale_id)?.input?.register_id ?? null,
-            installation_id: entry.installation_id ?? sales.find((sale) => sale.id === entry.local_sale_id)?.input?.installation_id ?? null,
-            status: entry.status === "error"
-              ? (entry.last_error_kind === "conflict" ? "conflict" : "failed")
-              : (entry.status ?? "pending"),
-          },
-        })),
+        ...entries.map((entry) => {
+          const matchingSale = sales.find((sale) => sale.id === entry.local_sale_id);
+          return {
+            store: "sync_outbox" as const,
+            value: {
+              ...entry,
+              operation_type: "sale.complete" as const,
+              schema_version: OFFLINE_BUSINESS_SCHEMA_VERSION,
+              register_id: entry.register_id ?? matchingSale?.input?.register_id ?? null,
+              installation_id: entry.installation_id ?? matchingSale?.input?.installation_id ?? null,
+              user_id: entry.user_id ?? matchingSale?.user_id ?? matchingSale?.input?.user_id ?? null,
+              user_name: entry.user_name ?? matchingSale?.user_name ?? matchingSale?.input?.user_name ?? null,
+              shift_id: entry.shift_id ?? (matchingSale as any)?.shift_id ?? matchingSale?.input?.shift_id ?? null,
+              status: entry.status === "error"
+                ? (entry.last_error_kind === "conflict" ? "conflict" : "failed")
+                : (entry.status ?? "pending"),
+            },
+          };
+        }),
         {
           store: "sync_metadata" as const,
           value: { key: BUSINESS_VERSION_KEY, value: String(OFFLINE_BUSINESS_SCHEMA_VERSION) },

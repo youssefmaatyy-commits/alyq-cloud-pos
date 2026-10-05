@@ -97,5 +97,5 @@ export const RETENTION_PHRASE = "APPLY RETENTION";
 export const DEFAULT_RETENTION_DAYS = 30;
 
 /** Shipped with this build. Not a claim about what a remote database has applied. */
-export const SHIPPED_MIGRATION_COUNT = 87;
-export const SHIPPED_LATEST_MIGRATION = "0087_branch_exact_movement_audit_and_bridge_safety.sql";
+export const SHIPPED_MIGRATION_COUNT = 88;
+export const SHIPPED_LATEST_MIGRATION = "0088_offline_sync_hardening.sql";

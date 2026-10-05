@@ -32,7 +32,17 @@ import { useRegister } from "@/modules/registers";
  */
 export function PosPage() {
   const { t, pick, date } = useI18n();
-  const { addBySku, loading, error, reloadCatalog, connectivityState, workingFromCache, cachedCatalogAt, syncPendingCount } = usePos();
+  const {
+    addBySku,
+    loading,
+    error,
+    reloadCatalog,
+    connectivityState,
+    connectivitySnapshot,
+    workingFromCache,
+    cachedCatalogAt,
+    syncPendingCount,
+  } = usePos();
   const { current: branch } = useBranch();
   const { user } = useInventory();
   const { openShift, loading: shiftsLoading } = useShifts();
@@ -217,6 +227,16 @@ export function PosPage() {
           {syncPendingCount > 0 ? ` · ${t("pos.syncPending")} ${syncPendingCount}` : ""}
         </span>
       </div>
+
+      {!connectivitySnapshot.storageDurable ? (
+        <div
+          className="mb-2 flex items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-950 shadow-sm"
+          data-testid="pos-storage-durability-warning"
+        >
+          <span aria-hidden>⚠️</span>
+          <span>{t("pos.storageMemoryWarning")}</span>
+        </div>
+      ) : null}
 
       {/* The single desktop row must be a definite track, not auto-sized:
           a content-sized row makes the checkout aside's percentage height

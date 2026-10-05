@@ -71,6 +71,9 @@ export interface EnqueueOfflineSaleMeta {
   branch_id?: string | null;
   /** Display evidence only; branch_id remains authoritative. */
   branch_name?: string | null;
+  /** Original shift identifier and number captured at cart time. */
+  shift_id?: string | null;
+  shift_number?: string | null;
 }
 
 /** Write a completed-while-offline sale locally and queue it for sync. */
@@ -86,14 +89,17 @@ export async function enqueueOfflineSale(
   const localId = newId();
   const createdAt = new Date().toISOString();
   const branchId = meta.branch_id ?? null;
+  const shiftId = meta.shift_id ?? input.shift_id ?? null;
   const queuedInput: CompleteSaleInput = branchId
     ? {
         ...input,
+        shift_id: shiftId,
         offline_evidence: input.offline_evidence ?? {
           schema_version: 1,
           branch_id: branchId,
           register_id: input.register_id ?? null,
           installation_id: input.installation_id ?? null,
+          shift_id: shiftId,
           captured_at: createdAt,
           subtotal: meta.subtotal,
           discount_amount: meta.discount_amount,
@@ -121,6 +127,8 @@ export async function enqueueOfflineSale(
     branch_name: meta.branch_name ?? null,
     register_id: input.register_id ?? null,
     installation_id: input.installation_id ?? null,
+    shift_id: shiftId,
+    shift_number: meta.shift_number ?? null,
     input: queuedInput,
     subtotal: meta.subtotal,
     discount_amount: meta.discount_amount,
@@ -164,6 +172,9 @@ export async function enqueueOfflineSale(
     branch_id: branchId,
     register_id: input.register_id ?? null,
     installation_id: input.installation_id ?? null,
+    user_id: input.user_id,
+    user_name: input.user_name,
+    shift_id: shiftId,
     created_at: createdAt,
     operation_type: "sale.complete",
     schema_version: OFFLINE_BUSINESS_SCHEMA_VERSION,
@@ -231,17 +242,22 @@ export interface SyncSummary {
   oldestPendingAt: string | null;
 }
 
-export async function getSyncSummary(activeBranchId: string | null = null): Promise<SyncSummary> {
+export async function getSyncSummary(
+  activeBranchId: string | null = null,
+  activeUserId: string | null = null,
+): Promise<SyncSummary> {
   const schema = await ensureOfflineSchema();
   const db = getOfflineDb();
   const entries = await db.getAll<SyncOutboxEntry>("sync_outbox");
   if (!schema.compatible) {
     return { pendingCount: 0, failedCount: 0, errorCount: 0, deferredCount: entries.length, conflictCount: 0, syncing: false, oldestPendingAt: entries.map((entry) => entry.created_at).sort()[0] ?? null };
   }
-  const deferredByBranch = (entry: SyncOutboxEntry) => Boolean(activeBranchId && (!entry.branch_id || entry.branch_id !== activeBranchId));
-  const pending = entries.filter((entry) => entry.status === "pending" && !deferredByBranch(entry));
-  const failedCount = entries.filter((entry) => entry.status === "failed").length;
-  const deferredCount = entries.filter((entry) => entry.status === "deferred" || deferredByBranch(entry)).length;
+  const deferredByBranch = (entry: SyncOutboxEntry) => Boolean(activeBranchId && entry.branch_id && entry.branch_id !== activeBranchId);
+  const deferredByUser = (entry: SyncOutboxEntry) => Boolean(activeUserId && entry.user_id && entry.user_id !== activeUserId);
+  const isDeferred = (entry: SyncOutboxEntry) => entry.status === "deferred" || deferredByBranch(entry) || deferredByUser(entry);
+  const pending = entries.filter((entry) => entry.status === "pending" && !isDeferred(entry));
+  const failedCount = entries.filter((entry) => entry.status === "failed" && !isDeferred(entry)).length;
+  const deferredCount = entries.filter(isDeferred).length;
   const conflictCount = entries.filter((entry) => entry.status === "conflict" || entry.last_error_kind === "conflict").length;
   return {
     pendingCount: pending.length,
@@ -268,20 +284,34 @@ export function safeSyncErrorSummary(error: unknown): string {
 }
 
 /** Coarse classification so the UI and bounded retry policy react differently. */
-function classifySyncError(error: unknown): { kind: OfflineSyncErrorKind; message: string } {
+export function classifySyncError(error: unknown): { kind: OfflineSyncErrorKind; message: string } {
   const message = safeSyncErrorSummary(error);
   if (error instanceof AppError) {
     if (error.code === "NETWORK") return { kind: "network", message };
-    if (error.code === "FORBIDDEN" || error.pgCode === "42501") return { kind: "permission", message };
+    if (error.code === "FORBIDDEN" || error.pgCode === "42501") {
+      if (/user|cashier|another cashier|original user/i.test(message)) {
+        return { kind: "auth", message };
+      }
+      return { kind: "permission", message };
+    }
     if (error.code === "VARIANT_STOCK_INSUFFICIENT" || error.code === "VARIANT_UNAVAILABLE") {
       return { kind: "conflict", message };
     }
   }
+  if (/no open shift|open shift|shift/i.test(message)) {
+    return { kind: "shift", message };
+  }
+  if (/original cashier|another cashier|original user|sign in as/i.test(message)) {
+    return { kind: "auth", message };
+  }
   if (/offline (pricing|stock|evidence) conflict|in stock|no longer sold|variant.*available/i.test(message)) {
     return { kind: "conflict", message };
   }
-  if (/permission|not permitted|access denied|active branch|membership|sale not found in active branch/i.test(message)) {
+  if (/permission|not permitted|access denied|membership|sale not found in active branch/i.test(message)) {
     return { kind: "permission", message };
+  }
+  if (/branch/i.test(message)) {
+    return { kind: "branch", message };
   }
   if (/schema|migration|function .* does not exist|pos_sync_offline_sale/i.test(message)) {
     return { kind: "schema", message };
@@ -344,7 +374,7 @@ async function attemptEntry(entry: SyncOutboxEntry, complete: CompleteSaleFn): P
     const attempts = entry.attempts + 1;
     const status: SyncOutboxEntry["status"] = kind === "conflict"
       ? "conflict"
-      : kind === "permission" || kind === "branch" || kind === "schema"
+      : kind === "permission" || kind === "branch" || kind === "schema" || kind === "shift" || kind === "auth"
         ? "deferred"
         : "failed";
     await db.put<SyncOutboxEntry>("sync_outbox", {
@@ -383,14 +413,25 @@ async function pruneSyncedHistory(limit = SYNC_HISTORY_LIMIT): Promise<void> {
   for (const line of lines) if (staleIds.has(line.local_sale_id)) await db.delete("offline_sale_lines", line.id);
 }
 
-function retryable(entry: SyncOutboxEntry, activeBranchId: string | null): boolean {
-  if (activeBranchId && entry.branch_id !== activeBranchId) return false;
-  return entry.status === "pending" || (entry.status === "failed" && entry.last_error_kind === "network")
-    || (entry.status === "deferred" && entry.last_error_kind === "branch");
+function retryable(
+  entry: SyncOutboxEntry,
+  activeBranchId: string | null = null,
+  activeUserId: string | null = null,
+): boolean {
+  if (activeBranchId && entry.branch_id && entry.branch_id !== activeBranchId) return false;
+  if (activeUserId && entry.user_id && entry.user_id !== activeUserId) return false;
+  if (entry.status === "syncing") return false;
+  if (entry.status === "conflict") return false;
+  if (entry.last_error_kind === "schema" || entry.last_error_kind === "rejected") return false;
+  return true;
 }
 
 /** Safe, bounded queue/history projection; never exposes payment/customer/raw payload data. */
-export async function listSafeSyncOperations(activeBranchId: string | null = null, limit = SYNC_HISTORY_LIMIT): Promise<SafeSyncOperation[]> {
+export async function listSafeSyncOperations(
+  activeBranchId: string | null = null,
+  limit = SYNC_HISTORY_LIMIT,
+  activeUserId: string | null = null,
+): Promise<SafeSyncOperation[]> {
   const schema = await ensureOfflineSchema();
   if (!schema.compatible) return [];
   const db = getOfflineDb();
@@ -411,23 +452,37 @@ export async function listSafeSyncOperations(activeBranchId: string | null = nul
     .sort((a, b) => b.created_at.localeCompare(a.created_at))
     .map((record) => {
       const entry = entriesByRef.get(record.client_ref);
-      const branchDeferred = Boolean(entry && activeBranchId && entry.branch_id !== activeBranchId);
-      const status = branchDeferred ? "deferred" : (entry?.status ?? record.sync_status);
+      const branchDeferred = Boolean(entry && activeBranchId && entry.branch_id && entry.branch_id !== activeBranchId);
+      const userDeferred = Boolean(entry && activeUserId && (entry.user_id ?? record.user_id) && (entry.user_id ?? record.user_id) !== activeUserId);
+      const status = branchDeferred || userDeferred ? "deferred" : (entry?.status ?? record.sync_status);
+      const errorKind = branchDeferred
+        ? "branch"
+        : userDeferred
+          ? "auth"
+          : (entry?.last_error_kind ?? record.last_error_kind);
+      const errorSummary = branchDeferred
+        ? "Queued for original branch"
+        : userDeferred
+          ? `Queued for original cashier (${record.user_name || "staff"})`
+          : (entry?.last_error ?? record.last_error);
+
       return {
         client_ref: record.client_ref,
         local_sale_id: record.id,
         operation_type: entry?.operation_type ?? "sale.complete",
         branch_id: record.branch_id ?? entry?.branch_id ?? null,
         register_id: record.register_id ?? entry?.register_id ?? null,
+        user_id: record.user_id ?? entry?.user_id ?? null,
+        shift_id: record.shift_id ?? entry?.shift_id ?? null,
         user_name: record.user_name,
         created_at: record.created_at,
         attempts: entry?.attempts ?? record.sync_attempts ?? 0,
         last_attempt_at: entry?.last_attempt_at ?? record.last_attempt_at ?? record.synced_at,
         next_attempt_at: entry?.next_attempt_at ?? null,
         status,
-        error_kind: branchDeferred ? "branch" : (entry?.last_error_kind ?? record.last_error_kind),
-        error_summary: branchDeferred ? "Queued for its original branch" : (entry?.last_error ?? record.last_error),
-        retryable: entry ? retryable(entry, activeBranchId) : false,
+        error_kind: errorKind,
+        error_summary: errorSummary,
+        retryable: entry ? retryable(entry, activeBranchId, activeUserId) : false,
         total: record.total,
         lines: lines.filter((line) => line.local_sale_id === record.id).map((line) => ({
           product_id: line.product_id,
@@ -457,6 +512,8 @@ export interface ProcessOutboxOptions {
   recovery?: boolean;
   /** Replay only rows captured for this active branch. Unscoped legacy rows are deferred. */
   branchId?: string | null;
+  /** Replay only rows captured for this active cashier. Different cashier rows are deferred. */
+  userId?: string | null;
   /** Manual retry of one stable operation; never rebuilds its client reference. */
   clientRef?: string;
 }
@@ -476,8 +533,8 @@ async function processOutboxPass(complete: CompleteSaleFn, options: ProcessOutbo
   // original branch makes them eligible again without changing their identity.
   if (options.branchId) {
     for (const entry of entries) {
-      if (!entry.branch_id || entry.branch_id !== options.branchId) {
-        const message = entry.branch_id ? "Queued for its original branch" : "Original branch is unavailable";
+      if (entry.branch_id && entry.branch_id !== options.branchId) {
+        const message = "Queued for original branch";
         await db.put<SyncOutboxEntry>("sync_outbox", {
           ...entry,
           status: "deferred",
@@ -489,21 +546,55 @@ async function processOutboxPass(complete: CompleteSaleFn, options: ProcessOutbo
       }
     }
   }
+
+  // Defer sales belonging to another cashier to prevent silent re-attribution
+  if (options.userId) {
+    for (const entry of entries) {
+      if (entry.user_id && entry.user_id !== options.userId) {
+        const message = `Queued for original cashier (${entry.user_name || entry.user_id})`;
+        await db.put<SyncOutboxEntry>("sync_outbox", {
+          ...entry,
+          status: "deferred",
+          last_error_kind: "auth",
+          last_error: message,
+        });
+        const record = await db.get<OfflineSaleRecord>("offline_sales", entry.local_sale_id);
+        if (record) await db.put<OfflineSaleRecord>("offline_sales", { ...record, sync_status: "deferred", last_error_kind: "auth", last_error: message });
+      }
+    }
+  }
+
   const now = Date.now();
   const due = entries
     .filter((entry) => entry.status !== "syncing")
     .filter((entry) => !options.clientRef || entry.client_ref === options.clientRef)
     // A branch switch must never redirect already-captured stock. Unscoped
     // legacy rows also fail closed when an active branch is asserted.
-    .filter((entry) => !options.branchId || entry.branch_id === options.branchId)
+    .filter((entry) => !options.branchId || !entry.branch_id || entry.branch_id === options.branchId)
+    // A different cashier's sales must not be re-attributed silently.
+    .filter((entry) => !options.userId || !entry.user_id || entry.user_id === options.userId)
     .filter((entry) => {
+      if (options.clientRef && entry.client_ref === options.clientRef) return true;
       if (entry.status === "pending") return true;
-      if (entry.status === "deferred" && entry.last_error_kind === "branch") return true;
-      if (entry.status !== "failed" || entry.last_error_kind !== "network") return false;
-      if (options.retryNetwork) return true;
-      if (entry.attempts >= MAX_AUTOMATIC_ATTEMPTS) return false;
-      if (options.recovery) return true;
-      return !entry.next_attempt_at || new Date(entry.next_attempt_at).getTime() <= now;
+      if (entry.status === "deferred") {
+        if (entry.last_error_kind === "branch" && options.branchId && entry.branch_id === options.branchId) return true;
+        if (entry.last_error_kind === "auth" && options.userId && entry.user_id === options.userId) return true;
+        if (entry.last_error_kind === "shift" || entry.last_error_kind === "permission") {
+          return Boolean(options.retryNetwork || options.recovery);
+        }
+        return false;
+      }
+      if (entry.status === "failed") {
+        if (entry.last_error_kind === "rejected" || entry.last_error_kind === "schema") return false;
+        if (options.retryNetwork) return true;
+        if (entry.last_error_kind === "network" || !entry.last_error_kind) {
+          if (entry.attempts >= MAX_AUTOMATIC_ATTEMPTS) return false;
+          if (options.recovery) return true;
+          return !entry.next_attempt_at || new Date(entry.next_attempt_at).getTime() <= now;
+        }
+        return false;
+      }
+      return false;
     })
     .sort((a, b) => (a.created_at < b.created_at ? -1 : 1));
 
@@ -542,20 +633,25 @@ export function processOutbox(complete: CompleteSaleFn, options: ProcessOutboxOp
 }
 
 /** Test/support seam that bypasses transient-network backoff only. */
-export async function retrySyncNow(complete: CompleteSaleFn, branchId?: string | null): Promise<SyncRunResult> {
-  return processOutbox(complete, { retryNetwork: true, branchId });
+export async function retrySyncNow(
+  complete: CompleteSaleFn,
+  branchId?: string | null,
+  userId?: string | null,
+): Promise<SyncRunResult> {
+  return processOutbox(complete, { retryNetwork: true, branchId, userId });
 }
 
 /** Retry exactly one eligible row with its original immutable input/client_ref. */
 export async function retrySyncOperation(
   clientRef: string,
   complete: CompleteSaleFn,
-  branchId: string | null,
+  branchId: string | null = null,
+  userId: string | null = null,
 ): Promise<SyncRunResult> {
   const db = getOfflineDb();
   const entry = await db.get<SyncOutboxEntry>("sync_outbox", clientRef);
-  if (!entry || !retryable(entry, branchId)) return { synced: [], failed: [], conflicts: [] };
-  return processOutbox(complete, { clientRef, retryNetwork: true, branchId });
+  if (!entry || !retryable(entry, branchId, userId)) return { synced: [], failed: [], conflicts: [] };
+  return processOutbox(complete, { clientRef, retryNetwork: true, branchId, userId });
 }
 
 /** True when at least one queued sale exists in any attention state. */
