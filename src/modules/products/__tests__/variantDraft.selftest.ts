@@ -11,7 +11,7 @@ import { generateVariants, saveVariant } from "../services/variantService";
 import { deriveBarcodeFromSku, nextBarcodeOnSkuChange } from "../services/barcode";
 import {
   EMPTY_PRODUCT_VARIANT_FORM, reconcileVariantDraft, validateVariantDraft,
-  variantDraftFromSaved, variantDraftTotal,
+  variantDraftFromSaved, variantDraftTotal, type ProductVariantFormValue,
 } from "../services/variantDraft";
 
 const backing = new Map<string, string>();
@@ -234,6 +234,153 @@ await test("a service edit and an undefined patch cannot wipe a saved shelf or i
     (err: unknown) => (err as { code?: string }).code === "FORBIDDEN",
     "viewer cannot edit a combination even when bypassing the form");
   signIn("admin");
+});
+
+await test("regression: reported case with 2 valid colors (names present) and sizes S + 1 generates exactly 4 combinations with validation PASS", () => {
+  const form: ProductVariantFormValue = {
+    mode: "colors_sizes",
+    colors: [
+      { id: "color:1", color_ar: "أسود", color_en: "Black", color_hex: "#000000", image_urls: [], image_url: "" },
+      { id: "color:2", color_ar: "أبيض", color_en: "White", color_hex: "#ffffff", image_urls: [], image_url: "" },
+    ],
+    sizes: ["S", "1"],
+    rows: [],
+  };
+
+  const reconciled = reconcileVariantDraft(form, "SHIRT-01");
+  assert.equal(reconciled.rows.length, 4, "2 colors × 2 sizes must produce exactly 4 combinations");
+  assert.deepEqual(
+    reconciled.rows.map((r) => `${r.color_en}/${r.size}`),
+    ["Black/S", "Black/1", "White/S", "White/1"],
+  );
+
+  const error = validateVariantDraft(reconciled, "SHIRT-01");
+  assert.equal(error, null, "Validation must PASS with zero false 'colorsRequired' errors");
+});
+
+await test("Arabic-only, English-only, and bilingual colors generate valid combinations without errors", () => {
+  // Arabic only colors
+  const arDraft = reconcileVariantDraft({
+    mode: "colors_sizes",
+    colors: [
+      { id: "color:ar1", color_ar: "أحمر", color_en: "", color_hex: "#ef4444", image_urls: [], image_url: "" },
+      { id: "color:ar2", color_ar: "أزرق", color_en: "", color_hex: "#3b82f6", image_urls: [], image_url: "" },
+    ],
+    sizes: ["S", "M"],
+    rows: [],
+  }, "PROD");
+  assert.equal(arDraft.rows.length, 4);
+  assert.equal(validateVariantDraft(arDraft, "PROD"), null);
+
+  // English only colors
+  const enDraft = reconcileVariantDraft({
+    mode: "colors_sizes",
+    colors: [
+      { id: "color:en1", color_ar: "", color_en: "Red", color_hex: "#ef4444", image_urls: [], image_url: "" },
+      { id: "color:en2", color_ar: "", color_en: "Blue", color_hex: "#3b82f6", image_urls: [], image_url: "" },
+    ],
+    sizes: ["S", "M"],
+    rows: [],
+  }, "PROD");
+  assert.equal(enDraft.rows.length, 4);
+  assert.equal(validateVariantDraft(enDraft, "PROD"), null);
+
+  // Mixed bilingual colors
+  const mixedDraft = reconcileVariantDraft({
+    mode: "colors_sizes",
+    colors: [
+      { id: "color:m1", color_ar: "أحمر", color_en: "", color_hex: "", image_urls: [], image_url: "" },
+      { id: "color:m2", color_ar: "", color_en: "Blue", color_hex: "", image_urls: [], image_url: "" },
+      { id: "color:m3", color_ar: "أخضر", color_en: "Green", color_hex: "#22c55e", image_urls: [], image_url: "" },
+    ],
+    sizes: ["XL"],
+    rows: [],
+  }, "PROD");
+  assert.equal(mixedDraft.rows.length, 3);
+  assert.equal(validateVariantDraft(mixedDraft, "PROD"), null);
+});
+
+await test("duplicate colors, duplicate sizes, empty colors, and empty sizes report clear validation errors", () => {
+  // Duplicate Arabic color name
+  const dupAr: ProductVariantFormValue = {
+    mode: "colors_sizes",
+    colors: [
+      { id: "c1", color_ar: "ذهبي", color_en: "Gold", color_hex: "", image_urls: [], image_url: "" },
+      { id: "c2", color_ar: "ذهبي", color_en: "Yellow Gold", color_hex: "", image_urls: [], image_url: "" },
+    ],
+    sizes: ["17"],
+    rows: [],
+  };
+  assert.equal(validateVariantDraft(reconcileVariantDraft(dupAr, "PROD"), "PROD"), "duplicateColor");
+
+  // Duplicate English color name
+  const dupEn: ProductVariantFormValue = {
+    mode: "colors_sizes",
+    colors: [
+      { id: "c1", color_ar: "ذهبي", color_en: "Gold", color_hex: "", image_urls: [], image_url: "" },
+      { id: "c2", color_ar: "أصفر", color_en: "Gold", color_hex: "", image_urls: [], image_url: "" },
+    ],
+    sizes: ["17"],
+    rows: [],
+  };
+  assert.equal(validateVariantDraft(reconcileVariantDraft(dupEn, "PROD"), "PROD"), "duplicateColor");
+
+  // Duplicate sizes
+  const dupSizes: ProductVariantFormValue = {
+    mode: "sizes",
+    colors: [],
+    sizes: ["S", "s"],
+    rows: [],
+  };
+  assert.equal(validateVariantDraft(reconcileVariantDraft(dupSizes, "PROD"), "PROD"), "duplicateSize");
+
+  // Empty color name
+  const emptyColor: ProductVariantFormValue = {
+    mode: "colors_sizes",
+    colors: [
+      { id: "c1", color_ar: "  ", color_en: "", color_hex: "", image_urls: [], image_url: "" },
+    ],
+    sizes: ["S"],
+    rows: [],
+  };
+  assert.equal(validateVariantDraft(reconcileVariantDraft(emptyColor, "PROD"), "PROD"), "colorsRequired");
+
+  // Empty sizes
+  const emptySizes: ProductVariantFormValue = {
+    mode: "colors_sizes",
+    colors: [
+      { id: "c1", color_ar: "أسود", color_en: "Black", color_hex: "", image_urls: [], image_url: "" },
+    ],
+    sizes: [],
+    rows: [],
+  };
+  assert.equal(validateVariantDraft(reconcileVariantDraft(emptySizes, "PROD"), "PROD"), "sizesRequired");
+});
+
+await test("Cartesian generation across 1×3 and 3×1 color/size ratios generates exact variants without missing combinations", () => {
+  // 1 color × 3 sizes -> 3 variants
+  const oneByThree = reconcileVariantDraft({
+    mode: "colors_sizes",
+    colors: [{ id: "c1", color_ar: "أسود", color_en: "Black", color_hex: "", image_urls: [], image_url: "" }],
+    sizes: ["S", "M", "L"],
+    rows: [],
+  }, "PROD");
+  assert.equal(oneByThree.rows.length, 3);
+  assert.deepEqual(oneByThree.rows.map((r) => r.size), ["S", "M", "L"]);
+
+  // 3 colors × 1 size -> 3 variants
+  const threeByOne = reconcileVariantDraft({
+    mode: "colors_sizes",
+    colors: [
+      { id: "c1", color_ar: "أسود", color_en: "Black", color_hex: "", image_urls: [], image_url: "" },
+      { id: "c2", color_ar: "أبيض", color_en: "White", color_hex: "", image_urls: [], image_url: "" },
+      { id: "c3", color_ar: "رمادي", color_en: "Gray", color_hex: "", image_urls: [], image_url: "" },
+    ],
+    sizes: ["One Size"],
+    rows: [],
+  }, "PROD");
+  assert.equal(threeByOne.rows.length, 3);
+  assert.deepEqual(threeByOne.rows.map((r) => r.color_en), ["Black", "White", "Gray"]);
 });
 
 console.log(`\n${count}/${count} variant-draft tests passed`);

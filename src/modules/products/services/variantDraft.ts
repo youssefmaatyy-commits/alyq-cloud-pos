@@ -54,6 +54,55 @@ export const EMPTY_PRODUCT_VARIANT_FORM: ProductVariantFormValue = {
 export const usesColors = (mode: ProductVariantMode) => mode === "colors" || mode === "colors_sizes";
 export const usesSizes = (mode: ProductVariantMode) => mode === "sizes" || mode === "colors_sizes";
 
+/** A color row is considered valid when at least one non-empty name exists in Arabic or English. */
+export function hasValidColorName(color: {
+  color_ar?: string | null;
+  color_en?: string | null;
+}): boolean {
+  return Boolean((color.color_ar ?? "").trim() || (color.color_en ?? "").trim());
+}
+
+/** Check if distinct color rows contain duplicate identities or names. */
+export function hasDuplicateColors(
+  colors: readonly { color_ar?: string | null; color_en?: string | null; id?: string }[],
+): boolean {
+  const arSeen = new Set<string>();
+  const enSeen = new Set<string>();
+  const keySeen = new Set<string>();
+
+  for (const c of colors) {
+    const ar = (c.color_ar ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+    const en = (c.color_en ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+    const key = colorKeyOf(c);
+
+    if (ar) {
+      if (arSeen.has(ar)) return true;
+      arSeen.add(ar);
+    }
+    if (en) {
+      if (enSeen.has(en)) return true;
+      enSeen.add(en);
+    }
+    if (key) {
+      if (keySeen.has(key)) return true;
+      keySeen.add(key);
+    }
+  }
+  return false;
+}
+
+/** Check if sizes contain duplicate entries (case-insensitive & whitespace normalized). */
+export function hasDuplicateSizes(sizes: readonly string[]): boolean {
+  const seen = new Set<string>();
+  for (const size of sizes) {
+    const normalized = size.trim().toLowerCase();
+    if (!normalized) continue;
+    if (seen.has(normalized)) return true;
+    seen.add(normalized);
+  }
+  return false;
+}
+
 const pairKey = (colorId: string, sizeValue: string | null) =>
   `${colorId}|${(sizeValue ?? "").trim().toLocaleLowerCase()}`;
 const rowKey = (row: ProductVariantDraft) => pairKey(row.color_id, row.size);
@@ -62,54 +111,79 @@ const rowKey = (row: ProductVariantDraft) => pairKey(row.color_id, row.size);
 export function reconcileVariantDraft(value: ProductVariantFormValue, productSku: string): ProductVariantFormValue {
   if (value.mode === "none") return value; // a mode change never silently erases work
   const colors = usesColors(value.mode)
-    ? value.colors.filter((row) => (row.color_en || row.color_ar).trim())
+    ? value.colors.filter((row) => hasValidColorName(row))
     : [];
-  const sizes = usesSizes(value.mode) ? value.sizes : [];
+  const sizes = usesSizes(value.mode)
+    ? value.sizes.map((s) => s.trim()).filter(Boolean)
+    : [];
+
   if ((usesColors(value.mode) && !colors.length) || (usesSizes(value.mode) && !sizes.length)) {
     return { ...value, rows: value.rows.filter((row) => row.persistedId) };
   }
+
   const byPair = new Map(value.rows.map((row) => [rowKey(row), row]));
   const taken = value.rows.map((row) => row.sku);
+
+  // Cartesian generation: Colors × Sizes
   const combinations = generateCombinations(
-    colors.map((row): VariantColorDraft => ({ color_ar: row.color_ar || null, color_en: row.color_en || null, color_hex: row.color_hex || null })),
+    colors.map((row): VariantColorDraft => ({
+      color_ar: row.color_ar?.trim() || null,
+      color_en: row.color_en?.trim() || null,
+      color_hex: row.color_hex?.trim() || null,
+    })),
     sizes,
   );
+
   const rows = combinations.map((combination) => {
-    // The generator de-duplicates normalized colour keys; use the same identity
-    // here. Duplicate labels are reported by validateVariantDraft, not saved.
-    const color = combination.color ? colors.find((row) => colorKeyOf(row) === combination.color_key) : null;
+    // Match the exact color row from value.colors
+    const color = combination.color
+      ? colors.find((row) => {
+          if (row.id && combination.color_key && row.id === combination.color_key) return true;
+          const rowKey = colorKeyOf(row);
+          if (rowKey && combination.color_key && rowKey === combination.color_key) return true;
+          if (row.color_en?.trim() && combination.color?.color_en?.trim() &&
+              row.color_en.trim().toLowerCase() === combination.color.color_en.trim().toLowerCase()) return true;
+          if (row.color_ar?.trim() && combination.color?.color_ar?.trim() &&
+              row.color_ar.trim().toLowerCase() === combination.color.color_ar.trim().toLowerCase()) return true;
+          return false;
+        }) ?? null
+      : null;
     const colorId = color?.id ?? "";
     const previous = byPair.get(pairKey(colorId, combination.size_value));
-    if (previous) return {
-      ...previous, color_ar: color?.color_ar ?? "", color_en: color?.color_en ?? "",
-      color_hex: color?.color_hex ?? "", size_sort_order: combination.size_sort_order,
-    };
+    if (previous) {
+      return {
+        ...previous,
+        color_ar: color?.color_ar?.trim() ?? "",
+        color_en: color?.color_en?.trim() ?? "",
+        color_hex: color?.color_hex?.trim() ?? "",
+        size_sort_order: combination.size_sort_order,
+      };
+    }
     const sku = suggestVariantSku(productSku, combination.color, combination.size, combination.size_label, taken);
     taken.push(sku);
     return {
       id: `draft:${colorId}:${combination.size_value ?? ""}`,
-      // A renamed saved colour keeps its original identity even for NEW sizes.
-      // Otherwise Gold → Yellow Gold would put size 19 on a different colour
-      // shelf than the existing sizes 17/18, and reopen the editor as a
-      // duplicate-label draft that cannot be saved.
-      persistedId: null, color_id: colorId,
-      color_key: colorId && !colorId.startsWith("color:") ? colorId : "",
-      color_ar: color?.color_ar ?? "", color_en: color?.color_en ?? "",
-      color_hex: color?.color_hex ?? "",
+      persistedId: null,
+      color_id: colorId,
+      color_key: colorId && !colorId.startsWith("color:") ? colorId : (color ? colorKeyOf(color) : ""),
+      color_ar: color?.color_ar?.trim() ?? "",
+      color_en: color?.color_en?.trim() ?? "",
+      color_hex: color?.color_hex?.trim() ?? "",
       size: combination.size_value ?? "",
       size_label: combination.size_value ?? "",
       size_sort_order: combination.size_sort_order,
-      // A freshly generated combination is immediately scannable and
-      // printable: the barcode starts "in sync" with the suggested SKU
-      // (same deterministic derivation the product form already uses), never
-      // blank. The admin can still overtype it — see `nextBarcodeOnSkuChange`.
-      sku, barcode: deriveBarcodeFromSku(sku), stock_quantity: "0", low_stock_level: "0",
-      price_override: "", cost_override: "", image_url: "", active: true,
+      sku,
+      barcode: deriveBarcodeFromSku(sku),
+      stock_quantity: "0",
+      low_stock_level: "0",
+      price_override: "",
+      cost_override: "",
+      image_url: "",
+      active: true,
     } satisfies ProductVariantDraft;
   });
-  // Existing combinations removed from the chips are *never* deleted here.
-  // The persisted row remains visible, and the editor prevents removing an
-  // option with saved shelves. Archiving/deletion has a separate guarded path.
+
+  // Retain any existing persisted combinations not in the generated set
   rows.push(...value.rows.filter((row) => row.persistedId && !rows.some((next) => next.id === row.id)));
   return { ...value, rows };
 }
@@ -168,16 +242,30 @@ export function variantDraftTotal(rows: readonly ProductVariantDraft[]): number 
 /** Refuse bad drafts *before* creating a product (a partly written product is not a form error). */
 export function validateVariantDraft(value: ProductVariantFormValue, productSku: string, productBarcode = ""): string | null {
   if (value.mode === "none") return null;
+
   if (usesColors(value.mode)) {
-    if (!value.colors.length || value.colors.some((c) => !(c.color_en || c.color_ar).trim())) return "colorsRequired";
-    const keys = value.colors.map(colorKeyOf);
-    if (new Set(keys).size !== keys.length) return "duplicateColor";
-    if (value.colors.some((c) => c.color_hex.trim() && !/^#[0-9a-fA-F]{6}$/.test(c.color_hex.trim()))) return "invalidColor";
+    if (!value.colors.length || value.colors.some((c) => !hasValidColorName(c))) {
+      return "colorsRequired";
+    }
+    if (hasDuplicateColors(value.colors)) {
+      return "duplicateColor";
+    }
+    if (value.colors.some((c) => c.color_hex?.trim() && !/^#[0-9a-fA-F]{6}$/.test(c.color_hex.trim()))) {
+      return "invalidColor";
+    }
   }
+
   // Legacy One Size / textual-size rows have no numeric chip; they must remain
   // editable without inventing a new numeric combination just to press Save.
-  if (usesSizes(value.mode) && !value.sizes.length &&
-      !value.rows.some((row) => row.persistedId && row.size.trim())) return "sizesRequired";
+  if (usesSizes(value.mode)) {
+    if (!value.sizes.length && !value.rows.some((row) => row.persistedId && row.size.trim())) {
+      return "sizesRequired";
+    }
+    if (hasDuplicateSizes(value.sizes)) {
+      return "duplicateSize";
+    }
+  }
+
   if (value.rows.length === 0) return "nothingToGenerate";
   const codes = new Set([productSku.trim().toUpperCase()]);
   const barcodes = new Set(productBarcode.trim() ? [productBarcode.trim().toUpperCase()] : []);

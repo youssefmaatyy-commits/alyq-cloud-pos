@@ -110,7 +110,12 @@ export function ProductVariantsForm({
       return;
     }
     const existing = new Set(value.sizes.map((size) => size.toLocaleLowerCase()));
-    change({ ...value, sizes: [...value.sizes, ...parsed.filter((size) => !existing.has(size.toLocaleLowerCase()))] });
+    const newSizes = parsed.filter((size) => !existing.has(size.toLocaleLowerCase()));
+    if (!newSizes.length && parsed.length > 0) {
+      toast.error(t("products.simple.duplicateSize"));
+      return;
+    }
+    change({ ...value, sizes: [...value.sizes, ...newSizes] });
     setSizeEntry("");
   };
 

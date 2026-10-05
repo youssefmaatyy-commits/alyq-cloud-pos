@@ -358,10 +358,12 @@ export function generateCombinations(
  * shelf after the shop renames a colour.
  */
 export function colorKeyOf(color: {
-  color_ar: string | null;
-  color_en: string | null;
+  color_ar?: string | null;
+  color_en?: string | null;
 }): string {
-  return (color.color_en || color.color_ar || "").trim().replace(/\s+/g, " ").toLowerCase();
+  const en = (color.color_en ?? "").trim();
+  const ar = (color.color_ar ?? "").trim();
+  return (en || ar).replace(/\s+/g, " ").toLowerCase();
 }
 
 /**
@@ -373,18 +375,18 @@ export function colorKeyOf(color: {
  */
 export function suggestVariantSku(
   baseSku: string,
-  color: { color_ar: string | null; color_en: string | null } | null,
+  color: { color_ar?: string | null; color_en?: string | null } | null,
   size: number | string | null,
   sizeLabel: string | null,
   taken: readonly string[] = [],
 ): string {
   const base = (baseSku || "VAR").toUpperCase().replace(/[^A-Z0-9-]/g, "").slice(0, 24) || "VAR";
-  const colorPart = color
-    ? (color.color_en || color.color_ar || "")
-        .toUpperCase()
-        .replace(/[^A-Z0-9]/g, "")
-        .slice(0, 6)
-    : "";
+  const en = (color?.color_en ?? "").trim();
+  const ar = (color?.color_ar ?? "").trim();
+  const colorPart = (en || ar)
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .slice(0, 6);
   const rawSize = size === null ? (sizeLabel ?? "") : String(size);
   const sizePart = rawSize.toUpperCase().replace(/[^A-Z0-9]/g, "").replace(".", "D").slice(0, 8);
   const stem = [base, colorPart, sizePart].filter(Boolean).join("-").slice(0, 36);
