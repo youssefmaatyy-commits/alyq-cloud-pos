@@ -18,6 +18,7 @@ import { getSupabaseClient } from "@/lib/supabase/client";
 import {
   PRODUCT_IMAGES_BUCKET,
   fileToDataUrl,
+  optimizeImage,
   validateImageFile,
   type ImageFileError,
 } from "@/modules/products/services/imageStorage";
@@ -48,6 +49,7 @@ function extensionForMime(type: string): string {
 
 /**
  * Upload one storefront image and return a URL that can be stored.
+ * Automatically runs client-side optimization before storage.
  *
  * Throws with a message the caller can map to a field error; demo mode returns a
  * data URL, so the builder previews exactly what live mode will show.
@@ -60,13 +62,16 @@ export async function uploadStoreImage(
   if (invalid === "type") throw new Error("IMAGE_TYPE_NOT_ALLOWED");
   if (invalid === "size") throw new Error("IMAGE_TOO_LARGE");
 
-  const client = getSupabaseClient();
-  if (!client) return fileToDataUrl(file);
+  // Optimize storefront images (except proofs which are handled by prepareProofImage)
+  const uploadFile = prefix === "proofs" ? file : (await optimizeImage(file)).file;
 
-  const path = `${prefix}/${newId()}.${extensionForMime(file.type)}`;
+  const client = getSupabaseClient();
+  if (!client) return fileToDataUrl(uploadFile);
+
+  const path = `${prefix}/${newId()}.${extensionForMime(uploadFile.type)}`;
   const { error } = await client.storage
     .from(PRODUCT_IMAGES_BUCKET)
-    .upload(path, file, { contentType: file.type, cacheControl: "3600", upsert: false });
+    .upload(path, uploadFile, { contentType: uploadFile.type, cacheControl: "3600", upsert: false });
   if (error) throw new Error(`UPLOAD_FAILED: ${error.message}`);
 
   return client.storage.from(PRODUCT_IMAGES_BUCKET).getPublicUrl(path).data.publicUrl;

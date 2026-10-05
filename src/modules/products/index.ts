@@ -36,7 +36,9 @@ export {
   resolveProductImages,
   uploadProductImage,
   validateImageFile,
+  optimizeImage,
   MAX_IMAGE_FILE_SIZE,
+  MAX_IMAGE_DIMENSION,
   ALLOWED_IMAGE_TYPES,
 } from "./services/imageStorage";
 export type { ProductImageItem } from "./types";

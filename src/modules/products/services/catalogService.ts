@@ -256,6 +256,7 @@ export async function saveProduct({
         },
       });
     }
+
     return { product, isNew: false };
   }
   assertCanCreateProduct();
