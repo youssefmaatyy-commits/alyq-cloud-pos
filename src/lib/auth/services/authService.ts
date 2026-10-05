@@ -21,9 +21,14 @@
  * cap, so a session can never outlive 30 days on one machine whichever mode
  * minted it.
  *
- * `restoreSession()` runs on boot and `validateSession()` on every navigation,
- * tab focus and heartbeat, so a lapsed session ends at the next interaction
- * rather than at the next reload.
+ * `restoreSession()` runs on boot. After that, expiry and identity are
+ * event-driven rather than polled: a route change only runs a local,
+ * non-mutating `isSessionExpired()` read (no provider call, ever); the
+ * authoritative provider check (`revalidateSession()` / `resyncCurrentIdentity()`)
+ * runs on sign-in, sign-out, a provider auth event, an explicit refresh, a
+ * cross-tab authority change, and on resuming the tab after a meaningful time
+ * in the background. `checkLocalSessionHealth()` is the one low-frequency,
+ * zero-network safety net underneath all of that — see its own doc comment.
  */
 import { getUserRepository, getAuthMode } from "../data";
 import { staffEntryToAuthUser } from "../data/demoRepository";
@@ -261,15 +266,20 @@ export function validateSession(now: Date = new Date()): {
 }
 
 /**
- * Mode-aware revalidation.
+ * Mode-aware revalidation: the authoritative, network-calling check.
  *
  * Live: ask the provider. A session whose provider expiry has passed is
  * refreshed; a refresh the provider refuses ends the session here, which is what
- * makes a revoked or deactivated account stop working within one heartbeat
- * instead of at the next reload. The absolute cap is applied on top, because it
- * is this app's policy rather than the provider's.
+ * makes a revoked or deactivated account stop working at the next authority
+ * check (sign-in/out, a provider auth event, an explicit refresh, or resuming
+ * from the background) instead of at the next reload. The absolute cap is
+ * applied on top, because it is this app's policy rather than the provider's.
  *
  * Demo: the synchronous sliding-expiry model, unchanged.
+ *
+ * Called by the context's manually-triggerable `revalidate()` (kept for tests
+ * and any future caller); it is not wired to any automatic timer or
+ * navigation event — see `AuthProvider`'s own lifecycle comment.
  */
 export async function revalidateSession(now: Date = new Date()): Promise<{
   session: AuthSession | null;
@@ -306,6 +316,45 @@ export async function revalidateSession(now: Date = new Date()): Promise<{
     // on the next heartbeat. Only the provider saying "no session" ends it.
     return { session: current, reason: null, changed: false };
   }
+}
+
+/**
+ * A zero-network safety check for a tab that is open, focused and never
+ * navigating or backgrounding: has this session outlived the absolute cap
+ * (live model) or gone idle (demo model)?
+ *
+ * Deliberately NOT a substitute for `resyncCurrentIdentity()` — it never asks
+ * the provider for a fresh role or branch, because neither the cap nor the
+ * demo idle model needs one to enforce: both are read from the session this
+ * browser already holds. The provider's own `autoRefreshToken` keeps a live
+ * token fresh independently of this, and `TOKEN_REFRESHED` /
+ * `resyncCurrentIdentity` (on sign-in, sign-out, explicit refresh, realtime
+ * invalidation and resuming from the background) are what keep role and
+ * branch current. This exists only so the one thing neither of those covers —
+ * a tab that quietly outlives the 30-day cap without ever navigating,
+ * resuming or receiving a provider event — still ends within one check
+ * instead of surviving indefinitely.
+ *
+ * The one network call this can make is the same one `revalidateSession()`
+ * makes for the same reason: a cap that has actually passed is revoked with
+ * the provider, not merely forgotten locally, so a stale refresh token does
+ * not linger past the policy that was supposed to end it.
+ */
+export async function checkLocalSessionHealth(now: Date = new Date()): Promise<{
+  session: AuthSession | null;
+  reason: SessionEndReason;
+  changed: boolean;
+}> {
+  const current = getCachedSession() ?? readStoredSession()?.session ?? null;
+  if (!current) return { session: null, reason: null, changed: false };
+
+  if (getAuthMode() !== "supabase") return validateSession(now);
+
+  if (isBeyondAbsoluteCap(current, now)) {
+    await signOut();
+    return { session: null, reason: "expired", changed: true };
+  }
+  return { session: current, reason: null, changed: false };
 }
 
 /**
@@ -365,7 +414,9 @@ function identityChanged(previous: AuthUser, next: AuthUser): boolean {
  *   demo : rebuild from the staff directory and the custom-role store.
  *
  * A deactivated or vanished account ends the session here, so the change takes
- * effect at the next heartbeat (≤ 60 s) rather than at the next reload.
+ * effect at the next authority check — sign-in/out, a provider auth event, an
+ * explicit refresh, a cross-tab authority change, or resuming the tab after a
+ * meaningful time away — rather than at the next reload.
  */
 export async function resyncCurrentIdentity(now: Date = new Date()): Promise<{
   session: AuthSession | null;

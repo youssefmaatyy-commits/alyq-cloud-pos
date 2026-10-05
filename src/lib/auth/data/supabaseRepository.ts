@@ -117,6 +117,22 @@ export class SupabaseUserRepository implements UserRepository {
     return client;
   }
 
+  /**
+   * In-flight de-duplication for the two reads every identity-refresh path
+   * (boot, resume-from-background, the provider's own `onAuthStateChange`,
+   * cross-tab sync, explicit `refreshIdentity`) ultimately funnels through.
+   *
+   * Each of those triggers can legitimately fire within the same tick — a tab
+   * resuming at the same moment the provider fires `TOKEN_REFRESHED`, say —
+   * and without this, each would open its own `profiles` + `get_active_branch_context`
+   * (+ `custom_roles`) round trip for the exact same answer. Concurrent callers
+   * instead share the one request already in flight; the slot is cleared the
+   * moment it settles, so the NEXT call (a genuinely later refresh) is never
+   * starved of a fresh read.
+   */
+  private pendingCurrentSession: Promise<LiveSessionInfo | null> | null = null;
+  private pendingRefreshSession: Promise<LiveSessionInfo | null> | null = null;
+
   // ── reading identities ────────────────────────────────────────────────────
 
   private async loadProfile(id: string): Promise<ProfileRow | null> {
@@ -342,6 +358,15 @@ export class SupabaseUserRepository implements UserRepository {
   }
 
   async currentSession(): Promise<LiveSessionInfo | null> {
+    if (!this.pendingCurrentSession) {
+      this.pendingCurrentSession = this.doCurrentSession().finally(() => {
+        this.pendingCurrentSession = null;
+      });
+    }
+    return this.pendingCurrentSession;
+  }
+
+  private async doCurrentSession(): Promise<LiveSessionInfo | null> {
     const client = this.client();
     const { data, error } = await client.auth.getSession();
     const session = data?.session ?? null;
@@ -367,6 +392,15 @@ export class SupabaseUserRepository implements UserRepository {
   }
 
   async refreshSession(): Promise<LiveSessionInfo | null> {
+    if (!this.pendingRefreshSession) {
+      this.pendingRefreshSession = this.doRefreshSession().finally(() => {
+        this.pendingRefreshSession = null;
+      });
+    }
+    return this.pendingRefreshSession;
+  }
+
+  private async doRefreshSession(): Promise<LiveSessionInfo | null> {
     const client = this.client();
     const { data, error } = await client.auth.refreshSession();
     const session = data?.session ?? null;

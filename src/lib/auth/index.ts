@@ -15,6 +15,7 @@ export {
   SESSION_IDLE_MS,
   SESSION_REMEMBER_IDLE_MS,
   adoptProviderSession,
+  checkLocalSessionHealth,
   consumePasswordRecoveryLink,
   createSession,
   forgetSession,

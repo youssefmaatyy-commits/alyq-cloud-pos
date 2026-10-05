@@ -143,6 +143,11 @@ const SUITES = [
   },
   { id: "crash", file: "scripts/crash.flow.mjs", title: "Crash recovery (ErrorBoundary: the screen, no leaked detail, the sibling survives)" },
   {
+    id: "authprovider",
+    file: "scripts/authProvider.live.flow.mjs",
+    title: "AuthProvider live-mode request lifecycle (Task 10): nav no-refresh, deduped resume, in-flight dedup, sign-in/out races, role/branch freshness",
+  },
+  {
     id: "reports",
     file: "scripts/reports.aggregates.mjs",
     title: "Report aggregates — PostgreSQL vs the shipped builders over 2,500 invoices",
