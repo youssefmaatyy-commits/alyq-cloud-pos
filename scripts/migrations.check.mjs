@@ -65,6 +65,7 @@ const PHASE4_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "phase4_scena
 const PROMPT5_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "prompt5_scenarios.sql");
 const PROMPT6_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "prompt6_scenarios.sql");
 const FINAL_STORE_QA_FILE = path.join(ROOT, "supabase", "tests", "final_store_qa.sql");
+const PROMPT7_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "prompt7_scenarios.sql");
 const SEED_FILE = path.join(ROOT, "supabase", "seed.sql");
 const SRC_DIR = path.join(ROOT, "src");
 
@@ -404,6 +405,20 @@ if (!VERIFY_ONLY) {
       console.log(`  ${c.red("✗")} final store simulation failed`);
       if (error?.stack) console.log(c.dim(error.stack));
       failures.push({ name: "Final Store QA", phase: "scenario", error: String(error.message) });
+    }
+  }
+
+  if (failures.length === 0 && runScenarios) {
+    console.log(c.bold("\nPrompt 7 focused scenarios (branch-exact movement audit + bridge safety)"));
+    try {
+      const sql = fs.readFileSync(PROMPT7_SCENARIOS_FILE, "utf8");
+      await driver.exec(sql, "prompt7_scenarios.sql");
+      console.log(`  ${c.green("✓")} every focused Prompt 7 scenario passed`);
+      for (const notice of sql.matchAll(/raise notice '([^']+)'/g)) console.log(c.dim(`      ${notice[1]}`));
+    } catch (error) {
+      console.log(`  ${c.red("✗")} a focused Prompt 7 scenario failed`);
+      if (error?.stack) console.log(c.dim(error.stack));
+      failures.push({ name: "Prompt 7 scenarios", phase: "scenario", error: String(error.message) });
     }
   }
 
