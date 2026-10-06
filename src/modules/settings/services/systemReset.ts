@@ -86,13 +86,88 @@ export interface ResetResult {
   needsReload?: boolean;
 }
 
-/** Server-side classes surface verbatim; the UI maps them to copy. */
+/** A reset failure safe to render. `code` is diagnostic; raw backend text is not. */
 export class ResetError extends Error {
   readonly code: string;
   constructor(code: string, message: string) {
     super(message);
+    this.name = "ResetError";
     this.code = code;
   }
+}
+
+interface StructuredRpcError {
+  code?: unknown;
+  message?: unknown;
+  details?: unknown;
+  hint?: unknown;
+}
+
+const RESET_MESSAGES: Record<string, string> = {
+  RESET_UNAUTHORIZED: "You are not authorized to perform this reset.",
+  RESET_REAUTH_REQUIRED: "Re-enter the current password before trying again.",
+  RESET_REAUTH_LOCKED: "Too many password attempts. Wait, then re-authenticate again.",
+  RESET_PHRASE_MISMATCH: "The confirmation phrase was not accepted.",
+  RESET_BAD_OPTIONS: "The reset options were not accepted by the server.",
+  RESET_BAD_MODE: "The selected reset mode is not supported.",
+  RESET_FAILED: "The reset could not be completed. No changes were committed.",
+  SUPER_ADMIN_LOST: "The protected administrator check failed. No changes were committed.",
+};
+
+const stringField = (value: unknown): string => typeof value === "string" ? value : "";
+const safeDiagnosticCode = (value: unknown): string | null => {
+  const code = stringField(value).trim().toUpperCase();
+  return /^[A-Z0-9_]{3,32}$/.test(code) ? code : null;
+};
+
+/**
+ * Convert Supabase/PostgREST's plain `{ code, message, details, hint }` object
+ * (or any other thrown value) into render-safe copy. Details and hints are
+ * deliberately never included: they can contain table names, values or policy
+ * internals. A constrained SQLSTATE/PostgREST code remains available to support.
+ */
+export function normalizeResetError(error: unknown): ResetError {
+  if (error instanceof ResetError) return error;
+
+  const structured: StructuredRpcError = error !== null && typeof error === "object"
+    ? error as StructuredRpcError
+    : {};
+  const rawMessage = error instanceof Error ? error.message : stringField(structured.message);
+  const resetPrefix = rawMessage.match(/^\s*(RESET_[A-Z_]+|SUPER_ADMIN_LOST)\s*:/)?.[1] ?? null;
+  if (resetPrefix && RESET_MESSAGES[resetPrefix]) {
+    return new ResetError(resetPrefix, RESET_MESSAGES[resetPrefix]);
+  }
+
+  const backendCode = safeDiagnosticCode(structured.code);
+  if (backendCode === "42501") {
+    return new ResetError(backendCode, RESET_MESSAGES.RESET_UNAUTHORIZED);
+  }
+  if (backendCode === "23001" || backendCode?.startsWith("23")) {
+    return new ResetError(
+      backendCode,
+      "The reset could not remove linked records safely. No changes were committed.",
+    );
+  }
+  if (backendCode?.startsWith("40")) {
+    return new ResetError(
+      backendCode,
+      "The reset conflicted with another database operation. No changes were committed; try again.",
+    );
+  }
+  if (backendCode?.startsWith("42") || backendCode === "PGRST202") {
+    return new ResetError(
+      backendCode,
+      "The database reset contract is not compatible with this application build.",
+    );
+  }
+  if (backendCode?.startsWith("08") || backendCode?.startsWith("53") || backendCode?.startsWith("57")) {
+    return new ResetError(
+      backendCode,
+      "The database service was unavailable. No changes were committed; try again.",
+    );
+  }
+
+  return new ResetError(backendCode ?? "RESET_FAILED", RESET_MESSAGES.RESET_FAILED);
 }
 
 // ── re-authentication (existing auth service; no new credential path) ──────
@@ -138,20 +213,8 @@ function assertPhrase(phrase: string, expected: string): void {
   }
 }
 
-function translateRpcError(err: unknown): never {
-  const message = err instanceof Error ? err.message : String(err);
-  const code = message.split(":")[0]?.trim() ?? "";
-  const known = [
-    "RESET_UNAUTHORIZED",
-    "RESET_REAUTH_REQUIRED",
-    "RESET_REAUTH_LOCKED",
-    "RESET_PHRASE_MISMATCH",
-    "RESET_BAD_OPTIONS",
-    "RESET_BAD_MODE",
-    "SUPER_ADMIN_LOST",
-  ];
-  if (known.includes(code)) throw new ResetError(code, message.slice(code.length + 1).trim());
-  throw new ResetError("RESET_FAILED", message);
+function translateRpcError(error: unknown): never {
+  throw normalizeResetError(error);
 }
 
 // ── public API ──────────────────────────────────────────────────────────────

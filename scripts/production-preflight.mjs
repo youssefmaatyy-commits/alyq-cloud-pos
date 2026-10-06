@@ -34,9 +34,20 @@ check(/webDir:\s*["']dist["']/.test(cap), "Capacitor packages the production dis
 
 const migrationDir = path.join(root, "supabase", "migrations");
 const migrations = fs.readdirSync(migrationDir).filter((name) => /^\d{4}_.+\.sql$/.test(name)).sort();
-const contiguous = migrations.every((name, index) => Number(name.slice(0, 4)) === index + 1);
-check(migrations.length === 85 && contiguous && migrations.at(-1) === "0085_first_admin_bootstrap.sql", "migrations are contiguous 0001–0085");
-check(/SHIPPED_MIGRATION_COUNT\s*=\s*85/.test(operations) && /0085_first_admin_bootstrap\.sql/.test(operations), "application schema constants match migration 0085");
+const contiguous = migrations.length > 0
+  && migrations.every((name, index) => Number(name.slice(0, 4)) === index + 1);
+const latestMigration = migrations.at(-1) ?? null;
+const latestNumber = latestMigration ? Number(latestMigration.slice(0, 4)) : 0;
+const shippedCount = operations.match(/SHIPPED_MIGRATION_COUNT\s*=\s*(\d+)/)?.[1];
+const shippedLatest = operations.match(/SHIPPED_LATEST_MIGRATION\s*=\s*["']([^"']+)["']/)?.[1];
+check(
+  contiguous && latestNumber === migrations.length,
+  `migrations are contiguous 0001–${String(latestNumber).padStart(4, "0")} (${migrations.length} files)`,
+);
+check(
+  Number(shippedCount) === migrations.length && shippedLatest === latestMigration,
+  `application schema constants match ${latestMigration ?? "the migration manifest"}`,
+);
 
 const requiredEnv = ["VITE_SUPABASE_URL", "VITE_SUPABASE_ANON_KEY", "VITE_CURRENCY", "VITE_STOREFRONT_URL", "VITE_DEMO_SEED", "VITE_APP_VERSION", "VITE_BUILD_SHA"];
 check(requiredEnv.every((name) => env.includes(name)), "all client-safe production variable names are documented");

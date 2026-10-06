@@ -1164,7 +1164,11 @@ export class SupabaseOnlineRepository
         reviews,
         campaigns,
         categoryContents,
-        deliveryZones: deliveryZones.filter((zone) => zone.enabled),
+        // Keep disabled rows in the public snapshot as existence evidence. The
+        // checkout/contact selectors filter enabled choices themselves, while
+        // free-delivery progress must not fall back to legacy global pricing
+        // merely because every configured zone is currently disabled.
+        deliveryZones,
         promotions,
         promotionTargets,
       };

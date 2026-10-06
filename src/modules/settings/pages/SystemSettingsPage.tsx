@@ -36,7 +36,7 @@ import {
   reauthenticate,
   reportResetFailure,
   resetReauth,
-  ResetError,
+  normalizeResetError,
   systemResetPreview,
   FACTORY_PHRASE,
   type FactoryOptions,
@@ -132,12 +132,15 @@ export function SystemSettingsPage() {
     }
     setBusy(true);
     setError(null);
+    setErrorCode(null);
     try {
       const data = await systemResetPreview(mode, chosen as Record<string, boolean>);
       setPreview(data);
       setStage("preview");
-    } catch (err) {
-      setError(err instanceof ResetError ? err.message : String(err));
+    } catch (error) {
+      const normalized = normalizeResetError(error);
+      setErrorCode(normalized.code);
+      setError(normalized.message);
     } finally {
       setBusy(false);
     }
@@ -172,12 +175,12 @@ export function SystemSettingsPage() {
         : await clearOperationalData(operational, phrase, verifiedPassword.current);
       setResult(data);
       setStage("done");
-    } catch (err) {
-      const message = err instanceof ResetError ? err.message : String(err);
-      setErrorCode(err instanceof ResetError ? err.code : "RESET_FAILED");
-      setError(message);
+    } catch (error) {
+      const normalized = normalizeResetError(error);
+      setErrorCode(normalized.code);
+      setError(normalized.message);
       setStage("failed");
-      void reportResetFailure(mode, "execute", message);
+      void reportResetFailure(mode, "execute", normalized.message);
     } finally {
       setBusy(false);
       verifiedPassword.current = "";
@@ -367,7 +370,7 @@ export function SystemSettingsPage() {
                   {busy ? t("common.saving") : t("dz.step1.cta")}
                 </Button>
               </div>
-              {error ? <p className="mt-2 text-xs font-semibold text-red-700">{error}</p> : null}
+              {error ? <p className="mt-2 text-xs font-semibold text-red-700">{errorCode ? `[${errorCode}] ` : ""}{error}</p> : null}
             </div>
           ) : null}
 
@@ -427,7 +430,7 @@ export function SystemSettingsPage() {
                   />
                 </Field>
               </div>
-              {error ? <p className="mt-1 text-xs font-semibold text-red-700">{error}</p> : null}
+              {error ? <p className="mt-1 text-xs font-semibold text-red-700">{errorCode ? `[${errorCode}] ` : ""}{error}</p> : null}
               <div className="mt-4 flex items-center justify-between">
                 <Button variant="ghost" size="sm" onClick={() => { setStage("preview"); setError(null); }}>{t("common.back")}</Button>
                 <Button variant="danger" size="sm" data-testid="dz-verify-password" disabled={busy || password.length === 0} onClick={() => void submitReauth()}>

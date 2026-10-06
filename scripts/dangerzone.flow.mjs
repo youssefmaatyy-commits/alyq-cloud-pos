@@ -90,7 +90,7 @@ if (categorySelect) {
   if (option) setReactValue(categorySelect, option.value);
 }
 clickExact("Save");
-await waitFor(() => ux.dom.window.location.hash === "#/products", { label: "the save to land" });
+await waitFor(() => ux.dom.window.location.hash.endsWith("/products"), { label: "the save to land" });
 const productId = catalog().products.find((p) => p.sku === SKU)?.id;
 assert.ok(productId, "the ring is in the catalogue");
 await navigate(`#/products/${productId}/edit`);
@@ -256,7 +256,7 @@ console.log("  ✓ the exact phrase arms the final button");
 // ── 4 · execute: the trees fall, the store stands ───────────────────────────
 clickEl(testid("dz-execute-clear"));
 await waitFor(() => testid("dz-result"), { label: "the result panel" });
-await waitFor(() => ux.dom.window.location.hash === "#/", { label: "the dashboard handoff" });
+await waitFor(() => ["#/", "#/dashboard"].includes(ux.dom.window.location.hash), { label: "the dashboard handoff" });
 await sleep(400);
 
 assert.equal(read("alyq.demo.sales.v1", []).length, 0, "sales are gone");

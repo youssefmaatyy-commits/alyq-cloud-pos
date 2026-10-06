@@ -7,6 +7,7 @@ import { useStorefront } from "../hooks/StorefrontProvider";
 import { useStoreCart } from "../hooks/StoreCartProvider";
 import type { OnlineOrder } from "../types";
 import { deliveryHintKey } from "../services/orderWorkflow";
+import { activeCheckoutCopy, checkoutCopyWithAmount } from "../services/checkoutCopy";
 import { PaymentProofPanel } from "../components/storefront/PaymentProofPanel";
 import { V2Image } from "./Primitives";
 
@@ -44,11 +45,24 @@ export function V2Coupon() {
 }
 
 export function V2CartTotals({ showDelivery = false }: { showDelivery?: boolean }) {
-  const { t, pick, money } = useI18n();
-  const { settings } = useStorefront();
+  const { t, pick, money, lang } = useI18n();
+  const { settings, deliveryZones } = useStorefront();
   const { totals, preview, previewLoading, deliveryType, deliveryZoneId, freeDelivery,
     couponCode, deliveryQuoteReady } = useStoreCart();
-  const zone = useStorefront().deliveryZones.find((entry) => entry.id === deliveryZoneId && entry.enabled);
+  const zone = deliveryZones.find((entry) => entry.id === deliveryZoneId && entry.enabled);
+  const copy = settings.checkout_copy;
+  const deliveryCalculated = copy.show_delivery_calculated_helper
+    ? activeCheckoutCopy(copy, "delivery_calculated_helper", lang)
+    : "";
+  const estimatedTotal = copy.show_estimated_total_advisory
+    ? activeCheckoutCopy(copy, "estimated_total_advisory", lang)
+    : "";
+  const freeDeliveryTemplate = copy.show_free_delivery_progress
+    ? activeCheckoutCopy(copy, "free_delivery_progress", lang)
+    : "";
+  const showDeliveryRow = showDelivery && (
+    deliveryType !== "delivery" || deliveryQuoteReady || deliveryCalculated.length > 0
+  );
   // The advisory preview is debounced, so for a moment after a coupon is
   // applied (or removed) it still describes the PREVIOUS coupon state — and
   // that stale breakdown still carries the automatic promotion the coupon has
@@ -66,10 +80,10 @@ export function V2CartTotals({ showDelivery = false }: { showDelivery?: boolean 
       {(shown?.promoDiscount ?? totals.discount_amount) > 0 ? <div className="v2-totals-discount"><dt>
         {t("store.cart.discount")}{shown?.promoCode ?? totals.discount_code ? ` · ${shown?.promoCode ?? totals.discount_code}` : ""}
       </dt><dd>−{money(shown?.promoDiscount ?? totals.discount_amount)}</dd></div> : null}
-      {showDelivery ? <div><dt>{deliveryType === "pickup" ? t("store.checkout.pickup") :
+      {showDeliveryRow ? <div><dt>{deliveryType === "pickup" ? t("store.checkout.pickup") :
         zone ? pick(zone.name_ar, zone.name_en) : t("store.cart.deliveryFee")}</dt>
-        <dd>{!deliveryQuoteReady && deliveryType === "delivery"
-          ? t("store.cart.deliveryCalculatedAtCheckout")
+        <dd data-testid="v2-delivery-calculated-helper">{!deliveryQuoteReady && deliveryType === "delivery"
+          ? deliveryCalculated
           : (shown?.deliveryFee ?? totals.delivery_fee) > 0
             ? money(shown?.deliveryFee ?? totals.delivery_fee) : t("store.checkout.free")}</dd></div> : null}
       {showDelivery && deliveryQuoteReady && (shown?.shippingDiscount ?? 0) > 0 ? <div className="v2-totals-discount"><dt>
@@ -78,11 +92,12 @@ export function V2CartTotals({ showDelivery = false }: { showDelivery?: boolean 
         ? t("store.cart.totalBeforeDelivery") : t("store.cart.total")}</dt>
         <dd>{money(shown?.total ?? totals.total)}</dd></div>
     </dl>
-    {freeDelivery && deliveryType === "delivery" && !freeDelivery.eligible ?
-      <p className="v2-small">{t("store.cart.freeDeliveryRemaining", { amount: money(freeDelivery.remaining) })}</p> : null}
+    {freeDelivery && deliveryType === "delivery" && !freeDelivery.eligible && freeDeliveryTemplate ?
+      <p className="v2-small" data-testid="v2-free-delivery-progress">{
+        checkoutCopyWithAmount(freeDeliveryTemplate, money(freeDelivery.remaining))
+      }</p> : null}
     {previewLoading ? <p className="v2-small" role="status">{t("store.v2.journey.checkingPrices")}</p> : null}
-    <p className="v2-small">{t("store.v2.journey.advisoryTotal")}{settings.delivery.enabled && !deliveryQuoteReady &&
-      deliveryType === "delivery" ? ` · ${t("store.cart.deliveryCalculatedAtCheckout")}` : ""}</p>
+    {estimatedTotal ? <p className="v2-small" data-testid="v2-estimated-total-advisory">{estimatedTotal}</p> : null}
   </div>;
 }
 

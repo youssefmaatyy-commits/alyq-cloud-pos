@@ -61,7 +61,8 @@ interface LiveSession {
 
 interface LiveLine {
   id: string;
-  product_id: string;
+  /** Null after a catalogue Factory Reset; snapshot fields still render history. */
+  product_id: string | null;
   variant_id: string | null;
   sku: string;
   barcode: string | null;
@@ -103,7 +104,7 @@ function mapSession(session: LiveSession): StocktakeSession {
     note: session.note,
     rows: (session.lines ?? []).map((line) => ({
       lineId: line.id,
-      productId: line.product_id,
+      productId: line.product_id ?? "",
       variantId: line.variant_id,
       productNameAr: line.product_name_ar,
       productNameEn: line.product_name_en,

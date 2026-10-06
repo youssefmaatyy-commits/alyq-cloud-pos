@@ -96,7 +96,7 @@ export interface StorefrontContextValue {
   campaigns: Campaign[];
   /** Phase 45: the shop-window content of the active categories. */
   categoryContents: StorefrontCategoryContent[];
-  /** Enabled delivery zones, admin order — the checkout's choices. */
+  /** All configured delivery zones, admin order; screens expose enabled choices only. */
   deliveryZones: DeliveryZone[];
   /** Live automatic offers (struck-through prices read these). */
   promotions: Promotion[];

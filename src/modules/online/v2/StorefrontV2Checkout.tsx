@@ -389,7 +389,6 @@ export function StorefrontV2Checkout() {
           {submitting || placing ? t("store.checkout.placing") : pick(copy.place_order_ar, copy.place_order_en).trim() || t("store.checkout.placeOrder")}
         </button>
         <p className="v2-small">{t("store.checkout.placementNote")}</p>
-        <p className="v2-small">{t("store.v2.journey.advisoryTotal")}</p>
       </V2Panel></aside></div>
     </form> : null}
   </div>;

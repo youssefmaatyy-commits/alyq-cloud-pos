@@ -55,8 +55,8 @@ import type {
 import { newOrderClientRef } from "../types";
 import {
   campaignFor,
+  checkoutFreeDeliveryProgress,
   deliveryFeeFor,
-  freeDeliveryProgress,
   normalizeCouponCode,
   reconcileAutomaticAndCoupon,
   round2,
@@ -286,6 +286,7 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
     campaigns,
     promotions,
     promotionTargets,
+    deliveryZones,
     catalogContext,
     settings,
     loading: catalogueLoading,
@@ -567,8 +568,14 @@ export function StoreCartProvider({ children }: { children: ReactNode }) {
   );
 
   const freeDelivery = useMemo(
-    () => freeDeliveryProgress(settings.delivery, round2(subtotal - autoDiscount - discount)),
-    [autoDiscount, discount, settings.delivery, subtotal],
+    () => checkoutFreeDeliveryProgress({
+      delivery: settings.delivery,
+      deliveryType,
+      subtotalAfterDiscount: round2(subtotal - autoDiscount - discount),
+      zones: deliveryZones,
+      selectedZoneId: deliveryZoneId,
+    }),
+    [autoDiscount, deliveryType, deliveryZoneId, deliveryZones, discount, settings.delivery, subtotal],
   );
 
   const problems = useMemo(

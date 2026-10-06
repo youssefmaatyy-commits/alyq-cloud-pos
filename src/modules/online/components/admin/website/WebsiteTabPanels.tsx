@@ -722,6 +722,10 @@ export function CheckoutCopyPanel({ draft, patch }: { draft: WebsiteSettings; pa
 
   const set = (key: keyof WebsiteSettings["checkout_copy"]) => (value: string) =>
     patch((c) => ({ ...c, checkout_copy: { ...c.checkout_copy, [key]: value } }));
+  const setVisible = (
+    key: "show_free_delivery_progress" | "show_estimated_total_advisory" | "show_delivery_calculated_helper",
+  ) => (value: boolean) =>
+    patch((c) => ({ ...c, checkout_copy: { ...c.checkout_copy, [key]: value } }));
 
   const pair = (base: string, labelAr: string, labelEn: string, multiline = true) => {
     const arKey = `${base}_ar` as keyof WebsiteSettings["checkout_copy"];
@@ -750,6 +754,35 @@ export function CheckoutCopyPanel({ draft, patch }: { draft: WebsiteSettings; pa
       {pair("cod_note", t("online.s45.codNoteAr"), t("online.s45.codNoteEn"))}
       {pair("instapay_note", t("online.s45.instapayNoteAr"), t("online.s45.instapayNoteEn"))}
       {pair("proof_note", t("online.s45.proofNoteAr"), t("online.s45.proofNoteEn"))}
+
+      <div className="space-y-3 rounded-xl border border-slate-200 p-3">
+        <ToggleSwitch
+          checked={copy.show_free_delivery_progress}
+          onChange={setVisible("show_free_delivery_progress")}
+          label={t("online.s45.showFreeDeliveryProgress")}
+        />
+        {pair("free_delivery_progress", t("online.s45.freeDeliveryProgressAr"), t("online.s45.freeDeliveryProgressEn"))}
+        <p className="text-[11px] text-slate-500">{t("online.s45.amountPlaceholderHint")}</p>
+      </div>
+
+      <div className="space-y-3 rounded-xl border border-slate-200 p-3">
+        <ToggleSwitch
+          checked={copy.show_estimated_total_advisory}
+          onChange={setVisible("show_estimated_total_advisory")}
+          label={t("online.s45.showEstimatedTotalAdvisory")}
+        />
+        {pair("estimated_total_advisory", t("online.s45.estimatedTotalAdvisoryAr"), t("online.s45.estimatedTotalAdvisoryEn"))}
+      </div>
+
+      <div className="space-y-3 rounded-xl border border-slate-200 p-3">
+        <ToggleSwitch
+          checked={copy.show_delivery_calculated_helper}
+          onChange={setVisible("show_delivery_calculated_helper")}
+          label={t("online.s45.showDeliveryCalculatedHelper")}
+        />
+        {pair("delivery_calculated_helper", t("online.s45.deliveryCalculatedHelperAr"), t("online.s45.deliveryCalculatedHelperEn"), false)}
+      </div>
+
       <Bilingual
         labelAr={t("online.s45.placeOrderAr")}
         labelEn={t("online.s45.placeOrderEn")}

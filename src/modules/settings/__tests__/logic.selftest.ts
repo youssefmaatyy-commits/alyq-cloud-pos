@@ -63,6 +63,7 @@ import {
   updateUser,
 } from "../services/settingsService";
 import { queryRoles, queryUsers, sortUsers, summarizeUsers } from "../services/userQuery";
+import { normalizeResetError, ResetError } from "../services/systemReset";
 import { roleFormToDraft, validateRoleForm, validateUserForm } from "../validation";
 import {
   DEFAULT_USER_SORT,
@@ -1076,6 +1077,49 @@ test("the only manage_users overlay cannot be stripped or deactivated", async ()
       { extra: worn?.extra_capabilities ?? [], denied: worn?.denied_capabilities ?? [] },
     ).includes("manage_users"),
   );
+});
+
+test("reset RPC errors normalize structured PostgREST objects without leaking diagnostics", () => {
+  const linked = normalizeResetError({
+    code: "23001",
+    message: "restrict_violation",
+    details: "Secret row value and sales_returns_sale_id_fkey",
+    hint: "Drop the constraint with a privileged token",
+  });
+  assert.ok(linked instanceof ResetError);
+  assert.equal(linked.code, "23001");
+  assert.match(linked.message, /linked records/i);
+  assert.doesNotMatch(linked.message, /Secret|sales_returns|constraint|token/);
+  assert.notEqual(linked.message, "[object Object]");
+
+  const unknown = normalizeResetError({
+    code: "unsafe code with spaces",
+    message: "password=do-not-render",
+    details: "private diagnostics",
+    hint: "private hint",
+  });
+  assert.equal(unknown.code, "RESET_FAILED");
+  assert.equal(unknown.message, "The reset could not be completed. No changes were committed.");
+  assert.doesNotMatch(unknown.message, /password|private|\[object Object\]/i);
+});
+
+test("reset RPC errors map known prefixes and retain only safe diagnostic codes", () => {
+  const known = normalizeResetError({
+    code: "P0001",
+    message: "RESET_REAUTH_LOCKED: backend lock details that must not render",
+    details: "attempt history",
+    hint: "internal limit",
+  });
+  assert.equal(known.code, "RESET_REAUTH_LOCKED");
+  assert.match(known.message, /Too many password attempts/);
+  assert.doesNotMatch(known.message, /backend|attempt history|internal limit/);
+
+  const schema = normalizeResetError({ code: "PGRST202", message: "function signature internals" });
+  assert.equal(schema.code, "PGRST202");
+  assert.match(schema.message, /not compatible/);
+
+  const native = new ResetError("RESET_PHRASE_MISMATCH", "Safe local message");
+  assert.equal(normalizeResetError(native), native);
 });
 
 // ── runner ───────────────────────────────────────────────────────────────────

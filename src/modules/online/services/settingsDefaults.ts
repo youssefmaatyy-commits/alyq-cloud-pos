@@ -413,6 +413,15 @@ export const DEFAULT_WEBSITE_SETTINGS: WebsiteSettings = {
     proof_note_en: "",
     place_order_ar: "",
     place_order_en: "",
+    free_delivery_progress_ar: "أضف {{amount}} أخرى للحصول على توصيل مجاني",
+    free_delivery_progress_en: "Add {{amount}} more for free delivery",
+    show_free_delivery_progress: true,
+    estimated_total_advisory_ar: "الإجمالي تقديري. يتأكد السعر والمخزون والخصم والتوصيل عند تسجيل الطلب.",
+    estimated_total_advisory_en: "Estimated total. Prices, stock, discounts and delivery are confirmed when you place the order.",
+    show_estimated_total_advisory: true,
+    delivery_calculated_helper_ar: "يُحسب عند إتمام الطلب",
+    delivery_calculated_helper_en: "Calculated at checkout",
+    show_delivery_calculated_helper: true,
   },
   confirmation: {
     title_ar: "",
@@ -1083,8 +1092,13 @@ export function sanitizeSettings(input: unknown): WebsiteSettings {
     }));
 
   const checkout = out.checkout_copy as unknown as Json;
-  for (const key of Object.keys(DEFAULT_WEBSITE_SETTINGS.checkout_copy)) {
-    checkout[key] = str(checkout[key], 500);
+  for (const [key, fallback] of Object.entries(DEFAULT_WEBSITE_SETTINGS.checkout_copy)) {
+    // Checkout copy now contains independent visibility controls. Preserve
+    // booleans as booleans; coercing every key through `str` would turn false
+    // into truthy text after a JSONB/cache round trip.
+    checkout[key] = typeof fallback === "boolean"
+      ? bool(checkout[key], fallback)
+      : str(checkout[key], 500);
   }
   const confirmation = out.confirmation as unknown as Json;
   for (const key of ["title_ar", "title_en", "message_ar", "message_en", "guidance_ar", "guidance_en", "support_cta_ar", "support_cta_en"]) {

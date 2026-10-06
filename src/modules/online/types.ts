@@ -1107,6 +1107,16 @@ export interface CheckoutCopySettings {
   proof_note_en: string;
   place_order_ar: string;
   place_order_en: string;
+  /** Plain text; `{{amount}}` is the only controlled substitution. */
+  free_delivery_progress_ar: string;
+  free_delivery_progress_en: string;
+  show_free_delivery_progress: boolean;
+  estimated_total_advisory_ar: string;
+  estimated_total_advisory_en: string;
+  show_estimated_total_advisory: boolean;
+  delivery_calculated_helper_ar: string;
+  delivery_calculated_helper_en: string;
+  show_delivery_calculated_helper: boolean;
 }
 
 export interface ConfirmationCopySettings {

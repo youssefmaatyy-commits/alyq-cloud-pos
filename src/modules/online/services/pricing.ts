@@ -502,6 +502,37 @@ export function freeDeliveryProgress(
   return { eligible: remaining === 0, remaining, threshold };
 }
 
+/**
+ * Checkout progress follows the same authority as delivery pricing. Any zone
+ * rows disable the legacy/global fallback: a shopper must select an enabled
+ * zone, whose threshold is then measured against discounted goods. Pickup can
+ * never advertise delivery progress.
+ */
+export function checkoutFreeDeliveryProgress(input: {
+  delivery: DeliverySettings;
+  deliveryType: DeliveryType;
+  subtotalAfterDiscount: number;
+  zones: readonly DeliveryZone[];
+  selectedZoneId: string | null;
+}): { eligible: boolean; remaining: number; threshold: number } | null {
+  if (input.deliveryType !== "delivery" || !input.delivery.enabled) return null;
+
+  let threshold: number | null;
+  if (input.zones.length > 0) {
+    const selected = input.zones.find(
+      (zone) => zone.id === input.selectedZoneId && zone.enabled,
+    );
+    if (!selected) return null;
+    threshold = selected.free_shipping_threshold;
+  } else {
+    threshold = input.delivery.free_delivery_threshold;
+  }
+
+  if (threshold === null || threshold <= 0) return null;
+  const remaining = round2(Math.max(threshold - input.subtotalAfterDiscount, 0));
+  return { eligible: remaining === 0, remaining, threshold };
+}
+
 // ── the cart ────────────────────────────────────────────────────────────────
 
 export interface PriceCartItem {
