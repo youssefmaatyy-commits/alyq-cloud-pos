@@ -17,6 +17,7 @@ const go = async (hash, id) => {
 
 await go("#/store", "v2-home");
 await waitFor(() => testid("v2-card-prd-1001"), { label: "the published home product" });
+await waitFor(() => robots() === "index, follow", { label: "home metadata" });
 check("public canonical home uses one V2 shell and never mounts the old layout",
   Boolean(testid("store-v2")) && !testid("store-layout") && dom.window.location.hash === "#/store");
 check("home has indexable metadata, a canonical public URL and real Store JSON-LD",

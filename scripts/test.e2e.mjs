@@ -92,6 +92,11 @@ const SUITES = [
     title: "Storefront V2 Phase 1 regressions on canonical routes: configured content, exact variants, cart, AR/RTL",
   },
   {
+    id: "storefront-bootstrap",
+    file: "scripts/storefront-bootstrap.flow.mjs",
+    title: "Storefront V2 refresh & bootstrap flash defense (neutral shield, safe cache, atomic paint)",
+  },
+  {
     id: "v2-studio",
     file: "scripts/storefront-v2-studio.flow.mjs",
     title: "Storefront V2 Phase 2 regressions: Admin draft/save/reload, scoped reset, ticker, RTL, canonical shop and POS",

@@ -11,11 +11,12 @@ import { V2ActionLink, V2Icon as Icon } from "./Primitives";
 import { resolvedV2SocialChannels, V2SocialIcons } from "./SocialChannels";
 import { SocialIcon } from "../components/storefront/SocialIcon";
 import { useV2ScrollRestoration } from "./scrollRestoration";
+import { StorefrontV2BootstrapShield, StorefrontV2ErrorShield } from "./BootstrapShield";
 import "./storefront-v2.css";
 
 export function StorefrontV2Shell({ children }: { children: ReactNode }) {
   const { t, pick, dir, lang, toggleLang } = useI18n();
-  const { settings, categoriesFacet, categoryContents, sections, campaigns, promotions } = useStorefront();
+  const { settings, isReady, error, refresh, categoriesFacet, categoryContents, sections, campaigns, promotions } = useStorefront();
   const { unitCount, addPulse } = useStoreCart();
   const { customer } = useStoreAccount();
   const location = useLocation();
@@ -182,6 +183,16 @@ export function StorefrontV2Shell({ children }: { children: ReactNode }) {
       : <span>{content}</span>;
   };
   const newsletterEmail = settings.contact.email.trim();
+
+  // Defense against refresh/bootstrap UI flash:
+  // Until authoritative or cached public settings are resolved, render a neutral
+  // bootstrap shield rather than a temporary default dark theme/header.
+  if (!isReady) {
+    if (error) {
+      return <StorefrontV2ErrorShield error={error} onRetry={() => void refresh()} />;
+    }
+    return <StorefrontV2BootstrapShield />;
+  }
 
   return (
     <div className="store-v2" dir={dir} data-testid="store-v2"

@@ -64,10 +64,13 @@ import { visibleSections } from "../services/sections";
 import { applyStoreTheme, applyFavicon, clearStoreTheme } from "../services/theme";
 import { uploadProofImage } from "../data/localAccounts";
 import { storefrontInvalidation } from "./storefrontInvalidation";
+import { readCachedPublicSettings, writeCachedPublicSettings } from "../services/publicSettingsCache";
 
 export interface StorefrontContextValue {
   mode: OnlineMode;
   loading: boolean;
+  /** Whether critical public settings required for first paint are resolved (from cache or server). */
+  isReady: boolean;
   error: string | null;
   refresh: () => Promise<void>;
 
@@ -151,6 +154,8 @@ export function StorefrontProvider({ children }: { children: ReactNode }) {
   const website = useMemo(() => getWebsiteRepository(), []);
   const orders = useMemo(() => getOnlineOrdersRepository(), []);
 
+  const cached = useMemo(() => readCachedPublicSettings(), []);
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState<{
@@ -164,9 +169,9 @@ export function StorefrontProvider({ children }: { children: ReactNode }) {
     deliveryZones: DeliveryZone[];
     promotions: Promotion[];
     promotionTargets: PromotionTarget[];
-  }>({
-    settings: null,
-    meta: null,
+  }>(() => ({
+    settings: cached?.settings ?? null,
+    meta: cached?.meta ?? null,
     contents: [],
     faqs: [],
     reviews: [],
@@ -175,7 +180,7 @@ export function StorefrontProvider({ children }: { children: ReactNode }) {
     deliveryZones: [],
     promotions: [],
     promotionTargets: [],
-  });
+  }));
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [variants, setVariants] = useState<StoreVariant[]>([]);
@@ -220,6 +225,7 @@ export function StorefrontProvider({ children }: { children: ReactNode }) {
         promotions: site.promotions ?? [],
         promotionTargets: site.promotionTargets ?? [],
       });
+      writeCachedPublicSettings(site.settings, site.meta);
       setBestSellers(top);
       setReservedList(holds);
       setError(null);
@@ -248,14 +254,20 @@ export function StorefrontProvider({ children }: { children: ReactNode }) {
     [snapshot.settings],
   );
 
+  const isReady = snapshot.settings !== null;
+
   // The storefront's mark on the shared document, and its removal.
   useEffect(() => {
-    applyStoreTheme(settings);
-    applyFavicon(settings.images.favicon_url);
+    if (snapshot.settings) {
+      applyStoreTheme(settings);
+      applyFavicon(settings.images.favicon_url);
+    } else {
+      clearStoreTheme();
+    }
     return () => {
       clearStoreTheme();
     };
-  }, [settings]);
+  }, [settings, snapshot.settings]);
 
   const contentByProduct = useMemo(
     () => new Map(snapshot.contents.map((content) => [content.product_id, content])),
@@ -389,6 +401,7 @@ export function StorefrontProvider({ children }: { children: ReactNode }) {
     () => ({
       mode,
       loading,
+      isReady,
       error,
       refresh: load,
       settings,
@@ -426,6 +439,7 @@ export function StorefrontProvider({ children }: { children: ReactNode }) {
     [
       mode,
       loading,
+      isReady,
       error,
       load,
       settings,

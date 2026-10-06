@@ -42,6 +42,7 @@ import { WhatsAppTemplatesPanel } from "../components/admin/WhatsAppTemplatesPan
 import { getWebsiteRepository } from "../data";
 import { describeThrown, toOnlineError, type OnlineErrorCode } from "../data/repository";
 import { invalidSettingsColor, resolveSettings, sanitizeSettings, STORE_PALETTE } from "../services/settingsDefaults";
+import { writeCachedPublicSettings } from "../services/publicSettingsCache";
 import { invalidSocialSetting, socialChannelHref } from "../services/socialSafety";
 import { storefrontInvalidation } from "../hooks/storefrontInvalidation";
 import {
@@ -343,6 +344,7 @@ export function WebsiteSettingsPage() {
         user_id: actor.id,
         user_name: actor.name,
       });
+      writeCachedPublicSettings(normalized, nextMeta);
       setSaved(normalized);
       setDraft(normalized);
       setMeta(nextMeta);
