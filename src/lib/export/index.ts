@@ -8,6 +8,7 @@ export {
   exportFileName,
   formatFor,
   moneyFormat,
+  sanitizeFormula,
   sanitizeSheetName,
   toDate,
   uniqueSheetNames,

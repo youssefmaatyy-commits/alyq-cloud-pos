@@ -1,13 +1,27 @@
 /**
- * Advanced Import Center (Phase 57).
+ * Advanced Import Center Types & Interfaces.
  *
- * A file is a proposal. Nothing here is a write. Column review, row status
- * and the commit mode are decided before any repository is asked to change.
+ * All-or-nothing validation, atomic server execution, multi-branch stock
+ * isolation, and versioned template architecture.
  */
 
-export type ImportKind = "products" | "variants" | "customers" | "categories" | "stock";
+export type ImportKind =
+  | "products"
+  | "variants"
+  | "catalog_unified"
+  | "customers"
+  | "categories"
+  | "stock";
 
-export type StockMode = "set" | "delta";
+export type StockMode = "set" | "delta" | "no_change";
+
+export type StockAction =
+  | "CREATE"
+  | "UPDATE"
+  | "ADD_STOCK"
+  | "SUBTRACT_STOCK"
+  | "SET_STOCK"
+  | "NO_STOCK_CHANGE";
 
 /** What to do when a customer phone already identifies exactly one person. */
 export type CustomerMatchPolicy = "skip" | "update" | "reject";
@@ -15,7 +29,7 @@ export type CustomerMatchPolicy = "skip" | "update" | "reject";
 /** What to do when a product SKU already identifies exactly one product. */
 export type ProductMatchPolicy = "reject" | "update";
 
-export type CommitMode = "valid-only" | "all-or-nothing";
+export type CommitMode = "all-or-nothing" | "valid-only";
 
 export type RowStatus = "valid" | "warning" | "error";
 
@@ -23,6 +37,8 @@ export interface FieldSpec {
   field: string;
   aliases: readonly string[];
   required?: boolean;
+  descriptionAr?: string;
+  descriptionEn?: string;
 }
 
 export interface ColumnAssignment {
@@ -49,9 +65,26 @@ export interface PreviewIssue {
   code: string;
   level: "warning" | "error";
   message: string;
+  suggestedFix?: string;
 }
 
-export type RowAction = "create" | "update" | "skip" | "stock_set" | "stock_delta" | "none";
+export type RowAction =
+  | "create"
+  | "update"
+  | "skip"
+  | "stock_set"
+  | "stock_delta"
+  | "stock_subtract"
+  | "none";
+
+export interface PreviewBranchStock {
+  branchId: string | null;
+  branchName: string | null;
+  current: number;
+  after: number;
+  delta: number;
+  action: string;
+}
 
 export interface PreviewRow {
   row: number;
@@ -62,6 +95,8 @@ export interface PreviewRow {
   /** Catalogue id the row would change, when the match is unique. */
   targetId: string | null;
   variantId: string | null;
+  branchId?: string | null;
+  computedStock?: PreviewBranchStock | null;
 }
 
 export interface ImportPreview {
@@ -71,14 +106,45 @@ export interface ImportPreview {
   rows: PreviewRow[];
   globalErrors: string[];
   counts: { valid: number; warning: number; error: number };
-  /** Review is unambiguous and the file itself is acceptable. */
+  /** Review is unambiguous and the file itself is acceptable with 0 errors in all-or-nothing mode. */
   ready: boolean;
 }
 
 export interface ImportCommitResult {
+  batchId: string;
   written: number;
   skipped: number;
   errors: number;
   rolledBack: boolean;
   issues: PreviewIssue[];
+  createdProductIds: string[];
+  createdVariantIds: string[];
+  stockAdjustmentsCount: number;
+}
+
+export interface ImportBatchRecord {
+  id: string;
+  batch_id: string;
+  kind: ImportKind;
+  mode: CommitMode;
+  stock_mode?: StockMode | null;
+  status: "completed" | "failed" | "rolled_back";
+  filename?: string | null;
+  total_rows: number;
+  written_count: number;
+  skipped_count: number;
+  error_count: number;
+  summary?: Record<string, unknown> | null;
+  errors?: PreviewIssue[] | null;
+  branch_id?: string | null;
+  user_id?: string | null;
+  user_name?: string | null;
+  created_at: string;
+}
+
+export interface BranchContext {
+  id: string;
+  name: string;
+  code?: string | null;
+  is_headquarters?: boolean;
 }

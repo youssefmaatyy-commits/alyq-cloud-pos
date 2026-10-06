@@ -428,6 +428,22 @@ export function ReportsPage() {
             </div>
           </Card>
 
+          {/* ── Universal Data Export Center ───────────────────────── */}
+          <Card className="border-indigo-100 bg-gradient-to-r from-indigo-50/50 to-white">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0">
+                <SectionTitle>Universal Data Export Center / مركز تصدير البيانات الشامل</SectionTitle>
+                <p className="mt-1 text-xs font-medium text-slate-600">
+                  Export complete business datasets (Sales, Inventory, Catalog, Customers, Shifts, Online Orders, Audit Logs) into multi-sheet Excel workbooks.
+                </p>
+              </div>
+              <Button variant="primary" size="sm" onClick={() => navigate("/reports/export")}>
+                <LayersIcon className="h-4 w-4" />
+                Open Export Center
+              </Button>
+            </div>
+          </Card>
+
           {/* ── Advanced reports ───────────────────────────────────────── */}
           <Card>
             <div className="flex flex-wrap items-start justify-between gap-3">

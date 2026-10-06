@@ -199,12 +199,31 @@ export function buildSheets(sheets: readonly ExportSheet<unknown>[]): BuiltSheet
   return built.map((sheet, index) => ({ ...sheet, name: names[index] }));
 }
 
+/**
+ * Neutralize spreadsheet formula injection attacks (CSV/Excel DDE injection).
+ * If a text cell begins with =, +, -, @, \t, or \r, prefix with a single quote '
+ * so Excel treats it strictly as a string literal.
+ */
+export function sanitizeFormula(value: string): string {
+  if (typeof value !== "string" || value.length === 0) return value;
+  if (/^[=+\-@\t\r]/.test(value)) {
+    return `'${value}`;
+  }
+  return value;
+}
+
 /** Booleans become Yes/No-free plain values; dates stay Date objects. */
 function normalizeCell(value: ExportCellValue, kind: ExportCellKind): ExportCellValue {
   if (value === null || value === undefined) return "";
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? "" : value;
   if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
   if (typeof value === "number") return Number.isFinite(value) ? roundFor(kind, value) : "";
+  if (typeof value === "string") {
+    if (/^[=+\-@\t\r]/.test(value)) {
+      return `'${value}`;
+    }
+    return value;
+  }
   return value;
 }
 

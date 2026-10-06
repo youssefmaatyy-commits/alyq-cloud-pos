@@ -80,6 +80,8 @@ export const ROUTE_PERMISSIONS: ReadonlyArray<readonly [string, Permission]> = [
   // would match it by prefix, because somebody grepping this table for the path
   // should find it.
   ["/reports/advanced", "reports.view"],
+  // Universal Data Export Center
+  ["/reports/export", "data.export"],
   // The website is two screens' worth of authority. Working an order —
   // approving, cancelling, verifying an InstaPay proof — is a till-side job, so
   // it uses `manage_online_orders`, which cashiers hold. Editing the shop itself
@@ -184,6 +186,8 @@ export function capabilityForPath(pathname: string): Capability | null {
 
 /** Alternate permissions that can also open a shared module door. */
 export const ROUTE_PERMISSION_ALTERNATES: ReadonlyArray<readonly [string, Permission]> = [
+  ["/reports/export", "reports.export"],
+  ["/reports/export", "reports.view"],
   ["/settings/system", "system.reset"],
   ["/settings/operations", "settings.manage"],
   ["/sync", "reports.view"],

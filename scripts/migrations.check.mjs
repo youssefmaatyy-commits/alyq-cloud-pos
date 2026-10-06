@@ -66,6 +66,7 @@ const PROMPT5_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "prompt5_sce
 const PROMPT6_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "prompt6_scenarios.sql");
 const FINAL_STORE_QA_FILE = path.join(ROOT, "supabase", "tests", "final_store_qa.sql");
 const PROMPT7_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "prompt7_scenarios.sql");
+const IMPORT_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "import_scenarios.sql");
 const SEED_FILE = path.join(ROOT, "supabase", "seed.sql");
 const SRC_DIR = path.join(ROOT, "src");
 
@@ -419,6 +420,20 @@ if (!VERIFY_ONLY) {
       console.log(`  ${c.red("✗")} a focused Prompt 7 scenario failed`);
       if (error?.stack) console.log(c.dim(error.stack));
       failures.push({ name: "Prompt 7 scenarios", phase: "scenario", error: String(error.message) });
+    }
+  }
+
+  if (failures.length === 0 && runScenarios) {
+    console.log(c.bold("\nMaster Import Center focused scenarios (atomicity, batch idempotency, negative stock rollback)"));
+    try {
+      const sql = fs.readFileSync(IMPORT_SCENARIOS_FILE, "utf8");
+      await driver.exec(sql, "import_scenarios.sql");
+      console.log(`  ${c.green("✓")} every focused Master Import Center database scenario passed`);
+      for (const notice of sql.matchAll(/raise notice '([^']+)'/gi)) console.log(c.dim(`      ${notice[1]}`));
+    } catch (error) {
+      console.log(`  ${c.red("✗")} a focused Master Import Center scenario failed`);
+      if (error?.stack) console.log(c.dim(error.stack));
+      failures.push({ name: "Import scenarios", phase: "scenario", error: String(error.message) });
     }
   }
 

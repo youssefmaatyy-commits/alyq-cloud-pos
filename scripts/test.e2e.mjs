@@ -157,6 +157,16 @@ const SUITES = [
     file: "scripts/reports.aggregates.mjs",
     title: "Report aggregates — PostgreSQL vs the shipped builders over 2,500 invoices",
   },
+  {
+    id: "import",
+    file: "scripts/import.flow.mjs",
+    title: "Master Excel Import Center (all-or-nothing, templates, branch stock, error reports)",
+  },
+  {
+    id: "export",
+    file: "scripts/export.flow.mjs",
+    title: "Universal Data Export Center (multi-domain, multi-sheet full business export, formula defense)",
+  },
 ];
 
 const c = {

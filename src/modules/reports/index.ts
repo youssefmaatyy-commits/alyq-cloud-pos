@@ -2,6 +2,7 @@
 
 export { ReportsPage } from "./pages/ReportsPage";
 export { AdvancedReportsPage } from "./pages/AdvancedReportsPage";
+export { DataExportCenterPage } from "./pages/DataExportCenterPage";
 
 // Advanced report analytics (Phase 14, requirement 7). Exported so the dashboard
 // and the Expenses / Shifts screens read the same numbers the reports do — the

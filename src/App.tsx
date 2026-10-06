@@ -56,7 +56,7 @@ import {
   ApprovalRulesPage,
   ApprovalsPage,
 } from "@/modules/approvals";
-import { AdvancedReportsPage, ReportsPage } from "@/modules/reports";
+import { AdvancedReportsPage, DataExportCenterPage, ReportsPage } from "@/modules/reports";
 import { RolesPage, SettingsProvider, UsersPage } from "@/modules/settings";
 import { BackupPage } from "@/modules/backup";
 import { BrandingPage } from "@/modules/settings/pages/BrandingPage";
@@ -298,6 +298,7 @@ export default function App() {
                 <Route path="/reports" element={<LegacyStaffRedirect />} />
                 <Route path="/reports/*" element={<LegacyStaffRedirect />} />
                 <Route path="/reports/advanced" element={<LegacyStaffRedirect />} />
+                <Route path="/reports/export" element={<LegacyStaffRedirect />} />
                 <Route path="/online" element={<LegacyStaffRedirect />} />
                 <Route path="/online/*" element={<LegacyStaffRedirect />} />
                 <Route path="/online/orders" element={<LegacyStaffRedirect />} />
@@ -408,6 +409,7 @@ function AuthenticatedApp() {
                                 longest-prefix — but it renders the analysis
                                 instead of the raw extracts. */}
                             <Route path="reports/advanced" element={<AdvancedReportsPage />} />
+                            <Route path="reports/export" element={<DataExportCenterPage />} />
                             {/* Phase 49: the Online module landing — the queue,
                                 the shop window and the marketing tools behind
                                 one door; each card keeps its own capability. */}

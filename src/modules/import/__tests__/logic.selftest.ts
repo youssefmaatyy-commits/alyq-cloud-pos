@@ -25,11 +25,11 @@ function test(name: string, fn: () => void | Promise<void>) {
 
 const catalogue: PreviewCatalogue = {
   products: [
-    { id: "p1", sku: "RING", barcode: "111", name_ar: "خاتم", name_en: "Ring", stock_quantity: 4, stock_tracking_enabled: true, variants_enabled: true, active: true, selling_price: 100, cost_price: 40 },
-    { id: "p2", sku: "PLAIN", barcode: "222", name_ar: "سادة", name_en: "Plain", stock_quantity: 3, stock_tracking_enabled: true, variants_enabled: false, active: true, selling_price: 50, cost_price: 10 },
+    { id: "p1", sku: "RING", barcode: "111", name_ar: "خاتم", name_en: "Ring", stock_quantity: 4, stock_tracking_enabled: true, variants_enabled: true, active: true, selling_price: 100, cost_price: 40, low_stock_level: 5, category_id: null, tax_rate: 0 },
+    { id: "p2", sku: "PLAIN", barcode: "222", name_ar: "سادة", name_en: "Plain", stock_quantity: 3, stock_tracking_enabled: true, variants_enabled: false, active: true, selling_price: 50, cost_price: 10, low_stock_level: 5, category_id: null, tax_rate: 0 },
   ],
   variants: [
-    { id: "v1", product_id: "p1", sku: "RING-G17", barcode: "333", color_ar: "ذهبي", color_en: "Gold", color_key: "gold", size: 17, size_label: null, stock_quantity: 2, active: true },
+    { id: "v1", product_id: "p1", sku: "RING-G17", barcode: "333", color_ar: "ذهبي", color_en: "Gold", color_key: "gold", size: 17, size_label: null, stock_quantity: 2, active: true, price_override: null, cost_override: null, low_stock_level: 5 },
   ],
   categories: [
     { id: "c1", name_ar: "مجوهرات", name_en: "Jewellery", active: true, parent_id: null },
