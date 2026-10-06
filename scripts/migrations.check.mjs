@@ -67,6 +67,7 @@ const PROMPT6_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "prompt6_sce
 const FINAL_STORE_QA_FILE = path.join(ROOT, "supabase", "tests", "final_store_qa.sql");
 const PROMPT7_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "prompt7_scenarios.sql");
 const IMPORT_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "import_scenarios.sql");
+const HARDENING_0090_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "hardening_0090_scenarios.sql");
 const SEED_FILE = path.join(ROOT, "supabase", "seed.sql");
 const SRC_DIR = path.join(ROOT, "src");
 
@@ -434,6 +435,20 @@ if (!VERIFY_ONLY) {
       console.log(`  ${c.red("✗")} a focused Master Import Center scenario failed`);
       if (error?.stack) console.log(c.dim(error.stack));
       failures.push({ name: "Import scenarios", phase: "scenario", error: String(error.message) });
+    }
+  }
+
+  if (failures.length === 0 && runScenarios) {
+    console.log(c.bold("\nMigration 0090 focused scenarios (unrestricted view hardening + security barrier)"));
+    try {
+      const sql = fs.readFileSync(HARDENING_0090_SCENARIOS_FILE, "utf8");
+      await driver.exec(sql, "hardening_0090_scenarios.sql");
+      console.log(`  ${c.green("✓")} every focused Migration 0090 hardening scenario passed`);
+      for (const notice of sql.matchAll(/raise notice '([^']+)'/gi)) console.log(c.dim(`      ${notice[1]}`));
+    } catch (error) {
+      console.log(`  ${c.red("✗")} a focused Migration 0090 hardening scenario failed`);
+      if (error?.stack) console.log(c.dim(error.stack));
+      failures.push({ name: "Migration 0090 hardening scenarios", phase: "scenario", error: String(error.message) });
     }
   }
 
