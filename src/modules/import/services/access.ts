@@ -8,11 +8,11 @@
 import type { Capability } from "@/lib/permissions/roles";
 import type { ImportKind } from "../types";
 
-const ORDER: readonly ImportKind[] = ["products", "variants", "customers", "categories", "stock"];
+const ORDER: readonly ImportKind[] = ["catalog_unified", "products", "variants", "customers", "categories", "stock"];
 
 export function importKindAdmitted(kind: ImportKind, can: (capability: Capability) => boolean): boolean {
   if (!can("import_data")) return false;
-  if (kind === "products") return can("add_product") || can("edit_product");
+  if (kind === "catalog_unified" || kind === "products") return can("add_product") || can("edit_product");
   if (kind === "variants" || kind === "categories") return can("add_product");
   if (kind === "customers") return can("add_customer") || can("edit_customer");
   return can("adjust_stock");

@@ -475,6 +475,7 @@ function reviewCatalogUnified(
       );
 
       const op = normalizeStockAction(values.stock_action, options.stockMode);
+      values.stock_action = op;
       let after = currentStock;
       let delta = 0;
 
@@ -1101,6 +1102,7 @@ function reviewStock(
   );
 
   const rawOp = values.stock_action ? normalizeStockAction(values.stock_action, mode) : (mode === "delta" ? "ADD_STOCK" : "SET_STOCK");
+  values.stock_action = rawOp;
   let next = current;
   let delta = 0;
 

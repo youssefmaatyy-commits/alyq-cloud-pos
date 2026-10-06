@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { PageHeader } from "@/components/layout/AppShell";
 import {
@@ -25,14 +25,10 @@ import { describeError } from "../services/catalogService";
 import { paginate, queryProducts, summarize, totalPagesFor } from "../services/productQuery";
 import type { Product } from "../types";
 
-// Lazy load ExcelImportModal to prevent xlsx from loading at startup
-const ExcelImportModal = lazy(() => 
-  import("../components/ExcelImportModal").then(m => ({ default: m.ExcelImportModal }))
-);
-
 export function ProductsPage() {
   const { t, pick, tPlural } = useI18n();
   const toast = useToast();
+  const navigate = useNavigate();
   const {
     products,
     categories,
@@ -77,7 +73,6 @@ export function ProductsPage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [pending, setPending] = useState<Product | null>(null);
   const [pendingDelete, setPendingDelete] = useState<Product | null>(null);
-  const [importOpen, setImportOpen] = useState(false);
 
   const nameIndex = useMemo(() => categoryNameIndex(categories, pick), [categories, pick]);
   const categoryName = useCallback(
@@ -157,7 +152,7 @@ export function ProductsPage() {
             <Button variant="secondary" onClick={() => void refresh()} title={t("common.retry")}>
               ⟳
             </Button>
-            <Button variant="secondary" onClick={() => setImportOpen(true)}>
+            <Button variant="secondary" onClick={() => navigate("/dashboard/products/import")}>
               📥 {t("import.button")}
             </Button>
             {/* Exports `results` — the filtered set on screen, not the raw list. */}
@@ -351,17 +346,6 @@ export function ProductsPage() {
         onCancel={() => setPendingDelete(null)}
         onConfirm={() => void confirmDelete()}
       />
-      {importOpen && (
-        <Suspense fallback={null}>
-          <ExcelImportModal
-            open={importOpen}
-            onClose={() => setImportOpen(false)}
-            products={products}
-            categories={categories}
-            onImportComplete={() => void refresh()}
-          />
-        </Suspense>
-      )}
       <span className="sr-only">{tPlural("products.count", results.length)}</span>
     </div>
   );

@@ -83,8 +83,9 @@ test("import kinds follow the write each commit already asserts", () => {
   assert.deepEqual(importKindsAdmitted(can(["add_product"])), []);
   assert.deepEqual(
     importKindsAdmitted(can(["import_data", "add_product", "edit_customer"])),
-    ["products", "variants", "customers", "categories"],
+    ["catalog_unified", "products", "variants", "customers", "categories"],
   );
+  assert.equal(importKindAdmitted("catalog_unified", can(["import_data", "add_product"])), true);
   assert.equal(importKindAdmitted("stock", can(["import_data", "view_inventory"])), false);
   assert.equal(importKindAdmitted("stock", can(["import_data", "adjust_stock"])), true);
   assert.equal(importKindAdmitted("products", can(["import_data", "edit_product"])), true);

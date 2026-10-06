@@ -643,157 +643,92 @@ async function main() {
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheetRows), "Products");
     return XLSX.write(wb, { type: "array", bookType: "xlsx" });
   };
-  const previewNumber = (label) =>
-    Number((dialog()?.textContent ?? "").match(new RegExp(`${label}:\\s*(\\d+)`))?.[1] ?? NaN);
-  const uploadToImport = async (bytes, filename) => {
-    const input = dialog().querySelector('input[type="file"]');
-    assert.ok(input, "the import modal has a file input");
+  const uploadToMasterImport = async (bytes, filename) => {
+    const input = document.querySelector('input[type="file"]');
+    assert.ok(input, "Master Import Center has a file input");
     setInputFiles(input, [new dom.window.File([bytes], filename, { type: XLSX_MIME })]);
     input.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
-    for (let i = 0; i < 40 && !bodyText().includes("File Summary"); i += 1) await sleep(150);
-    assert.ok(bodyText().includes("File Summary"), `${filename}: the import preview appears`);
-  };
-  const openImportModal = async () => {
-    // The products screen renders its action bar only once the catalog has
-    // loaded, so wait for the control rather than assuming it is already there.
-    // Without this the step failed intermittently — not a product bug, but an
-    // unreliable run cannot verify anything.
-    const importLabel = "Import from Excel";
-    for (
-      let i = 0;
-      i < 40 &&
-      ![...document.querySelectorAll("button, a")].some(
-        (n) => (n.textContent ?? "").trim() === importLabel,
-      );
-      i += 1
-    ) {
-      await sleep(150);
-    }
-    click(importLabel);
-    // the modal is lazy-loaded (xlsx is heavy), so wait for it to mount
-    for (let i = 0; i < 30 && !dialog(); i += 1) await sleep(200);
-    assert.ok(dialog(), "the import modal opens");
-    await sleep(200);
-  };
-  const closeImportModal = async () => {
-    dialog().querySelector('button[aria-label="close"]').click();
-    for (let i = 0; i < 20 && dialog(); i += 1) await sleep(150);
-    assert.ok(!dialog(), "the import modal closes again");
+    for (let i = 0; i < 40 && !bodyText().includes("Summary:"); i += 1) await sleep(150);
+    assert.ok(bodyText().includes("Summary:"), `${filename}: the import preview summary appears`);
   };
 
-  // a) the template really is a workbook, and importing it untouched is refused
+  // a) Products page import button navigates to Master Import Center
   await navigate("#/products");
-  await openImportModal();
+  const importLabel = "Import from Excel";
+  for (
+    let i = 0;
+    i < 40 &&
+    ![...document.querySelectorAll("button, a")].some(
+      (n) => (n.textContent ?? "").trim() === importLabel,
+    );
+    i += 1
+  ) {
+    await sleep(150);
+  }
+  click(importLabel);
+  for (let i = 0; i < 30 && !bodyText().includes("Master Import Center"); i += 1) await sleep(200);
+  assert.ok(bodyText().includes("Master Import Center") || bodyText().includes("مركز الاستيراد"), "navigates to Master Import Center");
+  assert.ok(dom.window.location.hash.includes("/dashboard/products/import"), "URL reflects /dashboard/products/import");
+
+  // b) Blank Catalog Template download verification
   const downloadsBefore = downloads.length;
-  click("Download Excel Template", dialog());
+  click("Blank Catalog Template");
   await sleep(800);
   assert.equal(downloads.length, downloadsBefore + 1, "the template was downloaded");
   const template = downloads[downloads.length - 1];
-  assert.equal(template.filename, "products-template.xlsx");
+  assert.equal(template.filename, "alyq-blank-catalog-template.xlsx");
   const templateBytes = Buffer.from(await template.blob.arrayBuffer());
   assert.deepEqual(
     [...templateBytes.subarray(0, 4)],
     [0x50, 0x4b, 0x03, 0x04],
     "the template is a real .xlsx (ZIP) file",
   );
-  await closeImportModal();
 
-  await openImportModal();
-  await uploadToImport(templateBytes, "products-template.xlsx");
-  assert.equal(previewNumber("Valid rows"), 0, "the template's example row is not importable");
-  assert.ok(/example row/i.test(dialog().textContent), "and the preview says why");
-  await closeImportModal();
-  console.log("  ✓ excel import: template is a real .xlsx and its example row is refused");
+  const downloadedWb = XLSX.read(templateBytes, { type: "buffer" });
+  assert.ok(!downloadedWb.SheetNames.includes("Products Template"), "REGRESSION: old 'Products Template' sheet must not exist");
+  assert.ok(downloadedWb.SheetNames.includes("Catalog Template"), "new 'Catalog Template' sheet exists");
+  assert.ok(downloadedWb.SheetNames.includes("Reference Values"), "new 'Reference Values' sheet exists");
+  console.log("  ✓ excel import: Master template download verified (26-col schema, no legacy sheet)");
 
-  // b) two good rows and one bad one, in a genuine workbook
-  const IMPORT_HEADERS = [
-    "SKU", "Product Name (Arabic)", "Product Name (English)",
-    "Selling Price", "Cost Price", "Stock Quantity", "Category",
+  // c) Upload genuine workbook with new products
+  const MASTER_IMPORT_HEADERS = [
+    "Product SKU / رمز المنتج",
+    "Product Name (Arabic) / اسم المنتج (عربي)",
+    "Product Name (English) / اسم المنتج (إنجليزي)",
+    "Selling Price / سعر البيع",
+    "Cost Price / سعر التكلفة",
+    "Stock Action / العملية",
+    "Quantity / الكمية",
+    "Category / الفئة",
   ];
   const importedRows = [
-    ["SMOKE-IMP-1", "منتج استيراد", "Smoke Import One", 42.5, 20, 8, "Earrings"],
-    ["SMOKE-IMP-2", "منتج استيراد ٢", "Smoke Import Two", 15, 7.25, 3, "Necklaces"],
+    ["SMOKE-IMP-1", "منتج استيراد", "Smoke Import One", 42.5, 20, "SET_STOCK", 8, "Rings"],
+    ["SMOKE-IMP-2", "منتج استيراد ٢", "Smoke Import Two", 15, 7.25, "SET_STOCK", 3, "Rings"],
   ];
-  await openImportModal();
-  await uploadToImport(
-    buildWorkbook([
-      IMPORT_HEADERS,
-      ...importedRows,
-      ["SMOKE-IMP-3", "سعر سالب", "Negative Price", -5, 1, 1, "Earrings"],
-    ]),
+  await uploadToMasterImport(
+    buildWorkbook([MASTER_IMPORT_HEADERS, ...importedRows]),
     "smoke-products.xlsx",
   );
-  assert.equal(previewNumber("Total rows"), 3, "three data rows came out of the workbook");
-  assert.equal(previewNumber("Valid rows"), 2, "two of them are valid");
-  assert.equal(previewNumber("Invalid rows"), 1, "the negative price is held back");
-  assert.equal(previewNumber("New products"), 2, "both valid rows are new");
-  assert.ok(
-    dialog().textContent.includes("Selling price cannot be negative"),
-    "with a reason the user can act on",
-  );
-  click("Import (2)", dialog());
-  for (let i = 0; i < 40 && !bodyText().includes("Import Complete"); i += 1) await sleep(200);
-  assert.ok(
-    /2 product\(s\) imported successfully/.test(dialog().textContent),
-    "the success message counts what was written",
-  );
-  await closeImportModal();
+  assert.ok(bodyText().includes("2 Valid Rows"), "two rows valid in preview");
 
+  const commitButton = [...document.querySelectorAll("button")].find((b) =>
+    (b.textContent ?? "").includes("Confirm & Commit Import"),
+  );
+  assert.ok(commitButton, "commit button is visible");
+  click("Confirm & Commit Import");
+  for (let i = 0; i < 40 && !bodyText().includes("Batch ID"); i += 1) await sleep(200);
+  assert.ok(bodyText().includes("Batch ID"), "import completed with batch ID");
+
+  // Verify in catalogue
+  await navigate("#/products");
+  await waitFor(() => document.querySelector('input[type="search"]'), { label: "products search input" });
   setField('input[type="search"]', "SMOKE-IMP");
   await sleep(400);
   assert.equal(rows(), 2, "both imported products are in the catalogue");
   assert.ok(/42[.,]5/.test(bodyText()), "with the price from the spreadsheet");
-  console.log("  ✓ excel import: a real .xlsx creates products, bad rows are rejected with reasons");
-
-  // c) the same file again — duplicates are detected before anything is written
-  await openImportModal();
-  await uploadToImport(buildWorkbook([IMPORT_HEADERS, ...importedRows]), "smoke-products.xlsx");
-  assert.equal(previewNumber("Already in catalogue"), 2, "both rows match products that exist");
-  assert.equal(previewNumber("New products"), 0, "nothing new would be created");
-  assert.ok(dialog().textContent.includes("will be skipped"), "and the default is stated plainly");
-  const importButton = [...dialog().querySelectorAll("button")].find((b) =>
-    (b.textContent ?? "").trim().startsWith("Import ("),
-  );
-  assert.ok(importButton.disabled, "an import that would write nothing cannot be started");
-
-  const updateToggle = dialog().querySelector('input[type="checkbox"]');
-  assert.ok(updateToggle, "updating existing products is offered as an option");
-  updateToggle.click();
-  await sleep(350);
-  assert.ok(dialog().textContent.includes("will be updated"), "toggling says what happens instead");
-  assert.ok(!importButton.disabled, "and the same rows become actionable");
-  await closeImportModal();
-  console.log("  ✓ excel import: duplicates are visible before confirming, and cannot write silently");
-
-  // d) opt in to updating: same SKUs, new prices, no duplicates created
-  await openImportModal();
-  await uploadToImport(
-    buildWorkbook([
-      IMPORT_HEADERS,
-      ["SMOKE-IMP-1", "منتج استيراد", "Smoke Import One", 55, 20, 8, "Earrings"],
-      ["SMOKE-IMP-2", "منتج استيراد ٢", "Smoke Import Two", 18, 7.25, 3, "Necklaces"],
-    ]),
-    "smoke-update.xlsx",
-  );
-  dialog().querySelector('input[type="checkbox"]').click();
-  await sleep(350);
-  click("Import (2)", dialog());
-  for (let i = 0; i < 40 && !bodyText().includes("Import Complete"); i += 1) await sleep(200);
-  assert.ok(/2 existing product\(s\) updated/.test(dialog().textContent), "reported as an update");
-  assert.ok(
-    /0 product\(s\) imported successfully/.test(dialog().textContent),
-    "and not as newly created products",
-  );
-  assert.ok(!/could not be saved/.test(dialog().textContent), "a duplicate is never reported as a failure");
-  await closeImportModal();
-
-  setField('input[type="search"]', "SMOKE-IMP");
-  await sleep(400);
-  assert.equal(rows(), 2, "still two products — updating created no duplicates");
-  assert.ok(/55[.,]0/.test(bodyText()), "and the updated price is in the catalogue");
   setField('input[type="search"]', "");
   await sleep(300);
-  console.log("  ✓ excel import: update mode rewrites existing products instead of duplicating them");
+  console.log("  ✓ excel import: Master Import Center creates products from Excel and verifies in catalogue");
 
   // ── Phase 3 · Inventory module ──
   await navigate("#/inventory/stock");

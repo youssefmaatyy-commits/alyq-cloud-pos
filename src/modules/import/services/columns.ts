@@ -121,9 +121,12 @@ export function fieldSpecs(kind: ImportKind): FieldSpec[] {
 function candidatesFor(header: string, specs: readonly FieldSpec[]): string[] {
   const key = normalizeHeader(header);
   if (!key) return [];
+  const parts = header.split(/[/|\\—–-]+/).map(normalizeHeader).filter(Boolean);
   const hits: string[] = [];
   for (const spec of specs) {
-    if (spec.aliases.some((alias) => normalizeHeader(alias) === key)) hits.push(spec.field);
+    const matchesFull = spec.aliases.some((alias) => normalizeHeader(alias) === key);
+    const matchesPart = parts.some((p) => spec.aliases.some((alias) => normalizeHeader(alias) === p));
+    if (matchesFull || matchesPart) hits.push(spec.field);
   }
   return hits;
 }

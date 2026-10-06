@@ -48,7 +48,12 @@ export async function createUxHarness({ beforeImport } = {}) {
   globalThis.File = dom.window.File;
   globalThis.Blob = dom.window.Blob;
   globalThis.FileReader = dom.window.FileReader;
-  URL.createObjectURL = (_blob) => `blob:mock-${Math.random().toString(36).slice(2)}`;
+  const downloads = [];
+  let pendingDownloadBlob = null;
+  URL.createObjectURL = (blob) => {
+    pendingDownloadBlob = blob ?? null;
+    return `blob:mock-${Math.random().toString(36).slice(2)}`;
+  };
   URL.revokeObjectURL = () => {};
 
   // Demo mode is entirely local — record any attempt to reach the network.
@@ -98,6 +103,10 @@ export async function createUxHarness({ beforeImport } = {}) {
   dom.window.HTMLAnchorElement.prototype.click = function () {
     if (this.download || this.target === "_blank") {
       opened.push({ href: this.getAttribute("href") ?? "", download: this.download ?? null });
+      if (this.download) {
+        downloads.push({ filename: this.download, blob: pendingDownloadBlob });
+        pendingDownloadBlob = null;
+      }
       return;
     }
     return realAnchorClick.call(this);
@@ -325,6 +334,7 @@ export async function createUxHarness({ beforeImport } = {}) {
     errors,
     networkCalls,
     opened,
+    downloads,
     documentWrites,
     sleep,
     bodyText,
