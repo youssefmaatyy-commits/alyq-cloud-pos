@@ -7,7 +7,7 @@
  * `/rest/v1`.
  */
 import assert from "node:assert/strict";
-import { createSupabaseClient, toSupabaseProjectUrl } from "../client";
+import { createSupabaseClient, SUPABASE_AUTH_OPTIONS, toSupabaseProjectUrl } from "../client";
 
 type TestCase = { name: string; fn: () => void | Promise<void> };
 const tests: TestCase[] = [];
@@ -37,6 +37,14 @@ function recordingClient(configuredUrl = "https://project-under-test.supabase.co
   });
   return { client, requests };
 }
+
+test("the shared Web/Desktop/Mobile client persists and auto-refreshes sessions", () => {
+  assert.deepEqual(SUPABASE_AUTH_OPTIONS, {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true,
+  });
+});
 
 test("a project URL stays a project URL and a legacy REST URL is reduced to its project root", () => {
   assert.equal(

@@ -13,7 +13,7 @@ import { AuthProvider, useAuth, type AuthContextValue } from "../../hooks/AuthPr
 import { resetAuthRepositories } from "../../data";
 import { resetSessionCache, SESSION_STORAGE_KEY } from "../../services/sessionStore";
 import { AUTH_SIGNAL_KEY } from "../../services/authEvents";
-import { checkLocalSessionHealth, isBeyondAbsoluteCap, SESSION_ABSOLUTE_MS } from "../../services/authService";
+import { checkLocalSessionHealth, SESSION_ABSOLUTE_MS } from "../../services/authService";
 
 export {
   resetAuthRepositories,
@@ -21,17 +21,19 @@ export {
   SESSION_STORAGE_KEY,
   AUTH_SIGNAL_KEY,
   checkLocalSessionHealth,
-  isBeyondAbsoluteCap,
   SESSION_ABSOLUTE_MS,
 };
 
 declare global {
   var __auth: AuthContextValue | undefined;
+  var __authStatuses: AuthContextValue["status"][] | undefined;
 }
 
 function Probe() {
   const auth = useAuth();
   globalThis.__auth = auth;
+  globalThis.__authStatuses ??= [];
+  if (globalThis.__authStatuses.at(-1) !== auth.status) globalThis.__authStatuses.push(auth.status);
   return null;
 }
 
@@ -44,6 +46,7 @@ export function mountAuthHarness(): void {
   // harness — the next mount's effects can end up attached to stale state.
   const stale = document.getElementById("auth-harness-root");
   stale?.remove();
+  globalThis.__authStatuses = [];
   const container = document.createElement("div");
   container.id = "auth-harness-root";
   document.body.appendChild(container);
@@ -56,4 +59,5 @@ export function unmountAuthHarness(): void {
   root = null;
   document.getElementById("auth-harness-root")?.remove();
   delete globalThis.__auth;
+  delete globalThis.__authStatuses;
 }

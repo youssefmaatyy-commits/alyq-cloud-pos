@@ -65,19 +65,25 @@ export interface AuthUser {
 export interface Credentials {
   username: string;
   password: string;
-  /** Long-lived session (7 days idle) instead of the 8-hour default. */
+  /**
+   * Legacy caller compatibility only. Session persistence is now unconditional:
+   * both true and false use the same provider-managed persistent session.
+   */
   remember?: boolean;
 }
 
 export interface AuthSession {
-  /** Opaque session token (Supabase access token later). */
+  /** Opaque app-record token. Provider access/refresh tokens are not copied here. */
   token: string;
   user: AuthUser;
   /** ISO timestamps. */
   issued_at: string;
-  /** Sliding expiry: extended on activity. */
+  /** Provider access-token expiry in live mode; demo sliding expiry otherwise. */
   expires_at: string;
-  /** Whether the session survives longer idle periods. */
+  /**
+   * Retained for stored-record compatibility. Newly created sessions are always
+   * persistent, so this is always true and never controls provider storage.
+   */
   remember: boolean;
 }
 
@@ -174,7 +180,10 @@ export type SignInResult =
  */
 export type SessionEndReason = "expired" | "signed_out" | null;
 
-/** Where the session record lives between reloads. */
+/**
+ * Where an app identity record lives. "session" is read only for migration of
+ * pre-Phase-2A records; all new writes use persistent local storage.
+ */
 export type SessionPersistence = "local" | "session";
 
 export interface StoredSession {

@@ -25,7 +25,7 @@
  *   · `onAuthStateChange` events become app events with a fully built user.
  */
 import assert from "node:assert/strict";
-import { SupabaseUserRepository } from "../data/supabaseRepository";
+import { isConfirmedAuthInvalidation, SupabaseUserRepository } from "../data/supabaseRepository";
 import { usernameToEmail } from "../services/identity";
 import { capabilitiesOf } from "@/lib/permissions/roles";
 import { makeStub } from "./support/supabaseStub";
@@ -256,10 +256,33 @@ test("refreshing returns the provider's new token and expiry", async () => {
   assert.ok(expiresInMs > 7_100_000 && expiresInMs <= 7_200_000, `expected ~2h expiry, got ${expiresInMs}ms`);
 });
 
-test("a provider that refuses to refresh yields no session", async () => {
-  const stub = makeStub({ refreshError: { message: "Invalid Refresh Token: Expired" } });
+test("a provider that confirms refresh-token invalidation yields no session", async () => {
+  const stub = makeStub({ refreshError: { message: "Invalid Refresh Token: Expired", code: "refresh_token_not_found", status: 400 } });
   const repository = new SupabaseUserRepository(stub.client);
   assert.equal(await repository.refreshSession(), null);
+});
+
+test("temporary refresh/getSession failures throw instead of impersonating logout", async () => {
+  const refreshDown = makeStub({ refreshError: { message: "Failed to fetch", status: 503 } });
+  await assert.rejects(
+    () => new SupabaseUserRepository(refreshDown.client).refreshSession(),
+    (error: unknown) => (error as { message?: string }).message === "Failed to fetch",
+  );
+
+  const restoreDown = makeStub({ sessionError: { message: "Gateway timeout", status: 504 } });
+  await assert.rejects(
+    () => new SupabaseUserRepository(restoreDown.client).currentSession(),
+    (error: unknown) => (error as { message?: string }).message === "Gateway timeout",
+  );
+  assert.equal(isConfirmedAuthInvalidation({ message: "Failed to fetch", status: 503 }), false);
+  assert.equal(isConfirmedAuthInvalidation({ code: "invalid_grant", message: "refresh rejected", status: 400 }), true);
+});
+
+test("a confirmed revoked provider session returns null for controlled login", async () => {
+  const revoked = makeStub({
+    sessionError: { message: "Refresh token has been revoked", code: "refresh_token_not_found", status: 400 },
+  });
+  assert.equal(await new SupabaseUserRepository(revoked.client).currentSession(), null);
 });
 
 test("there is no session when the provider has none", async () => {
@@ -615,6 +638,23 @@ test("provider auth events become app events carrying a fully built user", async
 
   unsubscribe();
   assert.ok(stub.calls.includes("unsubscribe"));
+});
+
+test("INITIAL_SESSION and transient event-profile failures are not signed-out verdicts", async () => {
+  const throwOn: string[] = [];
+  const stub = makeStub({ throwOn });
+  const repository = new SupabaseUserRepository(stub.client);
+  const seen: string[] = [];
+  repository.onAuthChange((event) => seen.push(event.type));
+
+  stub.emit("INITIAL_SESSION", null);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(seen, [], "boot owns INITIAL_SESSION classification");
+
+  throwOn.push("from.profiles");
+  stub.emit("TOKEN_REFRESHED", { user: { id: "u-admin", email: "admin@alyq.local" } });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(seen, [], "one profile transport failure preserves the existing login");
 });
 
 test("an event for an account that became inactive is reported as signed out", async () => {

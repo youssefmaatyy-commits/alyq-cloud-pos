@@ -15,7 +15,8 @@ export interface StubOptions {
   customRoles?: Record<string, unknown>[];
   signInError?: { message: string } | null;
   session?: Record<string, unknown> | null;
-  refreshError?: { message: string } | null;
+  sessionError?: { message: string; code?: string; status?: number } | null;
+  refreshError?: { message: string; code?: string; status?: number } | null;
   exchangeError?: { message: string } | null;
   resetError?: { message: string } | null;
   updateError?: { message: string } | null;
@@ -163,7 +164,7 @@ export function makeStub(options: StubOptions = {}) {
     },
   });
 
-  const session = options.session === undefined
+  let activeSession = options.session === undefined
     ? {
         access_token: "provider-access-token",
         expires_at: Math.floor((Date.now() + 3600_000) / 1000),
@@ -184,14 +185,15 @@ export function makeStub(options: StubOptions = {}) {
           (p) => p.email === email || usernameToEmail(String(p.username ?? "")) === email,
         );
         const id = row ? String(row.id) : email.startsWith("gone") ? "u-off" : "u-unknown";
+        activeSession = {
+          access_token: "provider-access-token",
+          expires_at: Math.floor((Date.now() + 3600_000) / 1000),
+          user: { id, email },
+        };
         return {
           data: {
             user: { id, email },
-            session: {
-              access_token: "provider-access-token",
-              expires_at: Math.floor((Date.now() + 3600_000) / 1000),
-              user: { id, email },
-            },
+            session: activeSession,
           },
           error: null,
         };
@@ -199,33 +201,32 @@ export function makeStub(options: StubOptions = {}) {
       getSession: async () => {
         calls.push("getSession");
         maybeThrow("getSession");
-        return { data: { session }, error: null };
+        if (options.sessionError) return { data: { session: null }, error: options.sessionError };
+        return { data: { session: activeSession }, error: null };
       },
       refreshSession: async () => {
         calls.push("refreshSession");
         maybeThrow("refreshSession");
         if (options.refreshError) return { data: null, error: options.refreshError };
-        return {
-          data: {
-            session: {
-              ...session,
-              access_token: "refreshed-token",
-              expires_at: Math.floor((Date.now() + 7200_000) / 1000),
-            },
-          },
-          error: null,
+        if (!activeSession) return { data: { session: null }, error: null };
+        activeSession = {
+          ...activeSession,
+          access_token: "refreshed-token",
+          expires_at: Math.floor((Date.now() + 7200_000) / 1000),
         };
+        return { data: { session: activeSession }, error: null };
       },
       signOut: async ({ scope }: { scope?: string } = {}) => {
         calls.push(`signOut:${scope ?? "local"}`);
         signOutScopes.push(scope ?? "local");
+        activeSession = null;
         return { error: null };
       },
       exchangeCodeForSession: async (code: string) => {
         calls.push(`exchangeCodeForSession:${code}`);
         maybeThrow("exchangeCodeForSession");
         if (options.exchangeError) return { data: null, error: options.exchangeError };
-        return { data: { session }, error: null };
+        return { data: { session: activeSession }, error: null };
       },
       setSession: async ({ access_token }: { access_token: string; refresh_token: string }) => {
         calls.push(`setSession:${access_token}`);
@@ -234,7 +235,8 @@ export function makeStub(options: StubOptions = {}) {
         // The real provider answers `{ data: { user, session } }`; a session the
         // edge-function login "issued" is adopted here so the repository's tail
         // resolves the right identity.
-        const adopted = (functionSession ?? session) as Record<string, unknown> | null;
+        const adopted = (functionSession ?? activeSession) as Record<string, unknown> | null;
+        activeSession = adopted;
         return {
           data: adopted ? { session: adopted, user: adopted.user ?? null } : null,
           error: null,

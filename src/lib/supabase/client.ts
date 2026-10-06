@@ -57,6 +57,13 @@ interface SupabaseClientFactoryOptions {
   fetch?: typeof globalThis.fetch;
 }
 
+/** Canonical provider session settings shared by Web, Desktop and Mobile. */
+export const SUPABASE_AUTH_OPTIONS = Object.freeze({
+  persistSession: true,
+  autoRefreshToken: true,
+  detectSessionInUrl: true,
+});
+
 /**
  * Create a client from either the documented project URL or a legacy REST URL.
  * All SDK services (PostgREST, Auth, Storage, Realtime and Edge Functions)
@@ -68,7 +75,10 @@ export function createSupabaseClient(
   options: SupabaseClientFactoryOptions = {},
 ): SupabaseClient {
   return createClient(toSupabaseProjectUrl(configuredUrl), anonKey, {
-    auth: { persistSession: true, autoRefreshToken: true },
+    // One provider-owned session contract for browsers, Electron's renderer
+    // and the Capacitor WebView. Supabase persists only its own token bundle;
+    // the application never stores a password or invents a refresh token.
+    auth: SUPABASE_AUTH_OPTIONS,
     ...(options.fetch ? { global: { fetch: options.fetch } } : {}),
   });
 }

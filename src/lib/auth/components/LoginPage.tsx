@@ -31,7 +31,6 @@ export function LoginPage() {
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [remember, setRemember] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
@@ -52,7 +51,10 @@ export function LoginPage() {
     if (!username.trim() || !password) return;
     setSubmitting(true);
     try {
-      await signIn({ username, password, remember });
+      // Persistence is the secure default on every ALYQ runtime. The provider
+      // owns refresh-token rotation; the login form never chooses a weaker,
+      // tab-only session and never stores the password.
+      await signIn({ username, password });
     } finally {
       // Cleared on every path, not just the happy one. A refused credential is
       // handled inside `signIn` and shown on the form; anything that *rejects*
@@ -159,16 +161,6 @@ export function LoginPage() {
                 placeholder="••••••••"
               />
             </Field>
-
-            <label className="flex items-center gap-2 text-xs font-semibold text-slate-700">
-              <input
-                type="checkbox"
-                checked={remember}
-                onChange={(e) => setRemember(e.target.checked)}
-                className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-              />
-              {t("auth.rememberMe")}
-            </label>
 
             <Button type="submit" className="w-full" disabled={submitting}>
               {submitting ? t("auth.signingIn") : t("auth.signIn")}

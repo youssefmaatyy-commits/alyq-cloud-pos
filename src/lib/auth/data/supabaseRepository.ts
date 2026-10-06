@@ -102,6 +102,40 @@ const asRecord = (value: unknown): Record<string, unknown> | null =>
     ? (value as Record<string, unknown>)
     : null;
 
+/**
+ * Only provider verdicts that specifically invalidate the refresh/session grant
+ * may end a cached login. Generic fetch failures, timeouts, 5xx responses and
+ * profile/RPC errors are transient and are allowed to throw to the lifecycle
+ * layer, which keeps the local identity and retries on reconnect/foreground.
+ */
+export function isConfirmedAuthInvalidation(error: unknown): boolean {
+  const record = asRecord(error);
+  const code = `${record?.code ?? record?.error_code ?? ""}`.toLowerCase();
+  const message = `${record?.message ?? ""}`.toLowerCase();
+  const status = Number(record?.status ?? 0);
+  if (
+    [
+      "invalid_grant",
+      "invalid_refresh_token",
+      "refresh_token_not_found",
+      "refresh_token_already_used",
+      "session_not_found",
+    ].includes(code)
+  ) {
+    return true;
+  }
+  if (
+    /invalid refresh token|refresh token (?:has )?(?:expired|revoked|not found|already used)|session not found|invalid_grant/.test(
+      message,
+    )
+  ) {
+    return true;
+  }
+  // Auth refresh endpoints use 400/401 for a rejected grant. A generic 403 can
+  // be RLS/profile authority and is intentionally not treated as token death.
+  return (status === 400 || status === 401) && /refresh|session|grant|jwt/.test(message);
+}
+
 export class SupabaseUserRepository implements UserRepository {
   readonly kind = "supabase" as const;
 
@@ -136,21 +170,23 @@ export class SupabaseUserRepository implements UserRepository {
   // ── reading identities ────────────────────────────────────────────────────
 
   private async loadProfile(id: string): Promise<ProfileRow | null> {
-    const { data } = await this.client()
+    const { data, error } = await this.client()
       .from("profiles")
       .select(PROFILE_COLUMNS)
       .eq("id", id)
       .maybeSingle();
+    if (error) throw error;
     return (data as ProfileRow | null) ?? null;
   }
 
   private async loadCustomRole(id: string | null): Promise<CustomRoleRow | null> {
     if (!id) return null;
-    const { data } = await this.client()
+    const { data, error } = await this.client()
       .from("custom_roles")
       .select("id, key, name_en, name_ar, base_role, capabilities, active")
       .eq("id", id)
       .maybeSingle();
+    if (error) throw error;
     return (data as CustomRoleRow | null) ?? null;
   }
 
@@ -160,7 +196,8 @@ export class SupabaseUserRepository implements UserRepository {
     // Branch membership is the live authority. Profile-global fields remain a
     // safe compatibility fallback only for installations in the middle of the
     // forward migration; after 0071 this RPC always supplies the active branch.
-    const { data: branchData } = await this.client().rpc("get_active_branch_context");
+    const { data: branchData, error: branchError } = await this.client().rpc("get_active_branch_context");
+    if (branchError) throw branchError;
     const branch = (branchData as ActiveBranchContextRow | null) ?? null;
     const customId = branch?.custom_role_id ?? profile.custom_role_id;
     const custom = await this.loadCustomRole(customId);
@@ -370,7 +407,11 @@ export class SupabaseUserRepository implements UserRepository {
     const client = this.client();
     const { data, error } = await client.auth.getSession();
     const session = data?.session ?? null;
-    if (error || !session?.user) return null;
+    if (error) {
+      if (isConfirmedAuthInvalidation(error)) return null;
+      throw error;
+    }
+    if (!session?.user) return null;
 
     const profile = await this.loadProfile(session.user.id);
     if (profile && profile.active === false) {
@@ -404,7 +445,11 @@ export class SupabaseUserRepository implements UserRepository {
     const client = this.client();
     const { data, error } = await client.auth.refreshSession();
     const session = data?.session ?? null;
-    if (error || !session?.user) return null;
+    if (error) {
+      if (isConfirmedAuthInvalidation(error)) return null;
+      throw error;
+    }
+    if (!session?.user) return null;
 
     const profile = await this.loadProfile(session.user.id);
     if (profile && profile.active === false) {
@@ -433,27 +478,37 @@ export class SupabaseUserRepository implements UserRepository {
   onAuthChange(listener: (event: AuthChangeEvent) => void): () => void {
     const client = this.client();
     const { data } = client.auth.onAuthStateChange((event, session) => {
-      if (event === "SIGNED_OUT" || !session?.user) {
+      if (event === "SIGNED_OUT") {
         listener({ type: "signed_out" });
         return;
       }
+      // Boot performs one explicit, error-classified session read. Treating an
+      // INITIAL_SESSION(null) callback as revocation would race that read and
+      // turn an offline startup into a logout.
+      if (event === "INITIAL_SESSION" || !session?.user) return;
+
       // Resolving the profile is async, so the listener fires a tick later than
-      // the provider's own callback. That is deliberate: an event carrying a
-      // half-built user would let a screen render with no capabilities.
+      // the provider's own callback. A transient profile/branch failure is not a
+      // signed-out verdict: keep the existing identity and let reconnect retry.
       void (async () => {
-        const profile = await this.loadProfile(session.user.id);
-        const user = await this.identityFor(profile, session.user.id, session.user.email ?? session.user.id);
-        if (!user || !user.role || user.active === false) {
-          listener({ type: "signed_out" });
-          return;
+        try {
+          const profile = await this.loadProfile(session.user.id);
+          const user = await this.identityFor(profile, session.user.id, session.user.email ?? session.user.id);
+          if (!user || !user.role || user.active === false) {
+            listener({ type: "signed_out" });
+            return;
+          }
+          const type: AuthChangeEvent["type"] =
+            event === "TOKEN_REFRESHED"
+              ? "token_refreshed"
+              : event === "USER_UPDATED"
+                ? "user_updated"
+                : "signed_in";
+          listener({ type, user });
+        } catch {
+          // Network/timeout/5xx: preserve the authenticated state. No retry loop;
+          // the SDK, online event or next foreground transition retries.
         }
-        const type: AuthChangeEvent["type"] =
-          event === "TOKEN_REFRESHED"
-            ? "token_refreshed"
-            : event === "USER_UPDATED"
-              ? "user_updated"
-              : "signed_in";
-        listener({ type, user });
       })();
     });
     return () => data.subscription.unsubscribe();

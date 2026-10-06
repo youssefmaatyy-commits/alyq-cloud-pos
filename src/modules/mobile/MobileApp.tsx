@@ -50,7 +50,9 @@ function MobileShell() {
   useEffect(() => {
     let active = true;
     if (!auth.user) return;
-    void createPushController(auth.user, navigate, (state) => { if (active) setPushState(state); }).then((controller) => { if (!active) void controller.dispose(); else { push.current = controller; setPushState(controller.state); } });
+    void createPushController(auth.user, navigate, (state) => { if (active) setPushState(state); })
+      .then((controller) => { if (!active) void controller.dispose(); else { push.current = controller; setPushState(controller.state); } })
+      .catch(() => { if (active) setPushState("error"); });
     return () => { active = false; const current = push.current; push.current = null; if (current) void current.dispose(); };
   }, [auth.user?.id, navigate]); // eslint-disable-line react-hooks/exhaustive-deps
 

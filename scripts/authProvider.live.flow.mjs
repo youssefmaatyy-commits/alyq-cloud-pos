@@ -27,7 +27,6 @@
  * (bundles itself; no `npm run test:bundle` step needed first.)
  */
 import { JSDOM } from "jsdom";
-import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -156,7 +155,6 @@ const {
   SESSION_STORAGE_KEY,
   AUTH_SIGNAL_KEY,
   checkLocalSessionHealth,
-  isBeyondAbsoluteCap,
   SESSION_ABSOLUTE_MS,
 } = harness;
 
@@ -173,17 +171,17 @@ await esbuild.build(
 const { makeStub } = await import(pathToFileURL(stubOutfile).href);
 
 /** A session record this browser already holds, matching the stub's default admin row. */
-function seededAppSession({ issuedMsAgo = 60_000, remember = false } = {}) {
+function seededAppSession({ issuedMsAgo = 60_000, expiresInMs = 3_600_000 } = {}) {
   const now = Date.now();
   return {
     session: {
       token: "sess-seed-admin",
       user: { id: "u-admin", username: "admin", name: "Store Admin", role: "admin", capabilities: [] },
       issued_at: new Date(now - issuedMsAgo).toISOString(),
-      expires_at: new Date(now + 3_600_000).toISOString(),
-      remember,
+      expires_at: new Date(now + expiresInMs).toISOString(),
+      remember: true,
     },
-    persistence: remember ? "local" : "session",
+    persistence: "local",
   };
 }
 
@@ -193,7 +191,7 @@ function seedStorage(seed) {
 }
 
 /** Fresh stub + fresh repositories/session cache + fresh React mount. */
-async function freshMount({ seeded = true, stubOptions = {} } = {}) {
+async function freshMount({ seeded = true, seed = null, stubOptions = {} } = {}) {
   dom.window.localStorage.clear();
   dom.window.sessionStorage.clear();
   resetSessionCache();
@@ -204,7 +202,7 @@ async function freshMount({ seeded = true, stubOptions = {} } = {}) {
   const stub = makeStub(stubOptions);
   globalThis.__ALYQ_TEST_SUPABASE_CLIENT__ = stub.client;
 
-  if (seeded) seedStorage(seededAppSession());
+  if (seeded) seedStorage(seed ?? seededAppSession());
 
   mountAuthHarness();
   // Let the boot effect's async `currentSession()` resolve.
@@ -223,7 +221,7 @@ const callsOf = (stub, name) => stub.calls.filter((c) => c === name).length;
 const results = [];
 async function step(id, title, run) {
   let status = "PASS";
-  let detail = [];
+  let detail;
   try {
     detail = (await run()) ?? [];
   } catch (err) {
@@ -305,12 +303,12 @@ await step("D2", "A brief background period (below the dedup threshold) does not
 });
 
 await step("D3", "Window blur/focus without the tab becoming hidden also resumes exactly once", async () => {
-  const before = baselineStub.calls.length;
+  const before = callsOf(baselineStub, "getSession");
   dom.window.dispatchEvent(new dom.window.Event("blur"));
   dateOffsetMs += 70_000;
   dom.window.dispatchEvent(new dom.window.Event("focus"));
   await sleep(100);
-  const added = callsOf(baselineStub, "getSession") - 1 - 1; // minus boot, minus step D's own addition
+  const added = callsOf(baselineStub, "getSession") - before;
   if (added !== 1) throw new Error(`expected exactly 1 additional getSession, saw ${added}`);
   return [`getSession added by an OS-focus-only resume: ${added}`];
 });
@@ -336,8 +334,8 @@ await step("E", "Rapid concurrent refreshIdentity() calls collapse to one in-fli
 
 // ── F. sign-in / sign-out ──────────────────────────────────────────────────
 await step("F", "Sign-in and sign-out refresh/clear identity correctly", async () => {
-  const stub = await freshMount({ seeded: false });
-  if (globalThis.__auth.status !== "anonymous") throw new Error("expected anonymous with no seeded session");
+  const stub = await freshMount({ seeded: false, stubOptions: { session: null } });
+  if (globalThis.__auth.status !== "anonymous") throw new Error("expected anonymous with neither app nor provider session");
 
   const ok = await globalThis.__auth.signIn({ username: "admin", password: "CorrectHorse1" });
   if (!ok) throw new Error(`sign-in failed: error=${globalThis.__auth.error}, calls=${JSON.stringify(stub.calls)}`);
@@ -363,7 +361,7 @@ await step("F", "Sign-in and sign-out refresh/clear identity correctly", async (
 
 // ── G. sign-out race: a stale in-flight refresh cannot resurrect a session ──
 await step("G", "A stale in-flight refresh cannot overwrite a sign-out that started after it", async () => {
-  const stub = await freshMount();
+  await freshMount();
   // Trigger a resume refresh (an in-flight, authority-asking read) …
   setVisibility("hidden");
   dateOffsetMs += 70_000;
@@ -388,7 +386,7 @@ await step("H", "refreshIdentity() (what a branch switch calls) is authoritative
   const profiles = [
     { id: "u-admin", username: "admin", name: "Store Admin", role: "admin", active: true, email: "admin@alyq.example", phone: null, custom_role_id: null, last_login_at: null, created_at: "2026-01-01T00:00:00.000Z" },
   ];
-  const stub = await freshMount({ stubOptions: { profiles } });
+  await freshMount({ stubOptions: { profiles } });
   if (globalThis.__auth.user.role !== "admin") throw new Error("expected the initial admin role");
 
   // An administrator changes this account's role while it is signed in —
@@ -425,26 +423,126 @@ await step("I", "A cross-tab session_changed signal still triggers exactly one r
   return [`provider requests from one cross-tab session_changed signal: ${added}`, "role change applied: manager"];
 });
 
-// ── the heartbeat's replacement: zero-network in the common case ───────────
-await step("SAFETY", "The local safety check costs zero Supabase requests unless the absolute cap has passed", async () => {
-  const stub = await freshMount();
-  const before = stub.calls.length;
-  const withinCap = await checkLocalSessionHealth();
-  if (stub.calls.length !== before) throw new Error("a session within the absolute cap made a provider request");
-  if (withinCap.changed) throw new Error("a session within the absolute cap was reported as changed");
+// ── persistent boot: provider-only session, no login flash, restart ─────────
+await step("PERSIST", "A provider-persisted session restores without an app record or login flash", async () => {
+  const stub = await freshMount({ seeded: false });
+  if (globalThis.__auth.status !== "authenticated") throw new Error("provider-only session was not adopted");
+  if (globalThis.__authStatuses.includes("anonymous")) {
+    throw new Error(`protected bootstrap flashed anonymous: ${globalThis.__authStatuses.join(" -> ")}`);
+  }
+  const stored = JSON.parse(dom.window.localStorage.getItem(SESSION_STORAGE_KEY) ?? "null");
+  if (stored?.persistence !== "local" || stored?.session?.remember !== true) {
+    throw new Error("adopted provider session was not persisted canonically");
+  }
+  if (!String(stored.session.token).startsWith("sess-")) {
+    throw new Error("the app identity cache copied a provider access token");
+  }
 
-  // Seed a session this browser has held for longer than SESSION_ABSOLUTE_MS.
-  dom.window.sessionStorage.clear();
-  seedStorage(seededAppSession({ issuedMsAgo: SESSION_ABSOLUTE_MS + 60_000 }));
+  // Simulate Web reload, Electron restart or Capacitor cold restart: React and
+  // module memory disappear, while provider/app persistent storage remains.
+  teardown();
   resetSessionCache();
-  const pastCap = await checkLocalSessionHealth();
-  const signOutCalls = stub.signOutScopes.length;
-  if (!pastCap.changed || pastCap.session !== null) throw new Error("a session past the absolute cap was not ended");
-  if (signOutCalls !== 1) throw new Error(`expected exactly 1 revoking signOut call, saw ${signOutCalls}`);
+  resetAuthRepositories();
+  mountAuthHarness();
+  for (let n = 0; n < 30 && globalThis.__auth?.syncing; n += 1) await sleep(50);
+  await sleep(50);
+  if (globalThis.__auth.status !== "authenticated") throw new Error("cold restart lost the session");
+  if (globalThis.__authStatuses.includes("anonymous")) throw new Error("restart flashed the login state");
   teardown();
   return [
-    "a session within the cap: 0 provider requests",
-    `a session past the ${Math.round(SESSION_ABSOLUTE_MS / 86_400_000)}-day cap: 1 revoking signOut call (the justified rare exception)`,
+    "provider-only persisted session adopted and cached persistently",
+    "Web refresh / Desktop restart / Mobile cold restart: authenticated, no anonymous frame",
+    `provider getSession calls across first boot + restart: ${callsOf(stub, "getSession")}`,
+  ];
+});
+
+// ── access expiry rotates silently ─────────────────────────────────────────
+await step("ROTATE", "Expired access token plus valid refresh session rotates silently", async () => {
+  const stub = await freshMount({ seed: seededAppSession({ expiresInMs: -60_000 }) });
+  if (globalThis.__auth.status !== "authenticated") throw new Error("access expiry signed the user out");
+  if (callsOf(stub, "refreshSession") !== 1) {
+    throw new Error(`expected one refreshSession, saw ${callsOf(stub, "refreshSession")}`);
+  }
+  if (globalThis.__auth.endReason !== null) throw new Error("normal token rotation showed a session-ended reason");
+  if (globalThis.__authStatuses.includes("anonymous")) throw new Error("silent refresh flashed login");
+  teardown();
+  return ["refreshSession=1", "status remained authenticated; no session-expired reason or login flash"];
+});
+
+// ── transient offline startup + bounded reconnect recovery ─────────────────
+await step("OFFLINE", "Temporary offline startup preserves identity and reconnect recovers once", async () => {
+  const throwOn = ["getSession"];
+  const stub = await freshMount({ stubOptions: { throwOn } });
+  if (globalThis.__auth.status !== "authenticated") throw new Error("temporary offline startup forced logout");
+  if (globalThis.__auth.endReason !== null) throw new Error("offline startup showed session expired");
+
+  throwOn.length = 0;
+  const before = callsOf(stub, "getSession");
+  dom.window.dispatchEvent(new dom.window.Event("online"));
+  await sleep(150);
+  const added = callsOf(stub, "getSession") - before;
+  if (added !== 1) throw new Error(`reconnect made ${added} provider reads, expected one`);
+  if (globalThis.__auth.status !== "authenticated") throw new Error("reconnect did not preserve/recover authentication");
+  teardown();
+  return ["offline boot kept cached identity", `online event recovery reads: ${added}`, "no retry loop"];
+});
+
+// ── confirmed invalidation ends the session ────────────────────────────────
+await step("REVOKED", "Confirmed invalid/revoked refresh token returns controlled login", async () => {
+  const stub = await freshMount({
+    seed: seededAppSession({ expiresInMs: -60_000 }),
+    stubOptions: {
+      refreshError: { message: "Invalid Refresh Token: token has been revoked", code: "refresh_token_not_found", status: 400 },
+    },
+  });
+  if (callsOf(stub, "refreshSession") !== 1) throw new Error("revocation was not confirmed through refresh");
+  if (globalThis.__auth.status !== "anonymous") throw new Error("revoked refresh session remained authenticated");
+  if (globalThis.__auth.endReason !== "expired") throw new Error("confirmed invalidation lacked controlled end reason");
+  if (dom.window.localStorage.getItem(SESSION_STORAGE_KEY)) throw new Error("revoked app identity cache was not cleared");
+  teardown();
+  return ["provider invalidation confirmed", "local identity cleared; controlled anonymous state with expired reason"];
+});
+
+// ── global logout revocation survives restart ──────────────────────────────
+await step("GLOBAL", "Logout All Devices revokes globally and cannot silently restart", async () => {
+  const stub = await freshMount();
+  await globalThis.__auth.signOutEverywhere();
+  await sleep(30);
+  if (globalThis.__auth.status !== "anonymous") throw new Error("global logout did not end the local session");
+  if (stub.signOutScopes.at(-1) !== "global") throw new Error("global logout did not use provider global scope");
+  if (dom.window.localStorage.getItem(SESSION_STORAGE_KEY)) throw new Error("global logout left app storage");
+
+  teardown();
+  resetSessionCache();
+  resetAuthRepositories();
+  mountAuthHarness();
+  for (let n = 0; n < 30 && globalThis.__auth?.syncing; n += 1) await sleep(50);
+  await sleep(50);
+  if (globalThis.__auth.status !== "anonymous") throw new Error("globally revoked session silently continued after restart");
+  teardown();
+  return ["provider scope=global", "restart remains anonymous"];
+});
+
+// ── local safety: access-token age is never local logout authority ─────────
+await step("SAFETY", "The local safety check never logs out a live refresh session", async () => {
+  const stub = await freshMount();
+  const before = stub.calls.length;
+  const withinWindow = await checkLocalSessionHealth();
+  if (stub.calls.length !== before) throw new Error("the local safety check made a provider request");
+  if (withinWindow.changed || !withinWindow.session) throw new Error("a valid live identity was changed");
+
+  // Even an old local issued_at/access expiry is only a cached shell in live
+  // mode. Refresh-token authority belongs to Supabase and is checked on wake.
+  dom.window.localStorage.clear();
+  seedStorage(seededAppSession({ issuedMsAgo: SESSION_ABSOLUTE_MS + 60_000, expiresInMs: -60_000 }));
+  resetSessionCache();
+  const oldCache = await checkLocalSessionHealth();
+  if (oldCache.changed || !oldCache.session) throw new Error("local token age impersonated provider revocation");
+  if (stub.signOutScopes.length !== 0) throw new Error("local age triggered provider sign-out");
+  teardown();
+  return [
+    "common check: 0 provider requests",
+    "old access-token cache: retained until authoritative refresh; 0 signOut calls",
   ];
 });
 

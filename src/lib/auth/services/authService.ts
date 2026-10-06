@@ -4,31 +4,22 @@
  * Two session models live here, and which one applies is decided by the mode:
  *
  *   live (Supabase configured)
- *     The provider is the authority. `token` is the Supabase access token,
- *     `expires_at` is the provider's expiry, and validation asks the provider
- *     (`currentSession()` / `refreshSession()`) rather than comparing clocks.
- *     `autoRefreshToken` is already on in `lib/supabase/client`, so a tab left
- *     open keeps its session; when the provider says there is none, the session
- *     ends here immediately.
+ *     Supabase is the authority. Its persisted refresh session survives Web,
+ *     Electron and Capacitor restarts; access-token expiry triggers provider
+ *     refresh rather than local sign-out. The app record carries cached identity
+ *     and an opaque app token only — provider refresh tokens stay provider-owned.
  *
  *   demo (no credentials)
- *     The offline model the authentication phase shipped, unchanged: an opaque
- *     token, a sliding idle expiry (8 h, or 7 days with "remember me") and a
- *     hard 30-day absolute cap. Nothing in it is a security claim — it exists so
- *     the app is usable and testable without a server.
+ *     The offline model has a persistent, sliding session and a hard 30-day
+ *     re-authentication cap. It exists only so the app is usable without a
+ *     server; it is not a replacement for provider refresh-token security.
  *
- * Both models share the same record shape (`AuthSession`) and the same absolute
- * cap, so a session can never outlive 30 days on one machine whichever mode
- * minted it.
- *
- * `restoreSession()` runs on boot. After that, expiry and identity are
- * event-driven rather than polled: a route change only runs a local,
- * non-mutating `isSessionExpired()` read (no provider call, ever); the
- * authoritative provider check (`revalidateSession()` / `resyncCurrentIdentity()`)
- * runs on sign-in, sign-out, a provider auth event, an explicit refresh, a
- * cross-tab authority change, and on resuming the tab after a meaningful time
- * in the background. `checkLocalSessionHealth()` is the one low-frequency,
- * zero-network safety net underneath all of that — see its own doc comment.
+ * `restoreSession()` runs on boot. In live mode an expired access-token timestamp
+ * is retained as a recovery shell until Supabase either refreshes it, confirms
+ * revocation, or a transient network failure clears. In demo mode local expiry
+ * remains authoritative. Provider checks run on boot, explicit refresh, provider
+ * events, reconnect and foreground/resume; temporary transport failures preserve
+ * the last authenticated identity and are retried only on those bounded events.
  */
 import { getUserRepository, getAuthMode } from "../data";
 import { staffEntryToAuthUser } from "../data/demoRepository";
@@ -57,10 +48,10 @@ import {
 import { broadcastAuth } from "./authEvents";
 import { recordAudit } from "@/modules/audit/services/auditService";
 
-/** Idle lifetime of a session without "remember me" (demo model). */
-export const SESSION_IDLE_MS = 8 * 60 * 60 * 1000;
-/** Idle lifetime with "remember me" (demo model). */
-export const SESSION_REMEMBER_IDLE_MS = 7 * 24 * 60 * 60 * 1000;
+/** Persistent sliding idle lifetime for the provider-free demo model. */
+export const SESSION_IDLE_MS = 7 * 24 * 60 * 60 * 1000;
+/** Legacy exported name; remember=true/false now use the same lifetime. */
+export const SESSION_REMEMBER_IDLE_MS = SESSION_IDLE_MS;
 
 /** Hard cap so a sliding session can never live forever on one machine. */
 export const SESSION_ABSOLUTE_MS = 30 * 24 * 60 * 60 * 1000;
@@ -77,8 +68,8 @@ export interface SignInOutcome {
   code?: AuthErrorCode;
 }
 
-export function idleTtlFor(remember: boolean): number {
-  return remember ? SESSION_REMEMBER_IDLE_MS : SESSION_IDLE_MS;
+export function idleTtlFor(_remember: boolean): number {
+  return SESSION_IDLE_MS;
 }
 
 function newToken(): string {
@@ -88,67 +79,90 @@ function newToken(): string {
 }
 
 /** Create (but do not persist) a session for a verified user. */
-export function createSession(user: AuthUser, remember = false, now: Date = new Date()): AuthSession {
-  const idle = idleTtlFor(remember);
+export function createSession(
+  user: AuthUser,
+  _remember = true,
+  now: Date = new Date(),
+): AuthSession {
+  const idle = idleTtlFor(true);
   const expires = now.getTime() + Math.min(idle, SESSION_ABSOLUTE_MS);
   return {
     token: newToken(),
     user,
     issued_at: now.toISOString(),
     expires_at: new Date(expires).toISOString(),
-    remember,
+    remember: true,
   };
 }
 
 /**
  * Project a provider session into the app's record.
  *
- * `issued_at` is carried over from an existing record for the same user so the
- * absolute cap measures from when this browser first saw the session, not from
- * the last refresh — otherwise a tab that refreshes hourly would never reach it.
+ * `issued_at` is carried over for diagnostics, but live lifetime is governed by
+ * the provider refresh session — not by this timestamp. The provider access token
+ * is deliberately not copied into the app's separate identity cache.
  */
 export function sessionFromProvider(
   live: LiveSessionInfo,
-  remember: boolean,
   now: Date = new Date(),
 ): AuthSession {
   const previous = getCachedSession() ?? readStoredSession()?.session ?? null;
   const issuedAt =
-    previous && live.user && previous.user.id === live.user.id && previous.issued_at
+    previous &&
+    live.user &&
+    previous.user.id === live.user.id &&
+    previous.issued_at
       ? previous.issued_at
       : now.toISOString();
 
+  const existingOpaqueToken = previous?.token.startsWith("sess-")
+    ? previous.token
+    : null;
   return {
-    token: live.token || newToken(),
+    token: existingOpaqueToken ?? newToken(),
     user: live.user ?? previous?.user ?? ({} as AuthUser),
     issued_at: issuedAt,
-    expires_at: live.expires_at || new Date(now.getTime() + idleTtlFor(remember)).toISOString(),
-    remember,
+    expires_at:
+      live.expires_at ||
+      new Date(now.getTime() + idleTtlFor(true)).toISOString(),
+    remember: true,
   };
 }
 
-export function isSessionExpired(session: AuthSession, now: Date = new Date()): boolean {
+export function isSessionExpired(
+  session: AuthSession,
+  now: Date = new Date(),
+): boolean {
   const expiry = new Date(session.expires_at).getTime();
   if (Number.isNaN(expiry)) return true;
   if (now.getTime() >= expiry) return true;
   // Absolute cap, independent of activity.
   const issued = new Date(session.issued_at).getTime();
-  if (!Number.isNaN(issued) && now.getTime() - issued >= SESSION_ABSOLUTE_MS) return true;
+  if (!Number.isNaN(issued) && now.getTime() - issued >= SESSION_ABSOLUTE_MS)
+    return true;
   return false;
 }
 
 /** The absolute cap alone: has this session been alive too long, whatever else? */
-export function isBeyondAbsoluteCap(session: AuthSession, now: Date = new Date()): boolean {
+export function isBeyondAbsoluteCap(
+  session: AuthSession,
+  now: Date = new Date(),
+): boolean {
   const issued = new Date(session.issued_at).getTime();
   if (Number.isNaN(issued)) return true;
   return now.getTime() - issued >= SESSION_ABSOLUTE_MS;
 }
 
 /** Extend a live session's sliding expiry (activity touch, demo model). */
-export function touchSession(session: AuthSession, now: Date = new Date()): AuthSession {
+export function touchSession(
+  session: AuthSession,
+  now: Date = new Date(),
+): AuthSession {
   const idle = idleTtlFor(session.remember);
   const issued = new Date(session.issued_at).getTime();
-  const cap = Number.isNaN(issued) ? now.getTime() + idle : issued + SESSION_ABSOLUTE_MS;
+  const cap = Number.isNaN(issued)
+    ? now.getTime() + idle
+    : issued + SESSION_ABSOLUTE_MS;
   const next = Math.min(now.getTime() + idle, cap);
   if (new Date(session.expires_at).getTime() >= next) return session;
   return { ...session, expires_at: new Date(next).toISOString() };
@@ -159,9 +173,9 @@ export function touchSession(session: AuthSession, now: Date = new Date()): Auth
  * session. Returns a coded failure so the login screen can render a message
  * without parsing strings.
  *
- * In live mode the record is built from the provider session (token + expiry),
- * which is why this awaits `currentSession()` after a successful authentication
- * rather than inventing a token locally.
+ * In live mode identity and expiry are read from the provider session after
+ * authentication. Provider tokens remain inside supabase-js storage; this app
+ * record receives its own opaque token.
  */
 export async function signIn(credentials: Credentials): Promise<SignInOutcome> {
   const username = credentials.username.trim();
@@ -170,7 +184,9 @@ export async function signIn(credentials: Credentials): Promise<SignInOutcome> {
   if (!password) return { ok: false, code: "missing_password" };
 
   const repository = getUserRepository();
-  const remember = Boolean(credentials.remember);
+  // `remember` is accepted only so older callers remain source-compatible. It
+  // no longer selects storage or lifetime; persistence is the secure default.
+  void credentials.remember;
 
   let result;
   try {
@@ -182,17 +198,23 @@ export async function signIn(credentials: Credentials): Promise<SignInOutcome> {
 
   let session: AuthSession;
   if (repository.kind === "supabase") {
-    // The provider holds the session now; read it back so the token and the
-    // expiry are the provider's, not ours.
+    // The provider holds the session now; read back its identity and expiry.
+    // Its access/refresh tokens remain exclusively in supabase-js storage.
     const live = await repository.currentSession().catch(() => null);
-    session = live?.user ? sessionFromProvider(live, remember) : createSession(result.user, remember);
+    session = live?.user
+      ? sessionFromProvider(live)
+      : createSession(result.user);
     if (!live?.user) session = { ...session, user: result.user };
   } else {
-    session = createSession(result.user, remember);
+    session = createSession(result.user);
   }
 
-  writeStoredSession(session, remember ? "local" : "session");
-  broadcastAuth({ kind: "signed_in", user_id: session.user.id, at: new Date().toISOString() });
+  writeStoredSession(session, "local");
+  broadcastAuth({
+    kind: "signed_in",
+    user_id: session.user.id,
+    at: new Date().toISOString(),
+  });
   return { ok: true, session };
 }
 
@@ -202,7 +224,9 @@ export async function signIn(credentials: Credentials): Promise<SignInOutcome> {
  * `everywhere: true` revokes every session the provider holds for this user —
  * "log out of all devices" — rather than only this browser's refresh token.
  */
-export async function signOut(options?: { everywhere?: boolean }): Promise<void> {
+export async function signOut(options?: {
+  everywhere?: boolean;
+}): Promise<void> {
   const everywhere = Boolean(options?.everywhere);
   try {
     await getUserRepository().signOut({ everywhere });
@@ -210,7 +234,11 @@ export async function signOut(options?: { everywhere?: boolean }): Promise<void>
     /* a provider error must never trap the user in a signed-in state */
   }
   clearStoredSession();
-  broadcastAuth({ kind: "signed_out", at: new Date().toISOString(), everywhere });
+  broadcastAuth({
+    kind: "signed_out",
+    at: new Date().toISOString(),
+    everywhere,
+  });
 }
 
 /** Sign out of this browser and every other session the provider holds. */
@@ -219,31 +247,44 @@ export function signOutEverywhere(): Promise<void> {
 }
 
 /**
- * Load and validate the persisted session.
- * Returns the session when it is still valid, otherwise `null` — clearing the
- * stored record and reporting `expired` so the login screen can explain why.
+ * Restore the app identity cache.
+ *
+ * In live mode `expires_at` is only the short-lived access-token timestamp. It
+ * must never evict a still-refreshable provider session, so even a stale record
+ * is retained and migrated to persistent storage while boot asks Supabase for
+ * the authoritative answer. In demo mode there is no refresh token, so local
+ * expiry remains authoritative.
  */
-export function restoreSession(now: Date = new Date()): { session: AuthSession | null; reason: SessionEndReason } {
+export function restoreSession(now: Date = new Date()): {
+  session: AuthSession | null;
+  reason: SessionEndReason;
+} {
   const stored = readStoredSession();
   if (!stored) {
     primeCacheFromStorage();
     return { session: null, reason: null };
   }
-  if (isSessionExpired(stored.session, now)) {
+  if (getAuthMode() !== "supabase" && isSessionExpired(stored.session, now)) {
     clearStoredSession();
     return { session: null, reason: "expired" };
   }
-  writeStoredSession(stored.session, stored.persistence);
-  return { session: stored.session, reason: null };
+  const persistent = {
+    ...stored.session,
+    // Releases before Phase 2A copied the provider access token into this app
+    // record. Replace it immediately with a non-authoritative opaque identifier.
+    token: stored.session.token.startsWith("sess-")
+      ? stored.session.token
+      : newToken(),
+    remember: true,
+  };
+  // Migrates a pre-Phase-2A sessionStorage record without changing identity.
+  writeStoredSession(persistent, "local");
+  return { session: persistent, reason: null };
 }
 
 /**
- * Re-check the live session (called on navigation, on tab focus and on an
- * interval). Extends the sliding expiry while valid; ends the session when it
- * has expired.
- *
- * Synchronous, and authoritative for the demo model. Live mode should prefer
- * `revalidateSession()`, which asks the provider.
+ * Synchronous validation for the provider-free demo model. Live mode never uses
+ * access-token time as a logout verdict; it calls `revalidateSession()`.
  */
 export function validateSession(now: Date = new Date()): {
   session: AuthSession | null;
@@ -258,28 +299,21 @@ export function validateSession(now: Date = new Date()): {
   }
   const touched = touchSession(current, now);
   if (touched !== current) {
-    const persistence = readStoredSession()?.persistence ?? "local";
-    writeStoredSession(touched, persistence);
+    writeStoredSession(touched, "local");
     return { session: touched, reason: null, changed: true };
   }
   return { session: current, reason: null, changed: false };
 }
 
 /**
- * Mode-aware revalidation: the authoritative, network-calling check.
+ * Authoritative, mode-aware revalidation.
  *
- * Live: ask the provider. A session whose provider expiry has passed is
- * refreshed; a refresh the provider refuses ends the session here, which is what
- * makes a revoked or deactivated account stop working at the next authority
- * check (sign-in/out, a provider auth event, an explicit refresh, or resuming
- * from the background) instead of at the next reload. The absolute cap is
- * applied on top, because it is this app's policy rather than the provider's.
- *
- * Demo: the synchronous sliding-expiry model, unchanged.
- *
- * Called by the context's manually-triggerable `revalidate()` (kept for tests
- * and any future caller); it is not wired to any automatic timer or
- * navigation event — see `AuthProvider`'s own lifecycle comment.
+ * Live sessions refresh shortly before (or any time after) access-token expiry.
+ * A repository `null` means Supabase confirmed that no usable session remains
+ * (missing/revoked/invalid refresh session or inactive account), so the app
+ * record is cleared. Transient network, timeout and server failures are thrown
+ * by the repository and caught here: the cached identity stays authenticated
+ * and a later reconnect/foreground event tries again. There is no retry loop.
  */
 export async function revalidateSession(now: Date = new Date()): Promise<{
   session: AuthSession | null;
@@ -291,54 +325,34 @@ export async function revalidateSession(now: Date = new Date()): Promise<{
 
   if (getAuthMode() !== "supabase") return validateSession(now);
 
-  if (isBeyondAbsoluteCap(current, now)) {
-    await signOut();
-    return { session: null, reason: "expired", changed: true };
-  }
-
   const repository = getUserRepository();
   const expiry = new Date(current.expires_at).getTime();
-  const needsRefresh = Number.isNaN(expiry) || expiry - now.getTime() <= LIVE_REFRESH_AHEAD_MS;
+  const needsRefresh =
+    Number.isNaN(expiry) || expiry - now.getTime() <= LIVE_REFRESH_AHEAD_MS;
 
   try {
-    const live = needsRefresh ? await repository.refreshSession() : await repository.currentSession();
+    const live = needsRefresh
+      ? await repository.refreshSession()
+      : await repository.currentSession();
     if (!live || !live.user) {
       clearStoredSession();
       return { session: null, reason: "expired", changed: true };
     }
-    const next = sessionFromProvider(live, current.remember, now);
-    const persistence = readStoredSession()?.persistence ?? (current.remember ? "local" : "session");
-    writeStoredSession(next, persistence);
-    const changed = next.token !== current.token || next.expires_at !== current.expires_at || next.user !== current.user;
+    const next = sessionFromProvider(live, now);
+    writeStoredSession(next, "local");
+    const changed =
+      next.expires_at !== current.expires_at ||
+      identityChanged(current.user, next.user);
     return { session: next, reason: null, changed };
   } catch {
-    // A network failure is not a signed-out user: keep the session and try again
-    // on the next heartbeat. Only the provider saying "no session" ends it.
     return { session: current, reason: null, changed: false };
   }
 }
 
 /**
- * A zero-network safety check for a tab that is open, focused and never
- * navigating or backgrounding: has this session outlived the absolute cap
- * (live model) or gone idle (demo model)?
- *
- * Deliberately NOT a substitute for `resyncCurrentIdentity()` — it never asks
- * the provider for a fresh role or branch, because neither the cap nor the
- * demo idle model needs one to enforce: both are read from the session this
- * browser already holds. The provider's own `autoRefreshToken` keeps a live
- * token fresh independently of this, and `TOKEN_REFRESHED` /
- * `resyncCurrentIdentity` (on sign-in, sign-out, explicit refresh, realtime
- * invalidation and resuming from the background) are what keep role and
- * branch current. This exists only so the one thing neither of those covers —
- * a tab that quietly outlives the 30-day cap without ever navigating,
- * resuming or receiving a provider event — still ends within one check
- * instead of surviving indefinitely.
- *
- * The one network call this can make is the same one `revalidateSession()`
- * makes for the same reason: a cap that has actually passed is revoked with
- * the provider, not merely forgotten locally, so a stale refresh token does
- * not linger past the policy that was supposed to end it.
+ * Low-frequency local safety check. Demo sessions enforce their sliding expiry;
+ * live sessions remain provider-governed and therefore never treat access-token
+ * expiry or an app-local age cap as a logout reason.
  */
 export async function checkLocalSessionHealth(now: Date = new Date()): Promise<{
   session: AuthSession | null;
@@ -347,42 +361,29 @@ export async function checkLocalSessionHealth(now: Date = new Date()): Promise<{
 }> {
   const current = getCachedSession() ?? readStoredSession()?.session ?? null;
   if (!current) return { session: null, reason: null, changed: false };
-
   if (getAuthMode() !== "supabase") return validateSession(now);
-
-  if (isBeyondAbsoluteCap(current, now)) {
-    await signOut();
-    return { session: null, reason: "expired", changed: true };
-  }
   return { session: current, reason: null, changed: false };
 }
 
-/**
- * Adopt a session the provider announced (an `onAuthStateChange` event, or a
- * recovery link landing on `#/reset-password`). Persisted like a sign-in.
- */
-export function adoptProviderSession(live: LiveSessionInfo, remember = false): AuthSession | null {
+/** Adopt and persist a provider session after boot, refresh or an auth event. */
+export function adoptProviderSession(
+  live: LiveSessionInfo,
+): AuthSession | null {
   if (!live.user) return null;
-  const session = sessionFromProvider(live, remember);
-  writeStoredSession(session, remember ? "local" : "session");
+  const session = sessionFromProvider(live);
+  writeStoredSession(session, "local");
   return session;
 }
 
 /**
- * May the app turn a provider session it *found* (on boot, from a refresh or
- * focus event, or from the provider's own event channel) into its own
- * session? Only when an app record already attests to it.
- *
- * `persistSession: true` on the Supabase client means a provider session can
- * appear "for free" — most importantly, it would silently resurrect someone
- * who signed in with remember-me OFF and closed the tab, undoing exactly the
- * promise that checkbox makes. So adoption is app-record-authoritative: the
- * record was written by an actual sign-in (or a consumed recovery link), and
- * a provider session with no record behind it is an orphan to be signed out,
- * not a session to be believed.
+ * A normal persisted provider session found at boot is valid adoption authority.
+ * Recovery URL material is the sole exception: the reset page must consume it
+ * itself, rather than a generic boot silently turning it into an app login.
  */
-export function shouldAdoptFoundProviderSession(appSessionHeld: boolean): boolean {
-  return appSessionHeld;
+export function shouldAdoptFoundProviderSession(
+  recoveryMaterialPresent: boolean,
+): boolean {
+  return !recoveryMaterialPresent;
 }
 
 /** Drop the local record without asking the provider (a signed-out event). */
@@ -396,9 +397,12 @@ function identityChanged(previous: AuthUser, next: AuthUser): boolean {
   if (previous.custom_role_id !== next.custom_role_id) return true;
   if (previous.active !== next.active) return true;
   if (previous.name !== next.name) return true;
-  if (previous.email !== next.email || previous.phone !== next.phone) return true;
+  if (previous.email !== next.email || previous.phone !== next.phone)
+    return true;
   if (previous.capabilities.length !== next.capabilities.length) return true;
-  return previous.capabilities.some((capability, index) => capability !== next.capabilities[index]);
+  return previous.capabilities.some(
+    (capability, index) => capability !== next.capabilities[index],
+  );
 }
 
 /**
@@ -425,8 +429,6 @@ export async function resyncCurrentIdentity(now: Date = new Date()): Promise<{
 }> {
   const current = getCachedSession() ?? readStoredSession()?.session ?? null;
   if (!current) return { session: null, changed: false, signedOut: false };
-  const persistence = readStoredSession()?.persistence ?? (current.remember ? "local" : "session");
-
   if (getAuthMode() === "supabase") {
     try {
       const live = await getUserRepository().currentSession();
@@ -434,9 +436,11 @@ export async function resyncCurrentIdentity(now: Date = new Date()): Promise<{
         clearStoredSession();
         return { session: null, changed: true, signedOut: true };
       }
-      const next = sessionFromProvider(live, current.remember, now);
-      const changed = identityChanged(current.user, next.user) || next.token !== current.token;
-      writeStoredSession(next, persistence);
+      const next = sessionFromProvider(live, now);
+      const changed =
+        identityChanged(current.user, next.user) ||
+        next.expires_at !== current.expires_at;
+      writeStoredSession(next, "local");
       return { session: next, changed, signedOut: false };
     } catch {
       // Offline or provider error: keep what we have and try again later.
@@ -454,22 +458,27 @@ export async function resyncCurrentIdentity(now: Date = new Date()): Promise<{
     clearStoredSession();
     return { session: null, changed: true, signedOut: true };
   }
-  if (!identityChanged(current.user, user)) return { session: current, changed: false, signedOut: false };
+  if (!identityChanged(current.user, user))
+    return { session: current, changed: false, signedOut: false };
 
   const next: AuthSession = {
     ...current,
     // Keep the sign-in timestamp this browser observed: the absolute cap and the
     // "last login" column both describe the session, not the identity edit.
-    user: { ...user, last_login_at: current.user.last_login_at ?? user.last_login_at },
+    user: {
+      ...user,
+      last_login_at: current.user.last_login_at ?? user.last_login_at,
+    },
   };
-  writeStoredSession(next, persistence);
+  writeStoredSession(next, "local");
   return { session: next, changed: true, signedOut: false };
 }
 
 /** True when a usable session exists right now. */
 export function hasActiveSession(now: Date = new Date()): boolean {
   const session = getCachedSession() ?? readStoredSession()?.session ?? null;
-  return Boolean(session) && !isSessionExpired(session as AuthSession, now);
+  if (!session) return false;
+  return getAuthMode() === "supabase" || !isSessionExpired(session, now);
 }
 
 // ── password recovery ───────────────────────────────────────────────────────
@@ -484,7 +493,10 @@ export function hasActiveSession(now: Date = new Date()): boolean {
  *
  * The outcome deliberately does not reveal whether the account exists.
  */
-export async function requestPasswordReset(identifier: string, redirectTo?: string): Promise<PasswordResetOutcome> {
+export async function requestPasswordReset(
+  identifier: string,
+  redirectTo?: string,
+): Promise<PasswordResetOutcome> {
   const handle = identifier.trim();
   if (!handle) return { ok: false, code: "missing_identifier" };
   try {
@@ -520,7 +532,9 @@ function auditPasswordChanged(via: "recovery_link" | "current_password"): void {
  * and invalidates other sessions per the project's settings. Demo mode: a new
  * salt and digests in the offline directory.
  */
-export async function updatePassword(newPassword: string): Promise<PasswordUpdateResult> {
+export async function updatePassword(
+  newPassword: string,
+): Promise<PasswordUpdateResult> {
   try {
     const outcome = await getUserRepository().updatePassword(newPassword);
     if (outcome.ok) auditPasswordChanged("recovery_link");
@@ -536,9 +550,15 @@ export async function updatePassword(newPassword: string): Promise<PasswordUpdat
  * recovery state — the current password is the authority, checked by the same
  * `authenticate` machinery a daily login uses (usernames included).
  */
-export async function changePassword(currentPassword: string, newPassword: string): Promise<PasswordUpdateResult> {
+export async function changePassword(
+  currentPassword: string,
+  newPassword: string,
+): Promise<PasswordUpdateResult> {
   try {
-    const outcome = await getUserRepository().changePassword(currentPassword, newPassword);
+    const outcome = await getUserRepository().changePassword(
+      currentPassword,
+      newPassword,
+    );
     if (outcome.ok) auditPasswordChanged("current_password");
     return outcome;
   } catch {
@@ -555,7 +575,10 @@ export async function changePassword(currentPassword: string, newPassword: strin
  */
 export async function consumePasswordRecoveryLink(
   parts: RecoveryLinkParts,
-): Promise<{ ok: true; session: AuthSession | null } | { ok: false; code: PasswordResetErrorCode }> {
+): Promise<
+  | { ok: true; session: AuthSession | null }
+  | { ok: false; code: PasswordResetErrorCode }
+> {
   const repository = getUserRepository();
   let result;
   try {
@@ -567,10 +590,17 @@ export async function consumePasswordRecoveryLink(
 
   if (repository.kind === "supabase") {
     const live = await repository.currentSession().catch(() => null);
-    if (live?.user) return { ok: true, session: adoptProviderSession(live, false) };
-    return { ok: true, session: getCachedSession() ?? readStoredSession()?.session ?? null };
+    if (live?.user)
+      return { ok: true, session: adoptProviderSession(live) };
+    return {
+      ok: true,
+      session: getCachedSession() ?? readStoredSession()?.session ?? null,
+    };
   }
-  return { ok: true, session: getCachedSession() ?? readStoredSession()?.session ?? null };
+  return {
+    ok: true,
+    session: getCachedSession() ?? readStoredSession()?.session ?? null,
+  };
 }
 
 /**

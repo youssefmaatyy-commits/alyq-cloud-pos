@@ -103,12 +103,11 @@ async function boot({ url = "http://localhost/#/login", seedSession = null } = {
   dom.window.addEventListener("error", (event) => consoleErrors.push(`window.onerror: ${event.message}`));
 
   if (seedSession) {
-    const store = seedSession.remember ? dom.window.localStorage : dom.window.sessionStorage;
-    store.setItem(
+    dom.window.localStorage.setItem(
       SESSION_KEY,
       JSON.stringify({
-        session: seedSession.session,
-        persistence: seedSession.remember ? "local" : "session",
+        session: { ...seedSession.session, remember: true },
+        persistence: "local",
       }),
     );
   }
@@ -126,16 +125,15 @@ async function boot({ url = "http://localhost/#/login", seedSession = null } = {
 }
 
 /** A session record for a demo account, as the app persists one. */
-function seededSession({ expiresInMs, issuedMsAgo = 60_000, remember = false }) {
+function seededSession({ expiresInMs, issuedMsAgo = 60_000 }) {
   const now = Date.now();
   return {
-    remember,
     session: {
       token: `sess-seed-${Math.random().toString(36).slice(2, 10)}`,
       user: { id: "usr-admin", username: "admin", name: "ALYQ Admin", role: "admin" },
       issued_at: new Date(now - issuedMsAgo).toISOString(),
       expires_at: new Date(now + expiresInMs).toISOString(),
-      remember,
+      remember: true,
     },
   };
 }
@@ -297,7 +295,8 @@ await step(2, "Verify login screen appears", async () => {
   const passwords = app.document.querySelectorAll('input[type="password"]').length;
   if (passwords !== 1) throw new Error(`expected exactly one password field, found ${passwords}`);
   if (!app.byText("Sign in")) throw new Error("no sign-in control on the login screen");
-  if (!app.document.querySelector("input[type='checkbox']")) throw new Error("remember-me option missing");
+  if (app.document.querySelector("input[type='checkbox']")) throw new Error("obsolete remember-me checkbox is still rendered");
+  if (app.bodyText().includes("Keep me signed in")) throw new Error("obsolete remember-me copy is still rendered");
   if (!app.bodyText().includes(DEMO_PASSWORD)) throw new Error("demo credentials are not disclosed on the screen");
 
   // A protected screen typed directly must bounce to the login screen and
@@ -309,7 +308,7 @@ await step(2, "Verify login screen appears", async () => {
     throw new Error(`attempted route not preserved (hash: ${hash})`);
   }
   return [
-    "login screen: username + password + remember-me + sign-in button",
+    "login screen: username + password + sign-in button; no persistence checkbox",
     `direct #/pos redirects to ${hash}`,
     "sidebar and business data are absent while signed out",
   ];
@@ -324,6 +323,8 @@ await step(3, "Enter valid username/password", async () => {
   if (!stored) throw new Error("no session record was persisted");
   const { session } = stored;
   if (!session.token) throw new Error("the session has no token");
+  if (stored.persistence !== "local") throw new Error("default session is not persistent");
+  if (app.dom.window.sessionStorage.getItem(SESSION_KEY)) throw new Error("session was duplicated into tab storage");
   if (session.user.role !== "admin") throw new Error(`unexpected role: ${session.user.role}`);
   if (new Date(session.expires_at).getTime() <= Date.now()) throw new Error("the session is already expired");
   if (app.dom.window.localStorage.getItem("alyq.inventory.currentUser.v1")) {
@@ -331,7 +332,7 @@ await step(3, "Enter valid username/password", async () => {
   }
   return [
     `signed in as ${session.user.name} (${session.user.username} · ${session.user.role})`,
-    `session persisted under ${SESSION_KEY} in ${stored.persistence}Storage with a token and an expiry`,
+    `session persisted by default under ${SESSION_KEY} in localStorage with a token and an expiry`,
     "no password is stored: the record holds identity + expiry only",
     "the pre-authentication demo identity store is gone",
   ];
@@ -526,19 +527,19 @@ await step(9, "Verify session expiry ends the session", async () => {
   const stale = await boot({ url: "http://localhost/#/dashboard", seedSession: seededSession({ expiresInMs: -60_000 }) });
   if (stale.isSignedIn()) throw new Error("an expired session was restored");
   if (!stale.usernameField()) throw new Error("an expired session did not fall back to the login screen");
-  if (stale.notice() !== "expired") throw new Error("boot-time expiry was not explained");
+  if (stale.notice() !== "expired") throw new Error(`boot-time expiry was not explained: ${stale.bodyText().slice(0, 240)}`);
   if (stale.readSession()) throw new Error("the expired record was left in storage after boot");
   out.push("session already expired at boot → cleared, login screen shown with the expiry notice");
 
-  // (c) Remember-me changes where the session lives, not whether it expires.
-  const remembered = await boot({ url: "http://localhost/#/dashboard", seedSession: seededSession({ expiresInMs: 3_600_000, remember: true }) });
-  if (!remembered.isSignedIn()) throw new Error("a remembered session was not restored");
-  const stored = remembered.readSession();
-  if (stored?.persistence !== "local") throw new Error("the remembered session is not in localStorage");
-  if (remembered.dom.window.sessionStorage.getItem(SESSION_KEY)) {
+  // (c) Persistence is unconditional and survives a fresh application boot.
+  const restarted = await boot({ url: "http://localhost/#/dashboard", seedSession: seededSession({ expiresInMs: 3_600_000 }) });
+  if (!restarted.isSignedIn()) throw new Error("a persistent session was not restored");
+  const stored = restarted.readSession();
+  if (stored?.persistence !== "local") throw new Error("the session is not in localStorage");
+  if (restarted.dom.window.sessionStorage.getItem(SESSION_KEY)) {
     throw new Error("the session was duplicated into sessionStorage");
   }
-  out.push("remember-me sessions restore from localStorage and are never duplicated");
+  out.push("default sessions restore after application restart and are never duplicated");
 
   return out;
 });

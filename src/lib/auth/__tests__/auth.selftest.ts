@@ -173,17 +173,19 @@ test("both stored digests describe the same password for every account", async (
 });
 
 // ── session lifetime ──────────────────────────────────────────────────────
-test("sessions get the idle lifetime the remember flag asks for", () => {
+test("legacy remember true and false create the same persistent lifetime", () => {
   resetStores();
   const now = new Date("2026-01-01T00:00:00.000Z");
-  const plain = createSession(DEMO_USERS[0] as never, false, now);
-  const remembered = createSession(DEMO_USERS[0] as never, true, now);
+  const unchecked = createSession(DEMO_USERS[0] as never, false, now);
+  const checked = createSession(DEMO_USERS[0] as never, true, now);
   assert.equal(idleTtlFor(false), SESSION_IDLE_MS);
   assert.equal(idleTtlFor(true), SESSION_REMEMBER_IDLE_MS);
-  assert.equal(new Date(plain.expires_at).getTime() - now.getTime(), SESSION_IDLE_MS);
-  assert.equal(new Date(remembered.expires_at).getTime() - now.getTime(), SESSION_REMEMBER_IDLE_MS);
-  assert.ok(remembered.expires_at > plain.expires_at, "remember-me lasts longer");
-  assert.ok(plain.token.startsWith("sess-") && plain.token.length > 10, "opaque token issued");
+  assert.equal(SESSION_IDLE_MS, SESSION_REMEMBER_IDLE_MS);
+  assert.equal(new Date(unchecked.expires_at).getTime() - now.getTime(), SESSION_IDLE_MS);
+  assert.equal(checked.expires_at, unchecked.expires_at, "checkbox value cannot change lifetime");
+  assert.equal(unchecked.remember, true, "legacy unchecked input is normalized to persistent");
+  assert.equal(checked.remember, true, "legacy checked input is persistent too");
+  assert.ok(unchecked.token.startsWith("sess-") && unchecked.token.length > 10, "opaque token issued");
 });
 
 test("expiry is decided by idle time and by the absolute cap", () => {
@@ -235,6 +237,43 @@ test("the session round-trips through storage and clears completely", () => {
   assert.equal(readStoredSession(), null);
   assert.equal(local.size + sessionMap.size, 0, "clearing removes every copy");
   assert.equal(getCurrentAuthUser(), ANONYMOUS_USER, "the cache falls back to anonymous");
+});
+
+test("unchecked and checked login both survive reload and device restart", async () => {
+  for (const remember of [false, true]) {
+    const { local, session: sessionMap } = installStorageStub();
+    resetSessionCache();
+    const outcome = await signIn({ username: "admin", password: DEMO_PASSWORD, remember });
+    assert.ok(outcome.ok && outcome.session, `login works with legacy remember=${remember}`);
+    assert.equal(local.has(SESSION_STORAGE_KEY), true, "session is always in persistent storage");
+    assert.equal(sessionMap.has(SESSION_STORAGE_KEY), false, "session is never tab-only");
+    assert.equal(readStoredSession()?.persistence, "local");
+    assert.equal(readStoredSession()?.session.remember, true);
+
+    // Reload drops only module memory; restart additionally loses sessionStorage.
+    resetSessionCache();
+    assert.ok(restoreSession().session, "browser reload restores the session");
+    sessionMap.clear();
+    resetSessionCache();
+    assert.ok(restoreSession().session, "Web/Desktop/Mobile restart restores it from persistent storage");
+  }
+});
+
+test("a legacy tab-only record is migrated to persistent storage on restore", () => {
+  const { local, session: sessionMap } = installStorageStub();
+  resetSessionCache();
+  const record = {
+    ...createSession(DEMO_USERS[0] as never, false, new Date()),
+    token: "legacy-provider-access-token",
+  };
+  writeStoredSession(record, "session");
+  resetSessionCache();
+  const restored = restoreSession();
+  assert.ok(restored.session);
+  assert.ok(restored.session.token.startsWith("sess-"), "legacy provider token is replaced by an opaque app id");
+  assert.equal(local.has(SESSION_STORAGE_KEY), true);
+  assert.equal(sessionMap.has(SESSION_STORAGE_KEY), false);
+  assert.equal(readStoredSession()?.persistence, "local");
 });
 
 test("corrupt or incomplete session records are ignored", () => {
@@ -438,14 +477,13 @@ test("a deactivated account cannot change its password from a moment-old session
   });
 });
 
-test("a provider session is adopted only when an app record attests, and recovery URLs are left alone", () => {
-  // The remember-me boot gate: without an app record, a conjured provider
-  // session is signed OUT, never believed — remember-me-off stays a promise.
-  assert.equal(shouldAdoptFoundProviderSession(true), true);
-  assert.equal(shouldAdoptFoundProviderSession(false), false);
+test("a persisted provider session is adopted unless recovery URL authority must be consumed", () => {
+  // Normal boot adopts Supabase's provider-owned persisted session even when an
+  // old app identity record is absent. Recovery material remains isolated.
+  assert.equal(shouldAdoptFoundProviderSession(false), true);
+  assert.equal(shouldAdoptFoundProviderSession(true), false);
 
-  // The companion rule: the boot purge must not touch a URL a recovery page
-  // is about to consume.
+  // The companion rule: boot must not touch a URL a recovery page consumes.
   assert.equal(carriesRecoveryMaterial({ search: "?code=xyz", hash: "" }), true);
   assert.equal(carriesRecoveryMaterial({ search: "", hash: "#access_token=t&refresh_token=r&type=recovery" }), true);
   assert.equal(carriesRecoveryMaterial({ search: "", hash: "#/pos" }), false);

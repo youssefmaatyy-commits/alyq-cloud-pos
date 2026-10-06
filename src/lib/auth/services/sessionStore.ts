@@ -7,14 +7,14 @@
  * lets the pure permission helpers stay synchronous while the session itself is
  * created/validated by the auth service.
  *
- * Storage layout (one key, so a future Supabase migration has a single place to
- * clear):
+ * Storage layout (one key, so logout has a single place to clear):
  *   localStorage  alyq.auth.session.v1   { session, persistence: "local" }
- *   sessionStorage                        { session, persistence: "session" }
  *
- * Reading checks the *other* store too, so a session created with "remember me"
- * off survives a tab reload but not a browser restart, and switching between the
- * two never leaves a stale record behind.
+ * `sessionStorage` is still read and cleared only to migrate records created by
+ * releases where the removed remember-me checkbox selected tab-only storage.
+ * New Web, Electron and Capacitor sessions always use persistent storage. The
+ * record is an app identity cache, not a password or refresh-token store;
+ * Supabase persists and rotates its own session through its configured client.
  */
 import type { AuthSession, AuthUser, SessionPersistence, StoredSession } from "../types";
 

@@ -2519,11 +2519,9 @@ async function main() {
   assert.ok(!denied(), "viewer can still read inventory");
   console.log("  ✓ viewer: read-only screens only, till and refunds denied");
 
-  // ── Session lifetime invariants ──
-  // Actual expiry/eviction is exercised in `scripts/auth.flow.mjs`, which can
-  // boot the app on a seeded session. Here the UI contract is checked: the
-  // session is persisted with a future expiry, remember-me selects the store,
-  // and a chosen registration outlives the tab only when asked to.
+  // ── Persistent session invariants ──
+  // Provider refresh behavior is exercised by `authProvider.live.flow.mjs`.
+  // This DOM contract pins the login UI and default persistent app record.
   await signInAs("manager");
   const readStored = () => {
     const raw =
@@ -2531,38 +2529,16 @@ async function main() {
       dom.window.sessionStorage.getItem("alyq.auth.session.v1");
     return raw ? JSON.parse(raw) : null;
   };
-  const plain = readStored();
-  assert.ok(plain, "a session record is persisted after sign-in");
+  const persistent = readStored();
+  assert.ok(persistent, "a session record is persisted after sign-in");
   assert.ok(
-    new Date(plain.session.expires_at).getTime() > Date.now(),
-    "the stored session expires in the future",
+    new Date(persistent.session.expires_at).getTime() > Date.now(),
+    "the stored session expiry is in the future",
   );
-  assert.equal(plain.persistence, "session", "without remember-me the session is tab-scoped");
-  assert.equal(plain.session.remember, false, "remember-me flag recorded as off");
-
-  await signOut();
-  setField("input[autocomplete='username']", "manager");
-  setField("input[autocomplete='current-password']", DEMO_PASSWORD);
-  // The remember-me checkbox is the only checkbox on the login form.
-  const remember = document.querySelector("input[type='checkbox']");
-  assert.ok(remember, "the login form offers remember-me");
-  remember.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
-  await sleep(100);
-  click("Sign in");
-  for (let i = 0; i < 25 && !isSignedIn(); i += 1) await sleep(200);
-  const remembered = readStored();
-  assert.equal(remembered.persistence, "local", "remember-me moves the session to localStorage");
-  assert.equal(remembered.session.remember, true, "remember-me flag recorded as on");
-  assert.ok(
-    !dom.window.sessionStorage.getItem("alyq.auth.session.v1"),
-    "the session is never kept in both stores at once",
-  );
-  assert.ok(
-    new Date(remembered.session.expires_at).getTime() >
-      new Date(plain.session.expires_at).getTime(),
-    "remember-me grants the longer idle lifetime",
-  );
-  console.log("  ✓ session persistence: tab-scoped by default, localStorage when remembered");
+  assert.equal(persistent.persistence, "local", "login is persistent by default");
+  assert.equal(persistent.session.remember, true, "legacy record flag is normalized to persistent");
+  assert.ok(!dom.window.sessionStorage.getItem("alyq.auth.session.v1"), "session is never duplicated into tab storage");
+  console.log("  ✓ session persistence: localStorage by default, independent of a checkbox");
 
   await signInAs("admin");
   // Phase 49: oversight screens live behind the Settings home — the door, not the leaf.

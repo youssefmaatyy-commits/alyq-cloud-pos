@@ -37,6 +37,10 @@ import {
 import { carriesRecoveryMaterial } from "../services/recoveryUrl";
 import { resetSessionCache } from "../services/sessionStore";
 import { subscribeAuthEvents } from "../services/authEvents";
+import {
+  shouldRevalidateAfterWake,
+  subscribeSessionWakeEvents,
+} from "../services/sessionLifecycle";
 import { getAuthMode, getUserRepository } from "../data";
 import { recordAudit } from "@/modules/audit/services/auditService";
 
@@ -81,20 +85,6 @@ export interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 /**
- * Placeholder expiry for the synthetic session object built from a bare
- * provider event, before the real session is read back — never a polling
- * interval. See `onAuthChange` below.
- */
-const PROVIDER_EVENT_PLACEHOLDER_MS = 60_000;
-
-/**
- * How long a tab must have been backgrounded (hidden, or the window
- * unfocused) before coming back counts as "resuming" rather than a brief
- * alt-tab — the dedup window for the merged focus/visibility refresh.
- */
-const RESUME_MIN_BACKGROUND_MS = 60_000;
-
-/**
  * How often the zero-network local safety check runs (`checkLocalSessionHealth`)
  * for a tab that stays open, focused and on one route — see that function's
  * own doc comment for why this is justified and why it is not a replacement
@@ -125,14 +115,14 @@ function auditSession(
  *
  * Expiry/identity are enforced by events, not polling:
  *   · on boot, by reading back the provider session;
- *   · on navigation, by a local, non-mutating expiry read only — no provider
- *     call, because a route change is not an authority change;
+ *   · in demo mode only, on navigation by a local expiry read; live route
+ *     changes never interpret access-token age as session expiry;
  *   · on sign-in, sign-out and sign-out-everywhere;
  *   · by the provider's own `onAuthStateChange`, which is how a session
  *     revoked elsewhere (or an account deactivated by an admin) ends here
  *     without waiting for anything else to happen;
- *   · on resuming the tab after a meaningful time backgrounded (one merged
- *     focus/visibility path — see the resume effect below);
+ *   · on reconnect and on foreground/resume through one shared Web, Desktop and
+ *     Capacitor lifecycle adapter;
  *   · on an explicit `refreshIdentity()` call (a branch switch, for instance);
  *   · across the other tabs of this same browser (`services/authEvents`);
  *   · and, underneath all of that, a low-frequency, zero-network safety check
@@ -152,7 +142,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [endReason, setEndReason] = useState<SessionEndReason>(null);
   const [error, setError] = useState<AuthErrorCode | null>(null);
   const [syncing, setSyncing] = useState(false);
-  const booted = useRef(false);
+  const explicitSignOutRef = useRef(false);
+  // React StrictMode replays effects in development. Preserve the one boot read
+  // so the first pass clearing an expired demo record cannot make the replay
+  // overwrite its reason with a plain anonymous state.
+  const bootRestoreRef = useRef<ReturnType<typeof restoreSession> | null>(null);
   /**
    * The subscription below is mounted once (re-subscribing would drop provider
    * events mid-flight), so it cannot close over `session` — it reads this ref
@@ -174,59 +168,78 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // ── boot ────────────────────────────────────────────────────────────────
   useEffect(() => {
-    if (booted.current) return;
-    booted.current = true;
-
-    // Offline model first: it is synchronous, so the app renders immediately
-    // with whatever was persisted rather than showing a spinner on every reload.
-    const { session: restored, reason } = restoreSession();
-    setSession(restored);
-    setEndReason(reason);
-    setStatus(restored ? "authenticated" : "anonymous");
-
-    if (getAuthMode() !== "supabase") return;
-
-    // Live mode: the provider is the authority, so ask it and adopt what it
-    // says — including "nothing", which clears a record the browser outlived.
-    //
-    // Adoption is app-record-authoritative. Because the Supabase client is
-    // configured with `persistSession: true`, a provider session can spring
-    // into existence for someone who signed in with remember-me OFF and merely
-    // closed the tab — and "remember me: off" is a promise, so a provider
-    // session with no app record behind it is ended here rather than believed.
-    // The one exception is a URL that carries recovery material: the sign-out
-    // must not race the reset page that's about to consume that exact link.
     let cancelled = false;
+    bootRestoreRef.current ??= restoreSession();
+    const { session: restored, reason } = bootRestoreRef.current;
+
+    if (getAuthMode() !== "supabase") {
+      setSession(restored);
+      setEndReason(reason);
+      setStatus(restored ? "authenticated" : "anonymous");
+      return;
+    }
+
+    // Recovery material belongs to the reset page, not generic session boot.
+    // Preserve an existing identity if there is one, otherwise stay anonymous;
+    // never sign the provider out while it is exchanging the recovery grant.
+    if (!shouldAdoptFoundProviderSession(carriesRecoveryMaterial())) {
+      setSession(restored);
+      setEndReason(null);
+      setStatus(restored ? "authenticated" : "anonymous");
+      return;
+    }
+
+    // Keep protected routes behind BootScreen until the provider restore has an
+    // answer. This prevents a login-screen flash on Web refresh, Electron start
+    // and Capacitor cold start.
     const bootEpoch = bumpEpoch();
+    setSession(null);
+    setStatus("loading");
+    setEndReason(null);
     setSyncing(true);
     void (async () => {
       try {
+        if (restored) {
+          // `revalidateSession` refreshes when the access token is stale and
+          // preserves the cached identity when the failure is only transport.
+          const result = await revalidateSession();
+          if (cancelled || epochRef.current !== bootEpoch) return;
+          if (!result.session) {
+            forgetSession();
+            setSession(null);
+            setStatus("anonymous");
+            setEndReason(result.reason ?? "expired");
+            return;
+          }
+          setSession(result.session);
+          setStatus("authenticated");
+          setEndReason(null);
+          return;
+        }
+
+        // Supabase may hold a perfectly valid provider session even when the
+        // old app-side record is absent (the former remember-me-off case).
         const live = await getUserRepository().currentSession();
         if (cancelled || epochRef.current !== bootEpoch) return;
-        if (!live || !live.user) {
+        if (!live?.user) {
           forgetSession();
           setSession(null);
           setStatus("anonymous");
+          setEndReason(null);
           return;
         }
-        if (!shouldAdoptFoundProviderSession(restored !== null)) {
-          if (carriesRecoveryMaterial()) return; // leave the link for the reset page
-          await getUserRepository().signOut().catch(() => undefined);
-          if (cancelled || epochRef.current !== bootEpoch) return;
-          forgetSession();
-          setSession(null);
-          setStatus("anonymous");
-          return;
-        }
-        const adopted = adoptProviderSession(live, restored?.remember ?? false);
+        const adopted = adoptProviderSession(live);
         if (!adopted) return;
         setSession(adopted);
         setStatus("authenticated");
         setEndReason(null);
       } catch {
-        /* a provider failure on boot keeps the persisted session; the next
-           authority check (sign-in/out, a provider event, or resuming the
-           tab) retries */
+        if (cancelled || epochRef.current !== bootEpoch) return;
+        // With no cached identity it is unsafe to invent one offline. With a
+        // cached identity `revalidateSession` already retained it above.
+        setSession(restored);
+        setStatus(restored ? "authenticated" : "anonymous");
+        setEndReason(null);
       } finally {
         if (!cancelled) setSyncing(false);
       }
@@ -244,15 +257,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const revalidate = useCallback(() => {
     const myEpoch = bumpEpoch();
     if (getAuthMode() === "supabase") {
-      // The provider answer is async; the sync check still runs first so an
-      // obviously-dead record is dropped without waiting for a round trip.
-      const immediate = validateSession();
-      if (!immediate.session && immediate.changed) {
-        setSession(null);
-        setStatus("anonymous");
-        setEndReason(immediate.reason);
-        return;
-      }
       void (async () => {
         const { session: next, reason, changed } = await revalidateSession();
         if (epochRef.current !== myEpoch) return;
@@ -260,7 +264,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (changed) {
             setSession(null);
             setStatus("anonymous");
-            setEndReason(reason);
+            setEndReason(reason ?? "expired");
           }
           return;
         }
@@ -281,15 +285,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (changed) setSession(next);
   }, [bumpEpoch]);
 
-  // ── navigation: a local, non-mutating expiry read only ───────────────────
-  // Routing is not an authority-change event, so this never asks the
-  // provider and never touches the sliding-expiry model (which would wrongly
-  // stretch a live session's provider-set expiry). It exists only so a
-  // session whose clock has *already* run out ends at the next click rather
-  // than surviving — silently "authenticated" — until the next resume or
-  // safety check.
+  // ── navigation: demo-only local expiry ──────────────────────────────────
+  // A live access-token timestamp is not a session lifetime and can never turn
+  // route navigation into logout. Supabase refreshes it through its SDK and the
+  // lifecycle recovery path. Demo mode has no refresh token, so its local
+  // sliding expiry remains authoritative.
   useEffect(() => {
-    if (status !== "authenticated") return;
+    if (status !== "authenticated" || getAuthMode() === "supabase") return;
     const onNavigate = () => {
       const current = sessionRef.current;
       if (!current || !isSessionExpired(current)) return;
@@ -306,62 +308,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [status]);
 
-  // ── resume: ONE merged focus/visibility refresh, deduped by a sentinel ───
-  // `backgroundedAt` is set (without overwriting an earlier value) whenever
-  // the tab is hidden or the window loses focus, and consumed by whichever of
-  // "visible" or "focus" fires first on the way back — so a tab switch (which
-  // fires both) refreshes once, not twice, and a window losing OS focus
-  // without a tab change (which fires only focus/blur) is still covered. A
-  // background period shorter than the threshold is treated as a flicker, not
-  // a return, and is not refreshed at all.
+  // ── reconnect / Web+Desktop focus / native foreground ──────────────────
   useEffect(() => {
-    if (status !== "authenticated") return;
-    let backgroundedAt: number | null = null;
-    const markBackgrounded = () => {
-      if (backgroundedAt === null) backgroundedAt = Date.now();
-    };
-    const maybeResume = () => {
-      if (document.visibilityState === "hidden") return;
-      if (backgroundedAt === null) return;
-      const elapsed = Date.now() - backgroundedAt;
-      backgroundedAt = null; // consumed: the other event, if it also fires, no-ops
-      if (elapsed < RESUME_MIN_BACKGROUND_MS) return;
+    if (status !== "authenticated" || getAuthMode() !== "supabase") return;
+    return subscribeSessionWakeEvents((wake) => {
+      const current = sessionRef.current;
+      if (!current || !shouldRevalidateAfterWake(wake, current.expires_at)) return;
       const myEpoch = bumpEpoch();
       void (async () => {
-        const { session: next, changed, signedOut } = await resyncCurrentIdentity();
+        const { session: next, reason, changed } = await revalidateSession();
         if (epochRef.current !== myEpoch) return;
-        if (signedOut || !next) {
-          setSession(null);
-          setStatus("anonymous");
-          setEndReason("signed_out");
+        if (!next) {
+          if (changed) {
+            setSession(null);
+            setStatus("anonymous");
+            setEndReason(reason ?? "expired");
+          }
           return;
         }
         if (changed) setSession(next);
       })();
-    };
-    const onVisibilityChange = () => {
-      if (document.visibilityState === "hidden") markBackgrounded();
-      else maybeResume();
-    };
-    const onBlur = () => markBackgrounded();
-    const onFocus = () => maybeResume();
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    window.addEventListener("blur", onBlur);
-    window.addEventListener("focus", onFocus);
-    return () => {
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-      window.removeEventListener("blur", onBlur);
-      window.removeEventListener("focus", onFocus);
-    };
+    });
   }, [status, bumpEpoch]);
 
   // ── local safety net: zero-network, long interval ────────────────────────
-  // Covers the one thing none of the above does: a tab that stays open,
-  // focused and on one route for a long time. See `checkLocalSessionHealth`.
-  // This is deliberately NOT a replacement for the removed heartbeat — it
-  // never asks the provider for role/branch/custom-role data, and the one
-  // network call it can make (revoking a session past the absolute cap) is
-  // the rare terminal case, not the common tick.
+  // Demo mode enforces its local sliding expiry. Live mode is deliberately a
+  // no-op here: access-token age is never a local logout verdict, and provider
+  // refresh remains event/SDK-driven rather than an infinite polling loop.
   useEffect(() => {
     if (status !== "authenticated") return;
     const timer = window.setInterval(() => {
@@ -397,34 +370,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               forgetSession();
               setSession(null);
               setStatus("anonymous");
-              setEndReason("signed_out");
+              setEndReason(explicitSignOutRef.current ? "signed_out" : "expired");
               return;
             }
-            // A provider event (SIGNED_IN, TOKEN_REFRESHED, USER_UPDATED) is
-            // corroboration, not authority by itself: without a session the
-            // app already holds, it must not create one. Conjuring a session
-            // here is precisely how remember-me-off logins would come back
-            // after reload, and how a recovery link's implicit SIGNED_IN would
-            // leak into the app without the reset page asking for it.
-            if (!shouldAdoptFoundProviderSession(sessionRef.current !== null)) return;
-            const live = {
-              token: "",
-              issued_at: new Date().toISOString(),
-              expires_at: new Date(Date.now() + PROVIDER_EVENT_PLACEHOLDER_MS).toISOString(),
-              refreshable: true,
-              user: event.user,
-            };
-            // Read the real session back rather than trusting a synthesised
-            // expiry; if that fails, keep the user we were just handed.
+            // Boot owns discovery of a provider-only persisted session. Later
+            // provider events may update only an app session already held, so a
+            // stale event cannot resurrect explicit logout or hijack recovery.
+            if (!sessionRef.current) return;
             const myEpoch = bumpEpoch();
             void (async () => {
-              const current = await getUserRepository().currentSession().catch(() => null);
-              if (epochRef.current !== myEpoch) return;
-              const adopted = adoptProviderSession(current ?? live, sessionRef.current?.remember ?? false);
-              if (!adopted) return;
-              setSession(adopted);
-              setStatus("authenticated");
-              setEndReason(null);
+              try {
+                const current = await getUserRepository().currentSession();
+                if (epochRef.current !== myEpoch || !current?.user) return;
+                const adopted = adoptProviderSession(current);
+                if (!adopted) return;
+                setSession(adopted);
+                setStatus("authenticated");
+                setEndReason(null);
+              } catch {
+                // TOKEN_REFRESHED/profile sync transport failure is not logout.
+              }
             })();
           })
         : () => undefined;
@@ -470,9 +435,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
     // `sessionRef` is read inside the callbacks; re-subscribing on every
     // session change would drop provider events mid-flight, so the read goes
-    // through the ref and the subscription is mounted once. An empty
-    // dependency array is intentional here.
-  }, []);
+    // through the ref and the subscription is mounted once. `bumpEpoch` is a
+    // stable callback, so listing it satisfies the hook contract without
+    // resubscribing on session changes.
+  }, [bumpEpoch]);
 
   // ── actions ─────────────────────────────────────────────────────────────
   const signIn = useCallback(async (credentials: Credentials) => {
@@ -480,6 +446,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // nothing already in flight (a resume refresh from the login screen's
     // previous session, say) can land its answer on top of this one.
     bumpEpoch();
+    explicitSignOutRef.current = false;
     setError(null);
     const outcome = await signInRequest(credentials);
     if (!outcome.ok || !outcome.session) {
@@ -507,6 +474,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // a provider event, a cross-tab sync) that is still in flight must never
     // be able to resurrect this session after sign-out has started.
     bumpEpoch();
+    explicitSignOutRef.current = true;
     const actor = session?.user ?? null;
     await signOutRequest();
     // Providers unmounting drops their own subscriptions; this makes sure no
@@ -521,6 +489,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOutEverywhere = useCallback(async () => {
     bumpEpoch();
+    explicitSignOutRef.current = true;
     const actor = session?.user ?? null;
     await signOutRequest({ everywhere: true });
     stopRealtime();
