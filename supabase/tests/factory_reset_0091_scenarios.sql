@@ -1,4 +1,5 @@
--- 0091 focused scenarios — current-schema Factory Reset, health and terminal rollback.
+-- 0091 contract + 0093 repair scenarios — guarded DELETEs, notification cleanup,
+-- current-schema Factory Reset, health and terminal rollback.
 -- Runs after every earlier scenario and before development seed reapplication.
 
 create or replace function public.test_0091_fail_terminal_reset_audit()
@@ -47,13 +48,147 @@ declare
   v_count             integer;
   v_stock             integer;
   v_profiles          integer;
+  v_custom_roles      integer;
+  v_memberships       integer;
+  v_approvals         integer;
+  v_manager_creds     integer;
+  v_manager_attempts  integer;
+  v_backups           integer;
+  v_import_batches    integer;
+  v_stocktakes        integer;
+  v_stocktake_lines   integer;
+  v_mobile_installs   integer;
   v_audits            integer;
   v_started           integer;
   v_succeeded         integer;
+  v_outbox_rows       integer;
+  v_inbox_rows        integer;
+  v_delivery_rows     integer;
+  v_attempt_rows      integer;
   v_key               text;
   v_value             jsonb;
+  v_function_source   text;
+  v_delete_statement  text;
 begin
   perform pg_temp.become(null, 'postgres');
+
+  -- PGlite does not preload Production's pg-safeupdate post-parse hook. Inspect
+  -- the installed functions to model the hook's exact relevant condition:
+  -- every DELETE must have a qualification, and this repair forbids WHERE TRUE.
+  for v_function_source in
+    select p.prosrc
+      from pg_proc p
+      join pg_namespace n on n.oid=p.pronamespace
+     where n.nspname='public'
+       and p.proname in('notification_factory_reset_cleanup','system_factory_reset')
+  loop
+    for v_delete_statement in
+      select m[1]
+        from regexp_matches(v_function_source,'(delete[[:space:]]+from[^;]*;)','gi') m
+    loop
+      v_delete_statement := regexp_replace(lower(v_delete_statement),'[[:space:]]+',' ','g');
+      if strpos(v_delete_statement,' where ')=0 then
+        raise exception '0093 pg-safeupdate contract found DELETE without WHERE: %',v_delete_statement;
+      end if;
+      if v_delete_statement ~ ' where [( ]*true([ );]|$)' then
+        raise exception '0093 pg-safeupdate contract found arbitrary WHERE TRUE: %',v_delete_statement;
+      end if;
+    end loop;
+  end loop;
+  select p.prosrc into strict v_function_source
+    from pg_proc p
+    join pg_namespace n on n.oid=p.pronamespace
+   where n.nspname='public' and p.proname='notification_factory_reset_cleanup';
+  if strpos(v_function_source,'notification_delivery_attempts')=0
+     or strpos(v_function_source,'notification_delivery_attempts') >= strpos(v_function_source,'notification_push_deliveries')
+     or strpos(v_function_source,'notification_push_deliveries') >= strpos(v_function_source,'user_notification_inbox')
+     or strpos(v_function_source,'user_notification_inbox') >= strpos(v_function_source,'notification_outbox') then
+    raise exception '0093 notification cleanup is not installed in child-first order';
+  end if;
+
+  -- Regression for the production pg-safeupdate path: begin with exactly zero
+  -- notification facts, then fire the same reset-start audit trigger used by
+  -- system_factory_reset(). The installed cleanup must accept the empty case.
+  delete from public.notification_delivery_attempts where id is not null;
+  delete from public.notification_push_deliveries where id is not null;
+  delete from public.user_notification_inbox where id is not null;
+  delete from public.notification_outbox where id is not null;
+  insert into public.audit_log(
+    action,entity,entity_id,entity_label,details,user_id,user_name,module,branch_id
+  ) values(
+    'system.reset.started','system','factory','Factory Reset zero-notification proof',
+    '{"scenario":"zero-notifications"}'::jsonb,v_admin::text,'Amina Admin','settings',v_main
+  );
+  if exists(select 1 from public.notification_outbox)
+     or exists(select 1 from public.user_notification_inbox)
+     or exists(select 1 from public.notification_push_deliveries)
+     or exists(select 1 from public.notification_delivery_attempts) then
+    raise exception '0093 zero-notification cleanup did not remain empty';
+  end if;
+
+  -- Exercise exactly one complete outbox -> inbox -> delivery -> attempt graph.
+  -- mobile_installations is intentionally outside the cleanup contract.
+  insert into public.mobile_installations(
+    id,installation_id,user_id,branch_id,platform,app_version,push_token,
+    push_token_hash,push_registered,active,locale
+  ) values(
+    '00000000-0000-4000-8000-000000009201',
+    '00000000-0000-4000-8000-000000009202',v_admin,v_main,'android','9.3.0',
+    'phase91-notification-token',repeat('a',64),true,true,'en'
+  ) on conflict(installation_id) do update set
+    user_id=excluded.user_id,branch_id=excluded.branch_id,push_token=excluded.push_token,
+    push_token_hash=excluded.push_token_hash,push_registered=true,active=true;
+  insert into public.notification_outbox(
+    id,dedupe_key,kind,branch_id,entity_type,entity_id,route_key,route_entity_id,
+    required_capabilities,title_en,title_ar,body_en,body_ar,state
+  ) values(
+    '00000000-0000-4000-8000-000000009291','phase91-single-notification',
+    'offline_sync_failure',v_main,'register','single','health','',
+    array['run_health_check'],'Single reset fixture','اختبار إعادة الضبط',
+    'Single notification cleanup fixture.','اختبار تنظيف إشعار واحد.','expanded'
+  );
+  insert into public.user_notification_inbox(
+    id,outbox_id,user_id,branch_id,kind,entity_type,entity_id,route_key,
+    route_entity_id,required_capabilities,title_en,title_ar,body_en,body_ar
+  ) values(
+    '00000000-0000-4000-8000-000000009292',
+    '00000000-0000-4000-8000-000000009291',v_admin,v_main,
+    'offline_sync_failure','register','single','health','',array['run_health_check'],
+    'Single reset fixture','اختبار إعادة الضبط',
+    'Single notification cleanup fixture.','اختبار تنظيف إشعار واحد.'
+  );
+  insert into public.notification_push_deliveries(
+    id,outbox_id,inbox_id,installation_id,user_id,token_hash,provider,status,
+    attempt_count,max_attempts
+  ) values(
+    '00000000-0000-4000-8000-000000009293',
+    '00000000-0000-4000-8000-000000009291',
+    '00000000-0000-4000-8000-000000009292',
+    '00000000-0000-4000-8000-000000009201',v_admin,repeat('a',64),
+    'fcm','delivered',1,5
+  );
+  insert into public.notification_delivery_attempts(
+    id,delivery_id,attempt_number,outcome,http_status
+  ) values(
+    '00000000-0000-4000-8000-000000009294',
+    '00000000-0000-4000-8000-000000009293',1,'delivered',200
+  );
+  insert into public.audit_log(
+    action,entity,entity_id,entity_label,details,user_id,user_name,module,branch_id
+  ) values(
+    'system.reset.started','system','factory','Factory Reset one-notification proof',
+    '{"scenario":"one-notification"}'::jsonb,v_admin::text,'Amina Admin','settings',v_main
+  );
+  if exists(select 1 from public.notification_outbox)
+     or exists(select 1 from public.user_notification_inbox)
+     or exists(select 1 from public.notification_push_deliveries)
+     or exists(select 1 from public.notification_delivery_attempts) then
+    raise exception '0093 one-notification cleanup left notification facts';
+  end if;
+  if not exists(select 1 from public.mobile_installations
+                where id='00000000-0000-4000-8000-000000009201') then
+    raise exception '0093 notification cleanup deleted a mobile installation';
+  end if;
 
   -- Security/branch/register state is retained by contract. Add one second
   -- branch so a real current-schema transfer can exist.
@@ -76,7 +211,10 @@ begin
   ) on conflict(id) do nothing;
   insert into public.product_variants(
     id,product_id,sku,color_ar,color_en,size,stock_quantity,active
-  ) values(v_variant,v_product,'P91-VARIANT','ذهبي','Gold',18,6,true)
+  ) values
+    (v_variant,v_product,'P91-VARIANT','ذهبي','Gold',18,6,true),
+    ('00000000-0000-4000-8000-0000000091d3',v_product,'P91-VARIANT-2','فضي','Silver',20,0,true),
+    ('00000000-0000-4000-8000-0000000091d4',v_product,'P91-VARIANT-3','أسود','Black',22,0,true)
   on conflict(id) do nothing;
 
   -- Accepted offline replay has no separate queue table: its durable record is
@@ -139,13 +277,36 @@ begin
     v_stocktake_line,v_stocktake,v_product,v_variant,v_variant::text,'P91-VARIANT',
     'منتج 0091','0091 product','Gold / 18',v_stock,v_stock,0,'P91-SNAPSHOT'
   );
+  insert into public.stocktakes(
+    id,reference,status,blind,note,created_by,created_by_name,
+    finalized_at,finalized_by,finalized_by_name
+  ) values
+    ('00000000-0000-4000-8000-0000000091e3','ST-0091-PRESERVE-2','finalized',false,
+     '0091 second immutable snapshot',v_admin::text,'Amina Admin',now(),v_admin::text,'Amina Admin'),
+    ('00000000-0000-4000-8000-0000000091e4','ST-0091-PRESERVE-3','finalized',false,
+     '0091 third immutable snapshot',v_admin::text,'Amina Admin',now(),v_admin::text,'Amina Admin');
+  insert into public.stocktake_lines(
+    id,stocktake_id,product_id,variant_id,shelf_key,sku,product_name_ar,
+    product_name_en,variant_label,expected_quantity,physical_quantity,variance,
+    movement_reference
+  ) values
+    ('00000000-0000-4000-8000-0000000091e5','00000000-0000-4000-8000-0000000091e3',
+     v_product,v_variant,v_variant::text,'P91-VARIANT','منتج 0091','0091 product',
+     'Gold / 18',v_stock,v_stock,0,'P91-SNAPSHOT-2'),
+    ('00000000-0000-4000-8000-0000000091e6','00000000-0000-4000-8000-0000000091e4',
+     v_product,v_variant,v_variant::text,'P91-VARIANT','منتج 0091','0091 product',
+     'Gold / 18',v_stock,v_stock,0,'P91-SNAPSHOT-3');
 
   insert into public.import_batches(
     batch_id,kind,mode,status,filename,total_rows,written_count,branch_id,user_id,user_name,summary
-  ) values(
-    'phase91-preserved-import','catalogue','all-or-nothing','completed','phase91.xlsx',
-    1,1,v_main::text,v_admin,'Amina Admin','{"proof":"0091"}'::jsonb
-  ) on conflict(batch_id) do update set status='completed',summary=excluded.summary;
+  ) values
+    ('phase91-preserved-import','catalogue','all-or-nothing','completed','phase91.xlsx',
+     1,1,v_main::text,v_admin,'Amina Admin','{"proof":"0091"}'::jsonb),
+    ('phase91-preserved-import-2','catalogue','all-or-nothing','completed','phase91-2.xlsx',
+     2,2,v_main::text,v_admin,'Amina Admin','{"proof":"0091-2"}'::jsonb),
+    ('phase91-preserved-import-3','catalogue','all-or-nothing','completed','phase91-3.xlsx',
+     3,3,v_main::text,v_admin,'Amina Admin','{"proof":"0091-3"}'::jsonb)
+  on conflict(batch_id) do update set status='completed',summary=excluded.summary;
 
   -- Preserve an explicit audit trace for the accepted offline operation. It is
   -- history, not an operational queue row, and must survive the sale deletion.
@@ -158,6 +319,76 @@ begin
   );
 
   perform pg_temp.become(null, 'postgres');
+
+  -- Production-shaped notification state: several outbox facts, inbox rows,
+  -- per-installation deliveries and multiple immutable attempts. The reset's
+  -- started-audit trigger must clear all of them set-wise, and rollback must
+  -- restore every row when the terminal success audit is forced to fail.
+  insert into public.mobile_installations(
+    id,installation_id,user_id,branch_id,platform,app_version,push_token,
+    push_token_hash,push_registered,active,locale
+  ) values(
+    '00000000-0000-4000-8000-000000009201',
+    '00000000-0000-4000-8000-000000009202',v_admin,v_main,'android','9.2.0',
+    'phase91-notification-token',repeat('a',64),true,true,'en'
+  ) on conflict(installation_id) do update set
+    user_id=excluded.user_id,branch_id=excluded.branch_id,push_token=excluded.push_token,
+    push_token_hash=excluded.push_token_hash,push_registered=true,active=true;
+
+  insert into public.notification_outbox(
+    id,dedupe_key,kind,branch_id,entity_type,entity_id,route_key,route_entity_id,
+    required_capabilities,title_en,title_ar,body_en,body_ar,state
+  )
+  select ('00000000-0000-4000-8000-00000000921'||n)::uuid,
+    'phase91-reset-notification-'||n,'offline_sync_failure',v_main,'register',
+    v_register_id::text,'health','',array['run_health_check'],
+    'Reset fixture '||n,'اختبار إعادة الضبط '||n,
+    'Production-shaped notification fixture.','اختبار إشعار متعدد الصفوف.','expanded'
+  from generate_series(1,3) n;
+
+  insert into public.user_notification_inbox(
+    id,outbox_id,user_id,branch_id,kind,entity_type,entity_id,route_key,
+    route_entity_id,required_capabilities,title_en,title_ar,body_en,body_ar
+  )
+  select ('00000000-0000-4000-8000-00000000922'||row_number() over(order by o.id))::uuid,
+    o.id,v_admin,v_main,o.kind,o.entity_type,o.entity_id,o.route_key,o.route_entity_id,
+    o.required_capabilities,o.title_en,o.title_ar,o.body_en,o.body_ar
+  from public.notification_outbox o
+  where o.dedupe_key like 'phase91-reset-notification-%';
+
+  insert into public.notification_push_deliveries(
+    id,outbox_id,inbox_id,installation_id,user_id,token_hash,provider,status,
+    attempt_count,max_attempts
+  )
+  select ('00000000-0000-4000-8000-00000000923'||row_number() over(order by i.id))::uuid,
+    i.outbox_id,i.id,'00000000-0000-4000-8000-000000009201',v_admin,repeat('a',64),
+    'fcm','delivered',2,5
+  from public.user_notification_inbox i
+  where i.outbox_id in(
+    select id from public.notification_outbox where dedupe_key like 'phase91-reset-notification-%'
+  );
+
+  insert into public.notification_delivery_attempts(
+    id,delivery_id,attempt_number,outcome,http_status,error_code
+  )
+  select gen_random_uuid(),d.id,n,
+    case when n=1 then 'retry' else 'delivered' end,
+    case when n=1 then 503 else 200 end,
+    case when n=1 then 'unavailable' else null end
+  from public.notification_push_deliveries d
+  cross join generate_series(1,2) n
+  where d.outbox_id in(
+    select id from public.notification_outbox where dedupe_key like 'phase91-reset-notification-%'
+  );
+
+  select count(*)::integer into v_outbox_rows from public.notification_outbox;
+  select count(*)::integer into v_inbox_rows from public.user_notification_inbox;
+  select count(*)::integer into v_delivery_rows from public.notification_push_deliveries;
+  select count(*)::integer into v_attempt_rows from public.notification_delivery_attempts;
+  if v_outbox_rows < 3 or v_inbox_rows < 3 or v_delivery_rows < 3 or v_attempt_rows < 6 then
+    raise exception 'notification reset fixture did not create production-shaped multi-row state';
+  end if;
+
   update public.website_settings
      set settings=jsonb_build_object(
        'phase91_marker','must-roll-back',
@@ -172,6 +403,16 @@ begin
   update public.refund_counters set next_value=913 where id=1;
 
   select count(*)::integer into v_profiles from public.profiles;
+  select count(*)::integer into v_custom_roles from public.custom_roles;
+  select count(*)::integer into v_memberships from public.branch_memberships;
+  select count(*)::integer into v_approvals from public.approval_requests;
+  select count(*)::integer into v_manager_creds from public.manager_credentials;
+  select count(*)::integer into v_manager_attempts from public.manager_pin_attempts;
+  select count(*)::integer into v_backups from public.backups;
+  select count(*)::integer into v_import_batches from public.import_batches;
+  select count(*)::integer into v_stocktakes from public.stocktakes;
+  select count(*)::integer into v_stocktake_lines from public.stocktake_lines;
+  select count(*)::integer into v_mobile_installs from public.mobile_installations;
   select count(*)::integer into v_audits from public.audit_log;
   select count(*)::integer into v_started from public.audit_log
    where action='system.reset.started' and entity_id='factory';
@@ -180,8 +421,8 @@ begin
 
   perform pg_temp.become(v_admin, 'authenticated');
   v_health := public.system_health_probe();
-  if v_health->>'migration' <> '0092_mobile_push_and_notification_center.sql'
-     or (v_health->>'migration_count')::integer <> 92
+  if v_health->>'migration' <> '0093_factory_reset_notification_cleanup_repair.sql'
+     or (v_health->>'migration_count')::integer <> 93
      or (v_health->>'authenticated')::boolean is not true
      or (v_health->>'branch_context_valid')::boolean is not true then
     raise exception '0091 health contract mismatch: %',v_health;
@@ -253,6 +494,25 @@ begin
      or (select count(*) from public.audit_log where action='system.reset.succeeded' and entity_id='factory') <> v_succeeded then
     raise exception 'terminal rollback changed reset/audit evidence';
   end if;
+  if (select count(*) from public.notification_outbox) <> v_outbox_rows
+     or (select count(*) from public.user_notification_inbox) <> v_inbox_rows
+     or (select count(*) from public.notification_push_deliveries) <> v_delivery_rows
+     or (select count(*) from public.notification_delivery_attempts) <> v_attempt_rows then
+    raise exception 'terminal rollback changed notification outbox/inbox/delivery evidence';
+  end if;
+  if (select count(*) from public.profiles) <> v_profiles
+     or (select count(*) from public.custom_roles) <> v_custom_roles
+     or (select count(*) from public.branch_memberships) <> v_memberships
+     or (select count(*) from public.approval_requests) <> v_approvals
+     or (select count(*) from public.manager_credentials) <> v_manager_creds
+     or (select count(*) from public.manager_pin_attempts) <> v_manager_attempts
+     or (select count(*) from public.backups) <> v_backups
+     or (select count(*) from public.import_batches) <> v_import_batches
+     or (select count(*) from public.stocktakes) <> v_stocktakes
+     or (select count(*) from public.stocktake_lines) <> v_stocktake_lines
+     or (select count(*) from public.mobile_installations) <> v_mobile_installs then
+    raise exception 'terminal rollback changed protected admin/security/history state';
+  end if;
   if (select product_id from public.stocktake_lines where id=v_stocktake_line) is distinct from v_product
      or (select variant_id from public.stocktake_lines where id=v_stocktake_line) is distinct from v_variant then
     raise exception 'terminal rollback detached the stocktake snapshot';
@@ -293,8 +553,12 @@ begin
      or exists(select 1 from public.stock_movements)
      or exists(select 1 from public.product_variants)
      or exists(select 1 from public.products)
-     or exists(select 1 from public.categories) then
-    raise exception 'successful 0091 factory reset left operational/catalogue rows';
+     or exists(select 1 from public.categories)
+     or exists(select 1 from public.notification_outbox)
+     or exists(select 1 from public.user_notification_inbox)
+     or exists(select 1 from public.notification_push_deliveries)
+     or exists(select 1 from public.notification_delivery_attempts) then
+    raise exception 'successful 0091 factory reset left operational/catalogue/notification rows';
   end if;
   if not exists(select 1 from public.stocktakes where id=v_stocktake)
      or not exists(select 1 from public.stocktake_lines where id=v_stocktake_line)
@@ -311,9 +575,21 @@ begin
     raise exception 'successful reset deleted accepted-offline audit evidence';
   end if;
   if (select count(*) from public.profiles) <> v_profiles
+     or (select count(*) from public.custom_roles) <> v_custom_roles
+     or (select count(*) from public.branch_memberships) <> v_memberships
+     or (select count(*) from public.approval_requests) <> v_approvals
+     or (select count(*) from public.manager_credentials) <> v_manager_creds
+     or (select count(*) from public.manager_pin_attempts) <> v_manager_attempts
+     or (select count(*) from public.backups) <> v_backups
+     or (select count(*) from public.import_batches) <> v_import_batches
+     or (select count(*) from public.stocktakes) <> v_stocktakes
+     or (select count(*) from public.stocktake_lines) <> v_stocktake_lines
+     or (select count(*) from public.mobile_installations) <> v_mobile_installs
+     or not exists(select 1 from public.mobile_installations
+                   where id='00000000-0000-4000-8000-000000009201')
      or not exists(select 1 from public.branches where id=v_destination)
      or (v_register_id is not null and not exists(select 1 from public.registers where id=v_register_id)) then
-    raise exception 'successful reset changed profiles/branches/register security state';
+    raise exception 'successful reset changed protected admin/security/history state';
   end if;
   if (select next_value from public.sale_counters where id=1) <> 1
      or (select next_value from public.return_counters where id=1) <> 1
@@ -326,7 +602,7 @@ begin
     raise exception 'successful reset did not append exactly one start and one success record';
   end if;
 
-  raise notice '0091 reset contract under latest schema — health reports 92; effective preview counts match the result; linked returns, cash/shift, transfer/movement and catalogue rows delete child-first; stocktakes/imports/offline audit/security survive; and a forced FINAL success-audit failure rolls back sales, returns, products, variants, branch stock, settings, counters and reset audits';
+  raise notice '0091 reset contract repaired by 0093 — health reports 93; guarded zero/one/many notification cleanup passes; effective preview counts match the result; linked returns, cash/shift, transfer/movement and catalogue rows delete child-first; protected admin/security/history survives; and a forced FINAL success-audit failure restores notifications, business rows, settings, counters and reset audits';
 end
 $phase91$;
 

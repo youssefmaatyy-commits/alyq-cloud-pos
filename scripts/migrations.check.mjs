@@ -69,6 +69,7 @@ const PROMPT7_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "prompt7_sce
 const IMPORT_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "import_scenarios.sql");
 const HARDENING_0090_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "hardening_0090_scenarios.sql");
 const FACTORY_RESET_0091_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "factory_reset_0091_scenarios.sql");
+const FACTORY_RESET_0093_MIGRATION_FILE = path.join(ROOT, "supabase", "migrations", "0093_factory_reset_notification_cleanup_repair.sql");
 const PUSH_0092_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "push_0092_scenarios.sql");
 const SEED_FILE = path.join(ROOT, "supabase", "seed.sql");
 const SRC_DIR = path.join(ROOT, "src");
@@ -120,6 +121,16 @@ if (migrations.length === 0) {
   console.error(c.red("✗ no migrations found in supabase/migrations/"));
   process.exit(1);
 }
+
+// pg-safeupdate rejects a DELETE when PostgreSQL's analyzed query has no WHERE
+// qualification (jointree->quals is null). PGlite does not preload that hook, so
+// mirror the relevant contract against the installed PL/pgSQL source instead of
+// allowing ordinary local execution to give a false-positive result again.
+const deleteStatements = (source) => source.match(/\bdelete\s+from\b[\s\S]*?;/gi) ?? [];
+const unqualifiedDeleteStatements = (source) => deleteStatements(source)
+  .filter((statement) => !/\bwhere\b/i.test(statement));
+const arbitraryTrueDeleteStatements = (source) => deleteStatements(source)
+  .filter((statement) => /\bwhere\s+(?:\(\s*)?true\b/i.test(statement));
 
 // ── drivers ───────────────────────────────────────────────────────────────
 /**
@@ -455,16 +466,16 @@ if (!VERIFY_ONLY) {
   }
 
   if (failures.length === 0 && runScenarios) {
-    console.log(c.bold("\nMigration 0091 focused scenarios (health + current-schema Factory Reset + terminal rollback)"));
+    console.log(c.bold("\nMigration 0091 contract + 0093 repair scenarios (guarded notification cleanup + atomic rollback)"));
     try {
       const sql = fs.readFileSync(FACTORY_RESET_0091_SCENARIOS_FILE, "utf8");
       await driver.exec(sql, "factory_reset_0091_scenarios.sql");
-      console.log(`  ${c.green("✓")} every focused Migration 0091 Factory Reset scenario passed`);
+      console.log(`  ${c.green("✓")} zero/one/many notification cleanup and the repaired Factory Reset contract passed`);
       for (const notice of sql.matchAll(/raise notice '([^']+)'/gi)) console.log(c.dim(`      ${notice[1]}`));
     } catch (error) {
-      console.log(`  ${c.red("✗")} a focused Migration 0091 Factory Reset scenario failed`);
+      console.log(`  ${c.red("✗")} a Migration 0093 Factory Reset repair scenario failed`);
       if (error?.stack) console.log(c.dim(error.stack));
-      failures.push({ name: "Migration 0091 Factory Reset scenarios", phase: "scenario", error: String(error.message) });
+      failures.push({ name: "Migration 0093 Factory Reset repair scenarios", phase: "scenario", error: String(error.message) });
     }
   }
 
@@ -674,6 +685,58 @@ async function checkExpectations() {
   report("every table the repositories query is selectable by authenticated", unreachable);
   report("every RPC the repositories call is executable by authenticated", unexecutable);
   report("no enum column defaults to a value outside its own labels", badDefaults);
+
+  const resetFunctionRows = await driver.query(`
+    select p.proname,p.prosrc
+      from pg_proc p
+      join pg_namespace n on n.oid=p.pronamespace
+     where n.nspname='public'
+       and p.proname in('notification_factory_reset_cleanup','system_factory_reset')
+     order by p.proname
+  `);
+  const resetFunctions = new Map(resetFunctionRows.map(([name, source]) => [name, source]));
+  const guardContractFailures = [];
+  for (const name of ["notification_factory_reset_cleanup", "system_factory_reset"]) {
+    const source = resetFunctions.get(name);
+    if (!source) {
+      guardContractFailures.push(`${name}() is not installed`);
+      continue;
+    }
+    for (const statement of unqualifiedDeleteStatements(source)) {
+      guardContractFailures.push(`${name}() has DELETE without WHERE: ${statement.replace(/\s+/g, " ").trim()}`);
+    }
+    for (const statement of arbitraryTrueDeleteStatements(source)) {
+      guardContractFailures.push(`${name}() uses arbitrary WHERE TRUE: ${statement.replace(/\s+/g, " ").trim()}`);
+    }
+  }
+
+  const repairMigrationSource = fs.readFileSync(FACTORY_RESET_0093_MIGRATION_FILE, "utf8");
+  for (const statement of unqualifiedDeleteStatements(repairMigrationSource)) {
+    guardContractFailures.push(`0093 source has DELETE without WHERE: ${statement.replace(/\s+/g, " ").trim()}`);
+  }
+  for (const statement of arbitraryTrueDeleteStatements(repairMigrationSource)) {
+    guardContractFailures.push(`0093 source uses arbitrary WHERE TRUE: ${statement.replace(/\s+/g, " ").trim()}`);
+  }
+
+  const notificationSource = resetFunctions.get("notification_factory_reset_cleanup") ?? "";
+  const childFirstDeletes = [
+    "notification_delivery_attempts",
+    "notification_push_deliveries",
+    "user_notification_inbox",
+    "notification_outbox",
+  ];
+  let previousDelete = -1;
+  for (const table of childFirstDeletes) {
+    const pattern = new RegExp(`delete\\s+from\\s+public\\.${table}\\s+where\\s+id\\s+is\\s+not\\s+null`, "i");
+    const match = pattern.exec(notificationSource);
+    if (!match) guardContractFailures.push(`${table} is not deleted through its non-null primary-key domain`);
+    else if (match.index <= previousDelete) guardContractFailures.push(`${table} is not in child-first notification cleanup order`);
+    else previousDelete = match.index;
+  }
+  report(
+    "0093 installed Factory Reset path satisfies pg-safeupdate and child-first notification cleanup",
+    guardContractFailures,
+  );
 
   // The refund enum by name: 0010 got this wrong, and the failure was invisible
   // until the schema was actually built.

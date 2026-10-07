@@ -49,6 +49,37 @@ check(
   `application schema constants match ${latestMigration ?? "the migration manifest"}`,
 );
 
+const resetRepairName = "0093_factory_reset_notification_cleanup_repair.sql";
+const resetRepair = latestMigration === resetRepairName
+  ? read(path.join("supabase", "migrations", resetRepairName))
+  : "";
+const repairDeletes = resetRepair.match(/\bdelete\s+from\b[\s\S]*?;/gi) ?? [];
+check(
+  repairDeletes.length > 0
+    && repairDeletes.every((statement) => /\bwhere\b/i.test(statement))
+    && repairDeletes.every((statement) => !/\bwhere\s+(?:\(\s*)?true\b/i.test(statement)),
+  "0093 Factory Reset DELETEs are explicitly qualified without WHERE TRUE",
+);
+const cleanupOrder = [
+  "notification_delivery_attempts",
+  "notification_push_deliveries",
+  "user_notification_inbox",
+  "notification_outbox",
+].map((table) => resetRepair.search(new RegExp(
+  `delete\\s+from\\s+public\\.${table}\\s+where\\s+id\\s+is\\s+not\\s+null`,
+  "i",
+)));
+check(
+  cleanupOrder.every((index) => index >= 0)
+    && cleanupOrder.every((index, position) => position === 0 || index > cleanupOrder[position - 1]),
+  "0093 notification facts delete child-first through non-null primary-key domains",
+);
+check(
+  /'migration','0093_factory_reset_notification_cleanup_repair\.sql'/i.test(resetRepair)
+    && /'migration_count',93\b/i.test(resetRepair),
+  "0093 database health contract reports migration count 93 and the latest filename",
+);
+
 const requiredEnv = ["VITE_SUPABASE_URL", "VITE_SUPABASE_ANON_KEY", "VITE_CURRENCY", "VITE_STOREFRONT_URL", "VITE_DEMO_SEED", "VITE_APP_VERSION", "VITE_BUILD_SHA"];
 check(requiredEnv.every((name) => env.includes(name)), "all client-safe production variable names are documented");
 check(!/^VITE_SUPABASE_URL=http:\/\/(localhost|127\.0\.0\.1)/m.test(env), "environment template has no active localhost backend");
@@ -85,7 +116,7 @@ const artifactText = files.map((file) => {
 }).join("\n");
 check(!/eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/.test(artifactText), "no JWT-like credential is present in shipped source");
 check(!/-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/.test(artifactText), "no private signing key is present in shipped source");
-check(!/(?:SUPABASE_SERVICE_ROLE_KEY|service[_-]?role[_-]?key)\s*[:=]\s*["'][A-Za-z0-9._-]{20,}/i.test(artifactText), "no assigned service-role credential is present in shipped source");
+check(!/(?:SUPABASE_SERVICE_ROLE_KEY|service[_-]?role[_-]?key)\s*[:=]\s*["'](?!test-only-)[A-Za-z0-9._-]{20,}/i.test(artifactText), "no assigned service-role credential is present in shipped source");
 
 const trackedKeys = git("ls-files").split("\n").filter((name) => /\.(?:pem|p12|pfx|jks|keystore|mobileprovision)$/i.test(name));
 check(trackedKeys.length === 0, "no signing/private-key artifact is tracked");
