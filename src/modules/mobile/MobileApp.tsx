@@ -99,7 +99,7 @@ function MobileShell() {
     { to: "/mobile", label: "Home", icon: "⌂", show: true },
     { to: "/mobile/orders", label: "Orders", icon: "▤", show: can("orders.view"), badge: orders.counts.pending },
     { to: "/mobile/inventory", label: "Inventory", icon: "◇", show: can("inventory.view") },
-    { to: "/mobile/notifications", label: "Alerts", icon: "♢", show: true, badge: notificationUnreadCount },
+    { to: "/mobile/notifications", label: lang === "ar" ? "الإشعارات" : "Notifications", icon: "♢", show: true, badge: notificationUnreadCount },
     { to: "/mobile/more", label: "More", icon: "•••", show: true },
   ].filter((tab) => tab.show);
 

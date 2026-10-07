@@ -246,12 +246,13 @@ test("every sidebar link resolves to a route App.tsx declares", () => {
 
   const shell = read("src/components/layout/AppShell.tsx");
   const links = [...new Set([...shell.matchAll(/to="(\/[^"]+)"/g)].map((m) => m[1]))];
-  // Phase 49: the sidebar is the MAIN MODULES and nothing else — six doors
-  // plus the storefront shortcut. The sub-screens live on the module homes, so
-  // the bar must stay a short list, and every link it carries must still
-  // resolve (the orphan check below is the invariant with teeth).
+  // Phase 49: the sidebar is the MAIN MODULES and nothing else — six doors,
+  // the storefront shortcut, and the durable Notification Center entry. The
+  // sub-screens live on the module homes, so the bar must stay a short list,
+  // and every link it carries must still resolve (the orphan check below is
+  // the invariant with teeth).
   assert.ok(
-    links.length <= 8,
+    links.length <= 9,
     `the sidebar stays a short list of modules (${links.length})`,
   );
 

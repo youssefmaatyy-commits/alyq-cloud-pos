@@ -378,8 +378,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </div>
 
       <nav className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto" aria-label={t("nav.menu")}>
-        {/* Six primary areas; desktop and mobile share this exact navigation. */}
+        {/* Primary areas plus the durable Phase 2C Notification Center. The
+            explicit entry is intentionally separate from the top-bar bell,
+            which remains the existing approvals/online-orders indicator. */}
         <NavItem to="/dashboard" icon={<GridIcon />} label={t("nav.dashboard")} end collapsed={navCollapsed} />
+        <NavItem
+          to="/mobile/notifications"
+          icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.7 21a2 2 0 0 1-3.4 0" /></svg>}
+          label={t("admin.shell.notifications")}
+          collapsed={navCollapsed}
+        />
         <NavItem to="/dashboard/pos" icon={<ShoppingCartIcon />} label={t("home.pos.title")} end visible={canOpen("/dashboard/pos")} collapsed={navCollapsed} />
         <NavItem
           to="/dashboard/management"

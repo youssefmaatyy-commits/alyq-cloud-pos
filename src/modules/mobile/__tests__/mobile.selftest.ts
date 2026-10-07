@@ -323,10 +323,20 @@ test("bottom-tab routes are relative to the /mobile/* mount, not absolute", () =
   }
 });
 
+test("Notification Center has explicit entries in both authenticated mobile shells", () => {
+  const app = fs.readFileSync("src/modules/mobile/MobileApp.tsx", "utf8");
+  const shell = fs.readFileSync("src/components/layout/AppShell.tsx", "utf8");
+  assert.match(app, /to: "\/mobile\/notifications", label: lang === "ar" \? "الإشعارات" : "Notifications"/);
+  assert.match(shell, /to="\/mobile\/notifications"/);
+  assert.match(shell, /label=\{t\("admin\.shell\.notifications"\)\}/);
+  assert.match(shell, /to=\{\{ pathname: "\/dashboard\/online\/orders", search: "\?status=pending" \}\}/, "the legacy Online Orders bell destination must remain intact");
+});
+
 test("phone shell is purpose-built, RTL-aware and width hardened", () => {
   const app = fs.readFileSync("src/modules/mobile/MobileApp.tsx", "utf8");
   const css = fs.readFileSync("src/modules/mobile/mobile.css", "utf8");
-  assert.match(app, /Home/); assert.match(app, /Orders/); assert.match(app, /Inventory/); assert.match(app, /Alerts/); assert.match(app, /More/);
+  assert.match(app, /Home/); assert.match(app, /Orders/); assert.match(app, /Inventory/); assert.match(app, /Notifications/); assert.match(app, /More/);
+  assert.doesNotMatch(app, /label: "Alerts"/);
   assert.match(app, /dir=\{dir\}/);
   assert.match(css, /max-width:370px/);
   assert.match(css, /overflow-x:clip/);
