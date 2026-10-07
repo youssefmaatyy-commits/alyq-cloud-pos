@@ -12,6 +12,50 @@ import {
   type MobileNotification,
 } from "../services/notificationCenter";
 
+function pushStateCopy(state: ReturnType<typeof useMobile>["pushState"], lang: "en" | "ar") {
+  const ar = lang === "ar";
+  if (state === "install_required") return {
+    title: ar ? "ثبّت ALYQ على الشاشة الرئيسية لتفعيل الإشعارات" : "Install ALYQ on your Home Screen to enable notifications",
+    detail: ar ? "في Safari اضغط مشاركة، ثم إضافة إلى الشاشة الرئيسية، وافتح ALYQ من الأيقونة." : "In Safari, tap Share, then Add to Home Screen, and open ALYQ from its icon.",
+    tone: "neutral" as const,
+  };
+  if (state === "not_requested") return {
+    title: ar ? "الإشعارات متاحة" : "Notifications available",
+    detail: ar ? "لم يتم طلب الإذن بعد. لن يظهر طلب الإذن إلا بعد الضغط على تفعيل الإشعارات." : "Permission not requested. ALYQ asks only after you tap Enable notifications.",
+    tone: "neutral" as const,
+  };
+  if (state === "granted") return {
+    title: ar ? "تم منح إذن الإشعارات" : "Notification permission granted",
+    detail: ar ? "اضغط تفعيل الإشعارات لإكمال اشتراك هذا المتصفح بأمان." : "Tap Enable notifications to complete this browser's secure subscription.",
+    tone: "info" as const,
+  };
+  if (state === "denied") return {
+    title: ar ? "تم رفض إذن الإشعارات" : "Notification permission denied",
+    detail: ar ? "يمكنك تغيير الإذن من إعدادات الجهاز أو Safari. يظل مركز الإشعارات متاحًا." : "Change the permission in device or Safari settings. Notification Center remains available.",
+    tone: "warning" as const,
+  };
+  if (state === "registered") return {
+    title: ar ? "تم تفعيل الإشعارات" : "Notifications enabled",
+    detail: ar ? "سيعرض الجهاز تنبيهًا مختصرًا وآمنًا، بينما تبقى التفاصيل داخل مركز الإشعارات." : "The device will show a minimal safe alert; details remain in Notification Center.",
+    tone: "success" as const,
+  };
+  if (state === "registering") return {
+    title: ar ? "جارٍ تفعيل الإشعارات" : "Enabling notifications",
+    detail: ar ? "جارٍ تسجيل هذا المتصفح بأمان." : "This browser is being registered securely.",
+    tone: "info" as const,
+  };
+  if (state === "error") return {
+    title: ar ? "خطأ في اشتراك الإشعارات" : "Notification subscription error",
+    detail: ar ? "تعذر إكمال الاشتراك. لم تتأثر جلسة الدخول ويمكنك المحاولة لاحقًا." : "Subscription could not be completed. Your session is unaffected; try again later.",
+    tone: "warning" as const,
+  };
+  return {
+    title: ar ? "الإشعارات غير مدعومة على هذا المتصفح أو الجهاز" : "Notifications are unsupported on this browser or device",
+    detail: ar ? "يمكنك متابعة استخدام ALYQ ومركز الإشعارات بشكل طبيعي." : "You can continue using ALYQ and Notification Center normally.",
+    tone: "neutral" as const,
+  };
+}
+
 function noticeCopy(notice: string | null, lang: "en" | "ar"): string | null {
   if (!notice) return null;
   if (notice === "entity_unavailable") {
@@ -76,6 +120,7 @@ export function MobileNotificationsPage() {
   };
 
   const unread = notifications.filter((note) => !note.readAt).length;
+  const pushCopy = pushStateCopy(mobile.pushState, lang);
   return <MobilePage
     title={lang === "ar" ? "الإشعارات" : "Notifications"}
     subtitle={lang === "ar" ? "تنبيهات تشغيلية محفوظة ومخوّلة من الخادم" : "Durable, server-authorized operational attention"}
@@ -83,10 +128,12 @@ export function MobileNotificationsPage() {
   >
     <MobileCard className="mobile-push-card">
       <div className="mobile-row">
-        <div><strong>{lang === "ar" ? "إشعارات الجهاز" : "Native notifications"}</strong><p className="mobile-muted">{mobile.pushState.replace(/_/g, " ")}</p></div>
-        <MobileBadge tone={mobile.pushState === "registered" ? "success" : mobile.pushState === "error" || mobile.pushState === "denied" ? "warning" : "neutral"}>{mobile.pushState}</MobileBadge>
+        <div><strong>{pushCopy.title}</strong><p className="mobile-muted">{pushCopy.detail}</p></div>
+        <MobileBadge tone={pushCopy.tone}>{mobile.pushState}</MobileBadge>
       </div>
-      {mobile.pushState === "not_requested" ? <button type="button" className="mobile-primary-button" onClick={() => void mobile.enablePush()}>{lang === "ar" ? "تفعيل الإشعارات" : "Enable notifications"}</button> : null}
+      {mobile.pushState === "not_requested" || mobile.pushState === "granted" || mobile.pushState === "error" ? <button type="button" className="mobile-primary-button" onClick={() => void mobile.enablePush()}>{mobile.pushState === "error"
+        ? (lang === "ar" ? "إعادة المحاولة" : "Try again")
+        : (lang === "ar" ? "تفعيل الإشعارات" : "Enable notifications")}</button> : null}
     </MobileCard>
 
     {routeNotice ? <MobileCard className="mobile-notice-card"><div className="mobile-row"><p>{routeNotice}</p><button type="button" className="mobile-action" onClick={() => setRouteNotice(null)}>{lang === "ar" ? "إخفاء" : "Dismiss"}</button></div></MobileCard> : null}
@@ -105,7 +152,7 @@ export function MobileNotificationsPage() {
             </button>;
           })}</div>}
     <p className="mobile-privacy-note">{lang === "ar"
-      ? "تحتوي شاشة القفل فقط على نوع آمن ومرجع مبهم، دون هاتف العميل أو عنوانه أو تفاصيل الدفع أو رموز PIN أو بيانات اعتماد."
-      : "Lock-screen payloads contain only a safe event type and opaque reference—never customer phone, address, payment details, PINs, or credentials."}</p>
+      ? "تحتوي شاشة القفل فقط على تنبيه عام ومرجع مبهم، دون هاتف العميل أو عنوانه أو تفاصيل الدفع أو رموز PIN أو بيانات اعتماد."
+      : "Lock-screen payloads contain only a generic notice and opaque reference—never customer phone, address, payment details, PINs, or credentials."}</p>
   </MobilePage>;
 }

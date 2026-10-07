@@ -1,14 +1,27 @@
 {
   "name": "ALYQ Mobile Management",
-  "short_name": "ALYQ Mobile",
+  "short_name": "ALYQ",
+  "description": "ALYQ management and operational notifications",
   "id": "/#/mobile",
   "start_url": "/#/mobile",
   "scope": "/",
   "display": "standalone",
+  "display_override": ["standalone"],
   "background_color": "#f4f6f8",
   "theme_color": "#111827",
-  "description": "Management and operational monitoring for the ALYQ system",
+  "orientation": "portrait-primary",
   "icons": [
-    { "src": "/alyq-logo.png", "sizes": "192x192", "type": "image/png", "purpose": "any" }
+    {
+      "src": "/icons/alyq-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/alyq-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
   ]
 }

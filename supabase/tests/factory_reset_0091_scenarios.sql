@@ -421,8 +421,8 @@ begin
 
   perform pg_temp.become(v_admin, 'authenticated');
   v_health := public.system_health_probe();
-  if v_health->>'migration' <> '0093_factory_reset_notification_cleanup_repair.sql'
-     or (v_health->>'migration_count')::integer <> 93
+  if v_health->>'migration' <> '0094_web_push_subscriptions.sql'
+     or (v_health->>'migration_count')::integer <> 94
      or (v_health->>'authenticated')::boolean is not true
      or (v_health->>'branch_context_valid')::boolean is not true then
     raise exception '0091 health contract mismatch: %',v_health;
@@ -602,7 +602,7 @@ begin
     raise exception 'successful reset did not append exactly one start and one success record';
   end if;
 
-  raise notice '0091 reset contract repaired by 0093 — health reports 93; guarded zero/one/many notification cleanup passes; effective preview counts match the result; linked returns, cash/shift, transfer/movement and catalogue rows delete child-first; protected admin/security/history survives; and a forced FINAL success-audit failure restores notifications, business rows, settings, counters and reset audits';
+  raise notice '0091 reset contract repaired by 0093 — health reports 94; guarded zero/one/many notification cleanup passes; effective preview counts match the result; linked returns, cash/shift, transfer/movement and catalogue rows delete child-first; protected admin/security/history survives; and a forced FINAL success-audit failure restores notifications, business rows, settings, counters and reset audits';
 end
 $phase91$;
 

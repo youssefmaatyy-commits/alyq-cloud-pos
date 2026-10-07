@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { parseMobileDeepLink, authorizeMobileDeepLink, safePushDeepLink } from "../services/deepLinks";
 import { safeNotificationId } from "../services/notificationCenter";
+import { decodeVapidPublicKey, webPushCapability, webPushStateFor } from "../services/webPush";
 import { buildOperationalNotifications, type NotificationSnapshot } from "@/modules/operations/services/notifications";
 import { compareVariants, type ProductVariant } from "@/modules/products/variants";
 import {
   classifyApnsResponse,
   classifyFcmResponse,
+  classifyWebPushResponse,
   parseRetryAfterSeconds,
   retryDelaySeconds,
 } from "../../../../supabase/functions/alyq-push/providers";
@@ -41,6 +43,11 @@ test("push providers classify delivery, retry, invalid-token and permanent outco
   assert.equal(classifyApnsResponse(410, { reason: "Unregistered" }, null, null).outcome, "invalid_token");
   assert.equal(classifyApnsResponse(429, { reason: "TooManyRequests" }, "30", null).outcome, "retry");
   assert.equal(classifyApnsResponse(403, { reason: "InvalidProviderToken" }, null, null).outcome, "permanent_failure");
+  assert.equal(classifyWebPushResponse(201, null).outcome, "delivered");
+  assert.equal(classifyWebPushResponse(410, null).outcome, "invalid_token");
+  assert.equal(classifyWebPushResponse(429, "45").outcome, "retry");
+  assert.equal(classifyWebPushResponse(503, null).outcome, "retry");
+  assert.equal(classifyWebPushResponse(403, null).outcome, "permanent_failure");
 });
 
 test("push retry helpers cap exponential jitter and provider Retry-After", () => {
@@ -49,6 +56,85 @@ test("push retry helpers cap exponential jitter and provider Retry-After", () =>
   assert.equal(retryDelaySeconds(1, null, 0), 12);
   assert.equal(retryDelaySeconds(3, 120, 0.5), 120);
   assert.equal(retryDelaySeconds(10, 99999, 1), 3600);
+});
+
+test("PWA Web Push support distinguishes iOS Home Screen, browser support and permission state", () => {
+  const base = {
+    userAgent: "Mozilla/5.0",
+    maxTouchPoints: 0,
+    standalone: false,
+    serviceWorker: true,
+    pushManager: true,
+    notifications: true,
+  };
+  assert.equal(webPushCapability(base), "available");
+  assert.equal(webPushCapability({ ...base, pushManager: false }), "unsupported");
+  assert.equal(webPushCapability({ ...base, userAgent: "Mozilla/5.0 (iPhone)", maxTouchPoints: 5 }), "install_required");
+  assert.equal(webPushCapability({ ...base, userAgent: "Mozilla/5.0 (iPhone)", maxTouchPoints: 5, standalone: true }), "available");
+  assert.equal(webPushCapability({ ...base, userAgent: "Mozilla/5.0 (Macintosh)", maxTouchPoints: 5 }), "install_required");
+  assert.equal(webPushStateFor("available", "default", false), "not_requested");
+  assert.equal(webPushStateFor("available", "denied", false), "denied");
+  assert.equal(webPushStateFor("available", "granted", false), "granted");
+  assert.equal(webPushStateFor("available", "granted", true), "registered");
+  assert.equal(webPushStateFor("install_required", "default", false), "install_required");
+  assert.equal(webPushStateFor("unsupported", "default", false), "unsupported");
+
+  const publicKey = Buffer.from(Uint8Array.from([4, ...Array.from({ length: 64 }, (_, index) => index + 1)]))
+    .toString("base64url");
+  assert.equal(decodeVapidPublicKey(publicKey).length, 65);
+  assert.throws(() => decodeVapidPublicKey("not-a-p256-key"));
+});
+
+test("PWA assets are installable and notification clicks carry only opaque identity", () => {
+  const manifest = JSON.parse(fs.readFileSync("public/mobile.webmanifest", "utf8")) as {
+    name: string; short_name: string; start_url: string; display: string; icons: Array<{ sizes: string }>;
+  };
+  assert.equal(manifest.name, "ALYQ Mobile Management");
+  assert.equal(manifest.short_name, "ALYQ");
+  assert.equal(manifest.start_url, "/#/mobile");
+  assert.equal(manifest.display, "standalone");
+  assert.deepEqual(manifest.icons.map((icon) => icon.sizes), ["192x192", "512x512"]);
+  const index = fs.readFileSync("index.html", "utf8");
+  assert.match(index, /apple-mobile-web-app-capable/);
+  assert.match(index, /alyq-apple-touch\.png/);
+  const sw = fs.readFileSync("public/alyq-sw.js", "utf8");
+  assert.match(sw, /self\.addEventListener\("push"/);
+  assert.match(sw, /showNotification\("ALYQ"/);
+  assert.match(sw, /self\.addEventListener\("notificationclick"/);
+  assert.match(sw, /ALYQ_WEB_PUSH_OPEN/);
+  assert.match(sw, /alyq_notification=/);
+  assert.match(sw, /client\.navigate\(target\)/);
+  assert.doesNotMatch(sw, /route_key|entity_id|phone|address|payment|refund|auth_token|capabilit/i);
+  assert.match(fs.readFileSync("src/main.tsx", "utf8"), /registerALYQServiceWorker\(\)\.catch/);
+  const bridge = fs.readFileSync("src/modules/mobile/services/pwaBridge.ts", "utf8");
+  assert.match(bridge, /alyq_notification/);
+  assert.match(bridge, /localStorage\.setItem\(WEB_PUSH_PENDING_KEY, id\)/);
+  assert.match(bridge, /history\.replaceState/);
+});
+
+test("Web Push registration is explicit, isolated from auth and server-authorized on click", () => {
+  const web = fs.readFileSync("src/modules/mobile/services/webPush.ts", "utf8");
+  const beforeEnable = web.slice(0, web.indexOf("async enable()"));
+  const enable = web.slice(web.indexOf("async enable()"));
+  assert.doesNotMatch(beforeEnable, /requestPermission\(/);
+  assert.match(enable, /Notification\.requestPermission\(\)/);
+  assert.match(enable, /pushManager\.subscribe/);
+  assert.match(web, /applicationServerKeyMatches/);
+  assert.match(web, /web_push_subscription_register/);
+  assert.match(web, /web_push_subscription_deactivate/);
+  assert.match(web, /resolveMobileNotificationRoute\(notificationId\)/);
+  assert.match(web, /route_unavailable/);
+  assert.doesNotMatch(web, /signOut|forgetSession|clearSession|route_key|entity_id/);
+  const mobileApp = fs.readFileSync("src/modules/mobile/MobileApp.tsx", "utf8");
+  assert.match(mobileApp, /if \(!auth\.user \|\| !branch\.current\) return;[\s\S]*createPushController/);
+
+  const worker = fs.readFileSync("supabase/functions/alyq-push/index.ts", "utf8");
+  assert.match(worker, /npm:web-push@3\.6\.7/);
+  assert.match(worker, /env\("WEB_PUSH_VAPID_PUBLIC_KEY"\)/);
+  assert.match(worker, /env\("WEB_PUSH_VAPID_PRIVATE_KEY"\)/);
+  assert.match(worker, /env\("WEB_PUSH_SUBJECT"\)/);
+  assert.match(worker, /JSON\.stringify\(\{ notification_id: delivery\.notification_id \}\)/);
+  assert.doesNotMatch(worker, /VITE_WEB_PUSH_VAPID_PRIVATE_KEY|VITE_WEB_PUSH_SUBJECT/);
 });
 
 test("push dispatch authentication is separate, fail-closed and body-authority-free", async () => {
@@ -129,6 +215,8 @@ test("mobile source has a narrow native surface and no privileged secret materia
     "src/modules/mobile/services/mobilePush.ts",
     "src/modules/mobile/services/mobileRuntime.ts",
     "src/modules/mobile/services/deepLinks.ts",
+    "src/modules/mobile/services/webPush.ts",
+    "src/modules/mobile/services/pwaBridge.ts",
   ];
   const source = files.map((file) => fs.readFileSync(file, "utf8")).join("\n");
   assert.doesNotMatch(source, /service[_-]?role.{0,30}[=:].{8,}|BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY|postgres(?:ql)?:\/\/|manager.{0,12}pin.{0,12}[=:]/i);
@@ -167,6 +255,42 @@ test("0092 wires every required event through failure-isolated deduplicated enqu
   assert.match(migration, /notification_enqueue_safe/);
   assert.match(migration, /exception when others then\s+return null/);
   assert.match(migration, /notification_route_accessible/);
+});
+
+test("0094 extends the existing delivery channel without duplicating business notifications", () => {
+  const migration = fs.readFileSync("supabase/migrations/0094_web_push_subscriptions.sql", "utf8");
+  assert.match(migration, /create table if not exists public\.web_push_subscriptions/);
+  assert.match(migration, /web_push_subscription_register/);
+  assert.match(migration, /web_push_subscription_deactivate/);
+  assert.match(migration, /web_push_subscriptions_deactivate_all/);
+  assert.match(migration, /provider in\('fcm','apns','web_push'\)/);
+  assert.match(migration, /insert into public\.notification_push_deliveries/);
+  assert.match(migration, /insert into public\.user_notification_inbox/);
+  assert.doesNotMatch(migration, /create table[^;]+(?:web_push_outbox|web_push_inbox)/i);
+  assert.match(migration, /revoke all on public\.web_push_subscriptions from public,anon,authenticated,service_role/);
+  assert.match(migration, /grant select on public\.web_push_subscriptions to service_role/);
+  assert.doesNotMatch(migration, /grant\s+(?:select|all)[^;]+web_push_subscriptions\s+to\s+(?:anon|authenticated)/i);
+  assert.match(migration, /'migration','0094_web_push_subscriptions\.sql','migration_count',94/);
+  assert.doesNotMatch(migration, /notification_factory_reset_cleanup|system_factory_reset/);
+});
+
+test("notification UX has explicit bilingual install, permission, enabled and failure states", () => {
+  const page = fs.readFileSync("src/modules/mobile/pages/MobileNotificationsPage.tsx", "utf8");
+  for (const copy of [
+    "Install ALYQ on your Home Screen to enable notifications",
+    "Notifications available",
+    "Permission not requested",
+    "Notification permission granted",
+    "Notification permission denied",
+    "Notifications enabled",
+    "Notification subscription error",
+    "Notifications are unsupported on this browser or device",
+    "ثبّت ALYQ على الشاشة الرئيسية لتفعيل الإشعارات",
+    "لم يتم طلب الإذن بعد",
+    "تم منح إذن الإشعارات",
+    "تم رفض إذن الإشعارات",
+    "تم تفعيل الإشعارات",
+  ]) assert.match(page, new RegExp(copy));
 });
 
 test("native push configuration protects external custody and relays APNs tokens", () => {

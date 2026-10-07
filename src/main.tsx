@@ -2,6 +2,11 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "./index.css";
 import App from "./App";
+import { registerALYQServiceWorker } from "@/modules/mobile/services/pwaBridge";
+
+// PWA registration is transport-only and best effort. It never blocks React,
+// session restoration, login, or ordinary browser use.
+void registerALYQServiceWorker().catch(() => undefined);
 
 if (import.meta.env.DEV) console.log("=== MAIN.TSX: Starting app initialization ===");
 

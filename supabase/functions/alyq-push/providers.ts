@@ -129,6 +129,34 @@ export function classifyApnsResponse(
   return { outcome: "permanent_failure", httpStatus: status, errorCode: code.toLowerCase(), retryAfterSeconds: null, providerReference: null };
 }
 
+export function classifyWebPushResponse(
+  status: number,
+  retryAfterHeader: string | null,
+): ClassifiedPushResult {
+  if (status >= 200 && status < 300) {
+    return { outcome: "delivered", httpStatus: status, errorCode: null, retryAfterSeconds: null, providerReference: null };
+  }
+  if (status === 404 || status === 410) {
+    return { outcome: "invalid_token", httpStatus: status, errorCode: "subscription_gone", retryAfterSeconds: null, providerReference: null };
+  }
+  if (TRANSIENT_HTTP.has(status)) {
+    return {
+      outcome: "retry",
+      httpStatus: status,
+      errorCode: `http_${status}`,
+      retryAfterSeconds: parseRetryAfterSeconds(retryAfterHeader),
+      providerReference: null,
+    };
+  }
+  return {
+    outcome: "permanent_failure",
+    httpStatus: status,
+    errorCode: `http_${status}`,
+    retryAfterSeconds: null,
+    providerReference: null,
+  };
+}
+
 export function classifyNetworkFailure(attemptNumber: number): ClassifiedPushResult {
   return {
     outcome: "retry",

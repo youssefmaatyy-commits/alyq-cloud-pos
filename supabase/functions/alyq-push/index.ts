@@ -1,5 +1,5 @@
 /**
- * alyq-push — bounded FCM HTTP v1 and APNs delivery worker.
+ * alyq-push — bounded FCM HTTP v1, APNs and standards-based Web Push worker.
  *
  * The database owns recipient authorization, current branch/capability checks,
  * installation/token custody, retries and immutable attempt evidence. This
@@ -14,15 +14,19 @@
  *   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, PUSH_DISPATCH_SECRET
  *   FCM_PROJECT_ID, FCM_CLIENT_EMAIL, FCM_PRIVATE_KEY
  *   APNS_TEAM_ID, APNS_KEY_ID, APNS_PRIVATE_KEY, APNS_TOPIC, APNS_ENVIRONMENT
+ *   WEB_PUSH_VAPID_PUBLIC_KEY, WEB_PUSH_VAPID_PRIVATE_KEY, WEB_PUSH_SUBJECT
  *
- * Never put any of these values in the database, app bundle or logs.
+ * Only the VAPID public key may also be embedded in the browser build. Never put
+ * private/provider values in the database, app bundle or logs.
  */
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
+import webpush from "npm:web-push@3.6.7";
 import {
   classifyApnsResponse,
   classifyFcmResponse,
   classifyNetworkFailure,
+  classifyWebPushResponse,
   retryDelaySeconds,
   type ClassifiedPushResult,
 } from "./providers.ts";
@@ -39,7 +43,7 @@ const CHANNEL_ID = "alyq_operational";
 interface ClaimedDelivery {
   delivery_id: string;
   notification_id: string;
-  platform: "android" | "ios";
+  platform: "android" | "ios" | "web";
   locale: string;
   push_token: string;
   kind: string;
@@ -63,6 +67,9 @@ interface WorkerConfig {
   apnsPrivateKey: string | null;
   apnsTopic: string | null;
   apnsEnvironment: "production" | "sandbox";
+  webPushVapidPublicKey: string | null;
+  webPushVapidPrivateKey: string | null;
+  webPushSubject: string | null;
 }
 
 class WorkerError extends Error {
@@ -98,6 +105,17 @@ function loadConfig(): WorkerConfig {
   if (apnsEnvironment && apnsEnvironment !== "production" && apnsEnvironment !== "sandbox") {
     throw new WorkerError("not_configured", "APNS_ENVIRONMENT must be production or sandbox");
   }
+  const webPushVapidPublicKey = env("WEB_PUSH_VAPID_PUBLIC_KEY");
+  const webPushVapidPrivateKey = env("WEB_PUSH_VAPID_PRIVATE_KEY");
+  const webPushSubject = env("WEB_PUSH_SUBJECT");
+  const webPushConfigured = [webPushVapidPublicKey, webPushVapidPrivateKey, webPushSubject]
+    .filter(Boolean).length;
+  if (webPushConfigured !== 0 && webPushConfigured !== 3) {
+    throw new WorkerError("not_configured", "All Web Push VAPID settings must be configured together");
+  }
+  if (webPushSubject && !/^(mailto:|https:\/\/)/i.test(webPushSubject)) {
+    throw new WorkerError("not_configured", "WEB_PUSH_SUBJECT must be a mailto or HTTPS URI");
+  }
   return {
     supabaseUrl,
     serviceRoleKey,
@@ -110,6 +128,9 @@ function loadConfig(): WorkerConfig {
     apnsPrivateKey: env("APNS_PRIVATE_KEY"),
     apnsTopic: env("APNS_TOPIC"),
     apnsEnvironment: apnsEnvironment === "sandbox" ? "sandbox" : "production",
+    webPushVapidPublicKey,
+    webPushVapidPrivateKey,
+    webPushSubject,
   };
 }
 
@@ -267,6 +288,7 @@ function safeData(delivery: ClaimedDelivery): Record<string, string> {
 
 async function sendFcm(config: WorkerConfig, delivery: ClaimedDelivery): Promise<ClassifiedPushResult> {
   if (!config.fcmProjectId) throw new WorkerError("fcm_not_configured", "FCM project is not configured");
+  if (!delivery.push_token) throw new WorkerError("invalid_claim", "FCM delivery token is unavailable");
   const accessToken = await getFcmAccessToken(config);
   const response = await timedFetch(
     `https://fcm.googleapis.com/v1/projects/${encodeURIComponent(config.fcmProjectId)}/messages:send`,
@@ -296,6 +318,7 @@ async function sendFcm(config: WorkerConfig, delivery: ClaimedDelivery): Promise
 
 async function sendApns(config: WorkerConfig, delivery: ClaimedDelivery): Promise<ClassifiedPushResult> {
   if (!config.apnsTopic) throw new WorkerError("apns_not_configured", "APNs topic is not configured");
+  if (!delivery.push_token) throw new WorkerError("invalid_claim", "APNs delivery token is unavailable");
   const providerToken = await getApnsProviderToken(config);
   const host = config.apnsEnvironment === "sandbox" ? "api.sandbox.push.apple.com" : "api.push.apple.com";
   const response = await timedFetch(`https://${host}/3/device/${encodeURIComponent(delivery.push_token)}`, {
@@ -330,6 +353,64 @@ async function sendApns(config: WorkerConfig, delivery: ClaimedDelivery): Promis
   return result;
 }
 
+function webPushRetryAfter(headers: unknown): string | null {
+  if (!headers || typeof headers !== "object" || Array.isArray(headers)) return null;
+  const value = (headers as Record<string, unknown>)["retry-after"];
+  return typeof value === "string" ? value : Array.isArray(value) && typeof value[0] === "string" ? value[0] : null;
+}
+
+function webPushSubscriptionEnvelope(value: string): { endpoint: string; p256dh: string; auth: string } {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error();
+    const record = parsed as Record<string, unknown>;
+    const endpoint = typeof record.endpoint === "string" ? record.endpoint : "";
+    const p256dh = typeof record.p256dh === "string" ? record.p256dh : "";
+    const auth = typeof record.auth === "string" ? record.auth : "";
+    if (!endpoint.startsWith("https://") || endpoint.length > 2048
+        || !/^[A-Za-z0-9_-]{80,120}$/.test(p256dh)
+        || !/^[A-Za-z0-9_-]{16,64}$/.test(auth)) throw new Error();
+    return { endpoint, p256dh, auth };
+  } catch {
+    throw new WorkerError("invalid_claim", "Web Push subscription material is unavailable");
+  }
+}
+
+async function sendWebPush(config: WorkerConfig, delivery: ClaimedDelivery): Promise<ClassifiedPushResult> {
+  if (!config.webPushVapidPublicKey || !config.webPushVapidPrivateKey || !config.webPushSubject) {
+    throw new WorkerError("web_push_not_configured", "Web Push VAPID settings are not configured");
+  }
+  const subscription = webPushSubscriptionEnvelope(delivery.push_token);
+  try {
+    const response = await webpush.sendNotification(
+      {
+        endpoint: subscription.endpoint,
+        keys: { p256dh: subscription.p256dh, auth: subscription.auth },
+      },
+      // Lock-screen copy is deliberately hard-coded in the service worker. The
+      // encrypted provider payload carries only the opaque inbox notification id.
+      JSON.stringify({ notification_id: delivery.notification_id }),
+      {
+        vapidDetails: {
+          subject: config.webPushSubject,
+          publicKey: config.webPushVapidPublicKey,
+          privateKey: config.webPushVapidPrivateKey,
+        },
+        TTL: 300,
+        urgency: "high",
+        topic: delivery.collapse_key.slice(0, 32),
+        timeout: REQUEST_TIMEOUT_MS,
+      },
+    );
+    return classifyWebPushResponse(response.statusCode, webPushRetryAfter(response.headers));
+  } catch (error) {
+    const failure = error && typeof error === "object" ? error as Record<string, unknown> : {};
+    const status = typeof failure.statusCode === "number" ? failure.statusCode : null;
+    if (status !== null) return classifyWebPushResponse(status, webPushRetryAfter(failure.headers));
+    throw error;
+  }
+}
+
 async function reportResult(
   client: SupabaseClient,
   workerId: string,
@@ -359,9 +440,11 @@ async function processDelivery(
 ): Promise<{ outcome: ClassifiedPushResult["outcome"]; recorded: boolean }> {
   let result: ClassifiedPushResult;
   try {
-    result = delivery.platform === "android"
-      ? await sendFcm(config, delivery)
-      : await sendApns(config, delivery);
+    result = delivery.platform === "web"
+      ? await sendWebPush(config, delivery)
+      : delivery.platform === "android"
+        ? await sendFcm(config, delivery)
+        : await sendApns(config, delivery);
   } catch (error) {
     result = error instanceof WorkerError
       ? {

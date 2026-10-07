@@ -64,7 +64,7 @@ A valid path still requires a signed-in user, required permission and successful
 
 Migration `0092_mobile_push_and_notification_center.sql` owns the durable outbox, current-recipient resolution, per-installation delivery state, immutable attempt evidence, retry/dead-letter behavior, invalid-token deactivation, and server-backed inbox/read state. Mobile registers/rotates a token through `mobile_installation_register_v2`; registration-time branch data is never final authorization.
 
-`supabase/functions/alyq-push` sends bounded batches through FCM HTTP v1 and APNs. Invoke it on a protected schedule with `Authorization: Bearer <PUSH_DISPATCH_SECRET>`. The dedicated dispatch secret authenticates invocation only; `SUPABASE_SERVICE_ROLE_KEY` is internal database authority and must never be sent by a scheduler or other caller. Deploy this function with gateway JWT verification disabled (for example, the Supabase deployment option `--no-verify-jwt`) because the function performs its own exact dispatch-secret check. Do not expose either secret to a browser or mobile client. The function reports only aggregate counts and never logs tokens, notification copy, provider response bodies, recipients, or credentials.
+`supabase/functions/alyq-push` sends bounded batches through FCM HTTP v1, APNs, and standards-based Web Push. Invoke it on a protected schedule with `Authorization: Bearer <PUSH_DISPATCH_SECRET>`. The dedicated dispatch secret authenticates invocation only; `SUPABASE_SERVICE_ROLE_KEY` is internal database authority and must never be sent by a scheduler or other caller. Deploy this function with gateway JWT verification disabled (for example, the Supabase deployment option `--no-verify-jwt`) because the function performs its own exact dispatch-secret check. Do not expose either secret to a browser or mobile client. The function reports only aggregate counts and never logs tokens, notification copy, provider response bodies, recipients, subscription keys, or credentials.
 
 Protected Edge Function secret names (values stay in Supabase secret custody):
 
@@ -79,6 +79,23 @@ Protected Edge Function secret names (values stay in Supabase secret custody):
 - `APNS_PRIVATE_KEY`
 - `APNS_TOPIC`
 - `APNS_ENVIRONMENT` (`production` or `sandbox`)
+- `WEB_PUSH_VAPID_PUBLIC_KEY` (public P-256 application-server key)
+- `WEB_PUSH_VAPID_PRIVATE_KEY` (server-only)
+- `WEB_PUSH_SUBJECT` (`mailto:` or HTTPS operator contact)
+
+Generate a local VAPID pair without committing it:
+
+```bash
+npx --yes web-push generate-vapid-keys --json
+```
+
+Put the public value in the controlled Web build environment as `WEB_PUSH_VAPID_PUBLIC_KEY`. Put the same public value, private value, and subject in Supabase Edge Function secret custody. Do not place the private key or subject in any `VITE_*` variable or repository file.
+
+## iPhone/iPad Home Screen Web Push
+
+Safari Web Push on supported iOS/iPadOS versions requires the installed Home Screen web app and does not require Apple Developer Program membership. Open ALYQ in Safari, use **Share → Add to Home Screen**, launch ALYQ from its icon, sign in, open **Notifications**, and tap **Enable notifications**. ALYQ never prompts on page load. A normal Safari tab shows installation guidance instead of requesting permission.
+
+The service worker displays only a generic bilingual ALYQ alert. Its encrypted payload and click handoff carry only an opaque `notification_id`; after Auth and branch restoration, the app calls the existing server route resolver and falls back to Notification Center for stale or unauthorized destinations. Migration `0094_web_push_subscriptions.sql` adds protected subscription custody and extends the existing delivery state machine—it does not create another outbox or inbox.
 
 Native protected configuration remains external:
 

@@ -291,17 +291,21 @@ test("there is no session when the provider has none", async () => {
   assert.equal(await repository.currentSession(), null);
 });
 
-test("signing out everywhere deactivates native installations before provider-global revocation", async () => {
+test("signing out everywhere deactivates native and Web Push before provider-global revocation", async () => {
   const stub = makeStub();
   const repository = new SupabaseUserRepository(stub.client);
 
   await repository.signOut();
   await repository.signOut({ everywhere: true });
   assert.deepEqual(stub.signOutScopes, ["local", "global"]);
-  assert.deepEqual(stub.rpcCalls, ["mobile_installations_deactivate_all"]);
+  assert.deepEqual(stub.rpcCalls, [
+    "mobile_installations_deactivate_all",
+    "web_push_subscriptions_deactivate_all",
+  ]);
   assert.ok(
-    stub.calls.indexOf("rpc:mobile_installations_deactivate_all") < stub.calls.indexOf("signOut:global"),
-    "provider token custody must be cleared while the caller access token is still valid",
+    stub.calls.indexOf("rpc:mobile_installations_deactivate_all") < stub.calls.indexOf("signOut:global")
+      && stub.calls.indexOf("rpc:web_push_subscriptions_deactivate_all") < stub.calls.indexOf("signOut:global"),
+    "native and browser provider custody must be cleared while the caller access token is still valid",
   );
 });
 

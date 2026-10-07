@@ -23,6 +23,9 @@ const lock = JSON.parse(read("package-lock.json"));
 const cap = read("capacitor.config.ts");
 const env = read(".env.example");
 const operations = read("src/modules/operations/types.ts");
+const webManifest = JSON.parse(read("public/mobile.webmanifest"));
+const serviceWorker = read("public/alyq-sw.js");
+const pushWorker = read("supabase/functions/alyq-push/index.ts");
 
 const status = git("status", "--porcelain");
 check(allowDirty || status === "", allowDirty ? "dirty-tree check explicitly bypassed for development validation" : "Git worktree is clean");
@@ -50,7 +53,7 @@ check(
 );
 
 const resetRepairName = "0093_factory_reset_notification_cleanup_repair.sql";
-const resetRepair = latestMigration === resetRepairName
+const resetRepair = migrations.includes(resetRepairName)
   ? read(path.join("supabase", "migrations", resetRepairName))
   : "";
 const repairDeletes = resetRepair.match(/\bdelete\s+from\b[\s\S]*?;/gi) ?? [];
@@ -77,11 +80,29 @@ check(
 check(
   /'migration','0093_factory_reset_notification_cleanup_repair\.sql'/i.test(resetRepair)
     && /'migration_count',93\b/i.test(resetRepair),
-  "0093 database health contract reports migration count 93 and the latest filename",
+  "0093 database health contract reports its migration count and filename",
 );
 
-const requiredEnv = ["VITE_SUPABASE_URL", "VITE_SUPABASE_ANON_KEY", "VITE_CURRENCY", "VITE_STOREFRONT_URL", "VITE_DEMO_SEED", "VITE_APP_VERSION", "VITE_BUILD_SHA"];
+const requiredEnv = ["VITE_SUPABASE_URL", "VITE_SUPABASE_ANON_KEY", "WEB_PUSH_VAPID_PUBLIC_KEY", "VITE_CURRENCY", "VITE_STOREFRONT_URL", "VITE_DEMO_SEED", "VITE_APP_VERSION", "VITE_BUILD_SHA"];
 check(requiredEnv.every((name) => env.includes(name)), "all client-safe production variable names are documented");
+check(
+  webManifest.name && webManifest.short_name && webManifest.start_url === "/#/mobile"
+    && webManifest.display === "standalone" && webManifest.scope === "/"
+    && Array.isArray(webManifest.icons)
+    && ["192x192", "512x512"].every((size) => webManifest.icons.some((icon) => icon.sizes === size)),
+  "PWA manifest is Home Screen installable with standalone ALYQ identity and required icons",
+);
+check(
+  /notificationclick/.test(serviceWorker) && /notification_id/.test(serviceWorker)
+    && !/route_key|entity_id|customer|payment|token/i.test(serviceWorker),
+  "service worker displays privacy-safe Web Push and carries only opaque notification identity",
+);
+check(
+  /env\("WEB_PUSH_VAPID_PRIVATE_KEY"\)/.test(pushWorker)
+    && /env\("WEB_PUSH_SUBJECT"\)/.test(pushWorker)
+    && !/VITE_WEB_PUSH_VAPID_PRIVATE_KEY|VITE_WEB_PUSH_SUBJECT/.test(env),
+  "Web Push private VAPID configuration remains server-only",
+);
 check(!/^VITE_SUPABASE_URL=http:\/\/(localhost|127\.0\.0\.1)/m.test(env), "environment template has no active localhost backend");
 check(!/^VITE_SUPABASE_ANON_KEY=\S+/m.test(env), "environment template contains no anon-key value");
 check(!/VITE_[A-Z0-9_]*(SERVICE|SECRET|PASSWORD|PRIVATE)/.test(env), "no server secret is exposed through a VITE variable");

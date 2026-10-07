@@ -18,7 +18,9 @@ const ANDROID_CHANNEL_ID = "alyq_operational";
 
 export type PushRegistrationState =
   | "unsupported"
+  | "install_required"
   | "not_requested"
+  | "granted"
   | "denied"
   | "registering"
   | "registered"
@@ -60,6 +62,17 @@ export async function deactivateMobileInstallation(): Promise<void> {
     await client.rpc("mobile_installation_deactivate", { p_installation_id: runtime.installationId });
   } catch {
     // Logout must still end the local auth session if revocation cannot reach the server.
+  }
+}
+
+/** Best-effort current-device cleanup shared by native and Home Screen PWA logout. */
+export async function deactivateCurrentPushRegistration(): Promise<void> {
+  if (Capacitor.isNativePlatform()) return deactivateMobileInstallation();
+  try {
+    const { deactivateWebPushSubscription } = await import("./webPush");
+    await deactivateWebPushSubscription();
+  } catch {
+    // Web Push can never trap a user in an authenticated session.
   }
 }
 
@@ -126,8 +139,12 @@ export async function createPushController(
   onNotificationsChanged: () => void,
 ): Promise<PushController> {
   const native = Capacitor.isNativePlatform();
+  if (!native) {
+    const { createWebPushController } = await import("./webPush");
+    return createWebPushController(navigate, onState, onNotificationsChanged);
+  }
   const asked = (await Preferences.get({ key: ASKED_KEY })).value === "true";
-  let state: PushRegistrationState = native ? "not_requested" : "unsupported";
+  let state: PushRegistrationState = "not_requested";
   const handles: Array<{ remove: () => Promise<void> }> = [];
   const setState = (next: PushRegistrationState) => { state = next; onState(next); };
   const consumePending = () => consumePendingNotificationAction(navigate, onNotificationsChanged);

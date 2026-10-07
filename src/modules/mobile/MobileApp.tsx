@@ -10,7 +10,7 @@ import { InventoryProvider } from "@/modules/inventory";
 import { ApprovalProvider } from "@/modules/approvals";
 import { OnlineNotificationsProvider, OnlineOrdersProvider, useOnlineOrders } from "@/modules/online";
 import { MobileContext } from "./MobileContext";
-import { createPushController, deactivateMobileInstallation, type PushController, type PushRegistrationState } from "./services/mobilePush";
+import { createPushController, deactivateCurrentPushRegistration, type PushController, type PushRegistrationState } from "./services/mobilePush";
 import { mobileNotificationUnreadCount } from "./services/notificationCenter";
 import { getMobileRuntime, mobileNetworkState, type MobileNetworkState, type MobileRuntimeContext } from "./services/mobileRuntime";
 import { MobileDashboardPage } from "./pages/MobileDashboardPage";
@@ -90,7 +90,11 @@ function MobileShell() {
     }),
     [runtime, network, pushState, notificationUnreadCount, notificationRevision, enablePush, refreshNetwork, refreshNotifications],
   );
-  const logout = async () => { if (push.current) await push.current.deactivate(); else await deactivateMobileInstallation(); await auth.signOut(); };
+  const logout = async () => {
+    if (push.current) await push.current.deactivate();
+    else await deactivateCurrentPushRegistration();
+    await auth.signOut();
+  };
   const tabs = [
     { to: "/mobile", label: "Home", icon: "⌂", show: true },
     { to: "/mobile/orders", label: "Orders", icon: "▤", show: can("orders.view"), badge: orders.counts.pending },
