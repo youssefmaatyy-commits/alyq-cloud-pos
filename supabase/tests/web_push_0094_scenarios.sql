@@ -157,9 +157,9 @@ begin
     raise exception 'Notification Center stopped resolving after Web Push lifecycle: %',v_result;
   end if;
   v_health:=public.system_health_probe();
-  if v_health->>'migration'<>'0094_web_push_subscriptions.sql'
-     or (v_health->>'migration_count')::integer<>94 then
-    raise exception '0094 health contract mismatch: %',v_health;
+  if v_health->>'migration'<>'0095_web_push_digest_repair.sql'
+     or (v_health->>'migration_count')::integer<>95 then
+    raise exception 'current health contract mismatch after Web Push lifecycle: %',v_health;
   end if;
 
   perform pg_temp.become(null,'postgres');
