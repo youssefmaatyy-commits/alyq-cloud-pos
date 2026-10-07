@@ -55,14 +55,19 @@ export function authorizeMobileDeepLink(
   return link && can(link.permission, subject) ? link : null;
 }
 
+/**
+ * Shape-only parser for tests and non-notification URL adapters. Native push
+ * actions do not call this: they resolve `notification_id` through the server
+ * so current branch/capability/entity authority is re-checked at open time.
+ */
 export function safePushDeepLink(data: Record<string, unknown>): MobileDeepLink | null {
-  const kind = typeof data.kind === "string" ? data.kind : "";
+  const routeKey = typeof data.route_key === "string" ? data.route_key : "";
   const id = typeof data.entity_id === "string" ? data.entity_id : "";
   if (!SAFE_ID.test(id)) return null;
-  const path = kind === "order" ? `/mobile/orders/${id}`
-    : kind === "invoice" ? `/mobile/invoices/${id}`
-      : kind === "approval" ? `/mobile/approvals/${id}`
-        : kind === "product" ? `/mobile/inventory/${id}`
+  const path = routeKey === "order" ? `/mobile/orders/${id}`
+    : routeKey === "invoice" ? `/mobile/invoices/${id}`
+      : routeKey === "approval" ? `/mobile/approvals/${id}`
+        : routeKey === "product" ? `/mobile/inventory/${id}`
           : "";
   return path ? parseMobileDeepLink(path) : null;
 }

@@ -62,9 +62,32 @@ A valid path still requires a signed-in user, required permission and successful
 
 ## Push backend
 
-The app registers its provider token through `mobile_installation_register`. A production edge/worker service with protected service-role and FCM/APNs credentials may select active registrations, apply user/branch permission targeting, send privacy-safe payloads and process invalid-token feedback. Client applications must never receive those server credentials.
+Migration `0092_mobile_push_and_notification_center.sql` owns the durable outbox, current-recipient resolution, per-installation delivery state, immutable attempt evidence, retry/dead-letter behavior, invalid-token deactivation, and server-backed inbox/read state. Mobile registers/rotates a token through `mobile_installation_register_v2`; registration-time branch data is never final authorization.
 
-Provider credentials are intentionally absent, so `npm run mobile:build` does not prove provider delivery.
+`supabase/functions/alyq-push` sends bounded batches through FCM HTTP v1 and APNs. Invoke it on a protected schedule with `Authorization: Bearer <PUSH_DISPATCH_SECRET>`. The dedicated dispatch secret authenticates invocation only; `SUPABASE_SERVICE_ROLE_KEY` is internal database authority and must never be sent by a scheduler or other caller. Deploy this function with gateway JWT verification disabled (for example, the Supabase deployment option `--no-verify-jwt`) because the function performs its own exact dispatch-secret check. Do not expose either secret to a browser or mobile client. The function reports only aggregate counts and never logs tokens, notification copy, provider response bodies, recipients, or credentials.
+
+Protected Edge Function secret names (values stay in Supabase secret custody):
+
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `PUSH_DISPATCH_SECRET`
+- `FCM_PROJECT_ID`
+- `FCM_CLIENT_EMAIL`
+- `FCM_PRIVATE_KEY`
+- `APNS_TEAM_ID`
+- `APNS_KEY_ID`
+- `APNS_PRIVATE_KEY`
+- `APNS_TOPIC`
+- `APNS_ENVIRONMENT` (`production` or `sandbox`)
+
+Native protected configuration remains external:
+
+- Android `android/app/google-services.json` is ignored and must be injected by protected CI/local setup.
+- Android upload/signing keystores are ignored and remain in protected CI/Play App Signing.
+- iOS APNs `.p8` keys, signing certificates and provisioning profiles remain in protected CI/Keychain.
+- The iOS Push Notifications capability and `aps-environment` entitlement must be enabled in the real App ID/Xcode signing configuration. This repository does not fabricate an entitlement or provisioning value.
+
+Provider credentials are intentionally absent, so `npm run mobile:build` does not prove provider delivery. Validate FCM/APNs delivery, token rotation, invalid-token feedback, foreground/background/killed-state opens, denied permission, multiple devices, local/global logout, branch revocation, and app updates on signed physical-device builds.
 
 ## Release checks
 

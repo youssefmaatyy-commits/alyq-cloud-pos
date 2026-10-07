@@ -254,8 +254,8 @@ test("the cleanup vocabulary is shipped, labelled, and not a copy", () => {
   const sql = fs.readFileSync(path.join(root, "supabase/migrations/0057_operations_cleanup_audit.sql"), "utf8");
   assert.match(sql, /operations\.cleanup_executed/);
   assert.match(sql, /operations\.retention_applied/);
-  assert.equal(SHIPPED_LATEST_MIGRATION, "0091_health_and_factory_reset_repair.sql");
-  assert.equal(SHIPPED_MIGRATION_COUNT, 91);
+  assert.equal(SHIPPED_LATEST_MIGRATION, "0092_mobile_push_and_notification_center.sql");
+  assert.equal(SHIPPED_MIGRATION_COUNT, 92);
   const names = fs.readdirSync(path.join(root, "supabase/migrations")).filter((name) => name.endsWith(".sql"));
   assert.equal(names.length, SHIPPED_MIGRATION_COUNT);
 });

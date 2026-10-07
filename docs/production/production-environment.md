@@ -14,7 +14,8 @@ All `VITE_*` values are embedded at build time and are therefore **CLIENT-SAFE o
 | `VITE_APP_VERSION` | CLIENT-SAFE, BUILD-TIME | Mobile Health/About | Must equal release manifest version |
 | `VITE_BUILD_SHA` | CLIENT-SAFE, BUILD-TIME | Mobile diagnostics | Full frozen Git SHA |
 | `ALYQ_BUILD_SHA` | BUILD-TIME | Electron metadata | Full frozen Git SHA |
-| `SUPABASE_SERVICE_ROLE_KEY` | SERVER-ONLY | Admin edge/push worker only | CI/host secret store; never `VITE_*`, client, logs or artifact |
+| `SUPABASE_SERVICE_ROLE_KEY` | SERVER-ONLY | Internal privileged Supabase clients in admin/push Edge Functions | Never use as incoming HTTP invocation authority; never `VITE_*`, client, logs or artifact |
+| `PUSH_DISPATCH_SECRET` | SERVER-ONLY | Protected scheduler and `alyq-push` invocation check only | Independent from service role; never frontend/mobile, `VITE_*`, logs or artifact |
 | Database connection/password | SERVER-ONLY | Migration/backup operator | Short-lived protected operator environment; never app build |
 | APNs key / FCM service credential | SERVER-ONLY | Push delivery worker | Provider secret store only |
 | Windows signing certificate/password | RELEASE/SIGNING SECRET | Controlled Windows CI | Hardware-backed or encrypted secret custody |

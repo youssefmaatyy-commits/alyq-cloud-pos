@@ -515,9 +515,16 @@ export class SupabaseUserRepository implements UserRepository {
   }
 
   async signOut(options?: { everywhere?: boolean }): Promise<void> {
+    const client = this.client();
+    // The authenticated RPC must run before global Auth revocation invalidates
+    // this access token. It clears every native provider token for the user;
+    // failure remains best-effort so push can never trap a user in a session.
+    if (options?.everywhere) {
+      try { await client.rpc("mobile_installations_deactivate_all"); } catch { /* continue provider logout */ }
+    }
     // `global` revokes every session the provider holds for this user, which is
     // what "log out of all devices" has to mean; `local` only ends this browser's.
-    await this.client().auth.signOut({ scope: options?.everywhere ? "global" : "local" });
+    await client.auth.signOut({ scope: options?.everywhere ? "global" : "local" });
   }
 
   // ── password recovery ─────────────────────────────────────────────────────

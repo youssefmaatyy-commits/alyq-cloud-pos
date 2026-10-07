@@ -180,8 +180,8 @@ begin
 
   perform pg_temp.become(v_admin, 'authenticated');
   v_health := public.system_health_probe();
-  if v_health->>'migration' <> '0091_health_and_factory_reset_repair.sql'
-     or (v_health->>'migration_count')::integer <> 91
+  if v_health->>'migration' <> '0092_mobile_push_and_notification_center.sql'
+     or (v_health->>'migration_count')::integer <> 92
      or (v_health->>'authenticated')::boolean is not true
      or (v_health->>'branch_context_valid')::boolean is not true then
     raise exception '0091 health contract mismatch: %',v_health;
@@ -326,7 +326,7 @@ begin
     raise exception 'successful reset did not append exactly one start and one success record';
   end if;
 
-  raise notice '0091 — health reports 91; effective preview counts match the result; linked returns, cash/shift, transfer/movement and catalogue rows delete child-first; stocktakes/imports/offline audit/security survive; and a forced FINAL success-audit failure rolls back sales, returns, products, variants, branch stock, settings, counters and reset audits';
+  raise notice '0091 reset contract under latest schema — health reports 92; effective preview counts match the result; linked returns, cash/shift, transfer/movement and catalogue rows delete child-first; stocktakes/imports/offline audit/security survive; and a forced FINAL success-audit failure rolls back sales, returns, products, variants, branch stock, settings, counters and reset audits';
 end
 $phase91$;
 

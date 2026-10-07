@@ -7,10 +7,11 @@ import { can } from "@/lib/permissions/enforce";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { CatalogProvider } from "@/modules/products";
 import { InventoryProvider } from "@/modules/inventory";
-import { ApprovalProvider, useApprovals } from "@/modules/approvals";
+import { ApprovalProvider } from "@/modules/approvals";
 import { OnlineNotificationsProvider, OnlineOrdersProvider, useOnlineOrders } from "@/modules/online";
 import { MobileContext } from "./MobileContext";
 import { createPushController, deactivateMobileInstallation, type PushController, type PushRegistrationState } from "./services/mobilePush";
+import { mobileNotificationUnreadCount } from "./services/notificationCenter";
 import { getMobileRuntime, mobileNetworkState, type MobileNetworkState, type MobileRuntimeContext } from "./services/mobileRuntime";
 import { MobileDashboardPage } from "./pages/MobileDashboardPage";
 import { MobileOrdersPage, MobileOrderDetailPage } from "./pages/MobileOrdersPages";
@@ -29,7 +30,6 @@ export function MobileApp() {
 function MobileShell() {
   const auth = useAuth();
   const branch = useBranch();
-  const approvals = useApprovals();
   const orders = useOnlineOrders();
   const { lang, dir, toggleLang } = useI18n();
   const navigate = useNavigate();
@@ -37,9 +37,20 @@ function MobileShell() {
   const [runtime, setRuntime] = useState<MobileRuntimeContext | null>(null);
   const [network, setNetwork] = useState<MobileNetworkState>("unknown");
   const [pushState, setPushState] = useState<PushRegistrationState>("unsupported");
+  const [notificationUnreadCount, setNotificationUnreadCount] = useState(0);
+  const [notificationRevision, setNotificationRevision] = useState(0);
   const push = useRef<PushController | null>(null);
 
   const refreshNetwork = useCallback(async () => setNetwork(await mobileNetworkState()), []);
+  const refreshNotifications = useCallback(async () => {
+    try {
+      setNotificationUnreadCount(await mobileNotificationUnreadCount());
+      setNotificationRevision((value) => value + 1);
+    } catch {
+      // Inbox transport failure is isolated from startup/auth and retries on the
+      // next receipt, reconnect, branch switch, foreground, or manual refresh.
+    }
+  }, []);
   useEffect(() => {
     let handle: { remove: () => Promise<void> } | null = null;
     void getMobileRuntime().then(setRuntime);
@@ -48,22 +59,43 @@ function MobileShell() {
     return () => { if (handle) void handle.remove(); };
   }, [refreshNetwork]);
   useEffect(() => {
+    if (!auth.user || !branch.current || network === "offline") return;
+    void refreshNotifications();
+  }, [auth.user?.id, branch.current?.id, network, refreshNotifications]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
     let active = true;
-    if (!auth.user) return;
-    void createPushController(auth.user, navigate, (state) => { if (active) setPushState(state); })
+    if (!auth.user || !branch.current) return;
+    void createPushController(
+      auth.user,
+      navigate,
+      (state) => { if (active) setPushState(state); },
+      () => { if (active) void refreshNotifications(); },
+    )
       .then((controller) => { if (!active) void controller.dispose(); else { push.current = controller; setPushState(controller.state); } })
       .catch(() => { if (active) setPushState("error"); });
     return () => { active = false; const current = push.current; push.current = null; if (current) void current.dispose(); };
-  }, [auth.user?.id, navigate]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [auth.user?.id, branch.current?.id, navigate, refreshNotifications]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const enablePush = useCallback(async () => { if (push.current) setPushState(await push.current.enable()); }, []);
-  const context = useMemo(() => ({ runtime, network, pushState, enablePush, refreshNetwork }), [runtime, network, pushState, enablePush, refreshNetwork]);
+  const context = useMemo(
+    () => ({
+      runtime,
+      network,
+      pushState,
+      notificationUnreadCount,
+      notificationRevision,
+      enablePush,
+      refreshNetwork,
+      refreshNotifications,
+    }),
+    [runtime, network, pushState, notificationUnreadCount, notificationRevision, enablePush, refreshNetwork, refreshNotifications],
+  );
   const logout = async () => { if (push.current) await push.current.deactivate(); else await deactivateMobileInstallation(); await auth.signOut(); };
   const tabs = [
     { to: "/mobile", label: "Home", icon: "⌂", show: true },
     { to: "/mobile/orders", label: "Orders", icon: "▤", show: can("orders.view"), badge: orders.counts.pending },
     { to: "/mobile/inventory", label: "Inventory", icon: "◇", show: can("inventory.view") },
-    { to: "/mobile/notifications", label: "Alerts", icon: "♢", show: true, badge: approvals.pendingCount + orders.counts.pending },
+    { to: "/mobile/notifications", label: "Alerts", icon: "♢", show: true, badge: notificationUnreadCount },
     { to: "/mobile/more", label: "More", icon: "•••", show: true },
   ].filter((tab) => tab.show);
 

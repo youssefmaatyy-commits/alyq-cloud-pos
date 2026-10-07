@@ -349,6 +349,7 @@ export function makeStub(options: StubOptions = {}) {
       },
     },
     rpc: async (fn: string) => {
+      calls.push(`rpc:${fn}`);
       rpcCalls.push(fn);
       maybeThrow(`rpc:${fn}`);
       return { data: null, error: options.rpcError ?? null };

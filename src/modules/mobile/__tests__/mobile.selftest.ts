@@ -1,8 +1,19 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { parseMobileDeepLink, authorizeMobileDeepLink, safePushDeepLink } from "../services/deepLinks";
+import { safeNotificationId } from "../services/notificationCenter";
 import { buildOperationalNotifications, type NotificationSnapshot } from "@/modules/operations/services/notifications";
 import { compareVariants, type ProductVariant } from "@/modules/products/variants";
+import {
+  classifyApnsResponse,
+  classifyFcmResponse,
+  parseRetryAfterSeconds,
+  retryDelaySeconds,
+} from "../../../../supabase/functions/alyq-push/providers";
+import {
+  isDispatchAuthorized,
+  selectDispatchBatchLimits,
+} from "../../../../supabase/functions/alyq-push/request";
 
 const tests: Array<[string, () => void | Promise<void>]> = [];
 const test = (name: string, fn: () => void | Promise<void>) => tests.push([name, fn]);
@@ -14,7 +25,64 @@ test("deep links validate shape and permission before navigation", () => {
   assert.equal(authorizeMobileDeepLink(order, { capabilities: ["view_inventory"] }), null);
   assert.equal(parseMobileDeepLink("javascript:alert(1)"), null);
   assert.equal(parseMobileDeepLink("alyq://mobile/orders/../../branch-b"), null);
-  assert.equal(safePushDeepLink({ kind: "order", entity_id: "order-123", customer_phone: "must-not-drive-routing" })?.route, "/mobile/orders/order-123");
+  assert.equal(safePushDeepLink({ kind: "online_order", route_key: "order", entity_id: "order-123", customer_phone: "must-not-drive-routing" })?.route, "/mobile/orders/order-123");
+  assert.equal(safeNotificationId({ notification_id: "123e4567-e89b-42d3-a456-426614174000", route_key: "order" }), "123e4567-e89b-42d3-a456-426614174000");
+  assert.equal(safeNotificationId({ notification_id: "../orders/admin" }), null);
+});
+
+test("push providers classify delivery, retry, invalid-token and permanent outcomes", () => {
+  assert.equal(classifyFcmResponse(200, { name: "projects/p/messages/m" }, null).outcome, "delivered");
+  assert.equal(classifyFcmResponse(404, { error: { status: "NOT_FOUND", details: [{ errorCode: "UNREGISTERED" }] } }, null).outcome, "invalid_token");
+  assert.equal(classifyFcmResponse(400, { error: { status: "INVALID_ARGUMENT" } }, null).outcome, "invalid_token");
+  assert.equal(classifyFcmResponse(503, { error: { status: "UNAVAILABLE" } }, "90").outcome, "retry");
+  assert.equal(classifyFcmResponse(400, { error: { status: "QUOTA_EXCEEDED" } }, null).outcome, "retry");
+  assert.equal(classifyFcmResponse(403, { error: { status: "PERMISSION_DENIED" } }, null).outcome, "permanent_failure");
+  assert.equal(classifyApnsResponse(200, {}, null, "apns-id").outcome, "delivered");
+  assert.equal(classifyApnsResponse(410, { reason: "Unregistered" }, null, null).outcome, "invalid_token");
+  assert.equal(classifyApnsResponse(429, { reason: "TooManyRequests" }, "30", null).outcome, "retry");
+  assert.equal(classifyApnsResponse(403, { reason: "InvalidProviderToken" }, null, null).outcome, "permanent_failure");
+});
+
+test("push retry helpers cap exponential jitter and provider Retry-After", () => {
+  assert.equal(parseRetryAfterSeconds("90", 0), 90);
+  assert.equal(parseRetryAfterSeconds("99999", 0), 3600);
+  assert.equal(retryDelaySeconds(1, null, 0), 12);
+  assert.equal(retryDelaySeconds(3, 120, 0.5), 120);
+  assert.equal(retryDelaySeconds(10, 99999, 1), 3600);
+});
+
+test("push dispatch authentication is separate, fail-closed and body-authority-free", async () => {
+  const dispatchSecret = "test-only-dispatch-secret";
+  const serviceRoleKey = "test-only-service-role-key";
+  assert.equal(await isDispatchAuthorized(null, dispatchSecret, serviceRoleKey), false);
+  assert.equal(await isDispatchAuthorized("Bearer wrong-secret", dispatchSecret, serviceRoleKey), false);
+  assert.equal(await isDispatchAuthorized(`Bearer ${dispatchSecret}`, dispatchSecret, serviceRoleKey), true);
+  assert.equal(await isDispatchAuthorized(`Bearer ${serviceRoleKey}`, dispatchSecret, serviceRoleKey), false);
+  assert.equal(await isDispatchAuthorized(`Bearer ${dispatchSecret}`, dispatchSecret, dispatchSecret), false);
+
+  const selected = selectDispatchBatchLimits({
+    limit: 500,
+    event_limit: 500,
+    user_id: "attacker-user",
+    branch_id: "attacker-branch",
+    push_token: "attacker-token",
+    kind: "attacker-kind",
+    title: "attacker-title",
+    body: "attacker-body",
+    payload: { arbitrary: true },
+  }, 100, 25);
+  assert.deepEqual(selected, { limit: 100, eventLimit: 25 });
+  assert.deepEqual(Object.keys(selected).sort(), ["eventLimit", "limit"]);
+
+  const edge = fs.readFileSync("supabase/functions/alyq-push/index.ts", "utf8");
+  assert.match(edge, /env\("PUSH_DISPATCH_SECRET"\)/);
+  assert.match(edge, /isDispatchAuthorized\(authorization, config\.dispatchSecret, config\.serviceRoleKey\)/);
+  assert.match(edge, /createClient\(config\.supabaseUrl, config\.serviceRoleKey/);
+  assert.match(edge, /selectDispatchBatchLimits\(payload, MAX_CLAIM, MAX_EVENTS\)/);
+  assert.match(edge, /jsonResponse\(known\.status, \{ ok: false, code: known\.code \}\)/);
+  const logStatements = edge.match(/console\.(?:info|error)\([^\n]+/g)?.join("\n") ?? "";
+  assert.doesNotMatch(logStatements, /dispatchSecret|serviceRoleKey|authorization|push_token|privateKey/i);
+  assert.doesNotMatch(edge, /VITE_/);
 });
 
 test("realtime, refresh and push identities deduplicate to one notification", () => {
@@ -67,6 +135,53 @@ test("mobile source has a narrow native surface and no privileged secret materia
   assert.doesNotMatch(source, /@capacitor\/filesystem|child_process|shell\.open|\beval\(/i);
   assert.match(source, /PushNotifications/);
   assert.match(source, /mobile_installation_deactivate/);
+});
+
+test("notification center is server-backed and push opens are deferred through current authority", () => {
+  const page = fs.readFileSync("src/modules/mobile/pages/MobileNotificationsPage.tsx", "utf8");
+  const center = fs.readFileSync("src/modules/mobile/services/notificationCenter.ts", "utf8");
+  const push = fs.readFileSync("src/modules/mobile/services/mobilePush.ts", "utf8");
+  assert.match(page, /listMobileNotifications/);
+  assert.match(page, /markAllMobileNotificationsRead/);
+  assert.doesNotMatch(page, /Preferences|buildOperationalNotifications|READ_KEY/);
+  assert.match(center, /notification_center_list/);
+  assert.match(center, /notification_center_resolve_route/);
+  assert.match(push, /PENDING_NOTIFICATION_KEY/);
+  assert.match(push, /pushNotificationReceived/);
+  assert.match(push, /pushNotificationActionPerformed/);
+  assert.match(push, /consumePendingNotificationAction/);
+  assert.match(push, /checkPermissions\(\)[\s\S]*deactivateMobileInstallation/);
+  assert.doesNotMatch(push, /safePushDeepLink\(event\.notification/);
+});
+
+test("0092 wires every required event through failure-isolated deduplicated enqueue", () => {
+  const migration = fs.readFileSync("supabase/migrations/0092_mobile_push_and_notification_center.sql", "utf8");
+  for (const event of [
+    "online_order:",
+    "manager_approval:",
+    "critical_stock:",
+    "stock_transfer_attention:",
+    "return_refund_attention:",
+    "offline_sync_failure:",
+  ]) assert.match(migration, new RegExp(event));
+  assert.match(migration, /notification_enqueue_safe/);
+  assert.match(migration, /exception when others then\s+return null/);
+  assert.match(migration, /notification_route_accessible/);
+});
+
+test("native push configuration protects external custody and relays APNs tokens", () => {
+  const manifest = fs.readFileSync("android/app/src/main/AndroidManifest.xml", "utf8");
+  const androidIgnore = fs.readFileSync("android/.gitignore", "utf8");
+  const iosIgnore = fs.readFileSync("ios/.gitignore", "utf8");
+  const appDelegate = fs.readFileSync("ios/App/App/AppDelegate.swift", "utf8");
+  assert.match(manifest, /default_notification_channel_id/);
+  assert.match(manifest, /alyq_operational/);
+  assert.match(androidIgnore, /^app\/google-services\.json$/m);
+  assert.match(androidIgnore, /^\*\.keystore$/m);
+  assert.match(iosIgnore, /^\*\.p8$/m);
+  assert.match(appDelegate, /capacitorDidRegisterForRemoteNotifications/);
+  assert.match(appDelegate, /capacitorDidFailToRegisterForRemoteNotifications/);
+  assert.doesNotMatch(appDelegate + manifest, /BEGIN (?:RSA |EC )?PRIVATE KEY|service_role/i);
 });
 
 test("bottom-tab routes are relative to the /mobile/* mount, not absolute", () => {

@@ -11,3 +11,8 @@ capacitor-cordova-ios-plugins
 # Generated Config files
 App/App/capacitor.config.json
 App/App/config.xml
+
+# Apple signing/provider custody — protected CI/Keychain only, never Git.
+*.p8
+*.p12
+*.mobileprovision

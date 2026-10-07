@@ -291,13 +291,25 @@ test("there is no session when the provider has none", async () => {
   assert.equal(await repository.currentSession(), null);
 });
 
-test("signing out everywhere asks the provider for a global scope", async () => {
+test("signing out everywhere deactivates native installations before provider-global revocation", async () => {
   const stub = makeStub();
   const repository = new SupabaseUserRepository(stub.client);
 
   await repository.signOut();
   await repository.signOut({ everywhere: true });
   assert.deepEqual(stub.signOutScopes, ["local", "global"]);
+  assert.deepEqual(stub.rpcCalls, ["mobile_installations_deactivate_all"]);
+  assert.ok(
+    stub.calls.indexOf("rpc:mobile_installations_deactivate_all") < stub.calls.indexOf("signOut:global"),
+    "provider token custody must be cleared while the caller access token is still valid",
+  );
+});
+
+test("installation deactivation failure cannot block an intentional global logout", async () => {
+  const stub = makeStub({ rpcError: { message: "push subsystem unavailable" } });
+  const repository = new SupabaseUserRepository(stub.client);
+  await repository.signOut({ everywhere: true });
+  assert.deepEqual(stub.signOutScopes, ["global"]);
 });
 
 test("a username recovery goes through the resolver; the browser never hands over an email", async () => {

@@ -6,8 +6,11 @@ export interface MobileContextValue {
   runtime: MobileRuntimeContext | null;
   network: "online" | "offline" | "unknown";
   pushState: PushRegistrationState;
+  notificationUnreadCount: number;
+  notificationRevision: number;
   enablePush: () => Promise<void>;
   refreshNetwork: () => Promise<void>;
+  refreshNotifications: () => Promise<void>;
 }
 
 export const MobileContext = createContext<MobileContextValue | null>(null);
