@@ -11,7 +11,9 @@
  *     archived rows, unpublished rows);
  *   · a malformed response fails instead of reading as "no products";
  *   · an unreachable project fails;
- *   · the request plan can only ever be the two read-only public functions.
+ *   · the request plan can only ever be the two read-only public functions;
+ *   · a function redefined by a later migration is judged by its LAST
+ *     definition, so an earlier read-only body cannot vouch for a later writer.
  */
 import assert from "node:assert/strict";
 
@@ -203,6 +205,93 @@ check("a volatile function, or one whose body writes, is refused", () => {
   assert.match(inspectFunctionSource(volatileBody, "storefront_catalogue").reason, /volatile/);
   assert.equal(missing.found, false);
   assert.equal(missing.readOnly, false);
+});
+
+/**
+ * One `create or replace function public.storefront_catalogue()` definition,
+ * quoted the way the argument says (`"function"` → `$function$`, `""` → `$$`).
+ *
+ * Concatenating several of these is what a migration history looks like, and it
+ * is the shape the shipped SQL actually has: `0030_live_mode_hardening.sql`
+ * defines the function with an `as $$` body and `0080_branch_stock_operations.sql`
+ * redefines it with `as $function$`. `create or replace` means the LAST one is
+ * the definition in the database the gate is about to call.
+ */
+const redefinition = (body: string, volatility = "stable", quote = "function"): string => `
+create or replace function public.storefront_catalogue()
+returns table(id uuid, stock_quantity integer, active boolean)
+language sql
+${volatility}
+security definer
+set search_path = pg_catalog, public
+as $${quote}$
+${body}
+$${quote}$;
+`;
+
+check("the LAST definition in migration order wins, so a later writer is refused", () => {
+  const readBody = "  select p.id, p.stock_quantity, p.active\n    from public.products p\n   where p.active";
+  const writeBody = `${readBody};\n  delete from public.branch_stock_balances where quantity < 0`;
+
+  // The regression: an earlier stable, select-only definition followed by a
+  // later writing one. Reading the FIRST match reports the historical read-only
+  // body and waves the release through; the effective definition deletes rows.
+  const superseded = [redefinition(readBody), redefinition(writeBody)].join("\n");
+  const verdict = inspectFunctionSource(superseded, "storefront_catalogue");
+  assert.equal(verdict.found, true);
+  assert.equal(verdict.readOnly, false,
+    "an earlier read-only body must not vouch for the later definition that replaced it");
+  assert.match(verdict.reason, /delete/, "the refusal names the write keyword from the LAST body");
+
+  // And the gate-level verdict agrees, which is what stops the RPC being sent.
+  assert.deepEqual(levelOf(inspectShippedSql(superseded), "catalogue.sql_read_only"), ["fail", "fail"],
+    "a function the last migration turned into a writer fails the shipped-SQL check");
+
+  // A later redefinition that only changes volatility is refused the same way.
+  const volatileLater = [redefinition(readBody), redefinition(readBody, "volatile")].join("\n");
+  assert.equal(inspectFunctionSource(volatileLater, "storefront_catalogue").readOnly, false);
+  assert.match(inspectFunctionSource(volatileLater, "storefront_catalogue").reason, /volatile/);
+
+  // Position is what decides it, not "some definition writes": with the clean
+  // body last, the effective definition reads only and the gate passes.
+  const restored = [redefinition(writeBody), redefinition(readBody)].join("\n");
+  assert.equal(inspectFunctionSource(restored, "storefront_catalogue").readOnly, true);
+
+  // Three files deep, with the mixed quoting the shipped SQL really uses, and
+  // with the last header shouted: the global match is case-insensitive and still
+  // lands on the final definition.
+  const mixed = [
+    redefinition(readBody, "stable", ""),
+    redefinition(readBody),
+    redefinition(writeBody).toUpperCase(),
+  ].join("\n");
+  const mixedVerdict = inspectFunctionSource(mixed, "storefront_catalogue");
+  assert.equal(mixedVerdict.readOnly, false);
+  assert.match(mixedVerdict.reason, /delete/i);
+});
+
+check("a body that mentions create … function ( cannot truncate its own inspection", () => {
+  // The last definition quotes dynamic DDL that itself looks like a function
+  // header. Attributing the body's START to a definition must not cut the body
+  // short there, or the `delete` that follows would never be read.
+  const dynamicDdl = [
+    redefinition("  select p.id, p.stock_quantity, p.active from public.products p where p.active"),
+    `
+create or replace function public.storefront_catalogue()
+returns void
+language plpgsql
+stable
+security definer
+as $function$
+  execute 'create or replace function public.helper() returns void as $h$ select 1 $h$';
+  delete from public.products where id is null;
+$function$;
+`,
+  ].join("\n");
+  const verdict = inspectFunctionSource(dynamicDdl, "storefront_catalogue");
+  assert.equal(verdict.readOnly, false, "the whole effective body is read, past the DDL it mentions");
+  assert.match(verdict.reason, /delete/);
+  assert.deepEqual(levelOf(inspectShippedSql(dynamicDdl), "catalogue.sql_read_only"), ["fail", "fail"]);
 });
 
 /* ── 3 · payload classification ──────────────────────────────────────────── */

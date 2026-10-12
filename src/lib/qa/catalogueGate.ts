@@ -29,10 +29,12 @@
  *      what matters is that the *target* is a read-only function and the *body*
  *      carries no arguments to write with).
  *   2. **The functions are read-only in the shipped SQL.** `inspectFunctionSource()`
- *      parses the migration that defines them and refuses anything that is not
- *      `stable`/`immutable` or whose body contains a write keyword. A migration
- *      that turned either function into a mutating one fails the gate before a
- *      single request leaves the process.
+ *      parses the migrations that define them — reading the LAST definition of
+ *      each, which is the one `create or replace` actually leaves in the
+ *      database — and refuses anything that is not `stable`/`immutable` or whose
+ *      body contains a write keyword. A later migration that turned either
+ *      function into a mutating one fails the gate before a single request
+ *      leaves the process, even when an earlier migration defined it read-only.
  *   3. **The credential is the anon key only.** A `service_role` JWT claim or an
  *      `sb_secret_…` key is refused up front: the gate must see exactly what an
  *      anonymous visitor sees, and must never hold a key that could write.
@@ -212,18 +214,32 @@ export interface FunctionSourceVerdict {
 
 /**
  * Parse `create or replace function public.<name>(…) … as $function$ … $function$`
- * out of a migration and decide whether the body can write.
+ * out of the shipped migrations and decide whether the body can write.
  *
  * Word boundaries matter: `updated_at` is not an `update`, `created_at` is not a
  * `create`. The volatility keyword is read from the header (between the closing
  * `)` of the signature and `as $function$`), where PostgreSQL expects it.
+ *
+ * ## The last definition is the one that ships
+ *
+ * The migrations are concatenated in filename order and `create or replace`
+ * means a later file *supersedes* an earlier one, so the definition worth
+ * judging is the LAST match, not the first. `storefront_catalogue()` really is
+ * defined twice — `0030_live_mode_hardening.sql` and then
+ * `0080_branch_stock_operations.sql` — and only the 0080 body exists in the
+ * database the gate is about to call. A single (non-global) match reads the
+ * historical 0030 body instead, which is how a later migration could hand the
+ * gate a `delete`-ing function and still be reported read-only.
  */
 export function inspectFunctionSource(sql: string, functionName: string): FunctionSourceVerdict {
-  const header = new RegExp(
+  // `g` is as load-bearing as `i`: collect every definition of this function and
+  // inspect the final one, which is the effective definition in migration order.
+  const definitions = [...sql.matchAll(new RegExp(
     `create\\s+(?:or\\s+replace\\s+)?function\\s+public\\.${functionName}\\s*\\(`,
-    "i",
-  ).exec(sql);
-  if (!header) {
+    "gi",
+  ))];
+  const header = definitions[definitions.length - 1];
+  if (!header || header.index === undefined) {
     return {
       found: false,
       readOnly: false,
@@ -232,8 +248,20 @@ export function inspectFunctionSource(sql: string, functionName: string): Functi
     };
   }
 
-  const afterSignature = sql.slice(header.index);
-  const bodyStart = /\bas\s+\$function\$/i.exec(afterSignature);
+  // Confine the search for the body's START to the effective definition: it ends
+  // where the next function header begins. Without the bound, a definition quoted
+  // some other way (`as $$ …`, as 0030 used) would let the search run on into an
+  // unrelated later function and judge *that* body — a pass for SQL never read.
+  // If the bound is ever wrong, the gate fails closed rather than open.
+  const nextDefinition = new RegExp(
+    "create\\s+(?:or\\s+replace\\s+)?function\\s+(?:public\\.)?[a-z_][a-z0-9_$]*\\s*\\(",
+    "gi",
+  );
+  nextDefinition.lastIndex = header.index + header[0].length;
+  const definitionEnd = nextDefinition.exec(sql)?.index ?? sql.length;
+
+  const definition = sql.slice(header.index, definitionEnd);
+  const bodyStart = /\bas\s+\$function\$/i.exec(definition);
   if (!bodyStart) {
     return {
       found: true,
@@ -243,9 +271,13 @@ export function inspectFunctionSource(sql: string, functionName: string): Functi
     };
   }
 
-  const headerText = afterSignature.slice(0, bodyStart.index);
-  const bodyText = afterSignature
-    .slice(bodyStart.index + bodyStart[0].length)
+  const headerText = definition.slice(0, bodyStart.index);
+  // The body is read to its own closing delimiter in the FULL text, not to the
+  // bound above: a body that mentions `create … function (` itself (dynamic DDL)
+  // must not be able to truncate the inspection and hide a write keyword that
+  // follows it. Only the body's start is attributed to a definition.
+  const bodyText = sql
+    .slice(header.index + bodyStart.index + bodyStart[0].length)
     .split(/\$function\$/i)[0] ?? "";
 
   const volatility = /\b(immutable|stable|volatile)\b/i.exec(headerText.toLowerCase())?.[1] ?? "";
