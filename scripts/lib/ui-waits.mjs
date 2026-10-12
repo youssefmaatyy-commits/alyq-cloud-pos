@@ -48,9 +48,12 @@ export async function waitForRoute(dom, hash, { normalizeStorePath = (value) => 
     if (canonical === '/dashboard') return Boolean(document.querySelector('[data-testid="dash-kpi-row"]'));
     if (canonical === '/dashboard/online/website') {
       const tab = new URLSearchParams(expectedSearch).get('tab') || 'general';
-      if (tab === 'v2') return Boolean(document.querySelector('[data-testid="v2-social-editor"]') && document.querySelector('[data-testid="v2-draft-preview"]'));
-      if (tab === 'social') return Boolean(document.querySelector('[data-testid="social-settings"]'));
-      if (tab === 'general') return Boolean(document.querySelector('input[placeholder="201001234567"]'));
+      const buttons = [...document.querySelectorAll('button[data-settings-tab]')];
+      // The same settings page remains mounted for every tab. Check its actual
+      // committed selection, not a header/old editor or only three known tabs.
+      const selected = buttons.find((button) => button.getAttribute('data-settings-tab') === tab) ||
+        buttons.find((button) => button.getAttribute('data-settings-tab') === 'general');
+      return selected?.getAttribute('aria-pressed') === 'true' && Boolean(document.querySelector('main h1'));
     }
     if (canonical.startsWith('/dashboard')) return Boolean(document.querySelector('main h1'));
     if (/^\/store\/products\/[^/]+$/.test(canonical)) return Boolean(document.querySelector('[data-testid="product-add-to-cart"], [data-testid="v2-pdp-add"], .v2-not-found h1'));

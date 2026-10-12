@@ -72,7 +72,7 @@ await test('route readiness requires final redirects, current queries and applie
       document: { querySelector(selector) {
         if (selector === '[data-testid="route-location"]') return { getAttribute: () => path };
         if (selector === 'select[aria-label="Status"]' && status) return { value: status(++reads.status) };
-        if (selector === 'header, h1') return {};
+        if (selector === 'header, h1' || selector === 'main h1') return {};
         return null;
       } },
     } } };
@@ -93,6 +93,17 @@ await test('route readiness requires final redirects, current queries and applie
   } });
   assert.equal(normalized, '/store/v2/account?tab=orders');
   assert.ok(redirect.reads.hash >= 2, 'a transient old-preview URL is not a completed redirect');
+
+  const editor = route('/dashboard/online/website', () => '#/dashboard/online/website?tab=theme');
+  let selectionReads = 0;
+  editor.dom.window.document.querySelectorAll = (selector) => {
+    if (selector !== 'button[data-settings-tab]') return [];
+    const selected = ++selectionReads > 1;
+    return [{ getAttribute: (name) => name === 'data-settings-tab' ? 'theme' : selected ? 'true' : 'false' }];
+  };
+  await waitForRoute(editor.dom, '#/dashboard/online/website?tab=theme');
+  assert.ok(selectionReads >= 2, 'the correct hash/header do not bypass the newly selected appearance panel');
+
 });
 
 
