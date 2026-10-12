@@ -45,7 +45,7 @@ await waitFor(() => catalog()?.products?.length > 0, { label: "the demo catalogu
 // participate in the test. 26 created + 5 sellable seeds = 31 matches for a
 // one-letter query, which also proves the result list stays capped.
 for (let i = 1; i <= 26; i += 1) {
-  await navigate("#/products/new", 200);
+  await navigate("#/products/new");
   await waitFor(() => document.querySelector("#sku"), { label: `product form ${i}` });
   await waitFor(() => (document.querySelector("#category_id")?.options?.length ?? 0) > 1, { label: `categories ${i}` });
   setField("#name_ar", `سوار التمرير ${i}`);
@@ -60,9 +60,10 @@ for (let i = 1; i <= 26; i += 1) {
     const firstCategory = [...category.options].find((option) => option.value !== "");
     if (firstCategory) setReactValue(category, firstCategory.value);
   }
-  await sleep(50);
+  await waitFor(() => !document.querySelector('[data-testid="product-form-save"]')?.disabled, { label: `save enabled ${i}` });
   clickExact("Save");
   await waitFor(() => !dom.window.location.hash.includes("/new") && dom.window.location.hash.includes("/products"), { label: `saved product ${i}` });
+  await waitFor(() => !document.querySelector("#sku") && catalog().products.some((p) => p.sku === `POS-SCROLL-${i}`), { label: `saved form ${i} replaced by catalogue` });
 }
 const idOf = (sku) => catalog().products.find((p) => p.sku === sku)?.id;
 assert.ok(idOf("POS-SCROLL-5"), "the created products are in the catalogue");

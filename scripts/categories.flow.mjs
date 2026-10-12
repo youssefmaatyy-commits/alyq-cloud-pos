@@ -1,3 +1,4 @@
+import { waitForCondition as waitFor, waitForRoute } from "./lib/ui-waits.mjs";
 /**
  * Category Lifecycle E2E (Phase 44) — the acceptance example, driven through
  * the real bundle in jsdom, demo mode, exactly as an admin would:
@@ -92,34 +93,23 @@ process.on("unhandledRejection", (reason) => {
 });
 dom.window.open = () => ({ document: { open() {}, write() {}, close() {} }, focus() {}, print() {} });
 
-await import(bundleFileUrl());
+const { flushSync } = await import(bundleFileUrl());
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const bodyText = () => document.body.textContent ?? "";
 /** JSX spans concatenate without literal spaces — squeeze before matching. */
 const squeezed = () => (document.body.textContent ?? "").replace(/\s+/g, "");
 
-async function waitFor(condition, { label, timeout = 15_000, interval = 150 } = {}) {
-  const deadline = Date.now() + timeout;
-  for (;;) {
-    if (condition()) return;
-    if (Date.now() > deadline) {
-      throw new Error(`Timed out waiting for ${label}. Body: ${squeezed().slice(400, 1400)}`);
-    }
-    await sleep(interval);
-  }
-}
 
-const navigate = async (hash, settle = 400) => {
+const navigate = async (hash) => {
   dom.window.location.hash = hash;
-  dom.window.dispatchEvent(new dom.window.HashChangeEvent("hashchange"));
-  await sleep(settle);
+  flushSync(() => dom.window.dispatchEvent(new dom.window.HashChangeEvent("hashchange")));
+  await waitForRoute(dom, hash);
 };
 
 const clickEl = (el) =>
-  el.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  flushSync(() => el.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true })));
 const click = (label, scope = document) => {
   const el = [...scope.querySelectorAll("button, a")].find((n) =>
     (n.textContent ?? "").trim().includes(label),
@@ -138,9 +128,9 @@ const clickExact = (label, scope = document) => {
 };
 const setNative = (input, proto) => (value) => {
   Object.getOwnPropertyDescriptor(proto.prototype, "value").set.call(input, value);
-  input.dispatchEvent(
+  flushSync(() => input.dispatchEvent(
     new dom.window.Event(input.tagName === "SELECT" ? "change" : "input", { bubbles: true }),
-  );
+  ));
 };
 const setField = (selector, value) => {
   const input = document.querySelector(selector);
@@ -177,8 +167,7 @@ const isSignedIn = () => bodyText().includes("Signed in as");
 const signOut = async () => {
   if (!isSignedIn()) return;
   click("Sign out");
-  for (let i = 0; i < 20 && !usernameField(); i += 1) await sleep(200);
-  await sleep(200);
+  await waitFor(() => usernameField() && !isSignedIn(), { label: "sign-out and Login to finish" });
 };
 const signInAs = async (username, password = DEMO_PASSWORD) => {
   await signOut();
@@ -190,7 +179,7 @@ const signInAs = async (username, password = DEMO_PASSWORD) => {
   setField("input[autocomplete='current-password']", password);
   click("Sign in");
   await waitFor(() => isSignedIn(), { label: `${username} to sign in` });
-  await sleep(400);
+
 };
 
 /** A category's row in the tree: the <li> whose heading names it. */
@@ -224,7 +213,7 @@ const rowAction = (nameEn, label) => {
 };
 
 async function createCategory(nameAr, nameEn) {
-  await navigate("#/categories", 500);
+  await navigate("#/dashboard/categories");
   const add = [...document.querySelectorAll("button")].find((b) =>
     (b.textContent ?? "").includes("Add category"),
   );
@@ -238,7 +227,7 @@ async function createCategory(nameAr, nameEn) {
   clickExact("Save");
   // The modal closes on success; if it is still open after a grace period,
   // surface why (validation, duplicate, …).
-  for (let i = 0; i < 20 && document.querySelector("#cat-name-en"); i += 1) await sleep(200);
+  await waitFor(() => !document.querySelector("#cat-name-en"), { label: "saved category form to close" });
   if (document.querySelector("#cat-name-en")) {
     throw new Error(`the category form did not close for ${nameEn}: ${squeezed().slice(0, 600)}`);
   }
@@ -253,7 +242,7 @@ const selectOptions = (select) => [...select.options].map((o) => o.textContent ?
 
 async function main() {
   console.log("\nCategory Lifecycle · safe delete, move, archive\n");
-  await sleep(500);
+
 
   // 0 ─ admin
   await signInAs("admin");
@@ -267,7 +256,7 @@ async function main() {
 
   // 2 ─ three products on Rings Old, one on Hidden Rings
   const makeProduct = async (sku, name, stock, categoryLabel) => {
-    await navigate("#/products/new");
+    await navigate("#/dashboard/products/new");
     await waitFor(() => document.querySelector("#sku"), { label: "the product form" });
     setField("#name_ar", name);
     setField("#name_en", name);
@@ -293,7 +282,7 @@ async function main() {
   console.log("  ✓ the four shelves and their products exist");
 
   // 3 ─ the empty category deletes with a plain confirm
-  await navigate("#/categories", 500);
+  await navigate("#/dashboard/categories");
   rowAction("Temporary Empty", "Delete");
   await waitFor(() => squeezed().includes("Deletecategory?"), {
     label: "the plain delete confirm",
@@ -345,7 +334,7 @@ async function main() {
     label: "the archive toast",
   });
   await waitFor(settled, { label: "the tree to settle after the archive" });
-  await sleep(300);
+
   // the Active tab hides it; the Archived tab names it (re-queried every time:
   // refresh rebuilds the strip and stale element references click nothing)
   const tabByLabel = (needle) =>
@@ -356,14 +345,14 @@ async function main() {
   const archivedTab = tabByLabel("Archived");
   assert.ok(activeTab && archivedTab, "the Active/Archived tabs exist");
   clickEl(activeTab);
-  await sleep(400);
+
   assert.ok(!treeRow("Rings Old"), "the archived category leaves the Active tab");
   {
     const archivedTab2 = tabByLabel("Archived");
     assert.ok(archivedTab2, "the Archived tab is still there");
     clickEl(archivedTab2);
   }
-  await sleep(500);
+
   assert.ok(treeRow("Rings Old"), "the archived category is found under Archived");
   console.log("  ✓ archive succeeds; the shelf leaves the working tree but stays findable");
 
@@ -380,7 +369,7 @@ async function main() {
     "stock untouched by the archive",
   );
 
-  await navigate("#/products/new");
+  await navigate("#/dashboard/products/new");
   await waitFor(() => document.querySelector("#category_id"), { label: "the product form" });
   assert.ok(
     ![...document.querySelector("#category_id").options].some((o) =>
@@ -398,7 +387,7 @@ async function main() {
   // The register is scan/search-first: no category chips, no browsable grid.
   // Archiving a shelf must not strand its products — they stay searchable.
   const posRows = () => [...document.querySelectorAll("[data-pos-result-index]")];
-  await navigate("#/pos", 600);
+  await navigate("#/dashboard/pos");
   await waitFor(() => document.querySelector('[data-testid="pos-scan-search"]'), { label: "the scan/search box" });
   assert.equal(
     document.querySelectorAll('[data-testid^="pos-category-chip-"]').length,
@@ -419,7 +408,7 @@ async function main() {
 
   // 6.5 ─ archive Hidden Rings NOW: the move scene must meet it archived, the
   //       way the task states it — an archived shelf is no destination.
-  await navigate("#/categories", 500);
+  await navigate("#/dashboard/categories");
   rowAction("Hidden Rings", "Deactivate");
   await waitFor(() => squeezed().includes("willbehiddenfromnewproducts"), {
     label: "the deactivate confirm",
@@ -427,17 +416,17 @@ async function main() {
   click("Deactivate");
   await waitFor(() => lastToast().includes("Category deactivated"), { label: "the archive toast" });
   await waitFor(settled, { label: "the tree to settle" });
-  await sleep(300);
+
   console.log("  ✓ Hidden Rings archived ahead of the move");
 
   // 7 ─ reactivate: everything returns
-  await navigate("#/categories", 500);
+  await navigate("#/dashboard/categories");
   {
     const archivedTab2 = tabByLabel("Archived");
     assert.ok(archivedTab2, "the Archived tab is there for the reactivation");
     clickEl(archivedTab2);
   }
-  await sleep(500);
+
   rowAction("Rings Old", "Activate");
   await waitFor(() => squeezed().includes("willbecomeselectablefornewproductsagain"), {
     label: "the activate confirm",
@@ -445,15 +434,15 @@ async function main() {
   click("Activate");
   await waitFor(() => lastToast().includes("Category activated"), { label: "the restore toast" });
   await waitFor(settled, { label: "the tree to settle after the restore" });
-  await sleep(300);
+
   {
     const activeTab2 = tabByLabel("Active");
     assert.ok(activeTab2, "the Active tab is still there");
     clickEl(activeTab2);
   }
-  await sleep(500);
+
   assert.ok(treeRow("Rings Old"), "the reactivated category is back under Active");
-  await navigate("#/products/new");
+  await navigate("#/dashboard/products/new");
   await waitFor(() => document.querySelector("#category_id"), { label: "the product form" });
   assert.ok(
     [...document.querySelector("#category_id").options].some((o) =>
@@ -464,7 +453,7 @@ async function main() {
   console.log("  ✓ reactivation restores the shelf");
 
   // 8 ─ the move: 3 products to Rings New, Rings Old deleted, one operation
-  await navigate("#/categories", 500);
+  await navigate("#/dashboard/categories");
   rowAction("Rings Old", "Delete");
   await waitFor(() => squeezed().includes("Thiscategorycontains3products"), {
     label: "the lifecycle dialog for the move",
@@ -487,7 +476,7 @@ async function main() {
   click("Move & delete");
   await waitFor(() => squeezed().includes("Moved3product"), { label: "the moved-3 toast" });
   await waitFor(settled, { label: "the tree to settle after the move" });
-  await sleep(300);
+
   assert.ok(!treeRow("Rings Old"), "Rings Old is gone");
   const ringsNewRow = treeRow("Rings New");
   assert.ok(ringsNewRow, "Rings New remains");
@@ -513,7 +502,7 @@ async function main() {
   const hiddenState = catalogState();
   const hiddenPiece = (hiddenState.products ?? []).find((p) => p.name_en === "Hidden Piece");
   assert.ok(hiddenPiece?.active, "the Hidden Piece was NOT auto-archived");
-  await navigate("#/pos", 600);
+  await navigate("#/dashboard/pos");
   await waitFor(() => document.querySelector('[data-testid="pos-scan-search"]'), { label: "the scan/search box" });
   setField('[data-testid="pos-scan-search"]', "CAT-H");
   await waitFor(
@@ -528,7 +517,7 @@ async function main() {
   // the store-level refusal (what a forged request meets in demo mode, and
   // what the 0044 trigger meets in live mode) is proven by the unit suite;
   // here we prove the UI never offers the door: the picker hides Hidden Rings
-  await navigate("#/products/new");
+  await navigate("#/dashboard/products/new");
   await waitFor(() => document.querySelector("#category_id"), { label: "the product form" });
   assert.ok(
     ![...document.querySelector("#category_id").options].some((o) =>

@@ -38,3 +38,5 @@ declare global {
 export function getSupabaseClient(): SupabaseClient | null {
   return (globalThis.__ALYQ_TEST_SUPABASE_CLIENT__ ?? null) as SupabaseClient | null;
 }
+
+export function getRepositoryMode(): "supabase" { return "supabase"; }

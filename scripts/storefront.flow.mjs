@@ -1,3 +1,4 @@
+import { waitForCondition as waitFor, waitForRoute } from "./lib/ui-waits.mjs";
 /**
  * Storefront customization flow (Phase 45).
  *
@@ -106,28 +107,19 @@ process.on("unhandledRejection", (reason) => {
   errors.push(`unhandledRejection: ${reason?.stack ?? String(reason)}`);
 });
 
-await import(bundleFileUrl());
+const { flushSync } = await import(bundleFileUrl());
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const bodyText = () => document.body.textContent ?? "";
 const bodyHtml = () => document.body.innerHTML ?? "";
-const navigate = async (hash, settle = 500) => {
+const navigate = async (hash) => {
   dom.window.location.hash = hash;
-  dom.window.dispatchEvent(new dom.window.HashChangeEvent("hashchange"));
-  await sleep(settle);
-};
-const waitFor = async (predicate, { timeout = 10000, label = "condition" } = {}) => {
-  const started = Date.now();
-  while (Date.now() - started < timeout) {
-    if (predicate()) return true;
-    await sleep(150);
-  }
-  throw new Error(`timed out waiting for ${label}`);
+  flushSync(() => dom.window.dispatchEvent(new dom.window.HashChangeEvent("hashchange")));
+  await waitForRoute(dom, hash);
 };
 const clickEl = (el) =>
-  el.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  flushSync(() => el.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true })));
 const click = (label, scope = document) => {
   const el = [...scope.querySelectorAll("button, a")].find((n) =>
     (n.textContent ?? "").trim().includes(label),
@@ -144,9 +136,9 @@ const clickExact = (label, scope = document) => {
 };
 const setNative = (input, proto) => (value) => {
   Object.getOwnPropertyDescriptor(proto.prototype, "value").set.call(input, value);
-  input.dispatchEvent(
+  flushSync(() => input.dispatchEvent(
     new dom.window.Event(input.tagName === "SELECT" ? "change" : "input", { bubbles: true }),
-  );
+  ));
 };
 const setField = (selector, value, scope = document) => {
   const input = scope.querySelector(selector);
@@ -202,12 +194,13 @@ const DEMO_PASSWORD = "alyq1234";
 const usernameField = () => document.querySelector("input[autocomplete='username']");
 const isSignedIn = () => bodyText().includes("Signed in as");
 const signInAs = async (username, password = DEMO_PASSWORD) => {
+  if (!usernameField()) await navigate("#/login");
   await waitFor(() => Boolean(usernameField()), { label: "the login screen" });
   setField("input[autocomplete='username']", username);
   setField("input[autocomplete='current-password']", password);
   click("Sign in");
   await waitFor(() => isSignedIn(), { label: `${username} to sign in` });
-  await sleep(300);
+
 };
 
 // ── 1 · the Variant Test Ring, through the real editor ──────────────────────
@@ -218,7 +211,7 @@ const SILVER_SKU = "VAR-RING-SILVER-17";
 await signInAs("admin");
 console.log("  ✓ admin signed in");
 
-await navigate("#/products/new");
+await navigate("#/dashboard/products/new");
 await waitFor(() => document.querySelector("#sku"), { label: "the product form" });
 setField("#name_ar", "خاتم متعدد");
 setField("#name_en", "Variant Ring");
@@ -234,12 +227,12 @@ setField("#low_stock_level", "1");
   setField("#category_id", option.value);
 }
 clickExact("Save");
-await waitFor(() => dom.window.location.hash === "#/products", { label: "route back to the catalogue" });
+await waitFor(() => dom.window.location.hash === "#/dashboard/products", { label: "route back to the catalogue" });
 await waitFor(() => bodyText().includes(SKU), { label: "the ring to appear" });
 const productId = catalog().products.find((p) => p.sku === SKU)?.id;
 assert.ok(productId, "the ring is in the demo catalogue");
 
-await navigate(`#/products/${productId}/edit`);
+await navigate(`#/dashboard/products/${productId}/edit`);
 await waitFor(() => document.querySelector('[data-testid="variant-editor"]'), { label: "the variant editor" });
 clickEl(document.querySelector('[data-testid="variant-generate"]'));
 await waitFor(() => document.querySelectorAll('[role="dialog"]').length > 0, { label: "the generator dialog" });
@@ -250,7 +243,7 @@ setNative(colorsArea, dom.window.HTMLTextAreaElement)("Gold | ذهبي | #d4af37
 const sizesInput = [...genDialog.querySelectorAll("input")].find((i) => (i.placeholder ?? "").includes("16, 16.5"));
 assert.ok(sizesInput, "the sizes input is in the generator");
 setNative(sizesInput, dom.window.HTMLInputElement)("17");
-await sleep(250);
+
 const genConfirm = [...genDialog.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === "Create 2");
 assert.ok(genConfirm && !genConfirm.disabled, "two combinations previewed");
 clickEl(genConfirm);
@@ -264,7 +257,7 @@ clickEl(document.querySelector('[data-testid="variant-mode-toggle"]'));
 await waitFor(() => document.querySelector('[data-testid="variant-enable-panel"]'), { label: "the enable panel" });
 setTestid(`opening-${GOLD_SKU}`, "2");
 setTestid(`opening-${SILVER_SKU}`, "2");
-await sleep(200);
+
 const confirmEnable = document.querySelector('[data-testid="variant-enable-confirm"]');
 assert.ok(!confirmEnable.disabled, "2 + 2 unlocks the confirm");
 clickEl(confirmEnable);
@@ -278,13 +271,14 @@ assert.equal(shelves[SILVER_SKU], 2, "Silver/17 opens with exactly 2");
 console.log("  ✓ Variant Ring live: Gold/17 = 2, Silver/17 = 2");
 
 // ── 2 · the builder shapes the new shop window ──────────────────────────────
-await navigate("#/online/website", 800);
+await navigate("#/dashboard/online/website");
 await waitFor(() => bodyText().includes("Website"), { label: "the website builder" });
 await waitFor(() => !bodyText().includes("Loading"), { label: "the builder to load its draft" });
 
 // 2a · hero: bilingual words + a fixture image
 clickExact("Hero");
-await sleep(200);
+await waitFor(() => document.querySelector("input[aria-label='Title (Arabic)']"), { label: "Hero editor tab" });
+
 setField("input[aria-label='Title (Arabic)']", "موسم جديد");
 setField("input[aria-label='Title (English)']", "New Season");
 setField("input[aria-label='Subtitle (Arabic)']", "قطع مختارة بعناية");
@@ -296,18 +290,19 @@ setField("input[aria-label='Button label (English)']", "Shop now");
   const urlInputs = [...document.querySelectorAll("input[aria-label='Image URL']")];
   assert.ok(urlInputs.length > 0, "the hero offers an image URL field");
   setNative(urlInputs[0], dom.window.HTMLInputElement)("https://cdn.alyq.example/hero.jpg");
-  await sleep(150);
+
   const card = urlInputs[0].closest("div.rounded-xl") ?? urlInputs[0].parentElement;
   const apply = [...card.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === "Use URL");
   assert.ok(apply, "the URL field has its apply button");
   clickEl(apply);
-  await sleep(200);
+
 }
 console.log("  ✓ hero configured (AR + EN + fixture image URL)");
 
 // 2b · announcement: one enabled message, rotating
 clickExact("Header");
-await sleep(250);
+await waitFor(() => bodyText().includes("Show the announcement bar"), { label: "Header editor tab" });
+
 {
   const row = [...document.querySelectorAll("div")].find((n) =>
     (n.textContent ?? "").trim().startsWith("Show the announcement bar"),
@@ -315,9 +310,10 @@ await sleep(250);
   assert.ok(row, "the announcement toggle exists");
   const sw = row.querySelector("[role='switch']") ?? row.closest("div")?.querySelector("[role='switch']");
   if (sw && sw.getAttribute("aria-checked") !== "true") clickEl(sw);
-  await sleep(150);
+
   clickExact("+ Add message");
-  await sleep(150);
+  await waitFor(() => bodyText().includes("Message (Arabic)"), { label: "announcement message fields" });
+
 }
 setFieldByLabel("Message (Arabic)", "توصيل مجاني للطلبات فوق ١٠٠٠ جنيه");
 setFieldByLabel("Message (English)", "Free delivery over EGP 1000");
@@ -328,7 +324,8 @@ console.log("  ✓ announcement message added (with a deliberately unsafe link)"
 
 // 2c · sections: hide Brands, promote New arrivals
 clickExact("Sections");
-await sleep(250);
+await waitFor(() => document.querySelector("ol > li"), { label: "section-order editor tab" });
+
 {
   const items = [...document.querySelectorAll("ol > li")];
   const brands = items.find((n) => (n.textContent ?? "").includes("Brands"));
@@ -336,10 +333,10 @@ await sleep(250);
   const sw = brands.querySelector("[role='switch']");
   assert.equal(sw.getAttribute("aria-checked"), "false", "optional Brands chapter starts hidden");
   clickEl(sw);
-  await sleep(150);
+
   assert.equal(sw.getAttribute("aria-checked"), "true", "the builder can restore optional chapters");
   clickEl(sw);
-  await sleep(150);
+
   assert.equal(sw.getAttribute("aria-checked"), "false", "Brands is hidden in the draft");
   const newArrivals = [...document.querySelectorAll("ol > li")].find((n) =>
     (n.textContent ?? "").includes("New arrivals"),
@@ -348,15 +345,17 @@ await sleep(250);
     (b) => (b.getAttribute("aria-label") ?? "") === "Move up",
   );
   clickEl(up);
-  await sleep(150);
+
 }
 console.log("  ✓ Brands hidden, New arrivals promoted");
 
 // 2d · an editorial campaign
 clickExact("Campaigns");
-await sleep(250);
+await waitFor(() => document.querySelector("[data-testid='campaigns-settings']"), { label: "campaigns editor tab" });
+
 click("+ Add campaign");
-await sleep(200);
+await waitFor(() => bodyText().includes("Heading (English)"), { label: "new campaign editor" });
+
 {
   const panel = document.querySelector("[data-testid='campaigns-settings']");
   assert.ok(panel, "the campaigns panel renders");
@@ -373,7 +372,7 @@ console.log("  ✓ editorial campaign added");
 
 // 2e · social: the four platforms, Instagram enabled with a SAFE url
 clickExact("Social");
-await sleep(250);
+
 // the four platforms ship in the defaults; the panel edits them in place
 await waitFor(() => {
   const panel = document.querySelector("[data-testid='social-settings']");
@@ -387,14 +386,15 @@ await waitFor(() => {
   const card = name.closest("div.rounded-xl") ?? name.parentElement;
   const sw = card.querySelector("[role='switch']");
   if (sw.getAttribute("aria-checked") !== "true") clickEl(sw);
-  await sleep(100);
+
   setFieldByLabel("Profile URL", "https://instagram.com/alyq", card);
 }
 console.log("  ✓ Instagram enabled with a safe https URL");
 
 // 2f · checkout words
 clickExact("Checkout");
-await sleep(250);
+await waitFor(() => bodyText().includes("Place-order button (English)"), { label: "checkout copy editor" });
+
 setFieldByLabel("Place-order button (English)", "Complete my order");
 setFieldByLabel("Place-order button (Arabic)", "أكمل طلبي");
 console.log("  ✓ checkout button copy set");
@@ -408,7 +408,7 @@ clickExact("Save");
 await waitFor(() => toastText().includes("Saved") || bodyText().includes("Last saved"), {
   label: "the save to land",
 });
-await sleep(400);
+
 {
   const settings = savedSettings();
   assert.ok(settings, "settings persisted");
@@ -429,7 +429,7 @@ await sleep(400);
 console.log("  ✓ everything persisted to the settings document");
 
 // ── 3 · the storefront reflects it (public window, English) ─────────────────
-await navigate("#/store", 900);
+await navigate("#/store");
 await waitFor(() => bodyText().includes("Free delivery over EGP 1000"), {
   label: "the announcement to render",
 });
@@ -464,7 +464,7 @@ console.log("  ✓ announcement, hero, campaign, grid live — hidden section go
   );
   assert.ok(langButton, "the language switch is offered");
   clickEl(langButton);
-  await sleep(600);
+
 }
 await waitFor(() => bodyText().includes("موسم جديد"), { label: "the Arabic hero" });
 assert.ok(bodyText().includes("توصيل مجاني للطلبات فوق ١٠٠٠ جنيه"), "the Arabic announcement renders");
@@ -474,15 +474,15 @@ assert.equal(dir, "rtl", "the document runs right-to-left");
 console.log("  ✓ Arabic storefront: RTL direction, AR hero/announcement/campaign");
 
 // ── 5 · the ring sells from the shop window ─────────────────────────────────
-await navigate("#/store", 700);
+await navigate("#/store");
 {
   const langBack = [...document.querySelectorAll("button, a")].find((n) =>
     (n.textContent ?? "").trim() === "EN",
   );
   if (langBack) clickEl(langBack);
-  await sleep(500);
+
 }
-await navigate(`#/store/products/${productId}`, 800);
+await navigate(`#/store/products/${productId}`);
 await waitFor(() => bodyText().includes("Variant Ring"), { label: "the product page" });
 await waitFor(() => document.querySelector("[data-testid='product-add-to-cart']"), {
   label: "the buy controls",
@@ -495,27 +495,27 @@ await waitFor(() => document.querySelector("[data-testid='store-variant-picker']
   const gold = document.querySelector("[data-testid='variant-color-gold']");
   assert.ok(gold, "the Gold swatch is offered");
   clickEl(gold);
-  await sleep(250);
+  await waitFor(() => document.querySelector("[data-testid='variant-size-17']"), { label: "Gold sizes after selecting the colour" });
 }
 {
   const chip = document.querySelector("[data-testid='variant-size-17']");
   assert.ok(chip, "the size chip for 17 is offered");
   clickEl(chip);
-  await sleep(250);
+
 }
 await waitFor(() => bodyText().includes("Gold / 17"), { label: "the chosen combination label" });
 assert.ok(bodyText().includes("Only 2 left") || bodyText().includes("In stock"), "the shelf speaks");
 {
   const add = document.querySelector("[data-testid='product-add-to-cart']");
   clickEl(add);
-  await sleep(400);
+
   clickEl(document.querySelector("[data-testid='product-add-to-cart']"));
-  await sleep(400);
+
 }
 console.log("  ✓ Gold/17 added twice from the product page");
 
 // the third Gold/17 is refused: the shelf promises exactly 2
-await navigate("#/store", 700);
+await navigate("#/store");
 await waitFor(() => document.querySelector("[data-testid='product-grid']"), { label: "the homepage grid" });
 {
   const card = [...document.querySelectorAll("article")].find((n) => (n.textContent ?? "").includes("Variant Ring"));
@@ -525,18 +525,18 @@ await waitFor(() => document.querySelector("[data-testid='product-grid']"), { la
   );
   assert.ok(quickAdd, "the card offers quick add for a variant product");
   clickEl(quickAdd);
-  await sleep(250);
+
   const goldChip = card.querySelector("[data-testid='quick-add-Gold / 17']");
   assert.ok(goldChip, "the Gold/17 chip is listed");
   const silverChip = card.querySelector("[data-testid='quick-add-Silver / 17']");
   assert.ok(silverChip, "the Silver/17 chip is listed");
   clickEl(silverChip);
-  await sleep(400);
+
   // a THIRD Gold would break the promise: quick-add it and the cart refuses
   clickEl(quickAdd);
-  await sleep(200);
+
   clickEl(card.querySelector("[data-testid='quick-add-Gold / 17']"));
-  await sleep(400);
+
 }
 {
   // The cart holds Gold×2 + Silver×1 — the third Gold never landed.
@@ -551,9 +551,9 @@ await waitFor(() => document.querySelector("[data-testid='product-grid']"), { la
 console.log("  ✓ third Gold refused; Silver/17 quick-added as its own line");
 
 // ── 6 · cart → checkout → order ─────────────────────────────────────────────
-await navigate("#/store/cart", 700);
+await navigate("#/store/cart");
 await waitFor(() => bodyText().includes("Your cart"), { label: "the cart page" });
-await sleep(400);
+
 {
   const plus = [...document.querySelectorAll("button")].find(
     (b) => (b.getAttribute("aria-label") ?? "") === "Increase quantity",
@@ -561,7 +561,7 @@ await sleep(400);
   assert.ok(plus, "the cart line stepper renders");
   assert.ok(plus.disabled, "the + stepper is capped at what the shelf can promise (2)");
 }
-await navigate("#/store/checkout", 800);
+await navigate("#/store/checkout");
 await waitFor(() => bodyText().includes("Checkout"), { label: "the checkout page" });
 assert.ok(bodyText().includes("Complete my order"), "the admin's place-order copy is live");
 setField("input[autocomplete='name']", "Mona Mahmoud");
@@ -572,7 +572,7 @@ setField("input[autocomplete='tel']", "01001234567");
     (n.textContent ?? "").trim().startsWith("Pickup"),
   );
   if (pickup) clickEl(pickup);
-  await sleep(200);
+
 }
 await waitFor(() => {
   const btn = [...document.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === "Complete my order");
@@ -580,7 +580,7 @@ await waitFor(() => {
 }, { label: "place order to enable" });
 clickExact("Complete my order");
 await waitFor(() => onlineOrders().length > 0, { label: "the order to land" });
-await sleep(500);
+
 {
   const order = onlineOrders()[0];
   assert.ok(order.order_number?.startsWith("WEB-"), "a real order number");

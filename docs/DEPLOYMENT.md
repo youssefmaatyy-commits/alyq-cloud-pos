@@ -16,7 +16,7 @@ knowledge that is not in this repository.
 | Node 22+ and npm | build and test tooling |
 | A Supabase project | Postgres, Auth and Storage |
 | The project's `URL` and `anon` key | inlined into the front end at build time |
-| `service_role` key (server-side only, never in the front end) | applying migrations where the CLI is unavailable |
+| Separately approved migration/backup operator | Follow the Production runbooks; application builds never need privileged credentials |
 
 ---
 
@@ -27,6 +27,8 @@ cp .env.example .env
 ```
 
 ```ini
+VITE_APP_MODE=production
+VITE_RELEASE_ENVIRONMENT=production
 VITE_SUPABASE_URL=https://<ref>.supabase.co
 VITE_SUPABASE_ANON_KEY=<anon-key>
 VITE_CURRENCY=EGP
@@ -40,9 +42,18 @@ Vite inlines `VITE_*` at **build** time. Two consequences that catch people out:
 - the deployed artefact carries the values it was built with, so changing an
   environment variable means rebuilding, not just redeploying.
 
-Leaving both Supabase values empty is a supported, deliberate state: the app
-falls back to demo mode. That is useful for a smoke test of a build, but it is
-not a production configuration — demo data lives in the visitor's browser.
+There is **no automatic Demo fallback**. Missing/unknown mode or invalid Production
+configuration fails the build and defensively blocks business providers at runtime.
+Demo requires explicit `VITE_APP_MODE=demo`, is visibly labelled and must never be
+used for real money. `VITE_DEMO_SEED=off` is a deprecated Demo veto, not a mode
+selector. See [`production/production-environment.md`](production/production-environment.md)
+for the tested migration path.
+
+Production publication is through the protected exact-SHA gate in
+[`production/vercel-release-gate.md`](production/vercel-release-gate.md), after all
+required checks, independent approval, final artifact validation and a real
+read-only public catalogue probe. The unsupported Pages publishing workflow has
+been removed. Do not directly deploy a stale or implicitly-Demo artifact.
 
 ### The storefront URL (`VITE_STOREFRONT_URL`)
 
@@ -119,7 +130,7 @@ half-applied migration is worse than a failed one.
 Against a live project you can also re-run just the inspection stage:
 
 ```bash
-npm run db:check -- --driver=psql --url="$DATABASE_URL" --verify-only
+node scripts/migrations.check.mjs --driver=psql --url="$DATABASE_URL" --verify-only
 ```
 
 That applies nothing and reports whether the deployed schema still matches the
@@ -461,7 +472,7 @@ Before releasing, in order:
 ```bash
 npm run db:check                                         # schema builds and matches the code
 npm run test:all                                         # types, logic suites, E2E
-npm run db:check -- --driver=psql --url="$DATABASE_URL" --verify-only   # deployed schema still matches
+node scripts/migrations.check.mjs --driver=psql --url="$DATABASE_URL" --verify-only   # deployed schema still matches
 ```
 
 ---
@@ -542,6 +553,6 @@ backup. Retention never deletes a snapshot somebody took by hand, nor the newest
 
 **Before a risky migration.** Take a manual snapshot first — it is the fastest way
 back if a migration and the application disagree. `npm run db:check` verifies that
-all 29 migrations apply cleanly, are idempotent, and still match the app's row
+all 94 current migrations apply cleanly, are idempotent, and still match the app's row
 types, role grants, audit vocabulary and seed; run it in CI on every change to
 `supabase/migrations/`.

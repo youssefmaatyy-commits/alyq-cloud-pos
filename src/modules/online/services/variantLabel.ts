@@ -13,10 +13,12 @@ export type VariantLabelSource = {
   color_en: string | null;
   size: number | null;
   size_label: string | null;
+  size_value?: string | null;
 };
 
 /** 17 → "17", 17.5 → "17.5" — never "17.00". */
-export function storeSizeLabel(size: number | null, fallback: string | null): string {
+export function storeSizeLabel(size: number | null, fallback: string | null, sizeValue?: string | null): string {
+  if (sizeValue !== undefined && sizeValue !== null) return sizeValue.trim();
   if (size === null || !Number.isFinite(size)) return (fallback ?? "").trim();
   return String(Math.round(size * 100) / 100);
 }
@@ -29,7 +31,7 @@ export function variantLabelOf(
   const color =
     (lang === "ar" ? variant.color_ar || variant.color_en : variant.color_en || variant.color_ar) ??
     "";
-  const size = storeSizeLabel(variant.size, variant.size_label);
+  const size = storeSizeLabel(variant.size, variant.size_label, variant.size_value);
   return [color.trim(), size].filter(Boolean).join(" / ");
 }
 

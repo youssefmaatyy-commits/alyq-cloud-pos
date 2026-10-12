@@ -37,7 +37,6 @@ const ux = await createUxHarness({
 const {
   assert,
   bodyText,
-  sleep,
   waitFor,
   navigate,
   clickEl,
@@ -61,7 +60,7 @@ function check(label, condition) {
 const CATALOG_KEY = "alyq.demo.catalog.v1";
 const setNative = (input, proto) => (value) => {
   Object.getOwnPropertyDescriptor(proto.prototype, "value").set.call(input, value);
-  input.dispatchEvent(new dom.window.Event(input.tagName === "SELECT" ? "change" : "input", { bubbles: true }));
+  ux.flushSync(() => input.dispatchEvent(new dom.window.Event(input.tagName === "SELECT" ? "change" : "input", { bubbles: true })));
 };
 const setField = (selector, value) => {
   const input = document.querySelector(selector);
@@ -76,14 +75,14 @@ const setTestid = (id, value) => {
 
 async function main() {
   console.log("\nPhase 49 · Storefront polish — the premium editorial shop\n");
-  await sleep(600);
+
 
   // ── seed: the Variant Test Ring, through the real editor (2 + 2) ───────────
   const SKU = "POLISH-RING";
   const GOLD_SKU = "POLISH-RING-GOLD-17";
   const SILVER_SKU = "POLISH-RING-SILVER-17";
   await signInAs("admin");
-  await navigate("#/products/new");
+  await navigate("#/dashboard/products/new");
   await waitFor(() => document.querySelector("#sku"), { label: "the product form" });
   setField("#name_ar", "خاتم جديد");
   setField("#name_en", "Polish Ring");
@@ -99,11 +98,11 @@ async function main() {
     setField("#category_id", option.value);
   }
   clickExact("Save");
-  await waitFor(() => dom.window.location.hash === "#/products", { label: "route back to the catalogue" });
+  await waitFor(() => dom.window.location.hash === "#/dashboard/products", { label: "route back to the catalogue" });
   const productId = (readJson(CATALOG_KEY)?.products ?? []).find((p) => p.sku === SKU)?.id;
   assert.ok(productId, "the ring is in the demo catalogue");
 
-  await navigate(`#/products/${productId}/edit`);
+  await navigate(`#/dashboard/products/${productId}/edit`);
   await waitFor(() => document.querySelector('[data-testid="variant-editor"]'), { label: "the variant editor" });
   clickEl(document.querySelector('[data-testid="variant-advanced"] summary'));
   clickEl(document.querySelector('[data-testid="variant-generate"]'));
@@ -114,7 +113,7 @@ async function main() {
   setNative(colorsArea, dom.window.HTMLTextAreaElement)("Gold | ذهبي | #d4af37\nSilver | فضي | #c0c0c0");
   const sizesInput = [...genDialog.querySelectorAll("input")].find((i) => (i.placeholder ?? "").includes("16, 16.5"));
   setNative(sizesInput, dom.window.HTMLInputElement)("17");
-  await sleep(250);
+
   clickEl([...genDialog.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === "Create 2"));
   await waitFor(
     () =>
@@ -126,7 +125,7 @@ async function main() {
   await waitFor(() => document.querySelector('[data-testid="variant-enable-panel"]'), { label: "the enable panel" });
   setTestid(`opening-${GOLD_SKU}`, "2");
   setTestid(`opening-${SILVER_SKU}`, "2");
-  await sleep(200);
+
   clickEl(document.querySelector('[data-testid="variant-enable-confirm"]'));
   await waitFor(
     () => (readJson(CATALOG_KEY)?.products ?? []).find((p) => p.id === productId)?.variants_enabled === true,
@@ -139,10 +138,11 @@ async function main() {
   await ux.clearStoreCart();
 
   // ── 1 · the house palette: gold accent, warm ivory, no orange ─────────────
-  await navigate("#/store", 900);
+  await navigate("#/store");
   await waitFor(() => document.querySelector("[data-testid='product-grid']") || bodyText().includes("ALYQ"), {
     label: "the storefront",
   });
+  await waitFor(() => getComputedStyle(document.documentElement).getPropertyValue("--store-accent").trim().toLowerCase() === "#a48d59", { label: "saved storefront theme applied" });
   const accent = getComputedStyle(document.documentElement).getPropertyValue("--store-accent").trim().toLowerCase();
   const bg = getComputedStyle(document.documentElement).getPropertyValue("--store-background").trim().toLowerCase();
   const surface = getComputedStyle(document.documentElement).getPropertyValue("--store-surface").trim().toLowerCase();
@@ -199,7 +199,7 @@ async function main() {
   );
   if (glass) {
     clickEl(glass);
-    await sleep(200);
+
   }
 
   // ── 6 · the header sticks, subtly ─────────────────────────────────────────
@@ -236,7 +236,7 @@ async function main() {
   );
 
   // ── 10 · the shop grid is two columns on a phone ──────────────────────────
-  await navigate("#/store/products", 800);
+  await navigate("#/store/products");
   await waitFor(() => document.querySelector("[data-testid='product-grid']"), { label: "the shop grid" });
   const grid = document.querySelector("[data-testid='product-grid']");
   check(
@@ -262,7 +262,7 @@ async function main() {
   }
 
   // ── 12 · the variant picker offers both shelves, nothing preselected ──────
-  await navigate(`#/store/products/${productId}`, 800);
+  await navigate(`#/store/products/${productId}`);
   await waitFor(() => document.querySelector("[data-testid='product-add-to-cart']"), { label: "the buy controls" });
   await waitFor(() => document.querySelector("[data-testid='store-variant-picker']"), { label: "the variant picker" });
   const addBtn = document.querySelector("[data-testid='product-add-to-cart']");
@@ -273,9 +273,9 @@ async function main() {
 
   // ── 13 · Gold + 17 speaks: exactly 2 on the shelf ─────────────────────────
   clickEl(document.querySelector("[data-testid='variant-color-gold']"));
-  await sleep(250);
+
   clickEl(document.querySelector("[data-testid='variant-size-17']"));
-  await sleep(250);
+
   await waitFor(() => bodyText().includes("Gold / 17"), { label: "the chosen combination label" });
   check(
     "Gold / 17 is selectable and the shelf says exactly 2",
@@ -286,16 +286,16 @@ async function main() {
   {
     // qty 1 → add twice (the proven path), the shelf caps the line at 2
     clickEl(document.querySelector("[data-testid='product-add-to-cart']"));
-    await sleep(350);
+
     clickEl(document.querySelector("[data-testid='product-add-to-cart']"));
-    await sleep(350);
+
     let increase = [...document.querySelectorAll("button")].find(
       (b) => (b.getAttribute("aria-label") ?? "") === "Increase quantity",
     );
     // step the line up to the shelf's promise…
     if (increase && !increase.disabled) {
       clickEl(increase);
-      await sleep(250);
+
       increase = [...document.querySelectorAll("button")].find(
         (b) => (b.getAttribute("aria-label") ?? "") === "Increase quantity",
       );
@@ -308,11 +308,11 @@ async function main() {
 
   // ── 15 · Silver / 17 is its own decision ──────────────────────────────────
   clickEl(document.querySelector("[data-testid='variant-color-silver']"));
-  await sleep(250);
+
   // Phase 43: a new colour starts its own shelf — the size is chosen again.
   const size17 = document.querySelector("[data-testid='variant-size-17']");
   if (size17 && size17.getAttribute("aria-pressed") !== "true") clickEl(size17);
-  await sleep(250);
+
   await waitFor(() => bodyText().includes("Silver / 17"), { label: "the silver combination" });
   // the previous check left the PDP stepper at 2 — Silver is bought as ONE unit
   for (let i = 0; i < 3; i += 1) {
@@ -321,10 +321,10 @@ async function main() {
     );
     if (!decrease || decrease.disabled) break;
     clickEl(decrease);
-    await sleep(200);
+
   }
   clickEl(document.querySelector("[data-testid='product-add-to-cart']"));
-  await sleep(400);
+
   {
     const cart = JSON.parse(localStorage.getItem("alyq.store.cart.v2") ?? "{}");
     const lines = cart.lines ?? [];
@@ -338,9 +338,9 @@ async function main() {
   }
 
   // ── 16 · the cart reads like a receipt: thumb, variant, stepper, subtotal ─
-  await navigate("#/store/cart", 800);
+  await navigate("#/store/cart");
   await waitFor(() => bodyText().includes("Your cart"), { label: "the cart page" });
-  await sleep(400);
+
   {
     // Each line names its combination (cart-line-variant), carries a media
     // slot (h-20 tile, placeholder when the demo has no photo), a stepper and
@@ -359,9 +359,9 @@ async function main() {
   }
 
   // ── 18 · the checkout hierarchy: Contact → fulfilment → Payment → Summary ─
-  await navigate("#/store/checkout", 900);
+  await navigate("#/store/checkout");
   await waitFor(() => bodyText().includes("Contact"), { label: "the checkout" });
-  await sleep(300);
+
   {
     const headings = [...document.querySelectorAll("h2")].map((h) => (h.textContent ?? "").trim());
     check(
@@ -380,16 +380,16 @@ async function main() {
   }
 
   // ── 20 · Arabic mirrors the shop ──────────────────────────────────────────
-  await navigate("#/store", 700);
+  await navigate("#/store");
   // the shopper is signed out — the storefront's own toggle (عربي / EN)
   click("عربي");
-  await sleep(400);
+
   check(
     "Arabic flips the storefront to RTL with the Arabic wordmark",
     document.documentElement.getAttribute("dir") === "rtl",
   );
   click("EN");
-  await sleep(300);
+
 
   // ── 21 · the footer: brand / shop / help columns, newsletter when enabled ─
   {
@@ -398,9 +398,9 @@ async function main() {
     // which is also the proof that the footer is builder-controlled, not
     // hardcoded — then look at the shop as the shopper.
     // a signed-out shopper reaches the admin login by opening any admin route
-    await navigate("#/", 600);
+    await navigate("#/dashboard");
     await signInAs("admin");
-    await navigate("#/online/website", 900);
+    await navigate("#/dashboard/online/website");
     await waitFor(() => [...document.querySelectorAll("button")].some((b) => (b.textContent ?? "").trim() === "Footer"), {
       label: "the builder tabs",
     });
@@ -412,16 +412,16 @@ async function main() {
       );
       assert.ok(bandSwitch, "the newsletter-band switch is in the footer panel");
       if (bandSwitch.getAttribute("aria-checked") !== "true") clickEl(bandSwitch);
-      await sleep(200);
+
     }
     await waitFor(() => {
       const save = [...document.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === "Save");
       return Boolean(save) && !save.disabled;
     }, { label: "the save to enable" });
     clickExact("Save");
-    await sleep(600);
+
     await signOut();
-    await navigate("#/store", 900);
+    await navigate("#/store");
     const footer = document.querySelector("footer");
     const newsletter = footer?.querySelector("input[type='email']");
     const brandMark = [...(footer?.querySelectorAll("p") ?? [])].find((p) => p.textContent.trim() === "ALYQ");

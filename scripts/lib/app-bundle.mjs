@@ -20,6 +20,7 @@
  *   node scripts/lib/app-bundle.mjs out.mjs      # → out.mjs
  */
 import fs from "node:fs";
+import { execFileSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -57,21 +58,18 @@ export function bundleFileUrl(outfile = process.env.ALYQ_TEST_BUNDLE || DEFAULT_
  * module scope (currency formatting, the Supabase client), so it is inlined the
  * same way the documented `--define:import.meta.env=…` recipe does.
  *
- * The Supabase pair is passed through when present, so the same suites can run
- * against a real project (the CI `live` job). Absent → the app takes its demo
- * path, which is what the jsdom suites expect.
+ * Tests are always isolated Demo. Ambient Supabase variables must NEVER turn
+ * this gate into a writer against a real (possibly production) project.
  */
 export const testDefine = () => ({
   "import.meta.env": JSON.stringify({
-    VITE_CURRENCY: process.env.VITE_CURRENCY ?? "EGP",
-    ...(process.env.VITE_SUPABASE_URL ? { VITE_SUPABASE_URL: process.env.VITE_SUPABASE_URL } : {}),
-    ...(process.env.VITE_SUPABASE_ANON_KEY
-      ? { VITE_SUPABASE_ANON_KEY: process.env.VITE_SUPABASE_ANON_KEY }
-      : {}),
-    MODE: "test",
-    DEV: false,
-    PROD: true,
-    SSR: false,
+    VITE_APP_MODE: "demo",
+    VITE_CURRENCY: "EGP",
+    MODE: "test", DEV: false, PROD: true, SSR: false,
+  }),
+  __ALYQ_RELEASE__: JSON.stringify({
+    gitSha: execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim(),
+    builtAt: new Date().toISOString(), environment: "demo", appMode: "demo",
   }),
 });
 
@@ -123,7 +121,7 @@ export const testBuildOptions = (overrides = {}) => ({
  */
 export async function buildAppBundle({ outfile = DEFAULT_BUNDLE, entryPoint, legacyRollback = false } = {}) {
   const esbuild = await import("esbuild"); // surfaced as "run npm install" by callers
-  const entry = entryPoint ?? path.join(ROOT, "src", "main.tsx");
+  const entry = entryPoint ?? path.join(ROOT, "scripts", "lib", "app-entry.ts");
 
   fs.mkdirSync(path.dirname(outfile), { recursive: true });
   await esbuild.build(testBuildOptions({ entryPoints: [entry], outfile,

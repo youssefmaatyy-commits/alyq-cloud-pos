@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { storeSizeLabel, variantLabelOf } from "@/modules/online/services/variantLabel";
 import {
   compareVariants,
   generateCombinations,
@@ -45,4 +46,12 @@ assert.equal(scanned42?.stock_quantity,10,"scan resolves the exact branch-overla
 assert.ok(compareVariants({...base,id:"manual-first",size_value:"XL",size_sort_order:0},{...base,id:"manual-second",size_value:"XS",size_sort_order:1})<0,
   "explicit merchant order wins over natural letter order");
 
-console.log("11/11 flexible size, Arabic color, ordering and exact scan tests passed");
+assert.equal(storeSizeLabel(17, "legacy", "M"), "M", "merchant flexible size overrides the obsolete numeric field");
+assert.equal(storeSizeLabel(17, "legacy", ""), "", "a color-only shelf must not invent the old numeric size");
+assert.equal(storeSizeLabel(17.5, "legacy"), "17.5", "legacy numeric snapshots still render exactly");
+assert.equal(variantLabelOf(base), "Blue / S");
+assert.equal(variantLabelOf({ ...base, size: 17, size_value: "One Size" }), "Blue / One Size");
+assert.equal(variantLabelOf({ ...base, size: 17, size_value: "", color_en: "Gold" }), "Gold");
+assert.equal(variantLabelOf({ ...base, size_value: "28x30", color_ar: "أزرق" }, "ar"), "أزرق / 28x30");
+
+console.log("18/18 flexible size, Arabic color, ordering, labels and exact scan tests passed");

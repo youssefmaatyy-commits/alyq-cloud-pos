@@ -1,4 +1,4 @@
-import { getSupabaseClient, isSupabaseConfigured } from "@/lib/supabase/client";
+import { getRepositoryMode } from "@/lib/supabase/client";
 import { DemoBackupRepository, getDemoBackupRepository, resetDemoBackupRepository } from "./demoRepository";
 import {
   SupabaseBackupRepository,
@@ -10,12 +10,12 @@ import type { BackupRepository } from "./repository";
 export type BackupMode = "supabase" | "demo";
 
 export function getBackupRepository(): BackupRepository {
-  if (isSupabaseConfigured && getSupabaseClient()) return getSupabaseBackupRepository();
+  if (getRepositoryMode() === "supabase") return getSupabaseBackupRepository();
   return getDemoBackupRepository();
 }
 
 export function getBackupMode(): BackupMode {
-  return isSupabaseConfigured && getSupabaseClient() ? "supabase" : "demo";
+  return getRepositoryMode() === "supabase" ? "supabase" : "demo";
 }
 
 /** Test seam. */

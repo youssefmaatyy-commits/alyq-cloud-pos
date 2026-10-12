@@ -1,3 +1,8 @@
+> **Historical plan:** its credential-absence Demo fallback proposal is superseded
+> by the 2026-10-11 explicit-mode release-safety contract. Production fails closed;
+> Demo is selected explicitly and labelled. Current deployment/promotion policy:
+> [`production/vercel-release-gate.md`](production/vercel-release-gate.md).
+
 # ALYQ Cloud POS — Production Readiness Plan
 
 **Status:** M0 (foundations) and M1 (WS1 migrations 0011–0016) complete. Next: the WS4 and WS5 application slices, then WS2–WS7.

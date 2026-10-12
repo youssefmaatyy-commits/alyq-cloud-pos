@@ -1,4 +1,4 @@
-import { getSupabaseClient, isSupabaseConfigured } from "@/lib/supabase/client";
+import { getRepositoryMode } from "@/lib/supabase/client";
 import {
   DemoInventoryRepository,
   applyDemoAdjustment,
@@ -14,14 +14,14 @@ import type { InventoryRepository } from "./repository";
 export type InventoryMode = "supabase" | "demo";
 
 export function getInventoryRepository(): InventoryRepository {
-  if (isSupabaseConfigured && getSupabaseClient()) {
+  if (getRepositoryMode() === "supabase") {
     return getSupabaseInventoryRepository();
   }
   return getDemoInventoryRepository();
 }
 
 export function getInventoryMode(): InventoryMode {
-  return isSupabaseConfigured && getSupabaseClient() ? "supabase" : "demo";
+  return getRepositoryMode() === "supabase" ? "supabase" : "demo";
 }
 
 export { DemoInventoryRepository, SupabaseInventoryRepository };

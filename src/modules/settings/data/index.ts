@@ -1,4 +1,4 @@
-import { getSupabaseClient, isSupabaseConfigured } from "@/lib/supabase/client";
+import { getRepositoryMode } from "@/lib/supabase/client";
 import { DemoSettingsRepository, getDemoSettingsRepository, resetDemoSettingsRepository } from "./demoRepository";
 import {
   SupabaseSettingsRepository,
@@ -10,12 +10,12 @@ import type { SettingsRepository } from "./repository";
 export type SettingsMode = "supabase" | "demo";
 
 export function getSettingsRepository(): SettingsRepository {
-  if (isSupabaseConfigured && getSupabaseClient()) return getSupabaseSettingsRepository();
+  if (getRepositoryMode() === "supabase") return getSupabaseSettingsRepository();
   return getDemoSettingsRepository();
 }
 
 export function getSettingsMode(): SettingsMode {
-  return isSupabaseConfigured && getSupabaseClient() ? "supabase" : "demo";
+  return getRepositoryMode() === "supabase" ? "supabase" : "demo";
 }
 
 /** Test seam. */

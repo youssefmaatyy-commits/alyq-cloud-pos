@@ -1,4 +1,4 @@
-import { getSupabaseClient, isSupabaseConfigured } from "@/lib/supabase/client";
+import { getSupabaseClient, getRepositoryMode } from "@/lib/supabase/client";
 import type { Sale, PaymentMethod, SaleStatus } from "../types";
 import type { RefundRecord, RefundStatus, SalesReturn } from "@/modules/returns/types";
 import { normalizeText } from "@/modules/products/services/productQuery";
@@ -114,7 +114,7 @@ export async function searchTransactionCenter(
   filters: TransactionCenterFilters,
   demo: DemoTransactionData,
 ): Promise<TransactionCenterResult> {
-  const client = isSupabaseConfigured ? getSupabaseClient() : null;
+  const client = (getRepositoryMode() === "supabase") ? getSupabaseClient() : null;
   if (client) {
     const dateTo = filters.dateTo ? `${filters.dateTo}T23:59:59.999` : null;
     const { data, error } = await client.rpc("transaction_center_search", {

@@ -14,6 +14,7 @@
  * unhandled rejection or network attempt fails the run, because demo mode is
  * localStorage-only and a quiet console is part of the spec.
  */
+import { waitForRoute } from "./ui-waits.mjs";
 import { JSDOM } from "jsdom";
 import assert from "node:assert/strict";
 import { bundleFileUrl } from "./app-bundle.mjs";
@@ -125,7 +126,7 @@ export async function createUxHarness({ beforeImport } = {}) {
   // not booted yet — the demo repositories seed on boot, so clearing later
   // would destroy the shelf instead of resetting it.
   if (beforeImport) beforeImport({ localStorage: dom.window.localStorage });
-  await import(bundleFileUrl());
+  const { flushSync } = await import(bundleFileUrl());
 
   // ── helpers ─────────────────────────────────────────────────────────────
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -140,14 +141,14 @@ export async function createUxHarness({ beforeImport } = {}) {
     }
   };
 
-  const navigate = async (hash, settle = 400) => {
+  const navigate = async (hash) => {
     dom.window.location.hash = hash;
-    dom.window.dispatchEvent(new dom.window.HashChangeEvent("hashchange"));
-    await sleep(settle);
+    flushSync(() => dom.window.dispatchEvent(new dom.window.HashChangeEvent("hashchange")));
+    await waitForRoute(dom, hash);
   };
 
   const clickEl = (el) =>
-    el.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+    flushSync(() => el.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true })));
 
   const click = (label, scope = document) => {
     const el = [...scope.querySelectorAll("button, a")].find((n) =>
@@ -175,7 +176,7 @@ export async function createUxHarness({ beforeImport } = {}) {
 
   const setNative = (input, proto) => (value) => {
     Object.getOwnPropertyDescriptor(proto.prototype, "value").set.call(input, value);
-    input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+    flushSync(() => input.dispatchEvent(new dom.window.Event(input.tagName === "SELECT" ? "change" : "input", { bubbles: true })));
   };
   const setInputValue = (input, value) => {
     const proto =
@@ -191,9 +192,7 @@ export async function createUxHarness({ beforeImport } = {}) {
     const input = scope.querySelector(selector);
     if (!input) throw new Error(`field not found: ${selector}`);
     setInputValue(input, value);
-    input.dispatchEvent(
-      new dom.window.Event(input.tagName === "SELECT" ? "change" : "input", { bubbles: true }),
-    );
+
     return input;
   };
 
@@ -206,7 +205,7 @@ export async function createUxHarness({ beforeImport } = {}) {
           ? dom.window.HTMLTextAreaElement
           : dom.window.HTMLInputElement;
     setNative(input, proto)(value);
-    input.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+
   };
 
   const dialogs = () => [...document.querySelectorAll('[role="dialog"]')];
@@ -245,8 +244,7 @@ export async function createUxHarness({ beforeImport } = {}) {
   const signOut = async () => {
     if (!isSignedIn()) return;
     click("Sign out");
-    for (let i = 0; i < 20 && !usernameField(); i += 1) await sleep(200);
-    await sleep(200);
+    await waitFor(() => usernameField() && !isSignedIn(), { label: "sign-out and Login to finish" });
   };
   const signInAs = async (username, password = DEMO_PASSWORD) => {
     await signOut();
@@ -258,7 +256,7 @@ export async function createUxHarness({ beforeImport } = {}) {
     setField("input[autocomplete='current-password']", password);
     click("Sign in");
     await waitFor(() => isSignedIn(), { label: `${username} to sign in` });
-    await sleep(400);
+    await waitFor(() => document.querySelector('[data-testid="route-location"]')?.getAttribute("data-path")?.startsWith("/dashboard") && document.querySelector('[data-testid="shell-brand"]') && !usernameField(), { label: "authenticated staff destination to mount" });
   };
 
   /** Place a website order through the storefront UI (the shopper's journey). */
@@ -272,8 +270,9 @@ export async function createUxHarness({ beforeImport } = {}) {
       ),
     );
     assert.ok(card, "an addable product card is on the shelf");
+    const before = (readJson(CART_KEY) ?? { lines: [] }).lines.reduce((sum, line) => sum + line.quantity, 0);
     clickExact("Add to cart", card);
-    await sleep(400);
+    await waitFor(() => (readJson(CART_KEY) ?? { lines: [] }).lines.reduce((sum, line) => sum + line.quantity, 0) > before, { label: "added cart line persisted" });
   };
 
   const placeOrder = async ({ payment = "cod", fulfilment = "Pickup", address = null, zone = null } = {}) => {
@@ -285,14 +284,14 @@ export async function createUxHarness({ beforeImport } = {}) {
       setField("input[autocomplete='address-level2']", address.city);
       setField("input[autocomplete='address-level3']", address.area);
       setField("input[autocomplete='street-address']", address.street);
-      await sleep(300);
+
     }
     if (fulfilment) {
       const button = [...document.querySelectorAll("button")].find(
         (n) => (n.textContent ?? "").trim().startsWith(fulfilment),
       );
       if (button) clickEl(button);
-      await sleep(200);
+
     }
     if (zone) {
       // Delivery zones are an explicit choice: the checkout names each zone
@@ -305,17 +304,19 @@ export async function createUxHarness({ beforeImport } = {}) {
       assert.ok(label, `the ${zone} zone is offered`);
       const radio = label.querySelector('input[type="radio"]');
       assert.ok(radio, "the zone radio exists");
-      radio.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
-      await sleep(300);
+      flushSync(() => radio.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true })));
+      await waitFor(() => radio.checked, { label: "selected checkout option committed" });
+
     }
     const radio = document.querySelector(`input[name="payment"][value="${payment}"]`);
     if (radio) {
-      radio.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
-      await sleep(200);
+      flushSync(() => radio.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true })));
+      await waitFor(() => radio.checked, { label: "selected checkout option committed" });
+
     }
     click("Place the order");
     await waitFor(() => /WEB-\d{6}/.test(bodyText()), { label: "an order number" });
-    await sleep(400);
+    await waitFor(() => !document.querySelector("input[autocomplete='name']") && /WEB-\d{6}/.test(bodyText()), { label: "order confirmation replaces checkout" });
     const number = (bodyText().match(/WEB-\d{6}/) ?? [])[0];
     return number;
   };
@@ -330,6 +331,7 @@ export async function createUxHarness({ beforeImport } = {}) {
 
   return {
     dom,
+    flushSync,
     assert,
     errors,
     networkCalls,

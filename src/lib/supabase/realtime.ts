@@ -38,7 +38,7 @@
  * is the answer: run once, swallow the burst, and if more arrived while the run
  * was in flight, run exactly once more afterwards.
  */
-import { getSupabaseClient } from "./client";
+import { applicationConfig, getSupabaseClient } from "./client";
 
 /**
  * Tables this bus can watch.
@@ -572,7 +572,9 @@ export function createRealtimeBus(options: RealtimeBusOptions): RealtimeBus {
 
 /** The bus the app uses. One per session, created on first import. */
 export const realtimeBus: RealtimeBus = createRealtimeBus({
-  client: () => getSupabaseClient() as unknown as RealtimeClientLike | null,
+  // Import-time status probing must not pre-empt the controlled bootstrap gate.
+  // No channel or business repository is mounted for invalid configuration.
+  client: () => applicationConfig.ok ? getSupabaseClient() as unknown as RealtimeClientLike | null : null,
   topic: "alyq-pos",
   recoverOnVisible: true,
 });

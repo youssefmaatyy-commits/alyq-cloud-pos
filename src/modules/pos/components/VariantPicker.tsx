@@ -3,7 +3,8 @@ import { useI18n } from "@/lib/i18n/I18nProvider";
 import { Button } from "@/components/ui";
 import type { Product } from "@/modules/products/types";
 import {
-  sizeLabelOf,
+  variantSizeValue,
+  compareVariants,
   variantLabel,
   variantPrice,
   type ProductVariant,
@@ -57,12 +58,12 @@ export function VariantPicker({ product, variants, onPick, onClose }: VariantPic
   }, [colors, active, colorKey]);
 
   const sizes = useMemo(
-    () => active.filter((v) => v.color_key === colorKey).sort((a, b) => (a.size ?? 0) - (b.size ?? 0)),
+    () => active.filter((v) => v.color_key === colorKey).sort(compareVariants),
     [active, colorKey],
   );
   const inCart = (id: string) => lines.find((line) => line.variant_id === id)?.qty ?? 0;
   const hasColors = active.some((variant) => Boolean(variant.color_key));
-  const colorsOnly = active.length > 0 && active.every((variant) => variant.size === null && !variant.size_label);
+  const colorsOnly = active.length > 0 && active.every((variant) => !variantSizeValue(variant));
 
   const pick = (variant: ProductVariant) => {
     if (!variant.active || variant.stock_quantity <= inCart(variant.id)) return;
@@ -164,7 +165,7 @@ export function VariantPicker({ product, variants, onPick, onClose }: VariantPic
                   }`}
                   aria-label={`${variantLabel(variant, lang)} — ${remaining}`}
                 >
-                  <span>{sizeLabelOf(variant.size, variant.size_label) || variantLabel(variant, lang)}</span>
+                  <span>{variantSizeValue(variant) || variantLabel(variant, lang)}</span>
                   <span className="mt-0.5 text-[10px] font-semibold text-stone-500">
                     {out ? (variant.stock_quantity === 0 ? t("pos.variants.soldOut") : t("pos.variants.inCart")) : remaining}
                   </span>

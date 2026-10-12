@@ -1,3 +1,4 @@
+import { waitForCondition as waitFor, waitForRoute } from "./lib/ui-waits.mjs";
 /**
  * Storefront → POS acceptance flow (Phase 9).
  *
@@ -135,38 +136,29 @@ process.on("unhandledRejection", (reason) => {
   errors.push(`unhandledRejection: ${reason?.stack ?? String(reason)}`);
 });
 
-await import(bundleFileUrl());
+const { flushSync } = await import(bundleFileUrl());
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const bodyText = () => document.body.textContent ?? "";
-const navigate = async (hash, settle = 500) => {
+const navigate = async (hash) => {
   dom.window.location.hash = hash;
-  dom.window.dispatchEvent(new dom.window.HashChangeEvent("hashchange"));
-  await sleep(settle);
+  flushSync(() => dom.window.dispatchEvent(new dom.window.HashChangeEvent("hashchange")));
+  await waitForRoute(dom, hash);
 };
 /** Wait for a condition the app reaches asynchronously (demo latency + fetch). */
-const waitFor = async (predicate, { timeout = 8000, label = "condition" } = {}) => {
-  const started = Date.now();
-  while (Date.now() - started < timeout) {
-    if (predicate()) return true;
-    await sleep(150);
-  }
-  throw new Error(`timed out waiting for ${label}`);
-};
 const click = (label, scope = document) => {
   const el = [...scope.querySelectorAll("button, a")].find((n) =>
     (n.textContent ?? "").trim().includes(label),
   );
   if (!el) throw new Error(`control not found: ${label}`);
-  el.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  flushSync(() => el.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true })));
   return el;
 };
 const clickExact = (label, scope = document) => {
   const el = [...scope.querySelectorAll("button, a")].find((n) => (n.textContent ?? "").trim() === label);
   if (!el) throw new Error(`control not found (exact): ${label}`);
-  el.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  flushSync(() => el.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true })));
   return el;
 };
 /**
@@ -186,7 +178,7 @@ const clickWhenEnabled = async (label, scope = document) => {
 const clickLabel = (label, scope = document) => {
   const el = [...scope.querySelectorAll("label")].find((n) => (n.textContent ?? "").trim() === label);
   if (!el) throw new Error(`labelled option not found: ${label}`);
-  el.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  flushSync(() => el.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true })));
   return el;
 };
 /** A <select> is wrapped in its label here, so find it by one of its options. */
@@ -204,7 +196,7 @@ const clickAria = (label, scope = document) => {
       .join(" | ");
     throw new Error(`control not found by aria-label: ${label} (at ${dom.window.location.hash}) — on page: ${present}`);
   }
-  el.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  flushSync(() => el.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true })));
   return el;
 };
 const setField = (selector, value, scope = document) => {
@@ -212,7 +204,7 @@ const setField = (selector, value, scope = document) => {
   if (!input) throw new Error(`field not found: ${selector}`);
   const proto = input.tagName === "SELECT" ? dom.window.HTMLSelectElement : dom.window.HTMLInputElement;
   Object.getOwnPropertyDescriptor(proto.prototype, "value").set.call(input, value);
-  input.dispatchEvent(new dom.window.Event(input.tagName === "SELECT" ? "change" : "input", { bubbles: true }));
+  flushSync(() => input.dispatchEvent(new dom.window.Event(input.tagName === "SELECT" ? "change" : "input", { bubbles: true })));
   return input;
 };
 const setFieldByLabel = (label, value) => {
@@ -237,7 +229,7 @@ const attachProofImage = (name = "instapay-proof.png") => {
   if (!input) throw new Error("the proof panel's file input is not on the page");
   const file = new dom.window.File(["x"], name, { type: "image/png" });
   Object.defineProperty(input, "files", { value: [file], configurable: true });
-  input.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+  flushSync(() => input.dispatchEvent(new dom.window.Event("change", { bubbles: true })));
   return file;
 };
 
@@ -287,7 +279,7 @@ const signInAs = async (username, password = DEMO_PASSWORD) => {
   setField("input[autocomplete='current-password']", password);
   click("Sign in");
   await waitFor(() => isSignedIn(), { label: `${username} to sign in` });
-  await sleep(300);
+
 };
 
 /** The storefront's own product cards. */
@@ -310,7 +302,7 @@ async function placeOrderThroughTheStore({
   address = null,
   zone = null,
 } = {}) {
-  await navigate("#/store/checkout", 700);
+  await navigate("#/store/checkout");
   await waitFor(() => bodyText().includes("Checkout"), { label: "the checkout page" });
 
   setField("input[autocomplete='name']", "Mona Mahmoud");
@@ -321,15 +313,15 @@ async function placeOrderThroughTheStore({
       (n) => (n.textContent ?? "").trim().startsWith(fulfilment),
     );
     if (!button) throw new Error(`fulfilment option not found: ${fulfilment}`);
-    button.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
-    await sleep(200);
+    flushSync(() => button.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true })));
+
   }
 
   if (address) {
     setField("input[autocomplete='address-level2']", address.city);
     setField("input[autocomplete='address-level3']", address.area);
     setField("input[autocomplete='street-address']", address.street);
-    await sleep(250);
+
   }
 
   if (zone) {
@@ -343,18 +335,18 @@ async function placeOrderThroughTheStore({
     assert.ok(label, `the ${zone} zone is offered`);
     const radio = label.querySelector('input[type="radio"]');
     assert.ok(radio, "the zone radio exists");
-    radio.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
-    await sleep(300);
+    flushSync(() => radio.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true })));
+
   }
 
   const radio = document.querySelector(`input[name="payment"][value="${payment}"]`);
   if (!radio) throw new Error(`payment option not found: ${payment}`);
-  radio.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
-  await sleep(200);
+  flushSync(() => radio.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true })));
+
 
   click("Place the order");
   await waitFor(() => /WEB-\d{6}/.test(bodyText()), { label: "an order number on the confirmation page" });
-  await sleep(400);
+
 
   const number = (bodyText().match(/WEB-\d{6}/) ?? [])[0];
   assert.ok(number, "the confirmation page shows the order number");
@@ -363,11 +355,12 @@ async function placeOrderThroughTheStore({
 
 async function main() {
   console.log("\nPhase 9 · storefront → POS acceptance flow");
-  await sleep(600);
+
 
   // ── 1 · the storefront is public ──────────────────────────────────────────
-  assert.ok(usernameField(), "the app itself still boots on the login screen");
-  await navigate("#/store", 900);
+  await waitFor(() => document.querySelector('[data-testid="route-location"]')?.getAttribute("data-path") === "/", { label: "public storefront at root" });
+  assert.equal(usernameField(), null, "the root is public Storefront, not Login");
+  await navigate("#/store");
   assert.equal(usernameField(), null, "a shopper is never sent to the login screen");
   await waitFor(() => productCards().length > 0, { label: "the homepage to render products" });
   assert.ok(!bodyText().includes("ALYQ-1001"), "the storefront shows names and prices, not internal SKUs");
@@ -384,7 +377,7 @@ async function main() {
   console.log(`  ✓ the storefront is public and renders ${productCards().length} product cards`);
 
   // ── 2 · browse, search, open a product ────────────────────────────────────
-  await navigate("#/store/products", 800);
+  await navigate("#/store/products");
   await waitFor(() => productCards().length > 0, { label: "the product list" });
   const allProducts = productCards().length;
   const target = firstInStockCard();
@@ -392,11 +385,11 @@ async function main() {
   const targetName = cardName(target);
 
   setField('input[type="search"]', targetName.split(" ")[0] ?? "");
-  await sleep(400);
+
   assert.ok(productCards().length > 0 && productCards().length <= allProducts, "search narrows the list");
   assert.ok(bodyText().includes("product"), "the result count is shown");
   setField('input[type="search"]', "");
-  await sleep(400);
+
   console.log(`  ✓ the product list renders ${allProducts} products and search narrows it`);
 
   // Sorting is a real control, not decoration.
@@ -409,13 +402,13 @@ async function main() {
     );
   }
   sortSelect.value = "price_asc";
-  sortSelect.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
-  await sleep(500);
+  flushSync(() => sortSelect.dispatchEvent(new dom.window.Event("change", { bubbles: true })));
+
   assert.ok(productCards().length > 0, "sorting keeps the list rendered");
   assert.ok(/#\/store\/products\?/.test(dom.window.location.hash) || true, "the list is still the product list");
   sortSelect.value = "featured";
-  sortSelect.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
-  await sleep(400);
+  flushSync(() => sortSelect.dispatchEvent(new dom.window.Event("change", { bubbles: true })));
+
 
   // The availability filter is a radio group, and it reads held stock rather
   // than just the shelf.
@@ -423,18 +416,18 @@ async function main() {
   assert.ok(group, "availability is offered as a named group of choices");
   assert.equal(group.querySelectorAll('input[type="radio"]').length, 3, "any / in stock / out of stock");
   clickLabel("In stock", group);
-  await sleep(600);
+
   const inStockOnly = productCards().length;
   assert.ok(inStockOnly > 0 && inStockOnly <= allProducts, `availability narrows the list (${inStockOnly})`);
   clickLabel("All products", group);
-  await sleep(500);
+
   assert.equal(productCards().length, allProducts, "clearing the filter brings the whole list back");
 
   // Open the product page and add to cart from there.
   const link = target.querySelector("h3 a");
   assert.ok(link, "each card links to its product page");
   const productHref = link.getAttribute("href");
-  link.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  flushSync(() => link.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true })));
   await waitFor(() => bodyText().includes("Add to cart"), { label: "the product page" });
   assert.ok(dom.window.location.hash.startsWith("#/store/products/"), "the product has its own URL");
   assert.ok(
@@ -446,8 +439,8 @@ async function main() {
   // ── 3 · the cart ──────────────────────────────────────────────────────────
   const stockBefore = stockOf(await skuForName(targetName));
   click("Add to cart");
-  await sleep(400);
-  await navigate("#/store/cart", 700);
+
+  await navigate("#/store/cart");
   await waitFor(() => bodyText().includes(targetName), { label: "the cart to hold the product" });
   assert.ok(bodyText().includes("Order summary"), "the cart shows a summary");
   assert.ok(bodyText().includes("Total"), "and a total");
@@ -455,8 +448,8 @@ async function main() {
   // A second unit, through the cart's own control.
   const increase = document.querySelector('button[aria-label="Increase quantity"]');
   assert.ok(increase, "the cart can change a quantity");
-  increase.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
-  await sleep(400);
+  flushSync(() => increase.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true })));
+
   assert.ok(bodyText().includes(targetName), "the line is still in the cart");
   console.log("  ✓ add to cart, cart summary and quantity changes all work");
 
@@ -484,13 +477,14 @@ async function main() {
   assert.ok(bodyText().includes("What happens next"), "the confirmation explains the next step");
   assert.ok(bodyText().includes("Tap to copy"), "the number invites the shopper to copy it");
   clickExact(codNumber);
-  await sleep(300);
+
   assert.deepEqual(clipboard, [codNumber], "the order number can be copied");
+  await waitFor(() => bodyText().includes("Copied"), { label: "clipboard completion feedback" });
   assert.ok(bodyText().includes("Copied"), "and the shopper is told it worked");
   console.log(`  ✓ guest checkout placed ${codNumber} — pending, stock held, no sale yet`);
 
   // ── 5 · the customer can track it ─────────────────────────────────────────
-  await navigate("#/store/track", 700);
+  await navigate("#/store/track");
   await waitFor(() => bodyText().includes("Track your order"), { label: "the tracking page" });
   setFieldByLabel("Order number", codNumber);
   setFieldByLabel("Phone", "01001234567");
@@ -510,19 +504,19 @@ async function main() {
   console.log("  ✓ order tracking works with the number and phone, and refuses a mismatch");
 
   // ── 6 · the order reaches the POS ─────────────────────────────────────────
-  await navigate("#/", 700);
+  await navigate("#/dashboard");
   await signInAs("admin");
   // Phase 49: the sidebar offers the Online MODULE; its queue lives on the
   // module home as the first card, reached on the next line.
   const navHrefs = [...document.querySelectorAll("aside nav a")].map((a) => a.getAttribute("href") ?? "");
-  assert.ok(navHrefs.includes("#/online"), "the POS sidebar offers the Online module");
-  await navigate("#/online", 600);
+  assert.ok(navHrefs.includes("#/dashboard/online"), "the POS sidebar offers the Online module");
+  await navigate("#/dashboard/online");
   await waitFor(
     () => document.querySelector('[data-testid="module-card-orders"]'),
     { label: "the Online home's orders card" },
   );
 
-  await navigate("#/online/orders", 900);
+  await navigate("#/dashboard/online/orders");
   await waitFor(() => bodyText().includes(codNumber), { label: "the order to appear in the POS" });
   assert.ok(bodyText().includes("Mona Mahmoud"), "with the customer's name");
   assert.ok(bodyText().includes("Pending"), "and its status");
@@ -530,7 +524,7 @@ async function main() {
     "the payment is described on the row");
 
   // The notification badge counts what needs a decision — it rides the module door.
-  const badge = document.querySelector('aside nav a[href="#/online"] span');
+  const badge = document.querySelector('aside nav a[href="#/dashboard/online"] span');
   assert.ok(badge, "the Online module door carries a count badge");
 
   // Approve it: this is the mandatory website → till step.
@@ -568,13 +562,13 @@ async function main() {
     "the order's history records the approval",
   );
   clickExact("Close", dialog());
-  await sleep(300);
+
   console.log(`  ✓ approving ${codNumber} created sale ${approvedOrder.sale_number} (source "online") and deducted stock`);
 
   // ── 7 · InstaPay: a human verifies the money ──────────────────────────────
   // The storefront is public, so the shopper's journey continues beside the
   // signed-in till — exactly as it does in a browser tab of its own.
-  await navigate("#/store/products", 800);
+  await navigate("#/store/products");
   await waitFor(() => productCards().length > 0, { label: "the product list" });
   const second = firstInStockCard();
   assert.ok(second, "another product can be bought");
@@ -582,7 +576,7 @@ async function main() {
   const secondSku = await skuForName(secondName);
   const secondStockBefore = stockOf(secondSku);
   click("Add to cart", second);
-  await sleep(400);
+
 
   const { number: instapayNumber, order: instapayOrder } = await placeOrderThroughTheStore({
     payment: "instapay",
@@ -602,7 +596,7 @@ async function main() {
   const sendProof = async () => {
     setFieldByLabel("Transfer reference", "IP-447788");
     attachProofImage();
-    await sleep(200);
+
     assert.ok(bodyText().includes("instapay-proof.png"), "the chosen screenshot is named on screen");
     clickExact("Send the proof");
     await waitFor(() => bodyText().includes("waiting for verification"), { label: "the proof to be accepted" });
@@ -619,7 +613,7 @@ async function main() {
   await sendProof();
 
   // Coming back later, the tracking page offers to replace what was sent.
-  await navigate("#/store/track", 700);
+  await navigate("#/store/track");
   setFieldByLabel("Order number", instapayNumber);
   setFieldByLabel("Phone", "01001234567");
   clickExact("Track");
@@ -627,11 +621,11 @@ async function main() {
   assert.ok(bodyText().includes("Proof sent"), "the tracking page says the proof is with the shop");
   assert.ok(bodyText().includes("IP-447788"), "and shows the reference the customer sent");
   click("Send a different proof");
-  await sleep(300);
+
   assert.ok(document.querySelector('input[type="file"]'), "which opens the form again");
   setFieldByLabel("Transfer reference", "IP-447799");
   attachProofImage("second-proof.png");
-  await sleep(200);
+
   clickExact("Send the proof");
   await waitFor(() => bodyText().includes("waiting for verification"), { label: "the second proof" });
   assert.equal(
@@ -647,16 +641,17 @@ async function main() {
   assert.equal(stockOf(secondSku), secondStockBefore, "and nothing shipped");
 
   // The till sees an order waiting on verification, and cannot approve it yet.
-  await navigate("#/online/orders", 900);
+  await navigate("#/dashboard/online/orders");
   await waitFor(() => bodyText().includes(instapayNumber), { label: "the InstaPay order in the POS" });
   assert.ok(bodyText().includes("Verification pending"), "the POS shows the payment needs verifying");
 
   setField('select[aria-label="Payment status"]', "verification_required");
-  await sleep(500);
+
   assert.ok(bodyText().includes(instapayNumber), "the payment filter finds it");
   setField('select[aria-label="Payment status"]', "all");
-  await sleep(400);
 
+
+  await waitFor(() => [...document.querySelectorAll("tbody tr")].some((tr) => tr.textContent.includes(instapayNumber)), { label: "InstaPay row after clearing payment filter" });
   const row = [...document.querySelectorAll("tbody tr")].find((tr) => (tr.textContent ?? "").includes(instapayNumber));
   assert.ok(row, "the order is listed");
   clickAria("View", row);
@@ -692,24 +687,24 @@ async function main() {
     "the till records the verified InstaPay payment as paid",
   );
   clickExact("Close", dialog());
-  await sleep(300);
+
   console.log(`  ✓ ${instapayNumber}: proof → verification pending → employee verified → sale, stock moved once`);
 
   // ── 8 · cancelling keeps the record and gives the stock back ──────────────
-  await navigate("#/store/products", 800);
+  await navigate("#/store/products");
   await waitFor(() => productCards().length > 0, { label: "the product list" });
   const third = firstInStockCard();
   const thirdName = cardName(third);
   const thirdSku = await skuForName(thirdName);
   const thirdStockBefore = stockOf(thirdSku);
   click("Add to cart", third);
-  await sleep(400);
+
   // The call is the point — it places the order — so only what the assertions
   // read is taken out of it.
   const { number: cancelledNumber } = await placeOrderThroughTheStore({ payment: "cod" });
   assert.equal(stockOf(thirdSku), thirdStockBefore, "a pending order holds, it does not deduct");
 
-  await navigate("#/online/orders", 900);
+  await navigate("#/dashboard/online/orders");
   await waitFor(() => bodyText().includes(cancelledNumber), { label: "the order in the POS" });
   const cancelRow = [...document.querySelectorAll("tbody tr")].find((tr) =>
     (tr.textContent ?? "").includes(cancelledNumber),
@@ -720,7 +715,7 @@ async function main() {
     ["Cancel order", "Reject order"].includes((button.textContent ?? "").trim()),
   );
   if (!cancelControl) throw new Error("the order detail offers no cancel/reject action");
-  cancelControl.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  flushSync(() => cancelControl.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true })));
   await waitFor(() => dialogs().length === 2, { label: "the cancellation prompt" });
   const prompt = topDialog();
   assert.ok(
@@ -737,13 +732,13 @@ async function main() {
     reasonField,
     "Customer changed their mind",
   );
-  reasonField.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
-  await sleep(200);
+  flushSync(() => reasonField.dispatchEvent(new dom.window.Event("input", { bubbles: true })));
+
   const confirmButton = [...prompt.querySelectorAll("button")].find(
     (n) => (n.textContent ?? "").trim() === "Confirm",
   );
   assert.ok(confirmButton && !confirmButton.disabled, "confirming needs a reason first");
-  confirmButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  flushSync(() => confirmButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true })));
   await waitFor(() => dialogs().length === 1, { label: "the prompt to close" });
   await waitFor(() => modalText().includes("Cancelled"), { label: "the cancellation" });
 
@@ -759,17 +754,17 @@ async function main() {
     "the cancelled order is still on record — it is not deleted",
   );
   clickExact("Close", dialog());
-  await sleep(300);
+
   console.log(`  ✓ cancelling ${cancelledNumber} kept the record with its reason and released the stock`);
 
   // ── 9 · the rest of the back office renders ───────────────────────────────
   for (const [hash, expected] of [
-    ["#/online/reports", "Online"],
-    ["#/online/marketing", "Marketing"],
-    ["#/online/content", "Website content"],
-    ["#/online/website", "Website"],
+    ["#/dashboard/online/reports", "Online"],
+    ["#/dashboard/online/marketing", "Marketing"],
+    ["#/dashboard/online/content", "Website content"],
+    ["#/dashboard/online/website", "Website"],
   ]) {
-    await navigate(hash, 800);
+    await navigate(hash);
     await waitFor(() => bodyText().includes(expected), { label: `${hash} to render` });
   }
   assert.ok(bodyText().includes("EGP") || bodyText().includes("Total"), "the reports screen totals online sales");
@@ -781,13 +776,13 @@ async function main() {
   // nothing to report. That is the point of the assertion: a shop whose orders
   // were worked correctly is told so in words, instead of being shown a table of
   // green rows nobody needs to act on.
-  await navigate("#/online/reservations", 900);
+  await navigate("#/dashboard/online/reservations");
   await waitFor(() => bodyText().includes("Stock holds & reconciliation"), {
     label: "the stock-holds screen",
   });
   // Phase 49: holds live on the Online module home — one card, not a sidebar
   // leaf. The card is proven, then the screen itself is opened as the card does.
-  await navigate("#/online", 600);
+  await navigate("#/dashboard/online");
   await waitFor(
     () => document.querySelector('[data-testid="module-card-holds"]'),
     { label: "the Online home's holds card" },
@@ -796,7 +791,7 @@ async function main() {
     document.querySelector('[data-testid="module-card-holds"]'),
     "the Online home links to holds — a reconciliation tool nobody can find is a tool nobody uses",
   );
-  await navigate("#/online/reservations", 900);
+  await navigate("#/dashboard/online/reservations");
   await waitFor(() => bodyText().includes("A pending website order holds its stock"), {
     label: "the holds screen copy",
   });
@@ -840,8 +835,8 @@ async function main() {
     scopeSelect,
     "all",
   );
-  scopeSelect.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
-  await sleep(400);
+  flushSync(() => scopeSelect.dispatchEvent(new dom.window.Event("change", { bubbles: true })));
+
 
   const openHolds = reservations().filter((r) => r.status === "reserved");
   for (const hold of openHolds) {
@@ -858,29 +853,30 @@ async function main() {
   );
 
   // ── 10 · the builder goes live on the storefront ──────────────────────────
-  await navigate("#/online/website", 900);
+  await navigate("#/dashboard/online/website");
   await waitFor(() => bodyText().includes("Website"), { label: "the website builder" });
   // Phase 45: the builder's sub-tabs; the colour picker lives under Theme.
   const themeTab = [...document.querySelectorAll("button")].find(
     (n) => (n.textContent ?? "").trim() === "Theme",
   );
   assert.ok(themeTab, "the builder has a Theme sub-tab");
-  themeTab.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
-  await sleep(300);
+  flushSync(() => themeTab.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true })));
+
+  await waitFor(() => document.querySelector('input[type="color"]'), { label: "Theme tab colour controls mounted" });
   const colorField = document.querySelector('input[type="color"]');
   assert.ok(colorField, "the builder offers a colour picker");
   setField('input[type="color"]', "#0f766e");
-  await sleep(300);
+
   const saveButton = [...document.querySelectorAll("button")].find((n) =>
     (n.textContent ?? "").trim().toLowerCase().includes("save"),
   );
   assert.ok(saveButton, "the builder can be saved");
-  saveButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  flushSync(() => saveButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true })));
   await waitFor(() => (websiteSettings()?.theme?.primary_color ?? "") === "#0f766e", {
     label: "the colour to be saved",
   });
 
-  await navigate("#/store", 900);
+  await navigate("#/store");
   await waitFor(() => productCards().length > 0, { label: "the storefront to reload" });
   await waitFor(() => themeVar("--store-primary").toLowerCase() === "#0f766e", {
     label: "the new colour to be painted on the storefront",
@@ -895,9 +891,10 @@ async function main() {
 
   // Social links: written under "Contact & social", they become real links on the
   // storefront — the header, the footer and the floating WhatsApp button.
-  await navigate("#/online/website", 900);
+  await navigate("#/dashboard/online/website");
   clickExact("General");
-  await sleep(500);
+  await waitFor(() => document.querySelector('input[placeholder="201001234567"]'), { label: "General tab contact fields" });
+
   const whatsappField = [...document.querySelectorAll("input")].find(
     (input) => (input.getAttribute("placeholder") ?? "") === "201001234567",
   );
@@ -906,8 +903,8 @@ async function main() {
     whatsappField,
     "201001234567",
   );
-  whatsappField.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
-  await sleep(200);
+  flushSync(() => whatsappField.dispatchEvent(new dom.window.Event("input", { bubbles: true })));
+
   const facebookField = [...document.querySelectorAll("input")].find(
     (input) => (input.getAttribute("placeholder") ?? "").startsWith("https://facebook.com"),
   );
@@ -916,19 +913,19 @@ async function main() {
     facebookField,
     "https://facebook.com/alyq.shop",
   );
-  facebookField.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
-  await sleep(200);
+  flushSync(() => facebookField.dispatchEvent(new dom.window.Event("input", { bubbles: true })));
+
 
   const saveSocial = [...document.querySelectorAll("button")].find((n) =>
     (n.textContent ?? "").trim().toLowerCase().includes("save"),
   );
   assert.ok(saveSocial, "the builder can be saved");
-  saveSocial.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  flushSync(() => saveSocial.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true })));
   await waitFor(() => (websiteSettings()?.social?.whatsapp ?? "") === "201001234567", {
     label: "the WhatsApp number to be saved",
   });
 
-  await navigate("#/store", 900);
+  await navigate("#/store");
   await waitFor(() => productCards().length > 0, { label: "the storefront to reload" });
   const hrefs = [...document.querySelectorAll("a")].map((a) => a.getAttribute("href") ?? "");
   assert.ok(
@@ -953,7 +950,7 @@ async function main() {
         ? dom.window.HTMLTextAreaElement.prototype
         : dom.window.HTMLInputElement.prototype;
     Object.getOwnPropertyDescriptor(proto, "value").set.call(el, value);
-    el.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+    flushSync(() => el.dispatchEvent(new dom.window.Event("input", { bubbles: true })));
   };
   const fieldByPlaceholder = (placeholder) => {
     const el = [...document.querySelectorAll("input")].find(
@@ -986,11 +983,11 @@ async function main() {
       (n.textContent ?? "").trim().toLowerCase().includes("save"),
     );
     assert.ok(save, "the builder can be saved");
-    save.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+    flushSync(() => save.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true })));
   };
 
   const QR_URL = "https://cdn.example.test/alyq-qr.png";
-  await navigate("#/online/website", 900);
+  await navigate("#/dashboard/online/website");
   clickExact("Delivery & payment");
   await waitFor(() => bodyText().includes("Payment methods"), { label: "the payment methods section" });
   assert.ok(bodyText().includes("Cash on delivery"), "the COD toggle is in the payment methods section");
@@ -1003,9 +1000,9 @@ async function main() {
   const qrUrlInput = document.querySelector('input[aria-label="Image URL"]');
   assert.ok(qrUrlInput, "the QR slot takes a URL as well as an upload");
   setInputValue(qrUrlInput, QR_URL);
-  await sleep(200);
+
   clickExact("Use URL");
-  await sleep(200);
+
   await saveBuilder();
   await waitFor(
     () =>
@@ -1019,21 +1016,21 @@ async function main() {
   );
 
   // The storefront checkout reads every field back.
-  await navigate("#/store/products", 900);
+  await navigate("#/store/products");
   await waitFor(() => productCards().length > 0, { label: "the product list" });
   const payCard = firstInStockCard();
   assert.ok(payCard, "an in-stock product to order");
   const payAdd = [...payCard.querySelectorAll("button")].find(
     (n) => (n.textContent ?? "").trim() === "Add to cart",
   );
-  payAdd.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
-  await sleep(400);
-  await navigate("#/store/checkout", 700);
+  flushSync(() => payAdd.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true })));
+
+  await navigate("#/store/checkout");
   await waitFor(() => bodyText().includes("Checkout"), { label: "the checkout page" });
   document
     .querySelector('input[name="payment"][value="instapay"]')
     ?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
-  await sleep(300);
+
   assert.ok(
     bodyText().includes("Send the transfer, then call the branch."),
     "the shop's own instructions are what the shopper reads",
@@ -1071,14 +1068,14 @@ async function main() {
 
   // An unsafe link renders nowhere, and "no proof required" hides the panel
   // without touching the verification workflow.
-  await navigate("#/online/website", 900);
+  await navigate("#/dashboard/online/website");
   clickExact("Delivery & payment");
   await waitFor(() => bodyText().includes("Payment methods"), { label: "the payment methods section" });
   setInputValue(fieldByPlaceholder("https://instapay.eg/…"), "javascript:alert(1)");
   const proofSwitch = switchByLabel("Require payment proof");
   assert.equal(proofSwitch.getAttribute("aria-checked"), "true", "the proof toggle starts on");
-  proofSwitch.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
-  await sleep(200);
+  flushSync(() => proofSwitch.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true })));
+
   await saveBuilder();
   await waitFor(
     () =>
@@ -1087,7 +1084,7 @@ async function main() {
     { label: "the unsafe link and the proof toggle to be saved" },
   );
 
-  await navigate("#/store/contact", 800);
+  await navigate("#/store/contact");
   await waitFor(() => bodyText().includes("Contact us"), { label: "the contact page" });
   assert.ok(
     ![...document.querySelectorAll("a")].some((a) =>
@@ -1101,14 +1098,14 @@ async function main() {
     "and the footer drops the InstaPay icon rather than linking it unsafely",
   );
 
-  await navigate("#/store/products", 900);
+  await navigate("#/store/products");
   await waitFor(() => productCards().length > 0, { label: "the product list" });
   const noProofCard = firstInStockCard();
   const noProofAdd = [...noProofCard.querySelectorAll("button")].find(
     (n) => (n.textContent ?? "").trim() === "Add to cart",
   );
-  noProofAdd.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
-  await sleep(400);
+  flushSync(() => noProofAdd.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true })));
+
   const { number: noProofNumber, order: noProofOrder } = await placeOrderThroughTheStore({
     payment: "instapay",
   });
@@ -1161,33 +1158,33 @@ async function main() {
     return deliveryFee;
   };
   const addOneToCart = async () => {
-    await navigate("#/store/products", 900);
+    await navigate("#/store/products");
     await waitFor(() => productCards().length > 0, { label: "the product list" });
     const card = firstInStockCard();
     assert.ok(card, "an in-stock product to order");
     const button = [...card.querySelectorAll("button")].find(
       (n) => (n.textContent ?? "").trim() === "Add to cart",
     );
-    button.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
-    await sleep(400);
+    flushSync(() => button.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true })));
+
   };
 
-  await navigate("#/online/website", 900);
+  await navigate("#/dashboard/online/website");
   clickExact("Delivery & payment");
   await waitFor(() => bodyText().includes("Payment methods"), { label: "the payment methods section" });
   assert.ok(bodyText().includes("Delivery areas"), "the builder configures where the shop delivers");
   assert.ok(bodyText().includes("Minimum order for delivery"), "and the delivery minimum");
   const deliverySwitch = switchByLabel("Offer delivery");
   assert.equal(deliverySwitch.getAttribute("aria-checked"), "true", "delivery starts switched on");
-  deliverySwitch.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
-  await sleep(200);
+  flushSync(() => deliverySwitch.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true })));
+
   await saveBuilder();
   await waitFor(() => websiteSettings()?.delivery?.enabled === false, { label: "delivery to be switched off" });
 
   // With a cart open, a shop that has switched delivery off says so — it does
   // not offer the channel and fail at the last step.
   await addOneToCart();
-  await navigate("#/store/checkout", 700);
+  await navigate("#/store/checkout");
   await waitFor(() => bodyText().includes("Checkout"), { label: "the checkout page" });
   assert.ok(
     bodyText().includes("Delivery is switched off"),
@@ -1204,11 +1201,11 @@ async function main() {
 
   // Switched back on: both channels are offered, and a delivery order carries
   // its chosen zone's fee and the whole address.
-  await navigate("#/online/website", 900);
+  await navigate("#/dashboard/online/website");
   clickExact("Delivery & payment");
   await waitFor(() => bodyText().includes("Payment methods"), { label: "the payment methods section" });
-  switchByLabel("Offer delivery").dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
-  await sleep(200);
+  flushSync(() => switchByLabel("Offer delivery").dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true })));
+
   await saveBuilder();
   await waitFor(() => websiteSettings()?.delivery?.enabled === true, { label: "delivery to be switched back on" });
 
@@ -1264,14 +1261,17 @@ async function main() {
   );
 
   // The staff read the same fee and the whole address the customer typed.
-  await navigate("#/online/orders", 900);
+  await navigate("#/dashboard/online/orders");
   await waitFor(() => bodyText().includes(deliveryNumber), { label: "the delivery order in the list" });
   const orderSearch = document.querySelector('input[type="search"]');
   assert.ok(orderSearch, "the order list can be searched");
   setField('input[type="search"]', deliveryNumber);
-  orderSearch.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-  await sleep(400);
-  await waitFor(() => bodyText().includes(deliveryNumber), { label: "the filtered order row" });
+  flushSync(() => orderSearch.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+
+  await waitFor(() => {
+    const rows = [...document.querySelectorAll("tbody tr")];
+    return rows.length === 1 && (rows[0].textContent ?? "").includes(deliveryNumber);
+  }, { label: "only the requested delivery order after filter refresh" });
   clickAria("View");
   await waitFor(() => Boolean(dialog()), { label: "the delivery order detail" });
   const deliveryModal = dialog().textContent ?? "";
@@ -1288,13 +1288,14 @@ async function main() {
   // Real https profiles and the map link render exactly where they did before.
   // Admin now rejects unsafe social URLs before saving; a forged/pre-existing
   // row with unsafe values still renders no executable link.
-  await navigate("#/online/website", 900);
+  await navigate("#/dashboard/online/website");
   clickExact("General");
-  await sleep(500);
+  await waitFor(() => document.querySelector('input[placeholder="201001234567"]'), { label: "General contact editor mounted" });
+
   setInputValue(fieldByPlaceholder("https://instagram.com/…"), "https://instagram.com/alyq.shop");
   setInputValue(fieldByPlaceholder("https://tiktok.com/@…"), "https://tiktok.com/@alyq.shop");
   setFieldUnderLabel("Map link", "https://maps.google.com/?q=alyq");
-  await sleep(200);
+
   await saveBuilder();
   await waitFor(
     () =>
@@ -1306,7 +1307,7 @@ async function main() {
 
   const linkWithLabel = (label) =>
     [...document.querySelectorAll("a")].find((a) => a.getAttribute("aria-label") === label) ?? null;
-  await navigate("#/store", 900);
+  await navigate("#/store");
   await waitFor(() => productCards().length > 0, { label: "the storefront to reload" });
   let hrefsNow = [...document.querySelectorAll("a")].map((a) => a.getAttribute("href") ?? "");
   assert.ok(
@@ -1331,7 +1332,7 @@ async function main() {
     hrefsNow.some((href) => href.includes("maps.google.com/?q=alyq")),
     "and the map link is in the footer too",
   );
-  await navigate("#/store/contact", 800);
+  await navigate("#/store/contact");
   await waitFor(() => bodyText().includes("Contact us"), { label: "the contact page" });
   const mapAnchor = [...document.querySelectorAll("a")].find(
     (a) => (a.textContent ?? "").trim() === "Open the map",
@@ -1345,14 +1346,15 @@ async function main() {
   // New social contract: unsafe accounts refuse the entire Save, preserving
   // the last published document. A fresh process tests that a forged/old row
   // still renders no executable links in either storefront or contact page.
-  await navigate("#/online/website", 900);
+  await navigate("#/dashboard/online/website");
   clickExact("General");
-  await sleep(500);
+  await waitFor(() => document.querySelector('input[placeholder="201001234567"]'), { label: "General contact editor mounted" });
+
   setInputValue(fieldByPlaceholder("https://facebook.com/…"), "JaVaScRiPt:alert(1)");
   setInputValue(fieldByPlaceholder("https://instagram.com/…"), "data:text/html,<script>alert(1)</script>");
   setInputValue(fieldByPlaceholder("https://tiktok.com/@…"), " javascript:alert(1)");
   setFieldUnderLabel("Map link", "vbscript:msgbox(1)");
-  await sleep(200);
+
   const beforeUnsafe = JSON.stringify(websiteSettings());
   await saveBuilder();
   await waitFor(() => document.querySelector('[data-testid="social-validation-error"]'),
@@ -1377,7 +1379,7 @@ async function main() {
 
   // Hand the next section the same starting point it has always had: the
   // storefront home, in English, with the catalogue on screen.
-  await navigate("#/store", 900);
+  await navigate("#/store");
   await waitFor(() => productCards().length > 0, { label: "the storefront to reload" });
 
   // ── 11 · the shop is Arabic as well as English, and still sells in EGP ────
@@ -1390,7 +1392,7 @@ async function main() {
   assert.ok(bodyText().includes("أضف إلى السلة"), "and so is buying");
   assert.equal(bodyText().includes("Add to cart"), false, "no untranslated English left on the page");
   assert.match(bodyText(), /EGP|ج\.م/, "prices are still Egyptian pounds in Arabic");
-  await navigate("#/store/products", 800);
+  await navigate("#/store/products");
   await waitFor(() => productCards().length > 0, { label: "the product list in Arabic" });
   assert.ok(bodyText().includes("منتج"), "the result count is translated too");
   // The toggle now reads "EN" and is named in Arabic — the shopper's own language.
@@ -1403,7 +1405,7 @@ async function main() {
   console.log("  ✓ the storefront sells in Arabic (RTL) and English, in EGP either way");
 
   // ── 12 · the till session is untouched by a shopper's visit ───────────────
-  await navigate("#/", 700);
+  await navigate("#/dashboard");
   assert.ok(isSignedIn(), "the session survived the trip to the storefront");
   console.log("  ✓ a shopper's visit leaves the till's session exactly as it was");
 
@@ -1412,17 +1414,17 @@ async function main() {
   // is not: a shopper places an order and leaves it pending, which is the exact
   // state a hold exists for — and the table has to render it, in the language the
   // till is using, with the verdict that says nothing needs doing.
-  await navigate("#/store/products", 900);
+  await navigate("#/store/products");
   await waitFor(() => productCards().length > 0, { label: "the product list" });
   const holdCard = firstInStockCard();
   assert.ok(holdCard, "an in-stock product to order");
   const holdName = cardName(holdCard);
   const holdLink = holdCard.querySelector("h3 a");
   assert.ok(holdLink, "the card links to its product page");
-  holdLink.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  flushSync(() => holdLink.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true })));
   await waitFor(() => bodyText().includes("Add to cart"), { label: "the product page" });
   click("Add to cart");
-  await sleep(400);
+
 
   const { number: pendingNumber, order: pendingOrder } = await placeOrderThroughTheStore({
     payment: "cod",
@@ -1432,7 +1434,7 @@ async function main() {
   assert.equal(openReservationsFor(pendingOrder.id).length, 1, "so its stock is held");
   const heldUnits = openReservationsFor(pendingOrder.id)[0].quantity;
 
-  await navigate("#/online/reservations", 900);
+  await navigate("#/dashboard/online/reservations");
   await waitFor(() => bodyText().includes("Stock holds & reconciliation"), {
     label: "the stock-holds screen",
   });
@@ -1450,7 +1452,7 @@ async function main() {
     everyHold,
     "all",
   );
-  everyHold.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+  flushSync(() => everyHold.dispatchEvent(new dom.window.Event("change", { bubbles: true })));
   await waitFor(() => bodyText().includes(pendingNumber), {
     label: `${pendingNumber} on the holds table`,
   });
@@ -1487,7 +1489,7 @@ async function main() {
 
   // The old-holds view: this order was placed seconds ago, so it is not old, and
   // the screen says nothing matches rather than showing a row that does not.
-  chipOf("Old").dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  flushSync(() => chipOf("Old").dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true })));
   await waitFor(() => bodyText().includes("No holds match this filter"), {
     label: "the old-holds view to narrow",
   });
@@ -1498,7 +1500,7 @@ async function main() {
   );
 
   // Back to every hold, through the monitoring strip rather than the select.
-  chipOf("Healthy").dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  flushSync(() => chipOf("Healthy").dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true })));
   await waitFor(() => bodyText().includes(pendingNumber), { label: "the healthy view" });
   assert.ok(bodyText().includes("Held correctly"), "and it is the correct hold, not a problem");
 
@@ -1528,7 +1530,7 @@ async function main() {
   });
   assert.ok(bodyText().includes("Clear every filter"), "and the way out is on the screen");
   click("Clear every filter");
-  await sleep(300);
+
 
   // A search respects the scope it is combined with: the default view lists
   // problems, so a correct hold is found once "every hold" is selected — and the
@@ -1540,16 +1542,16 @@ async function main() {
       select,
       "all",
     );
-    select.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+    flushSync(() => select.dispatchEvent(new dom.window.Event("change", { bubbles: true })));
   };
   chooseEveryHold();
-  await sleep(250);
+
   setField('input[type="search"]', pendingNumber);
   await waitFor(() => bodyText().includes("Clear filters"), { label: "the clear-filters count" });
   assert.ok(bodyText().includes(pendingNumber), "searching an order number finds its hold");
   assert.ok(bodyText().includes("Held correctly"), "with the verdict that says nothing needs doing");
   click("Clear filters");
-  await sleep(300);
+
   assert.equal(
     document.querySelector('input[type="search"]').value,
     "",
@@ -1570,12 +1572,12 @@ async function main() {
   // ── 14 · the dashboard widget reads the same review ──────────────────────
   // It costs no query of its own: the provider already loaded the orders, the
   // holds and the catalogue, so the widget is four numbers over rows the app had.
-  await navigate("#/", 900);
+  await navigate("#/dashboard");
   await waitFor(() => bodyText().includes("Active holds"), { label: "the dashboard's holds widget" });
   assert.ok(bodyText().includes("Can repair now"), "what can be fixed is counted separately");
   assert.ok(bodyText().includes("Oldest hold"), "and so is how long the oldest has been sitting");
   assert.ok(
-    document.querySelector('a[href="#/online/reservations"]'),
+    document.querySelector('a[href$="/online/reservations"]'),
     "the widget links to the screen that can act on it",
   );
   assert.ok(

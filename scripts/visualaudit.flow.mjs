@@ -26,7 +26,6 @@ const ux = await createUxHarness({
 const {
   assert,
   dom,
-  sleep,
   bodyText,
   waitFor,
   navigate,
@@ -62,7 +61,7 @@ function assertShell(screen) {
 
 const checks = [
   {
-    path: "#/",
+    path: "#/dashboard",
     name: "Dashboard",
     check: () => {
       assert.ok(testid("dash-kpi-row"), "dashboard: the KPI row renders");
@@ -70,7 +69,7 @@ const checks = [
     },
   },
 {
-    path: "#/products",
+    path: "#/dashboard/products",
     name: "Products",
     check: async () => {
       await waitFor(() => document.querySelector("table"), { label: "products table", timeout: 20000 });
@@ -97,14 +96,14 @@ const checks = [
     },
   },
   {
-    path: "#/categories",
+    path: "#/dashboard/categories",
     name: "Categories",
     check: () => {
       assert.ok(testid("categories-tabs"), "categories: the lifecycle tabs render");
     },
   },
   {
-    path: "#/inventory/stock",
+    path: "#/dashboard/inventory/stock",
     name: "Inventory stock",
     check: () => {
       assert.ok(document.querySelector('select[aria-label="Status"]'), "inventory: the status filter renders");
@@ -114,7 +113,7 @@ const checks = [
   },
   {
     // Phase 49: the module landing — the card grid is the screen.
-    path: "#/inventory",
+    path: "#/dashboard/inventory",
     name: "Inventory home",
     check: () => {
       assert.ok(testid("module-inventory"), "inventory home: the module page renders");
@@ -122,7 +121,7 @@ const checks = [
     },
   },
   {
-    path: "#/sales",
+    path: "#/dashboard/sales",
     name: "Sales home",
     check: () => {
       assert.ok(testid("module-sales"), "sales home: the module page renders");
@@ -130,7 +129,7 @@ const checks = [
     },
   },
   {
-    path: "#/catalog",
+    path: "#/dashboard/catalog",
     name: "Catalog home",
     check: () => {
       assert.ok(testid("module-catalog"), "catalog home: the module page renders");
@@ -138,7 +137,7 @@ const checks = [
     },
   },
   {
-    path: "#/online",
+    path: "#/dashboard/online",
     name: "Online home",
     check: () => {
       assert.ok(testid("module-online"), "online home: the module page renders");
@@ -146,7 +145,7 @@ const checks = [
     },
   },
   {
-    path: "#/pos",
+    path: "#/dashboard/pos",
     name: "POS (till)",
     check: () => {
       assert.ok(testid("pos-scan-search"), "pos: the scan/search box renders");
@@ -155,7 +154,7 @@ const checks = [
     },
   },
   {
-    path: "#/pos/sales",
+    path: "#/dashboard/pos/sales",
     name: "Invoice / Return Center",
     check: () => {
       assert.ok(testid("sales-date-from") && testid("sales-date-to"), "sales: the authoritative date range renders");
@@ -164,7 +163,7 @@ const checks = [
     },
   },
   {
-    path: "#/customers",
+    path: "#/dashboard/customers",
     name: "Customers",
     check: () => {
       const headers = [...document.querySelectorAll("th")].map((th) => th.textContent ?? "").join(" ");
@@ -172,7 +171,7 @@ const checks = [
     },
   },
   {
-    path: "#/returns",
+    path: "#/dashboard/returns",
     name: "Returns",
     check: () => {
       assert.ok(buttonsInclude("New return"), "returns: the primary action is on the header");
@@ -188,7 +187,7 @@ const checks = [
     },
   },
   {
-    path: "#/online/orders",
+    path: "#/dashboard/online/orders",
     name: "Online orders",
     check: () => {
       assert.ok(testid("orders-tabs"), "orders: the status tabs render");
@@ -198,21 +197,21 @@ const checks = [
     },
   },
   {
-    path: "#/online/website",
+    path: "#/dashboard/online/website",
     name: "Website customization",
     check: () => {
       assert.ok(document.body.textContent.length > 200, "website: the center renders its panels");
     },
   },
   {
-    path: "#/reports",
+    path: "#/dashboard/reports",
     name: "Reports",
     check: () => {
       assert.ok([...document.querySelectorAll("h1, h2")].length >= 1, "reports: the hub renders sections");
     },
   },
   {
-    path: "#/settings",
+    path: "#/dashboard/settings",
     name: "Settings",
     check: () => {
       const text = document.body.textContent ?? "";
@@ -230,40 +229,40 @@ const buttonsInclude = (label) =>
   [...document.querySelectorAll("button")].some((b) => (b.textContent ?? "").includes(label));
 
 // open a shift + one sale so list screens have data to shape
-await navigate("#/shifts", 700);
+await navigate("#/dashboard/shifts");
 await waitFor(() => bodyText().includes("No shift is currently open"), { label: "a closed drawer" });
 click("Open shift");
-await sleep(400);
+
 let sd = [...document.querySelectorAll('[role="dialog"]')].at(-1);
 setInputValue([...sd.querySelectorAll("input")].find((i) => !i.readOnly && i.type === "text"), "Main branch");
 setInputValue([...sd.querySelectorAll("input")].find((i) => i.inputMode === "decimal"), "100");
 clickEl([...sd.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === "Open shift"));
 await waitFor(() => /SH-\d{6}/.test(bodyText()), { label: "the shift to open" });
-await navigate("#/pos", 700);
+await navigate("#/dashboard/pos");
 await waitFor(() => document.querySelector('[data-testid="pos-scan-search"]'), { label: "the register" });
 const sellable = (ux.readJson("alyq.demo.catalog.v1")?.products ?? []).find(
   (p) => p.active && p.stock_tracking_enabled && !p.variants_enabled && p.stock_quantity > 0,
 );
 setField('[data-testid="pos-scan-search"]', sellable.name_en.split(" ")[0]);
-await sleep(400);
+
 const sellRow = [...document.querySelectorAll("[data-pos-result-index]")].find((b) =>
   (b.textContent ?? "").includes(sellable.name_en),
 );
 clickEl(sellRow);
-await sleep(300);
+
 setField('[data-testid="cash-input"]', "500");
-await sleep(250);
+
 clickEl([...document.querySelectorAll("button")].find(
   (b) => (b.textContent ?? "").trim().startsWith("✓") && (b.textContent ?? "").includes("Complete sale"),
 ));
 await waitFor(() => /INV-\d{6}/.test(bodyText()), { label: "the sale to complete" });
 clickExact("New sale");
-await sleep(300);
+
 
 // the product-detail screen needs an id
 const firstProductId = ux.readJson("alyq.demo.catalog.v1")?.products?.[0]?.id;
 checks.splice(2, 0, {
-  path: `#/products/${firstProductId}`,
+  path: `#/dashboard/products/${firstProductId}`,
   name: "Product detail",
   check: () => {
     assert.ok(testid("product-detail-tabs"), "product detail: the six tabs render");
@@ -273,17 +272,17 @@ checks.splice(2, 0, {
 });
 
 for (const { path, name, check } of checks) {
-  const settle = path === "#/products" ? 3000 : 800;
+  const settle = path === "#/dashboard/products" ? 3000 : 800;
   await navigate(path, settle);
   assertShell(name);
   await check();
   // RTL pass: flip the language, assert the shell mirrors, flip back
   clickExact("العربية");
-  await sleep(500);
+
   assert.ok(document.documentElement.getAttribute("dir") === "rtl", `${name}: Arabic flips the document to RTL`);
   assert.ok(document.querySelector('[data-testid="shell-brand"]'), `${name}: the shell survives RTL`);
   clickExact("English");
-  await sleep(300);
+
   console.log(`  ✓ ${name}: title, primary action, shared tokens, RTL`);
 }
 
@@ -299,7 +298,8 @@ for (const { path, name, check } of checks) {
       `${screen}: dir is explicit`);
   };
   const shopChecks = [
-    ["#/store", "Store home", () => {
+    ["#/store", "Store home", async () => {
+      await waitFor(() => document.querySelector("main section#categories"), { label: "configured category band" });
       assert.ok(document.querySelector("main section#categories"), "store home: the categories band renders");
     }],
     ["#/store/products", "Shop grid", () => {
@@ -319,62 +319,62 @@ for (const { path, name, check } of checks) {
     }],
   ];
   for (const [path, name, check] of shopChecks) {
-    await navigate(path, 800);
+    await navigate(path);
     assertShopShell(name);
-    check();
+    await check();
     clickExact("عربي");
-    await sleep(400);
+
     assert.ok(document.documentElement.getAttribute("dir") === "rtl", `${name}: Arabic mirrors the storefront`);
     clickExact("EN");
-    await sleep(300);
+
     console.log(`  ✓ ${name}: header, footer, shared tokens, RTL`);
   }
   // product detail + checkout need data and a cart line — the seeded shop and
   // the sale above provide both: PDP for the first demo product, checkout with
   // one quick-added unit.
-  await navigate("#/store/products", 700);
+  await navigate("#/store/products");
   await waitFor(() => document.querySelectorAll("article a").length > 0, { label: "the shop grid" });
   const firstShopCard = [...document.querySelectorAll("article")][0];
   const detailLink = firstShopCard?.querySelector("a");
   await navigate(detailLink.getAttribute("href").startsWith("#") ? detailLink.getAttribute("href").slice(1) : detailLink.getAttribute("href"), 800);
-  await sleep(400);
+
   assertShopShell("Product detail");
   clickExact("عربي");
-  await sleep(400);
+
   assert.ok(document.documentElement.getAttribute("dir") === "rtl", "Product detail: Arabic mirrors");
   clickExact("EN");
-  await sleep(300);
+
   console.log("  ✓ Product detail: header, footer, shared tokens, RTL");
   // checkout: drop one unit in the cart from the card, then visit
-  await navigate("#/store/products", 700);
+  await navigate("#/store/products");
   await waitFor(() => document.querySelector("[data-testid='product-grid']"), { label: "the shop grid" });
   const addable = [...document.querySelectorAll("button")].find(
     (b) => (b.getAttribute("data-testid") ?? "") === "card-add" && !b.disabled,
   );
   if (addable) {
     clickEl(addable);
-    await sleep(400);
-    await navigate("#/store/checkout", 800);
-    await sleep(500);
+
+    await navigate("#/store/checkout");
+
     assertShopShell("Checkout");
     clickExact("عربي");
-    await sleep(400);
+
     assert.ok(document.documentElement.getAttribute("dir") === "rtl", "Checkout: Arabic mirrors");
     clickExact("EN");
-    await sleep(300);
+
     console.log("  ✓ Checkout: header, footer, shared tokens, RTL");
   } else {
     console.log("  ✓ Checkout: (no instantly-addable product — covered in the storefront + polish suites)");
   }
   // back to the back office: an unauthenticated shopper reaches the admin
   // login by opening any admin route.
-  await navigate("#/", 600);
+  await navigate("#/dashboard");
   await signInAs("admin");
 }
 
 // contrast/typography sanity on the design tokens themselves
-await navigate("#/", 700);
-await sleep(400);
+await navigate("#/dashboard");
+
 const card = document.querySelector(".alyq-card");
 assert.ok(card, "the workspace uses the shared card token");
 const sidebar = document.querySelector("aside, nav");

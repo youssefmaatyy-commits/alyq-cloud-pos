@@ -10,8 +10,8 @@ Every step requires recorded evidence and an assigned operator. Stop on uncertai
 6. Apply only reviewed pending migrations in numeric order. Stop on first error.
 7. Verify migration maximum, schema/RPC parity, RLS, grants, branch isolation and audit append-only behavior.
 8. Verify Auth Site URL/redirects/provider settings and Storage bucket/policies/MIME/limits.
-9. Deploy immutable Web artifact through the authorized platform; do not change DNS until separately approved.
-10. Run Web login, branch, catalogue, order, POS, invoice, return, permission and Health smoke checks.
+9. Follow `vercel-release-gate.md`: verify required exact-SHA checks, protected environment/branch policy and disabled independent Vercel Git Production path; validate explicit Production mode/final artifact, run the real read-only public catalogue probe, stage a no-domain immutable candidate, verify its served release identity, then promote only with approval. Do not change DNS until separately approved.
+10. Verify authenticated Health SHA/UTC timestamp/environment against the approved release. Run business smoke checks only under the separately authorized operational acceptance plan; never seed fake products or run mutation fixtures against Production to manufacture a passing probe.
 11. Install the signed Desktop artifact on the acceptance workstation; verify publisher, timestamp and checksum.
 12. Bind the real register, open a controlled shift and verify register/branch/user separation.
 13. Complete scanner, 80/58mm, Arabic printer and drawer acceptance.

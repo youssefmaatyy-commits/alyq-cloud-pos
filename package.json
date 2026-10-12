@@ -8,11 +8,11 @@
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "node scripts/test.logic.mjs",
+    "test": "node scripts/release-safety.test.mjs && node scripts/test.logic.mjs",
     "test:bundle": "node scripts/lib/app-bundle.mjs",
     "test:e2e": "node scripts/test.e2e.mjs",
-    "test:all": "npm run typecheck && npm run test && npm run test:e2e",
-    "db:check": "node scripts/migrations.check.mjs",
+    "test:all": "npm run typecheck && npm run lint && npm run test && npm run db:check && npm run test:e2e && npm run build && npm run production:preflight",
+    "db:check": "node scripts/migrations.check.mjs --driver=pglite",
     "lint": "eslint .",
     "test:rendered": "node scripts/rendered.flow.mjs",
     "desktop:dev": "node scripts/desktop.dev.mjs",
@@ -25,7 +25,8 @@
     "mobile:android": "npm run mobile:build && cap open android",
     "mobile:ios": "npm run mobile:build && cap open ios",
     "mobile:doctor": "cap doctor",
-    "production:preflight": "node scripts/production-preflight.mjs"
+    "production:preflight": "node scripts/production-preflight.mjs",
+    "production:catalogue": "node scripts/catalogue-probe.mjs"
   },
   "dependencies": {
     "@capacitor/app": "^8.0.1",

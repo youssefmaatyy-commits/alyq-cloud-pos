@@ -22,7 +22,7 @@
  * auth-provider verification + a 10-minute server-checked window — documented
  * in 0047.)
  */
-import { getSupabaseClient, isSupabaseConfigured } from "@/lib/supabase/client";
+import { getSupabaseClient, getRepositoryMode } from "@/lib/supabase/client";
 import { signIn } from "@/lib/auth/services/authService";
 import { getCurrentAuthUser } from "@/lib/auth/services/sessionStore";
 import { capabilitiesOfUser } from "@/lib/permissions/enforce";
@@ -223,7 +223,7 @@ export async function systemResetPreview(
   mode: ResetMode,
   options: Record<string, boolean>,
 ): Promise<ResetPreview> {
-  if (isSupabaseConfigured && getSupabaseClient()) {
+  if ((getRepositoryMode() === "supabase") && getSupabaseClient()) {
     const { data, error } = await getSupabaseClient()!
       .rpc("system_reset_preview", { p_mode: mode, p_options: options });
     if (error) translateRpcError(error);
@@ -239,7 +239,7 @@ export async function clearOperationalData(
 ): Promise<ResetResult> {
   assertPhrase(phrase, OPERATIONAL_PHRASE);
   assertFresh();
-  if (isSupabaseConfigured && getSupabaseClient()) {
+  if ((getRepositoryMode() === "supabase") && getSupabaseClient()) {
     const { data, error } = await getSupabaseClient()!
       .rpc("system_clear_operational_data", {
         p_options: options,
@@ -263,7 +263,7 @@ export async function factoryReset(
 ): Promise<ResetResult> {
   assertPhrase(phrase, FACTORY_PHRASE);
   assertFresh();
-  if (isSupabaseConfigured && getSupabaseClient()) {
+  if ((getRepositoryMode() === "supabase") && getSupabaseClient()) {
     const { data, error } = await getSupabaseClient()!
       .rpc("system_factory_reset", {
         p_options: options,
@@ -287,7 +287,7 @@ export async function factoryReset(
  */
 export async function reportResetFailure(mode: ResetMode | "demo", stage: string, message: string): Promise<void> {
   try {
-    if (isSupabaseConfigured && getSupabaseClient()) {
+    if ((getRepositoryMode() === "supabase") && getSupabaseClient()) {
       await getSupabaseClient()!
         .rpc("system_reset_report_failure", { p_mode: mode, p_stage: stage, p_message: message });
     } else {

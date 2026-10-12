@@ -1,3 +1,4 @@
+import { releaseMetadata } from "@/lib/config/release";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth";
 import { useBranch } from "@/lib/branch";
@@ -22,6 +23,7 @@ export function MobileHealthPage() {
   };
   useEffect(() => { void refresh(); }, [branch.current?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   return <MobilePage title="Mobile Health" subtitle="Existing ALYQ health contract" actions={<button type="button" className="mobile-action" onClick={() => void refresh()}>Refresh</button>}>
+    <section data-testid="release-metadata" className="mobile-card"><h2>Release identity</h2><p>{releaseMetadata.environment}</p><p>{releaseMetadata.gitSha}</p><p>{releaseMetadata.builtAt}</p></section>
     {loading && !probe ? <MobileState kind="loading" title="Checking status…" /> : null}
     <MobileCard className="mobile-health-list">
       <div><span>ALYQ Mobile</span><strong>{mobile.runtime?.appVersion ?? "—"}</strong></div>

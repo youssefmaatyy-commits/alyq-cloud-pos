@@ -36,7 +36,6 @@ const ux = await createUxHarness({
 const {
   assert,
   bodyText,
-  sleep,
   waitFor,
   navigate,
   clickEl,
@@ -54,7 +53,7 @@ const {
 
 async function main() {
   console.log("\nPhase 46 · Dashboard / Admin UX — command centre\n");
-  await sleep(600);
+
 
   // ── 0 · a clean slate (cleared before boot), then admin ───────────────────
   await signInAs("admin");
@@ -76,10 +75,10 @@ async function main() {
   const plainStockBefore = plain().stock_quantity;
 
   // 1b. open a shift (the till's drawer) — the variants flow's proven steps
-  await navigate("#/shifts");
+  await navigate("#/dashboard/shifts");
   await waitFor(() => bodyText().includes("No shift is currently open"), { label: "a closed drawer" });
   click("Open shift");
-  await sleep(400);
+
   const shiftDialog = dialogs().at(-1);
   const shiftInputs = [...shiftDialog.querySelectorAll("input")];
   const fill = (input, value) => ux.setInputValue(input, value);
@@ -89,20 +88,20 @@ async function main() {
   await waitFor(() => /SH-\d{6}/.test(bodyText()), { label: "the shift to open" });
 
   // 1c. ring one sale through the scan/search box
-  await navigate("#/pos");
+  await navigate("#/dashboard/pos");
   const searchBox = () => document.querySelector('[data-testid="pos-scan-search"]');
   await waitFor(() => searchBox(), { label: "the register search" });
   setField('[data-testid="pos-scan-search"]', plainName.split(" ")[0]);
-  await sleep(400);
+
   const row = () =>
     [...document.querySelectorAll("[data-pos-result-index]")].find((b) =>
       (b.textContent ?? "").includes(plainName),
     );
   await waitFor(() => row() && !row().disabled, { label: "the product row" });
   clickEl(row());
-  await sleep(300);
+
   setField('[data-testid="cash-input"]', "500");
-  await sleep(250);
+
   const completeBtn = [...document.querySelectorAll("button")].find(
     (b) => (b.textContent ?? "").trim().startsWith("✓") && (b.textContent ?? "").includes("Complete sale"),
   );
@@ -111,7 +110,7 @@ async function main() {
   await waitFor(() => /INV-\d{6}/.test(bodyText()), { label: "the sale to complete" });
   const saleNumber = (bodyText().match(/INV-\d{6}/) ?? [])[0];
   click("New sale");
-  await sleep(300);
+
   console.log(`  ✓ seeded POS sale ${saleNumber} on an open shift`);
 
   // 1d. two website orders: a pending COD pickup, an InstaPay to verify
@@ -134,7 +133,7 @@ async function main() {
 
   // The queue provider mounted at sign-in; a refresh is the same thing a clerk
   // does when the badge and the screen disagree.
-  await navigate("#/online/orders", 800);
+  await navigate("#/dashboard/online/orders");
   const refreshBtn = [...document.querySelectorAll("button[title]")].find((b) =>
     (b.getAttribute("title") ?? "").toLowerCase().includes("retry"),
   );
@@ -144,9 +143,9 @@ async function main() {
   });
 
   // 1e. process a return for the till sale
-  await navigate("#/returns");
+  await navigate("#/dashboard/returns");
   await waitFor(() => bodyText().includes("Returns & Refunds"), { label: "the returns screen" });
-  await sleep(400);
+
   clickExact("New return");
   await waitFor(() => dialogs().length > 0, { label: "the return modal" });
   const returnModal = () => dialogs().at(-1);
@@ -155,35 +154,35 @@ async function main() {
   );
   assert.ok(saleSelect, "the invoice selector lists the sale");
   ux.setReactValue(saleSelect, [...saleSelect.options].find((o) => (o.textContent ?? "").includes(saleNumber)).value);
-  await sleep(400);
+
   const qtyInput = [...returnModal().querySelectorAll('input[placeholder="0"]')][0];
   assert.ok(qtyInput, "the return-quantity input is on the selected line");
   ux.setInputValue(qtyInput, "1");
-  qtyInput.dispatchEvent(new ux.dom.window.Event("input", { bubbles: true }));
-  await sleep(200);
+  ux.flushSync(() => qtyInput.dispatchEvent(new ux.dom.window.Event("input", { bubbles: true })));
+
   const reasonInput = returnModal().querySelector("#return-reason");
   ux.setInputValue(reasonInput, "Customer changed her mind");
-  reasonInput.dispatchEvent(new ux.dom.window.Event("input", { bubbles: true }));
-  await sleep(200);
+  ux.flushSync(() => reasonInput.dispatchEvent(new ux.dom.window.Event("input", { bubbles: true })));
+
   const submitReturn = [...returnModal().querySelectorAll("button")].find(
     (b) => (b.textContent ?? "").includes("Process return"),
   );
   assert.ok(submitReturn && !submitReturn.disabled, "the return is submittable");
   clickEl(submitReturn);
   await waitFor(() => /RET-\d{6}/.test(bodyText() + ux.toastText()), { label: "the return to be created" });
-  await sleep(300);
+
   // close any confirmation dialog the return opened
   const closeButton = [...(dialogs().at(-1)?.querySelectorAll("button") ?? [])].find(
     (b) => (b.textContent ?? "").trim() === "Close" || (b.textContent ?? "").includes("Done"),
   );
   if (closeButton) clickEl(closeButton);
-  await sleep(200);
+
   console.log("  ✓ seeded a processed return");
 
   // 1f. the variant ring: Gold/17 + Silver/17, then push Gold/17 LOW (1 of 2)
   const SKU = "UX-RING";
   const GOLD_SKU = "UX-RING-GOLD-17";
-  await navigate("#/products/new");
+  await navigate("#/dashboard/products/new");
   await waitFor(() => document.querySelector("#sku"), { label: "the product form" });
   setField("#name_ar", "خاتم اليوكس");
   setField("#name_en", "UX Ring");
@@ -199,11 +198,11 @@ async function main() {
     if (option) ux.setReactValue(categorySelect, option.value);
   }
   clickExact("Save");
-  await waitFor(() => ux.dom.window.location.hash === "#/products", { label: "the save to land" });
+  await waitFor(() => ux.dom.window.location.hash === "#/dashboard/products", { label: "the save to land" });
   const productId = catalog().products.find((p) => p.sku === SKU)?.id;
   assert.ok(productId, "the ring is in the catalogue");
 
-  await navigate(`#/products/${productId}/edit`);
+  await navigate(`#/dashboard/products/${productId}/edit`);
   await waitFor(() => testid("variant-editor"), { label: "the variant editor" });
   clickEl(testid("variant-generate"));
   await waitFor(() => dialogs().length > 0, { label: "the generator" });
@@ -216,7 +215,7 @@ async function main() {
     (i.placeholder ?? "").includes("16, 16.5"),
   );
   ux.setNative(sizesInput, ux.dom.window.HTMLInputElement)("17");
-  await sleep(250);
+
   clickEl([...genDialog.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === "Create 2"));
   await waitFor(() => testid("variant-row-GOLD".replace("GOLD", GOLD_SKU)), { label: "the gold row" });
   clickEl(testid("variant-mode-toggle"));
@@ -240,16 +239,16 @@ async function main() {
 
   // The inventory provider mounted before the ring existed — the same manual
   // sync a clerk does when the shelf and the ledger disagree.
-  await navigate("#/inventory/stock", 700);
+  await navigate("#/dashboard/inventory/stock");
   const invRetry = [...document.querySelectorAll("button[title]")].find((b) =>
     (b.getAttribute("title") ?? "").toLowerCase().includes("retry"),
   );
   if (invRetry) clickEl(invRetry);
-  await sleep(700);
+
   console.log("  ✓ seeded the variant ring with Gold / 17 pushed low");
 
   // ── 2 · the dashboard renders the day ─────────────────────────────────────
-  await navigate("#/", 700);
+  await navigate("#/dashboard");
   await waitFor(() => testid("dash-kpi-row"), { label: "the KPI row" });
   const kpiRow = testid("dash-kpi-row");
   assert.equal(kpiRow.querySelectorAll("a[data-kpi-link]").length, 5, "the five day-tiles are clickable links");
@@ -273,45 +272,46 @@ async function main() {
 
   // ── 3 · every route, through the module's own filters ─────────────────────
   clickTestid("kpi-today-sales");
-  await waitFor(() => ux.dom.window.location.hash.startsWith("#/pos/sales"), { label: "the sales route" });
+  await waitFor(() => ux.dom.window.location.hash.startsWith("#/dashboard/pos/sales"), { label: "the sales route" });
   const today = new Date().toISOString().slice(0, 10);
   await waitFor(() => testid("sales-date-from")?.value === today && testid("sales-date-to")?.value === today, { label: "the today date range to hydrate" });
   console.log("  ✓ Sales tile → Invoice Center with today's server date range");
 
-  await navigate("#/", 600);
+  await navigate("#/dashboard");
   await waitFor(() => testid("kpi-web-orders"), { label: "the KPI row again" });
   clickTestid("kpi-web-orders");
-  await waitFor(() => ux.dom.window.location.hash.startsWith("#/online/orders"), { label: "the orders route" });
+  await waitFor(() => ux.dom.window.location.hash.startsWith("#/dashboard/online/orders"), { label: "the orders route" });
   await waitFor(() => testid("orders-tabs"), { label: "the orders queue to render" });
   await waitFor(() => bodyText().includes(pendingOrderNumber), { label: "the queue to load" });
   assert.ok(bodyText().includes("Mona Mahmoud"), "the order rows show the customer");
 
-  await navigate("#/", 600);
+  await navigate("#/dashboard");
   clickTestid("web-kpi-pending");
-  await waitFor(() => ux.dom.window.location.hash.startsWith("#/online/orders"), { label: "the orders route" });
+  await waitFor(() => ux.dom.window.location.hash.startsWith("#/dashboard/online/orders"), { label: "the orders route" });
   await waitFor(() => testid("orders-tabs"), { label: "the orders queue to render" });
-  await sleep(300);
+
   const statusSelect = [...document.querySelectorAll("select")].find(
     (s) => s.getAttribute("aria-label") === "Order status",
   );
   assert.equal(statusSelect?.value, "pending", "the status filter hydrated from the URL");
   console.log("  ✓ Pending Review tile → the queue pre-filtered to pending");
 
-  await navigate("#/", 600);
+  await navigate("#/dashboard");
   clickTestid("web-kpi-instapay");
-  await waitFor(() => ux.dom.window.location.hash.startsWith("#/online/orders"), { label: "the orders route" });
+  await waitFor(() => ux.dom.window.location.hash.startsWith("#/dashboard/online/orders"), { label: "the orders route" });
   await waitFor(() => testid("orders-tabs"), { label: "the orders queue to render" });
-  await sleep(300);
+
   const paymentSelect = [...document.querySelectorAll("select")].find(
     (s) => s.getAttribute("aria-label") === "Payment status",
   );
   assert.equal(paymentSelect?.value, "verification_required", "the payment filter hydrated from the URL");
   console.log("  ✓ InstaPay tile → the queue pre-filtered to verification_required");
 
-  await navigate("#/", 600);
+  await navigate("#/dashboard");
   clickTestid("kpi-low-stock");
-  await waitFor(() => ux.dom.window.location.hash.startsWith("#/inventory"), { label: "the inventory route" });
-  await sleep(500);
+  await waitFor(() => ux.dom.window.location.hash.startsWith("#/dashboard/inventory"), { label: "the inventory route" });
+
+  await waitFor(() => document.querySelector('select[aria-label="Status"]')?.value === "low", { label: "low-stock filter hydration" });
   const inventoryStatus = [...document.querySelectorAll("select")].find(
     (s) => (s.getAttribute("aria-label") ?? "") === "Status",
   );
@@ -319,20 +319,21 @@ async function main() {
   assert.equal(inventoryStatus.value, "low", "the inventory status filter hydrated from the URL");
   console.log("  ✓ Low Stock tile → inventory pre-filtered to low");
 
-  await navigate("#/", 600);
+  await navigate("#/dashboard");
   clickTestid("kpi-returns");
-  await waitFor(() => ux.dom.window.location.hash.startsWith("#/returns"), { label: "the returns route" });
+  await waitFor(() => ux.dom.window.location.hash.startsWith("#/dashboard/returns"), { label: "the returns route" });
   await waitFor(() => /RET-\d{6}/.test(bodyText()), { label: "the processed return to appear" });
 
-  await navigate("#/", 600);
+  await navigate("#/dashboard");
   clickTestid("kpi-open-shift");
-  await waitFor(() => ux.dom.window.location.hash.startsWith("#/shifts"), { label: "the shifts route" });
-  await sleep(600);
+  await waitFor(() => ux.dom.window.location.hash.startsWith("#/dashboard/shifts"), { label: "the shifts route" });
+
+  await waitFor(() => /SH-\d{6}/.test(bodyText()), { label: "open shift loaded after KPI click" });
   assert.ok(/SH-\d{6}/.test(bodyText()), "the open shift is on the shift dashboard");
   console.log("  ✓ Returns and Open-Shift tiles route to their screens");
 
   // ── 4 · activity blocks ────────────────────────────────────────────────────
-  await navigate("#/", 700);
+  await navigate("#/dashboard");
   await waitFor(() => testid("dash-recent-orders"), { label: "the recent-orders block" });
   assert.ok(testid("dash-recent-orders").textContent.includes(saleNumber), "recent orders lists the till sale");
   await waitFor(() => testid("web-section"), { label: "the website block" });
@@ -373,18 +374,18 @@ async function main() {
   console.log('  ✓ variant-aware alert: "UX Ring · Gold / 17 · Out of stock" — one shelf line, never a false product claim');
 
   // ── 6 · the mobile register path ──────────────────────────────────────────
-  await navigate("#/pos", 700);
+  await navigate("#/dashboard/pos");
   await waitFor(() => testid("pos-mobile-cart-open") === null, { label: "the empty register" });
   // put something in the cart, so the sticky summary has something to say
   await waitFor(() => testid("pos-scan-search"), { label: "the scan/search box" });
   setField('[data-testid="pos-scan-search"]', plainName);
-  await sleep(400);
+
   const mobileRow = [...document.querySelectorAll("[data-pos-result-index]")].find(
     (b) => (b.textContent ?? "").includes(plainName) && !b.disabled,
   );
   assert.ok(mobileRow, "the product is in the results");
   clickEl(mobileRow);
-  await sleep(400);
+
   await waitFor(() => testid("pos-mobile-cart-open"), { label: "the sticky mobile cart bar" });
   clickTestid("pos-mobile-cart-open");
   await waitFor(() => testid("pos-mobile-cart-drawer"), { label: "the mobile cart drawer" });
@@ -396,20 +397,20 @@ async function main() {
     (b.getAttribute("aria-label") ?? "") === "Close",
   );
   clickEl(closeDrawer);
-  await sleep(300);
+
   console.log("  ✓ mobile: sticky summary opens a drawer with the real cart + payment");
 
   // ── 7 · Arabic RTL ────────────────────────────────────────────────────────
-  await navigate("#/", 600);
+  await navigate("#/dashboard");
   clickExact("العربية");
-  await sleep(400);
+
   assert.equal(document.documentElement.getAttribute("dir"), "rtl", "the shell flips to RTL");
   await waitFor(() => bodyText().includes("لوحة التحكم"), { label: "the Arabic dashboard" });
   assert.ok(bodyText().includes("إيرادات اليوم"), "the KPI labels are Arabic");
   assert.equal(ux.errors.length, 0, "no console errors in Arabic");
   console.log("  ✓ Arabic: RTL shell + Arabic dashboard labels");
   clickExact("English");
-  await sleep(300);
+
 
   // ── 8 · permission-aware rendering ────────────────────────────────────────
   await signOut();
@@ -421,8 +422,8 @@ async function main() {
   assert.ok(!testid("kpi-today-sales"), "sales-history KPIs are hidden without sales.view");
   assert.ok(bodyText().includes("Business performance"), "the separately-authorized reports section remains visible");
   assert.ok(testid("kpi-low-stock"), "the inventory view they own still renders");
-  assert.ok(!document.querySelector('a[href="#/online/website"]'), "no website-builder link in the sidebar");
-  assert.ok(!document.querySelector('a[href="#/settings/branding"]'), "no Branding link in the sidebar");
+  assert.ok(!document.querySelector('a[href="#/dashboard/online/website"]'), "no website-builder link in the sidebar");
+  assert.ok(!document.querySelector('a[href="#/dashboard/settings/branding"]'), "no Branding link in the sidebar");
   console.log("  ✓ a read-only viewer sees the shelf view, never the till or the website");
 
   ux.finish("Dashboard/Admin UX");

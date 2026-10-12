@@ -13,7 +13,7 @@
  * Zoom is a transform on the existing image rather than a second download: a
  * shopper on a phone gets the detail without paying for a full-size file twice.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { cn } from "@/utils/cn";
@@ -171,8 +171,9 @@ export function StoreProductPage() {
   const [chosenColorKey, setChosenColorKey] = useState<string | null>(null);
   const [chosenVariantId, setChosenVariantId] = useState<string | null>(null);
 
-  // A different product routed in resets the choice, not the page.
-  useEffect(() => {
+  // Reset identity before paint: a passive reset could erase the shopper's
+  // first colour click after a product loads. Never carry a sibling's shelf.
+  useLayoutEffect(() => {
     setChosenColorKey(null);
     setChosenVariantId(null);
     setLocalQuantity(1);

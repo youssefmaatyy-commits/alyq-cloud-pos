@@ -44,7 +44,7 @@ export const en = {
   "nav.menu": "Menu",
   "mode.demo": "Demo mode",
   "mode.demoHint":
-    "Supabase is not configured — data is stored locally in this browser.",
+    "Demo was explicitly selected — test data is stored locally in this browser. Not for real sales.",
   "mode.live": "Connected",
   "mode.liveHint": "Reading and writing to Supabase.",
   "mode.switch": "Switch language",
@@ -4695,7 +4695,7 @@ export const ar: Record<TranslationKey, string> = {
   "nav.phase1": "المرحلة 1",
   "nav.menu": "القائمة",
   "mode.demo": "الوضع التجريبي",
-  "mode.demoHint": "لم يتم إعداد Supabase — يتم تخزين البيانات محليًا في هذا المتصفح.",
+  "mode.demoHint": "تم اختيار الوضع التجريبي صراحةً — تُحفظ بيانات الاختبار محليًا في هذا المتصفح. ليس للمبيعات الحقيقية.",
   "mode.live": "متصل",
   "mode.liveHint": "يتم القراءة والكتابة من Supabase.",
   "mode.switch": "تغيير اللغة",

@@ -1,7 +1,7 @@
 import { getDesktopContext, getDesktopRegisterBinding, isDesktopRuntime, saveDesktopRegisterBinding } from "@/lib/desktop/bridge";
 import type { DesktopRegisterBinding } from "@/lib/desktop/types";
 import { assertCapability } from "@/lib/permissions/enforce";
-import { getSupabaseClient, isSupabaseConfigured } from "@/lib/supabase/client";
+import { getSupabaseClient, getRepositoryMode } from "@/lib/supabase/client";
 import { AppError, toAppError } from "@/modules/products/data/repository";
 import type {
   RegisterContextState,
@@ -117,7 +117,7 @@ export async function resolveRegisterContext(activeBranchId: string | null): Pro
     return { kind: "desktop-unregistered", register: null, reason: error instanceof Error ? error.message : "Register setup required" };
   }
   const cached = credential.register;
-  if (!isSupabaseConfigured) {
+  if (getRepositoryMode() === "demo") {
     const valid = cached.active && Boolean(activeBranchId) && cached.branch_id === activeBranchId;
     return valid
       ? { kind: "desktop-ready", register: cached, reason: null }
@@ -149,7 +149,7 @@ export async function resolveRegisterContext(activeBranchId: string | null): Pro
 
 export async function listRegisters(): Promise<RegisterRecord[]> {
   assertCapability("manage_registers");
-  if (!isSupabaseConfigured) return [];
+  if (getRepositoryMode() === "demo") return [];
   const client = getSupabaseClient();
   if (!client) throw new AppError("NOT_CONFIGURED");
   const { data, error } = await client.rpc("register_list");
@@ -165,7 +165,7 @@ export async function createAndBindRegister(input: {
   assertCapability("manage_registers");
   const context = await getDesktopContext();
   if (!context) throw new AppError("VALIDATION", "Register setup must run in the desktop application");
-  if (!isSupabaseConfigured) throw new AppError("NOT_CONFIGURED", "Backend registration requires Supabase");
+  if (getRepositoryMode() === "demo") throw new AppError("NOT_CONFIGURED", "Backend registration requires Supabase");
   const client = getSupabaseClient();
   if (!client) throw new AppError("NOT_CONFIGURED");
   const { data, error } = await client.rpc("register_create", {
@@ -190,7 +190,7 @@ export async function manageRegister(input: {
   branch_id?: string | null;
 }): Promise<RegisterRecord> {
   assertCapability("manage_registers");
-  if (!isSupabaseConfigured) throw new AppError("NOT_CONFIGURED");
+  if (getRepositoryMode() === "demo") throw new AppError("NOT_CONFIGURED");
   const client = getSupabaseClient();
   if (!client) throw new AppError("NOT_CONFIGURED");
   const { data, error } = await client.rpc("register_manage", {
@@ -209,7 +209,7 @@ export async function sendRegisterHeartbeat(input: {
   hardware: Record<string, unknown>;
 }): Promise<RegisterRecord | null> {
   const credential = await getRegisterCredential();
-  if (!credential || !isSupabaseConfigured) return null;
+  if (!credential || getRepositoryMode() === "demo") return null;
   const context = await getDesktopContext();
   const client = getSupabaseClient();
   if (!client || !context) return null;

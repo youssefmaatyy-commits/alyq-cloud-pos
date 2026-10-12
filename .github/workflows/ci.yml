@@ -1,124 +1,106 @@
 name: CI
-
-# Four jobs, each independent. Anything red blocks a merge:
-#   static    lint, types (which also guarantee the EN/AR dictionary is
-#             complete), production build
-#   logic     every *.selftest.ts — money math, validation, permissions, repos
-#   database  applies supabase/migrations to a real PostgreSQL engine and checks
-#             the result satisfies the code (no Docker: @electric-sql/pglite)
-#   e2e       the real app bundle driven in jsdom (smoke + auth flows)
-#
-# `live` is opt-in: set the repository variable ALYQ_LIVE_CI=true and the
-# SUPABASE_TEST_* secrets to run the same E2E suites against a real project.
-# It is the only job that can see the live-mode surface — the RLS policies and
-# the anonymous storefront reads that migration 0030 hardened — and until it is
-# switched on, `npm run db:check` is what proves those, by running the real
-# policies against a real engine as each role (see supabase/tests/scenarios.sql).
-
 on:
   push:
-    branches: ["main", "arena/**"]
+    branches: [main, "arena/**"]
   pull_request:
   workflow_dispatch:
-
+permissions:
+  contents: read
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
   static:
     name: Types & build
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Synthetic public configuration for OFFLINE artifact validation only.
+    # A green CI build is not a commercial catalogue approval.
+    env:
+      VITE_APP_MODE: production
+      VITE_RELEASE_ENVIRONMENT: preview
+      VITE_SUPABASE_URL: https://isolated-release-check.invalid
+      VITE_SUPABASE_ANON_KEY: sb_publishable_ci_fixture_only_0000000000
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run production:preflight
-      # ESLint, added with migration 0030's hardening pass. It is the cheapest of
-      # the four gates and the only one that reads the code rather than running
-      # it: the hooks rules catch a conditional hook, which every other job here
-      # would sail through because the suites that exist do not render that
-      # component. Warnings are reported and do not block; errors do.
       - run: npm run lint
-      # `ar` is typed Record<TranslationKey, string>, so this also fails on a
-      # missing or extra Arabic translation — no separate i18n check needed.
       - run: npm run typecheck
       - run: npm run build
+      - run: npm run production:preflight
       - uses: actions/upload-artifact@v4
         with:
-          name: dist
+          name: offline-production-contract-artifact
           path: dist
           retention-days: 7
-
   logic:
     name: Logic suites
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
       - run: npm ci
+      # Includes actual Vite fail-closed builds, built-JS bootstrap, secret scan,
+      # catalogue probe and release authorization tests, plus all logic suites.
       - run: npm test
-
   database:
     name: Migrations & schema
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
       - run: npm ci
-      # Applies every migration in order, twice (idempotency), then asserts the
-      # schema satisfies what the repositories query. Three defects that made
-      # the live schema unbuildable (0010's enum default, six invalid INSERT
-      # policies, 0007's unescaped %) were all caught by this job's assertions.
+      # Isolated PostgreSQL/PGlite only; no hosted project credentials.
       - run: npm run db:check
-
   e2e:
     name: E2E (jsdom)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
       - run: npm ci
+      # Fresh bundles/processes, all 31 suites, no retry-on-failure or exclusions.
       - run: npm run test:e2e
-      - uses: actions/upload-artifact@v4
-        if: failure()
-        with:
-          name: e2e-bundle
-          path: /tmp/alyq-app.mjs
-          retention-days: 7
-
-  live:
-    name: Live Supabase E2E
-    # Opt-in: repository variable ALYQ_LIVE_CI=true, plus the secrets below.
-    if: ${{ github.event_name == 'workflow_dispatch' && vars.ALYQ_LIVE_CI == 'true' }}
+      - run: npm run test:e2e
+  release_gate:
+    name: Release gate
+    if: ${{ always() }}
+    needs: [static, logic, database, e2e]
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    env:
-      VITE_SUPABASE_URL: ${{ secrets.SUPABASE_TEST_URL }}
-      VITE_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_TEST_ANON_KEY }}
+    timeout-minutes: 2
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm run db:check
-      - run: npm run test:e2e
-      - run: npm run build
+      - name: Refuse release if any required job failed, cancelled or was skipped
+        env:
+          STATIC: ${{ needs.static.result }}
+          LOGIC: ${{ needs.logic.result }}
+          DATABASE: ${{ needs.database.result }}
+          E2E: ${{ needs.e2e.result }}
+        run: |
+          test "$STATIC" = success
+          test "$LOGIC" = success
+          test "$DATABASE" = success
+          test "$E2E" = success

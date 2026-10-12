@@ -1,3 +1,4 @@
+import { OrderReadConsistency } from "../services/orderReadConsistency";
 /**
  * Online orders — the POS side.
  *
@@ -26,9 +27,7 @@ import { canActAs } from "@/lib/permissions/enforce";
 import { useAuth } from "@/lib/auth";
 import { getCurrentUser } from "@/modules/inventory/permissions";
 import type { Product } from "@/modules/products/types";
-import { getDemoRepository } from "@/modules/products/data/demoRepository";
-import { getSupabaseRepository } from "@/modules/products/data/supabaseRepository";
-import { getSupabaseClient, isSupabaseConfigured } from "@/lib/supabase/client";
+import { getCatalogRepository } from "@/modules/products/data";
 import { useRealtimeWatch } from "@/lib/supabase/useRealtimeWatch";
 import { getSalesRepository } from "@/modules/pos/data";
 import type { Sale } from "@/modules/pos/types";
@@ -129,6 +128,10 @@ export function OnlineOrdersProvider({ children }: { children: ReactNode }) {
   const [products, setProducts] = useState<Product[]>([]);
 
   const mounted = useRef(true);
+  // Read responses are snapshots, not authority over later writes/selections.
+  // A fast payment action can finish before the drawer's initial getOrder read,
+  // and a previous filter load can arrive after the clerk has changed filters.
+  const reads = useRef(new OrderReadConsistency());
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -146,6 +149,7 @@ export function OnlineOrdersProvider({ children }: { children: ReactNode }) {
 
   const load = useCallback(
     async (currentFilter: OnlineOrderFilter, options?: { silent?: boolean }) => {
+      const ticket = reads.current.beginLoad();
       if (!canManage) {
         setOrders([]);
         setCounts(EMPTY_ORDER_COUNTS);
@@ -161,12 +165,9 @@ export function OnlineOrdersProvider({ children }: { children: ReactNode }) {
           repository.counts(),
           repository.listReservations(),
           salesRepository.listSales(),
-          (isSupabaseConfigured && getSupabaseClient()
-            ? getSupabaseRepository()
-            : getDemoRepository()
-          ).listProducts(),
+          getCatalogRepository().listProducts(),
         ]);
-        if (!mounted.current) return;
+        if (!mounted.current || !reads.current.canApplyLoad(ticket)) return;
         setOrders(list);
         setCounts(totals);
         setReservations(holds);
@@ -174,13 +175,13 @@ export function OnlineOrdersProvider({ children }: { children: ReactNode }) {
         setProducts(catalog);
         setError(null);
         // Keep the drawer honest: an order that has moved on shows its new state.
-        setSelected((previous) =>
+        if (reads.current.canApplyLoadSelection(ticket)) setSelected((previous) =>
           previous ? list.find((order) => order.id === previous.id) ?? null : null,
         );
       } catch (caught) {
-        if (mounted.current) setError(toOnlineError(caught));
+        if (mounted.current && reads.current.canApplyLoad(ticket)) setError(toOnlineError(caught));
       } finally {
-        if (mounted.current) setLoading(false);
+        if (mounted.current && reads.current.isLatestLoad(ticket)) setLoading(false);
       }
     },
     [canManage, repository, salesRepository],
@@ -214,6 +215,7 @@ export function OnlineOrdersProvider({ children }: { children: ReactNode }) {
 
   const select = useCallback(
     async (id: string | null) => {
+      const ticket = reads.current.beginSelection();
       if (!id) {
         setSelected(null);
         return;
@@ -224,7 +226,7 @@ export function OnlineOrdersProvider({ children }: { children: ReactNode }) {
       setSelected(fromList);
       try {
         const fresh = await repository.getOrder(id);
-        if (mounted.current) setSelected(fresh);
+        if (mounted.current && reads.current.canApplySelection(ticket)) setSelected(fresh);
       } catch {
         // The list copy is good enough to look at; the failure is not worth an
         // error banner on a read.
@@ -239,6 +241,7 @@ export function OnlineOrdersProvider({ children }: { children: ReactNode }) {
       action: OrderAction,
       reason?: string | null,
     ): Promise<OnlineOrder | null> => {
+      reads.current.recordMutation();
       setActionError(null);
       setBusyAction({ orderId, action });
       try {
@@ -248,6 +251,7 @@ export function OnlineOrdersProvider({ children }: { children: ReactNode }) {
           user_id: actor.id,
           user_name: actor.name,
         });
+        reads.current.recordMutation();
         if (!mounted.current) return updated;
 
         // Update in place so the row does not flash while the list re-reads.
