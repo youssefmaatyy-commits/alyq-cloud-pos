@@ -16,7 +16,12 @@ npm run dev          # http://localhost:5173
 
 With no environment file the app runs in **demo mode**: an in-browser dataset in
 `localStorage`, seeded with five accounts — one per role — all using the
-password `alyq1234`.
+password `alyq1234`. Declare the mode explicitly with `VITE_APP_MODE`:
+
+```bash
+VITE_APP_MODE=demo        # the in-browser dataset, deliberately
+VITE_APP_MODE=production  # live Supabase; a missing or invalid configuration fails the build
+```
 
 | Username | Role | Can do |
 | --- | --- | --- |
@@ -27,7 +32,10 @@ password `alyq1234`.
 | `viewer` | Viewer | read-only: dashboard, catalog, customers, sales history |
 
 Demo mode is for development and evaluation. It is per-browser, has no
-server-side enforcement, and must never be used for real money.
+server-side enforcement, and must never be used for real money. A
+`VITE_APP_MODE=production` build never falls back to it: a missing, half-set,
+malformed or dangerous Supabase configuration stops the build, and a bundle that
+exists anyway shows a configuration-error screen instead of the application.
 
 ## Live mode (Supabase)
 
@@ -53,8 +61,10 @@ npm run typecheck    # tsc; also guarantees the EN/AR dictionary is complete
 npm run build        # production bundle
 npm test             # logic suites: money math, validation, permissions, repos
 npm run db:check     # migrations apply, are idempotent, and satisfy the code
-npm run test:e2e     # the real bundle driven in jsdom (smoke + auth + store flows)
+npm run test:e2e     # the real bundle driven in jsdom (31 suites; CI runs it twice)
 npm run test:all     # typecheck + logic + e2e
+npm run check:production-guard  # three real builds: production fails closed, demo is labelled
+npm run release:probe           # read-only: release.json + an empty-catalogue walk
 ```
 
 `npm run db:check` runs a WebAssembly PostgreSQL in-process, so no Docker or

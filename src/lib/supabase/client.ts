@@ -1,56 +1,40 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
+import { RESOLVED_APP_MODE, toSupabaseProjectUrl } from "@/lib/appMode";
+
 /**
  * Central Supabase access for ALYQ Cloud POS.
  *
- * The client is created lazily and only when BOTH `VITE_SUPABASE_URL` and
- * `VITE_SUPABASE_ANON_KEY` are present. When they are missing the application
- * automatically runs in **demo mode** (in-memory, browser-persisted data) so the
- * UI is always usable. Nothing here throws at import time.
+ * The client is created lazily, and only when `src/lib/appMode.ts` resolved the
+ * build to **production** mode with a configuration that passed validation.
+ * That module — not this file — owns the policy, so there is exactly one place
+ * where "is this build live?" is answered and exactly one place that validates
+ * the URL and the anon key.
+ *
+ * In explicit demo mode (`VITE_APP_MODE=demo`) the credentials are ignored even
+ * when they are present: the demo dataset is a deliberate choice, never a
+ * fallback. When a production build is misconfigured, `STARTUP_BLOCKED` is true
+ * and `main.tsx` renders the configuration-error screen instead of the
+ * application, so nothing here can be reached with a half-configured backend.
+ * Nothing in this module throws at import time.
  */
 
-const env = import.meta.env ?? {};
+export { toSupabaseProjectUrl };
+
+export const SUPABASE_URL = RESOLVED_APP_MODE.supabase.configured
+  ? RESOLVED_APP_MODE.supabase.projectUrl
+  : "";
+export const SUPABASE_PROJECT_URL = SUPABASE_URL;
+export const SUPABASE_ANON_KEY = RESOLVED_APP_MODE.supabase.configured
+  ? RESOLVED_APP_MODE.supabase.anonKey
+  : "";
 
 /**
- * Supabase's JavaScript client expects a project URL, not one of its API URLs.
- *
- * Some existing deployments supplied the PostgREST endpoint here
- * (`https://<project>.supabase.co/rest/v1`). Passing that endpoint through made
- * supabase-js append its own API paths beneath it, including
- * `/rest/v1/functions/v1/<function>`. Accept the existing configuration while
- * always handing the SDK the project base URL it requires.
+ * True when validated live credentials are available *and* the build is allowed
+ * to use them. Demo mode always answers false, which is what makes every
+ * repository selector in the app pick the local dataset.
  */
-export function toSupabaseProjectUrl(configuredUrl: string): string {
-  const trimmed = configuredUrl.trim();
-  if (!trimmed) return "";
-
-  try {
-    const url = new URL(trimmed);
-    const path = url.pathname.replace(/\/+$/, "").toLowerCase();
-    if (path === "/rest/v1") {
-      url.pathname = "/";
-      url.search = "";
-      url.hash = "";
-      return url.href.replace(/\/$/, "");
-    }
-  } catch {
-    // Keep invalid input intact. `isSupabaseConfigured` retains the existing
-    // configuration gate, and supabase-js remains responsible for reporting a
-    // malformed URL if a caller tries to create a live client.
-  }
-
-  return trimmed;
-}
-
-export const SUPABASE_URL = (env.VITE_SUPABASE_URL ?? "").trim();
-export const SUPABASE_PROJECT_URL = toSupabaseProjectUrl(SUPABASE_URL);
-export const SUPABASE_ANON_KEY = (env.VITE_SUPABASE_ANON_KEY ?? "").trim();
-
-/** True when real Supabase credentials are available. */
-export const isSupabaseConfigured =
-  SUPABASE_PROJECT_URL.length > 0 &&
-  /^https?:\/\//i.test(SUPABASE_PROJECT_URL) &&
-  SUPABASE_ANON_KEY.length > 0;
+export const isSupabaseConfigured = RESOLVED_APP_MODE.supabase.configured;
 
 interface SupabaseClientFactoryOptions {
   /** Test seam; production uses the platform fetch implementation. */

@@ -146,6 +146,28 @@ export async function createUxHarness({ beforeImport } = {}) {
     await sleep(settle);
   };
 
+  /**
+   * The route the router is actually on, without the legacy alias layer.
+   *
+   * Phase 40 moved every staff screen under `/dashboard/*` and kept the old
+   * URLs as permanent redirects (`#/products` → `#/dashboard/products`, …).
+   * A suite that navigates by the old bookmark therefore lands on the canonical
+   * path, which is what a route assertion should name: asserting `#/products`
+   * after a save only ever passed while the old table was the *only* table.
+   */
+  const routePath = () => dom.window.location.hash.replace(/^#/, "").split("?")[0] || "/";
+
+  /**
+   * Wait until the router settles on a path. Exact by default (query-string
+   * agnostic); pass `{ exact: false }` for a prefix such as a detail route
+   * whose id is generated at run time.
+   */
+  const waitForRoute = (path, { exact = true, ...options } = {}) =>
+    waitFor(() => (exact ? routePath() === path : routePath().startsWith(path)), {
+      label: `the route ${path}`,
+      ...options,
+    });
+
   const clickEl = (el) =>
     el.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
 
@@ -340,6 +362,8 @@ export async function createUxHarness({ beforeImport } = {}) {
     bodyText,
     waitFor,
     navigate,
+    routePath,
+    waitForRoute,
     clickEl,
     click,
     clickExact,

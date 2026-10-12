@@ -81,10 +81,15 @@ async function main() {
 
   // ── 1 · exactly the six module doors (+ the storefront shortcut) ─────────
   const MODULES = ["#/dashboard", "#/dashboard/pos", "#/dashboard/management", "#/dashboard/online", "#/dashboard/reports", "#/dashboard/settings"];
+  // The durable Phase 2C Notification Center is a door of the same rank as the
+  // module homes — the commit that exposed it added exactly one link, and this
+  // check still pins the sidebar to *doors only*: no sub-screen may follow it in.
+  const NOTIFICATION_DOOR = "#/mobile/notifications";
   const hrefs = sidebarHrefs();
   check(
-    "the sidebar carries exactly the six module doors + the storefront shortcut",
-    MODULES.every((m) => hrefs.includes(m)) && hrefs.includes("#/store") && hrefs.length === 7,
+    "the sidebar carries exactly the six module doors + the notification center + the storefront shortcut",
+    MODULES.every((m) => hrefs.includes(m)) && hrefs.includes(NOTIFICATION_DOOR)
+      && hrefs.includes("#/store") && hrefs.length === 8,
   );
 
   // ── 2 · no sub-screen in the sidebar ──────────────────────────────────────

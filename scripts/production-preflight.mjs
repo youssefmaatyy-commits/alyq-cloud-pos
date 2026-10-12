@@ -83,7 +83,7 @@ check(
   "0093 database health contract reports its migration count and filename",
 );
 
-const requiredEnv = ["VITE_SUPABASE_URL", "VITE_SUPABASE_ANON_KEY", "WEB_PUSH_VAPID_PUBLIC_KEY", "VITE_CURRENCY", "VITE_STOREFRONT_URL", "VITE_DEMO_SEED", "VITE_APP_VERSION", "VITE_BUILD_SHA"];
+const requiredEnv = ["VITE_APP_MODE", "VITE_SUPABASE_URL", "VITE_SUPABASE_ANON_KEY", "WEB_PUSH_VAPID_PUBLIC_KEY", "VITE_CURRENCY", "VITE_STOREFRONT_URL", "VITE_DEMO_SEED", "VITE_APP_VERSION", "VITE_BUILD_SHA"];
 check(requiredEnv.every((name) => env.includes(name)), "all client-safe production variable names are documented");
 check(
   webManifest.name && webManifest.short_name && webManifest.start_url === "/#/mobile"
@@ -142,6 +142,20 @@ check(!/(?:SUPABASE_SERVICE_ROLE_KEY|service[_-]?role[_-]?key)\s*[:=]\s*["'](?!t
 const trackedKeys = git("ls-files").split("\n").filter((name) => /\.(?:pem|p12|pfx|jks|keystore|mobileprovision)$/i.test(name));
 check(trackedKeys.length === 0, "no signing/private-key artifact is tracked");
 check(lock.packages?.["node_modules/brace-expansion"]?.version === "5.0.12", "brace-expansion security patch is locked at 5.0.12");
+
+// The GitHub Pages workflow was removed: it published a build from an abandoned
+// session branch while `main` moved on. The product is served from the managed
+// host documented in docs/DEPLOYMENT.md, so its absence is a contract, not a
+// habit — and the manual repository settings that go with the removal are
+// listed in docs/production/manual-github-settings.md.
+check(
+  !fs.existsSync(path.join(root, ".github", "workflows", "deploy-pages.yml")),
+  "no GitHub Pages deploy workflow (use the managed host; see manual-github-settings.md)",
+);
+check(
+  fs.existsSync(path.join(root, "docs", "production", "manual-github-settings.md")),
+  "the manual GitHub/Vercel settings are documented",
+);
 
 for (const message of passes) console.log(`✓ ${message}`);
 for (const message of failures) console.error(`✗ ${message}`);

@@ -61,19 +61,31 @@ export function bundleFileUrl(outfile = process.env.ALYQ_TEST_BUNDLE || DEFAULT_
  * against a real project (the CI `live` job). Absent → the app takes its demo
  * path, which is what the jsdom suites expect.
  */
-export const testDefine = () => ({
-  "import.meta.env": JSON.stringify({
-    VITE_CURRENCY: process.env.VITE_CURRENCY ?? "EGP",
-    ...(process.env.VITE_SUPABASE_URL ? { VITE_SUPABASE_URL: process.env.VITE_SUPABASE_URL } : {}),
-    ...(process.env.VITE_SUPABASE_ANON_KEY
-      ? { VITE_SUPABASE_ANON_KEY: process.env.VITE_SUPABASE_ANON_KEY }
-      : {}),
-    MODE: "test",
-    DEV: false,
-    PROD: true,
-    SSR: false,
-  }),
-});
+export const testDefine = () => {
+  const url = (process.env.VITE_SUPABASE_URL ?? "").trim();
+  const key = (process.env.VITE_SUPABASE_ANON_KEY ?? "").trim();
+  // The suites are a demo-mode contract unless the live CI job supplies real
+  // credentials (that job's whole purpose is the live surface), so the mode is
+  // named explicitly here instead of being inferred at run time.
+  const appMode = (process.env.VITE_APP_MODE ?? "").trim() || (url && key ? "production" : "demo");
+  return {
+    "import.meta.env": JSON.stringify({
+      VITE_CURRENCY: process.env.VITE_CURRENCY ?? "EGP",
+      VITE_APP_MODE: appMode,
+      // Stamped so `src/lib/release.ts` and the configuration screen report a
+      // real identity under the suites rather than 0.0.0/unknown.
+      VITE_APP_VERSION: process.env.VITE_APP_VERSION ?? "6.0.0",
+      VITE_BUILD_SHA: process.env.VITE_BUILD_SHA ?? "test-bundle",
+      VITE_BUILD_TIME: process.env.VITE_BUILD_TIME ?? new Date(0).toISOString(),
+      ...(url ? { VITE_SUPABASE_URL: url } : {}),
+      ...(key ? { VITE_SUPABASE_ANON_KEY: key } : {}),
+      MODE: "test",
+      DEV: false,
+      PROD: true,
+      SSR: false,
+    }),
+  };
+};
 
 /** Image and font assets are mocked to stable URL strings by the plugin. */
 export const testPlugins = () => [assetMockPlugin()];

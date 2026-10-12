@@ -282,6 +282,7 @@ const DEMO_PASSWORD = "alyq1234";
 const usernameField = () => document.querySelector("input[autocomplete='username']");
 const isSignedIn = () => bodyText().includes("Signed in as");
 const signInAs = async (username, password = DEMO_PASSWORD) => {
+  if (!usernameField()) await navigate("#/login", 500);
   await waitFor(() => Boolean(usernameField()), { label: "the login screen" });
   setField("input[autocomplete='username']", username);
   setField("input[autocomplete='current-password']", password);
@@ -366,7 +367,10 @@ async function main() {
   await sleep(600);
 
   // ── 1 · the storefront is public ──────────────────────────────────────────
-  assert.ok(usernameField(), "the app itself still boots on the login screen");
+  // Phase 4A: `/` is the public shop. The staff door is `#/login`, and an
+  // anonymous visitor there is asked to sign in rather than shown a shell.
+  await navigate("#/login", 700);
+  assert.ok(usernameField(), "the app itself still asks staff to sign in");
   await navigate("#/store", 900);
   assert.equal(usernameField(), null, "a shopper is never sent to the login screen");
   await waitFor(() => productCards().length > 0, { label: "the homepage to render products" });
@@ -510,13 +514,14 @@ async function main() {
   console.log("  ✓ order tracking works with the number and phone, and refuses a mismatch");
 
   // ── 6 · the order reaches the POS ─────────────────────────────────────────
-  await navigate("#/", 700);
+  // `/` is the public shop since Phase 4A; the back office is /dashboard.
+  await navigate("#/dashboard", 700);
   await signInAs("admin");
   // Phase 49: the sidebar offers the Online MODULE; its queue lives on the
   // module home as the first card, reached on the next line.
   const navHrefs = [...document.querySelectorAll("aside nav a")].map((a) => a.getAttribute("href") ?? "");
-  assert.ok(navHrefs.includes("#/online"), "the POS sidebar offers the Online module");
-  await navigate("#/online", 600);
+  assert.ok(navHrefs.includes("#/dashboard/online"), "the POS sidebar offers the Online module");
+  await navigate("#/dashboard/online", 600);
   await waitFor(
     () => document.querySelector('[data-testid="module-card-orders"]'),
     { label: "the Online home's orders card" },
@@ -530,7 +535,7 @@ async function main() {
     "the payment is described on the row");
 
   // The notification badge counts what needs a decision — it rides the module door.
-  const badge = document.querySelector('aside nav a[href="#/online"] span');
+  const badge = document.querySelector('aside nav a[href="#/dashboard/online"] span');
   assert.ok(badge, "the Online module door carries a count badge");
 
   // Approve it: this is the mandatory website → till step.
@@ -1403,7 +1408,8 @@ async function main() {
   console.log("  ✓ the storefront sells in Arabic (RTL) and English, in EGP either way");
 
   // ── 12 · the till session is untouched by a shopper's visit ───────────────
-  await navigate("#/", 700);
+  // The staff shell is /dashboard; the shopper's own URL is the public one.
+  await navigate("#/dashboard", 700);
   assert.ok(isSignedIn(), "the session survived the trip to the storefront");
   console.log("  ✓ a shopper's visit leaves the till's session exactly as it was");
 
@@ -1570,7 +1576,7 @@ async function main() {
   // ── 14 · the dashboard widget reads the same review ──────────────────────
   // It costs no query of its own: the provider already loaded the orders, the
   // holds and the catalogue, so the widget is four numbers over rows the app had.
-  await navigate("#/", 900);
+  await navigate("#/dashboard", 900);
   await waitFor(() => bodyText().includes("Active holds"), { label: "the dashboard's holds widget" });
   assert.ok(bodyText().includes("Can repair now"), "what can be fixed is counted separately");
   assert.ok(bodyText().includes("Oldest hold"), "and so is how long the oldest has been sitting");

@@ -192,6 +192,7 @@ const signOut = async () => {
 };
 const signInAs = async (username, password = DEMO_PASSWORD) => {
   await signOut();
+  if (!usernameField()) await navigate("#/login", 500);
   await waitFor(() => Boolean(usernameField()), { label: "the login screen" });
   setField("input[autocomplete='username']", username);
   setField("input[autocomplete='current-password']", password);
@@ -262,7 +263,9 @@ async function main() {
   await sleep(500);
 
   // 0 ─ sign in as admin (full capability, including product.delete)
-  assert.ok(usernameField(), "the app boots on the login screen");
+  // The public shop owns `/`; staff reach their door through `#/login`.
+  await navigate("#/login", 600);
+  assert.ok(usernameField(), "the app opens the staff door on the login screen");
   await signInAs("admin");
   assert.ok(isSignedIn(), "admin signed in");
 
@@ -283,7 +286,7 @@ async function main() {
   // the form page itself (barcode preview), so a text wait alone can race the
   // navigation and have the pending route clobber the next one.
   clickExact("Save");
-  await waitFor(() => dom.window.location.hash === "#/products", {
+  await waitFor(() => dom.window.location.hash === "#/dashboard/products", {
     label: "the save to route back to the catalogue",
   });
   await waitFor(() => bodyText().includes(unusedSku), { label: "the new product to appear" });
@@ -324,7 +327,7 @@ async function main() {
   setField("#low_stock_level", "2");
   selectOption("#category_id", (o) => o.value !== "");
   clickExact("Save");
-  await waitFor(() => dom.window.location.hash === "#/products", {
+  await waitFor(() => dom.window.location.hash === "#/dashboard/products", {
     label: "the save to route back to the catalogue",
   });
   await waitFor(() => bodyText().includes(ringSku), { label: "the ring to appear" });

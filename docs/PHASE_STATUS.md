@@ -478,7 +478,9 @@ These are not owned by a single phase:
    are no reports, exports or analytics outputs anywhere in the app.
 
 *Addendum, written after this snapshot:* items 2, 3, 4 and 7 have since been closed — `.github/`
-now holds `ci.yml` and `deploy-pages.yml`, and the repository has a `.gitignore`, a `.env.example`
+now holds `ci.yml` (the `deploy-pages.yml` workflow was removed: it published from an abandoned
+session branch, and the product is served from the managed host — see
+`docs/production/manual-github-settings.md`), and the repository has a `.gitignore`, a `.env.example`
 and a root `README.md`. Excel exports exist for products, inventory, sales, payments, cash,
 customers, returns, expenses, reports and online orders, so item 7's "no exports" no longer holds;
 printing is still limited to the three artefacts. Item 1 is partly closed: migrations now run to

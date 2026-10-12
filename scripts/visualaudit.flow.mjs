@@ -62,7 +62,7 @@ function assertShell(screen) {
 
 const checks = [
   {
-    path: "#/",
+    path: "#/dashboard",
     name: "Dashboard",
     check: () => {
       assert.ok(testid("dash-kpi-row"), "dashboard: the KPI row renders");
@@ -70,7 +70,7 @@ const checks = [
     },
   },
 {
-    path: "#/products",
+    path: "#/dashboard/products",
     name: "Products",
     check: async () => {
       await waitFor(() => document.querySelector("table"), { label: "products table", timeout: 20000 });
@@ -97,14 +97,14 @@ const checks = [
     },
   },
   {
-    path: "#/categories",
+    path: "#/dashboard/categories",
     name: "Categories",
     check: () => {
       assert.ok(testid("categories-tabs"), "categories: the lifecycle tabs render");
     },
   },
   {
-    path: "#/inventory/stock",
+    path: "#/dashboard/inventory/stock",
     name: "Inventory stock",
     check: () => {
       assert.ok(document.querySelector('select[aria-label="Status"]'), "inventory: the status filter renders");
@@ -114,7 +114,7 @@ const checks = [
   },
   {
     // Phase 49: the module landing — the card grid is the screen.
-    path: "#/inventory",
+    path: "#/dashboard/inventory",
     name: "Inventory home",
     check: () => {
       assert.ok(testid("module-inventory"), "inventory home: the module page renders");
@@ -122,7 +122,7 @@ const checks = [
     },
   },
   {
-    path: "#/sales",
+    path: "#/dashboard/sales",
     name: "Sales home",
     check: () => {
       assert.ok(testid("module-sales"), "sales home: the module page renders");
@@ -130,7 +130,7 @@ const checks = [
     },
   },
   {
-    path: "#/catalog",
+    path: "#/dashboard/catalog",
     name: "Catalog home",
     check: () => {
       assert.ok(testid("module-catalog"), "catalog home: the module page renders");
@@ -138,7 +138,7 @@ const checks = [
     },
   },
   {
-    path: "#/online",
+    path: "#/dashboard/online",
     name: "Online home",
     check: () => {
       assert.ok(testid("module-online"), "online home: the module page renders");
@@ -146,7 +146,7 @@ const checks = [
     },
   },
   {
-    path: "#/pos",
+    path: "#/dashboard/pos",
     name: "POS (till)",
     check: () => {
       assert.ok(testid("pos-scan-search"), "pos: the scan/search box renders");
@@ -155,7 +155,7 @@ const checks = [
     },
   },
   {
-    path: "#/pos/sales",
+    path: "#/dashboard/pos/sales",
     name: "Invoice / Return Center",
     check: () => {
       assert.ok(testid("sales-date-from") && testid("sales-date-to"), "sales: the authoritative date range renders");
@@ -164,7 +164,7 @@ const checks = [
     },
   },
   {
-    path: "#/customers",
+    path: "#/dashboard/customers",
     name: "Customers",
     check: () => {
       const headers = [...document.querySelectorAll("th")].map((th) => th.textContent ?? "").join(" ");
@@ -172,7 +172,7 @@ const checks = [
     },
   },
   {
-    path: "#/returns",
+    path: "#/dashboard/returns",
     name: "Returns",
     check: () => {
       assert.ok(buttonsInclude("New return"), "returns: the primary action is on the header");
@@ -188,7 +188,7 @@ const checks = [
     },
   },
   {
-    path: "#/online/orders",
+    path: "#/dashboard/online/orders",
     name: "Online orders",
     check: () => {
       assert.ok(testid("orders-tabs"), "orders: the status tabs render");
@@ -198,21 +198,21 @@ const checks = [
     },
   },
   {
-    path: "#/online/website",
+    path: "#/dashboard/online/website",
     name: "Website customization",
     check: () => {
       assert.ok(document.body.textContent.length > 200, "website: the center renders its panels");
     },
   },
   {
-    path: "#/reports",
+    path: "#/dashboard/reports",
     name: "Reports",
     check: () => {
       assert.ok([...document.querySelectorAll("h1, h2")].length >= 1, "reports: the hub renders sections");
     },
   },
   {
-    path: "#/settings",
+    path: "#/dashboard/settings",
     name: "Settings",
     check: () => {
       const text = document.body.textContent ?? "";
@@ -368,12 +368,12 @@ for (const { path, name, check } of checks) {
   }
   // back to the back office: an unauthenticated shopper reaches the admin
   // login by opening any admin route.
-  await navigate("#/", 600);
+  await navigate("#/dashboard", 600);
   await signInAs("admin");
 }
 
 // contrast/typography sanity on the design tokens themselves
-await navigate("#/", 700);
+await navigate("#/dashboard", 700);
 await sleep(400);
 const card = document.querySelector(".alyq-card");
 assert.ok(card, "the workspace uses the shared card token");

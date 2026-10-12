@@ -137,7 +137,7 @@ setField("#low_stock_level", "1");
   if (option) setReactValue(categorySelect, option.value);
 }
 clickExact("Save");
-await waitFor(() => ux.dom.window.location.hash === "#/products", { label: "the save to land" });
+await ux.waitForRoute("/dashboard/products", { label: "the save to land on the catalogue" });
 const productId = catalog().products.find((p) => p.sku === RING_SKU)?.id;
 assert.ok(productId, "the ring is in the catalogue");
 
@@ -483,7 +483,8 @@ assert.ok(
 console.log("  ✓ 16 · the storefront stands, customized");
 
 // ── 17 · the dashboard KPIs reconcile ───────────────────────────────────────
-await navigate("#/", 800);
+// `/` is the public shop; the dashboard is /dashboard.
+await navigate("#/dashboard", 800);
 await waitFor(() => testid("dash-kpi-row"), { label: "the KPI row" });
 {
   // today: 1 till sale + 2 online sales; 2 web orders placed, both approved
@@ -573,6 +574,6 @@ assert.ok(trail().every((e) => !JSON.stringify(e.details ?? {}).toLowerCase().in
   "no password ever reached the trail");
 console.log(`  ✓ 22 · the audit trail holds ${trail().length} rows, password-free`);
 
-await navigate("#/");
+await navigate("#/dashboard");
 await sleep(400);
 ux.finish("Final Integrated Flow");

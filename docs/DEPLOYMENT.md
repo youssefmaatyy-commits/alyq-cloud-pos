@@ -27,6 +27,7 @@ cp .env.example .env
 ```
 
 ```ini
+VITE_APP_MODE=production
 VITE_SUPABASE_URL=https://<ref>.supabase.co
 VITE_SUPABASE_ANON_KEY=<anon-key>
 VITE_CURRENCY=EGP
@@ -40,9 +41,24 @@ Vite inlines `VITE_*` at **build** time. Two consequences that catch people out:
 - the deployed artefact carries the values it was built with, so changing an
   environment variable means rebuilding, not just redeploying.
 
-Leaving both Supabase values empty is a supported, deliberate state: the app
-falls back to demo mode. That is useful for a smoke test of a build, but it is
-not a production configuration — demo data lives in the visitor's browser.
+### The application mode (`VITE_APP_MODE`)
+
+| Value | Meaning |
+| --- | --- |
+| `production` | A live deployment. A missing, half-set, malformed, plain-`http` or secret-shaped Supabase configuration is a **build failure** — there is no fallback to demo data. A bundle built with such a configuration anyway shows the configuration-error screen, not the till. |
+| `demo` | The in-browser dataset on purpose. Supabase values, if present, are ignored so a demonstration can never reach a project. |
+| *(unset)* | Legacy inference: a valid pair means live, none means demo. Supported so existing deployments keep building, but `npm run release:probe` warns — name the mode. |
+
+The rules are enforced at build time (`vite.config.ts`, via `src/lib/appMode.ts`)
+and proved end-to-end by `npm run check:production-guard`, which performs three
+real builds: production without configuration (must fail), production with a
+configuration (must succeed), and demo (must succeed and be labelled `demo`).
+
+Leaving both Supabase values empty **without** declaring a mode is still the
+local-development default, but it is not a production configuration — demo data
+lives in the visitor's browser. Set `VITE_APP_MODE=production` on the host
+(Vercel: Project → Settings → Environment Variables) so a broken configuration
+fails the build instead of shipping a demo till.
 
 ### The storefront URL (`VITE_STOREFRONT_URL`)
 
@@ -448,9 +464,21 @@ Auth configuration change):
 
 ```bash
 npm ci
-npm run typecheck     # includes EN/AR dictionary parity
-npm run build         # → dist/ (single-file bundle)
+npm run production:preflight                # read-only repository/environment audit
+npm run typecheck                          # includes EN/AR dictionary parity
+VITE_APP_MODE=production \
+  VITE_SUPABASE_URL=https://<ref>.supabase.co \
+  VITE_SUPABASE_ANON_KEY=<anon-key> \
+  VITE_DEMO_SEED=off \
+  npm run build                            # → dist/ (single-file bundle)
 ```
+
+In CI the same Vite build writes `dist/release.json` — version, commit, build
+time and the declared mode — and `npm run release:probe` reads it back and walks
+the shipped bundle against an empty catalogue without writing anything. Both are
+part of the release job in `.github/workflows/ci.yml`; the admin-only settings
+that CI cannot change itself (branch protection, Pages) are listed in
+`docs/production/manual-github-settings.md`.
 
 `dist/` is a static bundle: serve it over HTTPS from any static host or CDN.
 There is no server component; the browser talks to Supabase directly, which is
@@ -461,6 +489,8 @@ Before releasing, in order:
 ```bash
 npm run db:check                                         # schema builds and matches the code
 npm run test:all                                         # types, logic suites, E2E
+npm run check:production-guard                           # three real builds: the gate fails closed
+npm run release:probe                                    # manifest + empty-catalogue walk, read-only
 npm run db:check -- --driver=psql --url="$DATABASE_URL" --verify-only   # deployed schema still matches
 ```
 
@@ -481,7 +511,8 @@ npm run db:check -- --driver=psql --url="$DATABASE_URL" --verify-only   # deploy
 
 - **Secrets.** Only the `anon` key belongs in the front end. `service_role`
   belongs in CI secrets or a server-side job, and must never appear in a
-  `VITE_*` variable.
+  `VITE_*` variable. With `VITE_APP_MODE=production` a secret-shaped key does
+  not merely leak — it fails the build.
 - **Environments.** Use separate Supabase projects for staging and production;
   the CI `live` job is designed to point at staging only.
 - **Monitoring.** Supabase's Postgres logs plus its Auth logs cover sign-in

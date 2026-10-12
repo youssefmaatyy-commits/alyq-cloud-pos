@@ -199,7 +199,10 @@ async function main() {
     if (option) ux.setReactValue(categorySelect, option.value);
   }
   clickExact("Save");
-  await waitFor(() => ux.dom.window.location.hash === "#/products", { label: "the save to land" });
+  // Phase 40: the back office lives under /dashboard, and `/products` is a
+  // permanent redirect to it, so the catalogue the save lands on is
+  // /dashboard/products.
+  await ux.waitForRoute("/dashboard/products", { label: "the save to land on the catalogue" });
   const productId = catalog().products.find((p) => p.sku === SKU)?.id;
   assert.ok(productId, "the ring is in the catalogue");
 
@@ -249,7 +252,7 @@ async function main() {
   console.log("  ✓ seeded the variant ring with Gold / 17 pushed low");
 
   // ── 2 · the dashboard renders the day ─────────────────────────────────────
-  await navigate("#/", 700);
+  await navigate("#/dashboard", 700);
   await waitFor(() => testid("dash-kpi-row"), { label: "the KPI row" });
   const kpiRow = testid("dash-kpi-row");
   assert.equal(kpiRow.querySelectorAll("a[data-kpi-link]").length, 5, "the five day-tiles are clickable links");
@@ -273,22 +276,22 @@ async function main() {
 
   // ── 3 · every route, through the module's own filters ─────────────────────
   clickTestid("kpi-today-sales");
-  await waitFor(() => ux.dom.window.location.hash.startsWith("#/pos/sales"), { label: "the sales route" });
+  await waitFor(() => ux.dom.window.location.hash.startsWith("#/dashboard/pos/sales"), { label: "the sales route" });
   const today = new Date().toISOString().slice(0, 10);
   await waitFor(() => testid("sales-date-from")?.value === today && testid("sales-date-to")?.value === today, { label: "the today date range to hydrate" });
   console.log("  ✓ Sales tile → Invoice Center with today's server date range");
 
-  await navigate("#/", 600);
+  await navigate("#/dashboard", 600);
   await waitFor(() => testid("kpi-web-orders"), { label: "the KPI row again" });
   clickTestid("kpi-web-orders");
-  await waitFor(() => ux.dom.window.location.hash.startsWith("#/online/orders"), { label: "the orders route" });
+  await waitFor(() => ux.dom.window.location.hash.startsWith("#/dashboard/online/orders"), { label: "the orders route" });
   await waitFor(() => testid("orders-tabs"), { label: "the orders queue to render" });
   await waitFor(() => bodyText().includes(pendingOrderNumber), { label: "the queue to load" });
   assert.ok(bodyText().includes("Mona Mahmoud"), "the order rows show the customer");
 
-  await navigate("#/", 600);
+  await navigate("#/dashboard", 600);
   clickTestid("web-kpi-pending");
-  await waitFor(() => ux.dom.window.location.hash.startsWith("#/online/orders"), { label: "the orders route" });
+  await waitFor(() => ux.dom.window.location.hash.startsWith("#/dashboard/online/orders"), { label: "the orders route" });
   await waitFor(() => testid("orders-tabs"), { label: "the orders queue to render" });
   await sleep(300);
   const statusSelect = [...document.querySelectorAll("select")].find(
@@ -297,9 +300,9 @@ async function main() {
   assert.equal(statusSelect?.value, "pending", "the status filter hydrated from the URL");
   console.log("  ✓ Pending Review tile → the queue pre-filtered to pending");
 
-  await navigate("#/", 600);
+  await navigate("#/dashboard", 600);
   clickTestid("web-kpi-instapay");
-  await waitFor(() => ux.dom.window.location.hash.startsWith("#/online/orders"), { label: "the orders route" });
+  await waitFor(() => ux.dom.window.location.hash.startsWith("#/dashboard/online/orders"), { label: "the orders route" });
   await waitFor(() => testid("orders-tabs"), { label: "the orders queue to render" });
   await sleep(300);
   const paymentSelect = [...document.querySelectorAll("select")].find(
@@ -308,9 +311,9 @@ async function main() {
   assert.equal(paymentSelect?.value, "verification_required", "the payment filter hydrated from the URL");
   console.log("  ✓ InstaPay tile → the queue pre-filtered to verification_required");
 
-  await navigate("#/", 600);
+  await navigate("#/dashboard", 600);
   clickTestid("kpi-low-stock");
-  await waitFor(() => ux.dom.window.location.hash.startsWith("#/inventory"), { label: "the inventory route" });
+  await waitFor(() => ux.dom.window.location.hash.startsWith("#/dashboard/inventory"), { label: "the inventory route" });
   await sleep(500);
   const inventoryStatus = [...document.querySelectorAll("select")].find(
     (s) => (s.getAttribute("aria-label") ?? "") === "Status",
@@ -319,20 +322,20 @@ async function main() {
   assert.equal(inventoryStatus.value, "low", "the inventory status filter hydrated from the URL");
   console.log("  ✓ Low Stock tile → inventory pre-filtered to low");
 
-  await navigate("#/", 600);
+  await navigate("#/dashboard", 600);
   clickTestid("kpi-returns");
-  await waitFor(() => ux.dom.window.location.hash.startsWith("#/returns"), { label: "the returns route" });
+  await waitFor(() => ux.dom.window.location.hash.startsWith("#/dashboard/returns"), { label: "the returns route" });
   await waitFor(() => /RET-\d{6}/.test(bodyText()), { label: "the processed return to appear" });
 
-  await navigate("#/", 600);
+  await navigate("#/dashboard", 600);
   clickTestid("kpi-open-shift");
-  await waitFor(() => ux.dom.window.location.hash.startsWith("#/shifts"), { label: "the shifts route" });
+  await waitFor(() => ux.dom.window.location.hash.startsWith("#/dashboard/shifts"), { label: "the shifts route" });
   await sleep(600);
   assert.ok(/SH-\d{6}/.test(bodyText()), "the open shift is on the shift dashboard");
   console.log("  ✓ Returns and Open-Shift tiles route to their screens");
 
   // ── 4 · activity blocks ────────────────────────────────────────────────────
-  await navigate("#/", 700);
+  await navigate("#/dashboard", 700);
   await waitFor(() => testid("dash-recent-orders"), { label: "the recent-orders block" });
   assert.ok(testid("dash-recent-orders").textContent.includes(saleNumber), "recent orders lists the till sale");
   await waitFor(() => testid("web-section"), { label: "the website block" });
@@ -400,7 +403,7 @@ async function main() {
   console.log("  ✓ mobile: sticky summary opens a drawer with the real cart + payment");
 
   // ── 7 · Arabic RTL ────────────────────────────────────────────────────────
-  await navigate("#/", 600);
+  await navigate("#/dashboard", 600);
   clickExact("العربية");
   await sleep(400);
   assert.equal(document.documentElement.getAttribute("dir"), "rtl", "the shell flips to RTL");

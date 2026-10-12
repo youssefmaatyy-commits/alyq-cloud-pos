@@ -1,12 +1,15 @@
 name: CI
 
-# Four jobs, each independent. Anything red blocks a merge:
+# Five jobs, each independent. Anything red blocks a merge:
 #   static    lint, types (which also guarantee the EN/AR dictionary is
-#             complete), production build
-#   logic     every *.selftest.ts — money math, validation, permissions, repos
+#             complete), the production fail-closed gate, the production build,
+#             and the release probe over the artifact that was just built
+#   logic     every *.selftest.ts — money math, validation, permissions, repos,
+#             the application-mode policy and the release-probe policy
 #   database  applies supabase/migrations to a real PostgreSQL engine and checks
 #             the result satisfies the code (no Docker: @electric-sql/pglite)
-#   e2e       the real app bundle driven in jsdom (smoke + auth flows)
+#   e2e       the real app bundle driven in jsdom — run TWICE on purpose, because
+#             this suite is the release gate and a gate that flakes is not a gate
 #
 # `live` is opt-in: set the repository variable ALYQ_LIVE_CI=true and the
 # SUPABASE_TEST_* secrets to run the same E2E suites against a real project.
@@ -14,6 +17,12 @@ name: CI
 # the anonymous storefront reads that migration 0030 hardened — and until it is
 # switched on, `npm run db:check` is what proves those, by running the real
 # policies against a real engine as each role (see supabase/tests/scenarios.sql).
+#
+# The GitHub Pages workflow that used to live beside this file was removed: it
+# published a build from an abandoned session branch, and the product is served
+# from the managed host documented in docs/DEPLOYMENT.md. GitHub repository
+# settings that must be changed by hand are listed in
+# docs/production/manual-github-settings.md.
 
 on:
   push:
@@ -27,9 +36,9 @@ concurrency:
 
 jobs:
   static:
-    name: Types & build
+    name: Types, gate & build
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -39,15 +48,25 @@ jobs:
       - run: npm ci
       - run: npm run production:preflight
       # ESLint, added with migration 0030's hardening pass. It is the cheapest of
-      # the four gates and the only one that reads the code rather than running
-      # it: the hooks rules catch a conditional hook, which every other job here
+      # the gates and the only one that reads the code rather than running it:
+      # the hooks rules catch a conditional hook, which every other job here
       # would sail through because the suites that exist do not render that
       # component. Warnings are reported and do not block; errors do.
       - run: npm run lint
       # `ar` is typed Record<TranslationKey, string>, so this also fails on a
       # missing or extra Arabic translation — no separate i18n check needed.
       - run: npm run typecheck
+      # Three real builds prove `VITE_APP_MODE=production` fails closed without a
+      # Supabase configuration and succeeds with one; see the script header.
+      - run: npm run check:production-guard -- --require-clean
+      # The evaluation build. It carries `dist/release.json` (mode demo, the
+      # commit, the build time), so the probe below and the artifact both name
+      # exactly what was built.
       - run: npm run build
+      # Non-mutating release probe: reads the manifest it just produced and
+      # boots the shipped bundle in jsdom against an EMPTY catalogue, asserting
+      # that nothing is written and no request leaves the process.
+      - run: npm run release:probe -- --demo
       - uses: actions/upload-artifact@v4
         with:
           name: dist
@@ -85,9 +104,9 @@ jobs:
       - run: npm run db:check
 
   e2e:
-    name: E2E (jsdom)
+    name: E2E (jsdom) ×2
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -95,7 +114,13 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # First pass: the acceptance run.
       - run: npm run test:e2e
+      # Second pass, unmodified, from a freshly rebuilt bundle. A suite that
+      # passes once and fails once is a defect report about the suite, and this
+      # gate must not be able to answer "flaky" and still be green.
+      - name: E2E repeat (flake guard)
+        run: npm run test:e2e
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
@@ -112,6 +137,7 @@ jobs:
     env:
       VITE_SUPABASE_URL: ${{ secrets.SUPABASE_TEST_URL }}
       VITE_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_TEST_ANON_KEY }}
+      VITE_APP_MODE: production
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

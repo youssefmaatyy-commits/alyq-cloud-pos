@@ -39,6 +39,7 @@ const {
   bodyText,
   sleep,
   waitFor,
+  waitForRoute,
   navigate,
   clickEl,
   click,
@@ -99,7 +100,7 @@ async function main() {
     setField("#category_id", option.value);
   }
   clickExact("Save");
-  await waitFor(() => dom.window.location.hash === "#/products", { label: "route back to the catalogue" });
+  await waitForRoute("/dashboard/products", { label: "route back to the catalogue" });
   const productId = (readJson(CATALOG_KEY)?.products ?? []).find((p) => p.sku === SKU)?.id;
   assert.ok(productId, "the ring is in the demo catalogue");
 

@@ -33,6 +33,7 @@ const {
   bodyText,
   sleep,
   waitFor,
+  waitForRoute,
   navigate,
   clickEl,
   clickExact,
@@ -336,9 +337,7 @@ async function main() {
   // The success handler routes to the return detail once the catalog refresh
   // settles — after our own navigation, so wait for its landing first, or it
   // overwrites the next screen mid-step.
-  await waitFor(() => ux.dom.window.location.hash.startsWith("#/returns/ret-"), {
-    label: "the return detail",
-  });
+  await waitForRoute("/dashboard/returns/ret-", { label: "the return detail", exact: false });
 
   // ── 11 · disabling the sale restores list for new carts ───────────────────
   await navigate("#/online/discounts");
