@@ -185,7 +185,9 @@ reasonInput.dispatchEvent(new ux.dom.window.Event("input", { bubbles: true }));
 await sleep(200);
 clickEl([...returnModal().querySelectorAll("button")].find((b) => (b.textContent ?? "").includes("Process return")));
 await waitFor(() => /RET-\d{6}/.test(bodyText() + ux.toastText()), { label: "the return to be created" });
-await sleep(300);
+await waitFor(() => dom.window.location.hash.startsWith("#/dashboard/returns/ret-") &&
+  testid("route-location")?.getAttribute("data-path") === dom.window.location.hash.slice(1).split("?")[0],
+{ label: "return-success redirect committed before reset preview journey" });
 const closeButton = [...(dialogs().at(-1)?.querySelectorAll("button") ?? [])].find(
   (b) => (b.textContent ?? "").trim() === "Close" || (b.textContent ?? "").includes("Done"),
 );

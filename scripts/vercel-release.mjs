@@ -8,7 +8,7 @@ import { execFileSync } from 'node:child_process';
 import { parseEnv } from 'node:util';
 import { assertBuildEnvironment } from '../src/lib/config/application-mode.mjs';
 import { inspectReleaseArtifact, artifactFiles, digest, assertNoFrontendSecrets } from './lib/release-artifact.mjs';
-import { verifyGitHubRelease } from './lib/github-release-gate.mjs';
+import { verifyGitHubRelease, assertAutomaticDeploymentsDisabled } from './lib/github-release-gate.mjs';
 import { probeCatalogue } from './lib/catalogue-probe.mjs';
 import { verifyCandidateRelease } from './lib/candidate-release.mjs';
 
@@ -21,6 +21,10 @@ const vercel = (args) => {
   } catch { throw new Error('Vercel release command failed; promotion blocked. Vendor output withheld for credential safety.'); }
 };
 try {
+  let hostingPolicy;
+  try { hostingPolicy = JSON.parse(fs.readFileSync('vercel.json', 'utf8')); }
+  catch { throw new Error('Repository Vercel deployment policy unavailable or malformed.'); }
+  assertAutomaticDeploymentsDisabled(hostingPolicy);
   for (const name of ['VERCEL_TOKEN', 'VERCEL_ORG_ID', 'VERCEL_PROJECT_ID']) {
     if (!env[name]) throw new Error(`Required protected release setting missing: ${name}`);
   }

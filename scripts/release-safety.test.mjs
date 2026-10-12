@@ -7,7 +7,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { JSDOM } from 'jsdom';
 import { resolveApplicationConfig, assertBuildEnvironment } from '../src/lib/config/application-mode.mjs';
 import { assertNoFrontendSecrets, inspectReleaseArtifact } from './lib/release-artifact.mjs';
-import { assertReleaseChecks, REQUIRED_RELEASE_CHECKS, assertCIReleaseRun, assertReleaseEnvironment } from './lib/github-release-gate.mjs';
+import { assertReleaseChecks, REQUIRED_RELEASE_CHECKS, assertCIReleaseRun, assertReleaseEnvironment, assertAutomaticDeploymentsDisabled } from './lib/github-release-gate.mjs';
 import { probeCatalogue } from './lib/catalogue-probe.mjs';
 import { verifyCandidateRelease } from './lib/candidate-release.mjs';
 import { testProductionEnv } from './lib/test-production-env.mjs';
@@ -93,6 +93,19 @@ await test('route readiness requires final redirects, current queries and applie
   } });
   assert.equal(normalized, '/store/v2/account?tab=orders');
   assert.ok(redirect.reads.hash >= 2, 'a transient old-preview URL is not a completed redirect');
+});
+
+
+await test('Git auto-deployments cannot bypass required CI and the protected promotion workflow', () => {
+  const config = JSON.parse(fs.readFileSync('vercel.json', 'utf8'));
+  assertAutomaticDeploymentsDisabled(config);
+  assert.equal(config.framework, 'vite');
+  assert.equal(config.buildCommand, 'npm run build');
+  assert.equal(config.outputDirectory, 'dist');
+  for (const value of [undefined, true, 'false', {}, { main: false }]) {
+    assert.throws(() => assertAutomaticDeploymentsDisabled({ git: { deploymentEnabled: value } }), /must be disabled/);
+  }
+  assert.throws(() => assertAutomaticDeploymentsDisabled({}), /must be disabled/);
 });
 
 const product = { id: 'synthetic-product', active: true, show_on_website: true, selling_price: 100, stock_tracking_enabled: true, stock_quantity: 1 };

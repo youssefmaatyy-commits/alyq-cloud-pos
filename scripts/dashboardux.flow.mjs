@@ -177,6 +177,11 @@ async function main() {
   );
   if (closeButton) clickEl(closeButton);
 
+  // Return persistence/visible RET reference precedes refreshCatalog and the
+  // onSuccess redirect. Wait for that navigation before opening another form.
+  await waitFor(() => ux.dom.window.location.hash.startsWith("#/dashboard/returns/ret-") &&
+    testid("route-location")?.getAttribute("data-path") === ux.dom.window.location.hash.slice(1).split("?")[0],
+  { label: "return-success redirect committed before product creation" });
   console.log("  ✓ seeded a processed return");
 
   // 1f. the variant ring: Gold/17 + Silver/17, then push Gold/17 LOW (1 of 2)

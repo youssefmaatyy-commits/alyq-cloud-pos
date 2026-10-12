@@ -41,6 +41,14 @@ export function assertReleaseEnvironment(environment, policies) {
   }
 }
 
+/** Git auto-deployments are a separate bypass of the approved main CI workflow.
+ * Disable them for every branch; immutable candidates use the guarded CLI. */
+export function assertAutomaticDeploymentsDisabled(config) {
+  if (config?.git?.deploymentEnabled !== false) {
+    throw new Error('Vercel Git auto-deployment must be disabled before guarded release.');
+  }
+}
+
 export function verifyGitHubRelease(env = process.env) {
   const sha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
   if (sha !== env.RELEASE_SHA) throw new Error('Checkout does not match the approved CI commit.');
