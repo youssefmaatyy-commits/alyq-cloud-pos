@@ -482,12 +482,13 @@ export type CatalogueTransport = (request: CatalogueRequest) => Promise<Catalogu
  *
  * It is the deliberate escape hatch for a deployment that is *meant* to have an
  * empty storefront (a pre-launch staging project, a shop between seasons). It is
- * awkward on purpose: only the exact lowercase value `true` counts, so `TRUE`,
- * `1`, `yes`, `on` and a stale `"false"` all fail closed. Surrounding
- * whitespace is trimmed, because `.env` files and CI inputs carry it invisibly.
+ * awkward on purpose: only the exact string `true` counts — not `TRUE`, not
+ * `True`, not `1`, `yes`, `on`, `"true "`, and not a stale `"false"`. Every one
+ * of those fails closed, and the CLI prints which value it saw so a padded
+ * variable is diagnosable rather than mysterious.
  */
 export function allowEmptyStorefrontFlag(raw: string | undefined | null): boolean {
-  return (raw ?? "").trim() === "true";
+  return raw === "true";
 }
 
 function push(findings: CatalogueFinding[], level: CatalogueLevel, code: string, message: string): void {

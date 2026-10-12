@@ -288,12 +288,8 @@ await checkAsync("allow-empty — only the exact value `true` permits an empty s
     assert.deepEqual(levelOf(verdict.findings, "catalogue.allow_empty"), ["warn"]);
     assert.equal(verdict.allowedEmpty, true);
   }
-  for (const value of ["TRUE", "True", "1", "yes", "on", "false", "", " true", "true ", undefined, null]) {
+  for (const value of ["TRUE", "True", "1", "yes", "on", "false", "", " true", "true ", "truely", undefined, null]) {
     const verdict = await runCatalogueGate({ projectUrl: PRODUCT_URL, anonKey: ANON_JWT, allowEmptyStorefront: value as string, transport });
-    if (value === " true" || value === "true ") {
-      assert.equal(verdict.ok, true, `surrounding whitespace is trimmed for ${JSON.stringify(value)}`);
-      continue;
-    }
     assert.equal(verdict.ok, false, `value ${JSON.stringify(value)} must not permit an empty storefront`);
     assert.deepEqual(levelOf(verdict.findings, "catalogue.empty"), ["fail"]);
   }
@@ -368,6 +364,37 @@ await checkAsync("network-error — an unreachable project fails without writing
   assert.ok(calls.every((body) => body === "{}"), "every attempted request was argument-free");
 });
 
+await checkAsync("permission-denied — a 403 from either function fails the release", async () => {
+  const verdict = await runCatalogueGate({
+    projectUrl: PRODUCT_URL,
+    anonKey: ANON_JWT,
+    transport: async (request) => (request.functionName === "storefront_branch_product_variants"
+      ? { status: 403, json: { message: "permission denied for function" } }
+      : { status: 200, json: [product({})] }),
+  });
+  assert.equal(verdict.ok, false);
+  assert.deepEqual(levelOf(verdict.findings, "catalogue.http"), ["fail"]);
+  assert.match(String(verdict.findings.find((f) => f.code === "catalogue.http")?.message), /HTTP 403/);
+});
+
+await checkAsync("timeout — a request that exceeds the bound fails, with no payload leaked", async () => {
+  const verdict = await runCatalogueGate({
+    projectUrl: PRODUCT_URL,
+    anonKey: ANON_JWT,
+    // What the CLI's bounded transport reports when `AbortController` fires.
+    transport: async () => ({ status: 0, networkError: "timed out after 800 ms" }),
+  });
+  assert.equal(verdict.ok, false);
+  const unreachable = verdict.findings.filter((finding) => finding.code === "catalogue.unreachable");
+  assert.equal(unreachable.length, 2);
+  assert.deepEqual(levelOf(verdict.findings, "catalogue.sellable"), [], "a timeout is never read as an empty shop");
+  for (const finding of unreachable) assert.match(finding.message, /timed out after 800 ms/);
+  for (const finding of verdict.findings) {
+    assert.ok(!finding.message.includes(ANON_JWT), "no finding echoes the credential");
+    assert.ok(!finding.message.includes("{"), "no finding echoes a response body");
+  }
+});
+
 await checkAsync("a secret-shaped key stops the gate before it calls anything", async () => {
   let called = false;
   const verdict = await runCatalogueGate({
@@ -385,11 +412,10 @@ await checkAsync("a secret-shaped key stops the gate before it calls anything", 
 
 /* ── 6 · the flag itself ─────────────────────────────────────────────────── */
 
-check("ALLOW_EMPTY_STOREFRONT counts only the exact value true", () => {
+check("ALLOW_EMPTY_STOREFRONT counts only the exact string true", () => {
   assert.equal(allowEmptyStorefrontFlag("true"), true);
-  assert.equal(allowEmptyStorefrontFlag(" true "), true);
-  for (const value of ["TRUE", "True", "1", "yes", "on", "false", "", null, undefined, "truely"]) {
-    assert.equal(allowEmptyStorefrontFlag(value as string), false, String(value));
+  for (const value of ["TRUE", "True", "1", "yes", "on", "false", "", " true", "true ", "true\n", null, undefined, "truely"]) {
+    assert.equal(allowEmptyStorefrontFlag(value as string), false, JSON.stringify(value));
   }
 });
 

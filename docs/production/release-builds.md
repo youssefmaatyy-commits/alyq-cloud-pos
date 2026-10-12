@@ -21,9 +21,20 @@ Every build declares its mode with `VITE_APP_MODE`:
 | `demo` | The evaluation bundle: in-browser dataset, credentials ignored even when present. `release.json` records `mode: demo`. | Nothing — this is the deliberate artifact for a smoke test or a sales demonstration. It must never be the artifact behind a real till. |
 | *(unset)* | **Nothing: the build fails.** There is no inference left. `APP_MODE_MISSING` (or `APP_MODE_UNKNOWN` for an unrecognised value) is fatal before a bundle is written; a bundle produced some other way renders the configuration-error screen and never mounts the app. | A build that does not name its mode. A release pipeline whose variable never arrived now fails loudly instead of producing a demo artifact that looks like a live shop. |
 
-`npm run check:production-guard` proves all three cases with real builds — including the
-unset, credential-free build, which must **fail** (`APP_MODE_MISSING`) and must leave no
-demo artifact behind; `npm run release:probe` reads the result back (see below).
+`npm run check:production-guard` proves the whole matrix with real builds:
+
+| Case | Expected |
+| --- | --- |
+| no `VITE_APP_MODE`, no credentials | **fail** (`APP_MODE_MISSING`), no artifact written |
+| no `VITE_APP_MODE`, valid-looking credentials | **fail** (`APP_MODE_MISSING`) — production is not inferred either |
+| unknown mode (`staging`), credentials | **fail** (`APP_MODE_UNKNOWN`) |
+| `production`, no credentials | **fail** (`SUPABASE_UNCONFIGURED`) |
+| `production`, half a pair | **fail** (`SUPABASE_INCOMPLETE`) |
+| `production`, complete pair | **succeed**, manifest says `production` |
+| `demo`, no credentials | **succeed**, manifest says `demo` |
+| `demo` **with** credentials | **succeed**, `SUPABASE_CREDENTIALS_IGNORED`, no Supabase client — and the shipped bundle walks the empty catalogue with zero network requests |
+
+`npm run release:probe` reads the result back (see below).
 
 ### Existing deployments must name their mode
 
@@ -96,7 +107,13 @@ ALLOW_EMPTY_STOREFRONT=true npm run catalogue:gate              # a deliberately
   anon key — no other method, URL or body is ever produced (the plan is asserted before the
   first byte is sent);
 - it fails when no public product or variant is sellable, and permits zero products **only**
-  when `ALLOW_EMPTY_STOREFRONT` is exactly `true`;
+  when `ALLOW_EMPTY_STOREFRONT` is exactly `true` (case- and whitespace-sensitive; the CLI
+  prints the value it saw);
+- it classifies an RPC failure, a non-2xx answer, a permission denial, malformed JSON, a
+  network error and a *timeout* as release failures, with a bounded request
+  (`--timeout`, default 15 s) so a silent project cannot hang a promotion;
+- it never prints the key, and no response body reaches a message: findings name the
+  function, the HTTP status and the shape of the answer;
 - exit codes: `0` sellable (or declared empty), `1` gate failed, `2` unusable invocation.
 
 `npm run catalogue:gate` is `catalogue-gate` in `.github/workflows/promote-production.yml`,

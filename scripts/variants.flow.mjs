@@ -218,14 +218,27 @@ async function main() {
   setField("#selling_price", "200");
   setField("#cost_price", "100");
   setField("#tax_rate", "0");
-  const setSelect = (selector, predicate) => {
-    const select = document.querySelector(selector);
-    if (!select) throw new Error(`select not found: ${selector}`);
-    const option = [...select.options].find(predicate);
+  /**
+   * Choose the first option that satisfies `predicate`.
+   *
+   * The category picker is fed by the catalog provider, which re-reads the
+   * shelves when a product form mounts: for a moment the select still holds only
+   * its placeholder. Waiting for the option (and re-querying, because React
+   * replaces the select node when options arrive) is what makes this a test of
+   * the form rather than a race with its render — the same fix as
+   * `scripts/categories.flow.mjs`.
+   */
+  const setSelect = async (selector, predicate) => {
+    const select = () => document.querySelector(selector);
+    if (!select()) throw new Error(`select not found: ${selector}`);
+    await waitFor(() => Boolean(select()) && [...select().options].some(predicate), {
+      label: `an option to appear in ${selector}`,
+    });
+    const option = [...select().options].find(predicate);
     if (!option) throw new Error(`no option matches in ${selector}`);
     setField(selector, option.value);
   };
-  setSelect("#category_id", (o) => o.value !== "");
+  await setSelect("#category_id", (o) => o.value !== "");
   clickEl(document.querySelector('[data-testid="variant-mode-colors_sizes"]'));
   await waitFor(() => document.querySelector('[data-testid="variant-add-color"]'), { label: "color row control" });
   clickEl(document.querySelector('[data-testid="variant-add-color"]'));
@@ -354,7 +367,7 @@ async function main() {
   setField("#selling_price", "200");
   setField("#cost_price", "100");
   setField("#tax_rate", "0");
-  setSelect("#category_id", (o) => o.value !== "");
+  await setSelect("#category_id", (o) => o.value !== "");
   clickEl(document.querySelector('[data-testid="variant-mode-colors_sizes"]'));
   await waitFor(() => document.querySelector('[data-testid="variant-add-color"]'), { label: "retry color control" });
   clickEl(document.querySelector('[data-testid="variant-add-color"]'));
@@ -402,7 +415,7 @@ async function main() {
   setField("#tax_rate", "0");
   setField("#stock_quantity", "4");
   setField("#low_stock_level", "1");
-  setSelect("#category_id", (o) => o.value !== "");
+  await setSelect("#category_id", (o) => o.value !== "");
   clickExact("Save");
   await waitFor(() => !dom.window.location.hash.includes("/new") && dom.window.location.hash.includes("/products"), {
     label: "the save to route back to the catalogue",

@@ -75,11 +75,13 @@ read-only probe before it releases (`npm run catalogue:gate`, wired into
 | Read the shipped SQL | The two public RPC bodies in `supabase/migrations/*.sql` must prove read-only first; a write keyword, a `volatile` marker or a missing function refuses to send any request at all (exit 1) |
 | Call `storefront_catalogue()` and `storefront_branch_product_variants()` | Two `POST …/rest/v1/rpc/<fn>` calls with an empty body and the anon key — the same two functions the storefront itself calls. No other request is ever sent |
 | Decide | Pass when at least one public product or variant is sellable (untracked stock, or tracked stock `> 0`, by rollup or by variant). Fail when nothing is sellable (`catalogue.nothing_sellable`) |
-| Zero products | Permitted only with `ALLOW_EMPTY_STOREFRONT` **exactly** `true` (GitHub *variable*, not secret). Anything else — `TRUE`, `1`, `yes`, an empty string — fails |
+| Zero products | Permitted only with `ALLOW_EMPTY_STOREFRONT` **exactly** `true` (GitHub *variable*, not secret): case matters, and so does whitespace. `TRUE`, `True`, `1`, `yes`, `on`, an empty string, `" true"` and `"true "` all fail the gate — the CLI prints the value it saw, so a padded variable is diagnosable instead of mysterious |
 
 It never writes to Supabase: the probe asserts it holds only the anon key (a `sb_secret_…`
 or `service_role` value refuses to run) and that the plan it is about to send contains the
-two allow-listed RPC calls and nothing else.
+two allow-listed RPC calls and nothing else. Requests are bounded (`--timeout`, default
+15 s): a project that does not answer is a failed release, not a hung pipeline, and neither
+the key nor any response body is ever printed.
 
 ## Release checks
 

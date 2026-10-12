@@ -69,7 +69,7 @@ bundle on a GitHub-owned URL — the exact failure the removal exists to end.
 | `SUPABASE_PROD_URL` | Secret | Actions secrets (used by `promote-production.yml`) | Production project URL |
 | `SUPABASE_PROD_ANON_KEY` | Secret | Actions secrets (used by `promote-production.yml`) | The same anon/publishable key the storefront ships. **Not** a service key: a `sb_secret_…` or `service_role` value refuses to run the gate |
 | `VERCEL_DEPLOY_HOOK_URL` | Secret | Actions secrets (used by `promote-production.yml`) | The project's deploy hook; the promotion's last job POSTs it and performs no other write |
-| `ALLOW_EMPTY_STOREFRONT` | Repository variable | Settings → Secrets and variables → Actions → Variables | Leave **unset**. Set to exactly `true` only for the deliberate launch of a shop that has no sellable product yet — `TRUE`, `1` or `yes` fail the gate |
+| `ALLOW_EMPTY_STOREFRONT` | Repository variable | Settings → Secrets and variables → Actions → Variables | Leave **unset**. Set to exactly `true` only for the deliberate launch of a shop that has no sellable product yet — `TRUE`, `1`, `yes` and `"true "` all fail the gate (case and whitespace both matter) |
 
 Never store the `service_role` key, the VAPID private key or database passwords
 as Actions variables that a workflow passes to a front-end build; the

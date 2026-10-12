@@ -50,11 +50,13 @@ Vite inlines `VITE_*` at **build** time. Two consequences that catch people out:
 | *(unset)* | **Fatal, in both directions: `npm run build` fails** (`APP_MODE_MISSING`, or `APP_MODE_UNKNOWN` for an unrecognised value). There is no inference left to fall back on — a build that does not say what it is must not exist. A bundle produced some other way renders the configuration-error screen and never mounts the till. |
 
 The rules are enforced at build time (`vite.config.ts`, via `src/lib/appMode.ts`)
-and proved end-to-end by `npm run check:production-guard`, which performs real
-builds: production without configuration (must fail), production with a
-configuration (must succeed), demo with no credentials (must succeed and be
-labelled `demo`), and **unset mode with no credentials at all (must fail — no
-demo artifact)**.
+and proved end-to-end by `npm run check:production-guard`, which performs eight
+real builds: unset mode with no credentials and unset mode *with* credentials
+(both must fail), an unknown mode (must fail), production without configuration
+and with half a configuration (both must fail), production complete (must
+succeed), demo without credentials (must succeed) and **demo with credentials
+present (must succeed, ignore them, and boot without a single network
+request)**.
 
 #### Migrating an existing deployment (one edit, per environment)
 
@@ -503,9 +505,12 @@ npm run check:production-guard -- --require-clean
 read-only in `supabase/migrations/*.sql`, then sends exactly two
 `POST …/rest/v1/rpc/…` requests with empty bodies and the anon key. It fails when
 the public shop has nothing sellable, and permits an empty catalogue only when
-`ALLOW_EMPTY_STOREFRONT` is exactly `true`. Nothing in it writes to Supabase. The
-admin-only settings that CI cannot change itself (branch protection, Pages, the
-promotion secrets and the `ALLOW_EMPTY_STOREFRONT` variable) are listed in
+`ALLOW_EMPTY_STOREFRONT` is exactly `true` — case- and whitespace-sensitive, so
+`TRUE`, `1` and `"true "` all fail closed. Requests are bounded by `--timeout`
+(default 15 s), a timeout is a release failure, and neither the key nor a
+response body is ever printed. Nothing in it writes to Supabase. The admin-only
+settings that CI cannot change itself (branch protection, Pages, the promotion
+secrets and the `ALLOW_EMPTY_STOREFRONT` variable) are listed in
 `docs/production/manual-github-settings.md`.
 
 `dist/` is a static bundle: serve it over HTTPS from any static host or CDN.
