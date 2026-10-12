@@ -4,8 +4,9 @@ This file is the checklist for the changes that **cannot** be made from this
 repository: they live in the GitHub and Vercel dashboards and need an
 organisation owner or repository admin. Everything that *can* be checked from
 the repository is checked — `npm run production:preflight` fails if the Pages
-workflow comes back or the environment template stops documenting
-`VITE_APP_MODE`.
+workflow comes back, if the environment template stops documenting
+`VITE_APP_MODE`, or if the promotion workflow stops gating on the commercial
+catalogue gate.
 
 > **Why this file exists.** An automated attempt to change the repository's
 > branch protection returned **HTTP 403** — the token in use has `repo` scope but
@@ -65,10 +66,33 @@ bundle on a GitHub-owned URL — the exact failure the removal exists to end.
 | `SUPABASE_TEST_URL` | Secret | Actions secrets | Test project URL (`https://<ref>.supabase.co`) |
 | `SUPABASE_TEST_ANON_KEY` | Secret | Actions secrets | Test project's anon/publishable key |
 | `production` | Environment | Settings → Environments | Optional protection: required reviewers + deploy branch `main` |
+| `SUPABASE_PROD_URL` | Secret | Actions secrets (used by `promote-production.yml`) | Production project URL |
+| `SUPABASE_PROD_ANON_KEY` | Secret | Actions secrets (used by `promote-production.yml`) | The same anon/publishable key the storefront ships. **Not** a service key: a `sb_secret_…` or `service_role` value refuses to run the gate |
+| `VERCEL_DEPLOY_HOOK_URL` | Secret | Actions secrets (used by `promote-production.yml`) | The project's deploy hook; the promotion's last job POSTs it and performs no other write |
+| `ALLOW_EMPTY_STOREFRONT` | Repository variable | Settings → Secrets and variables → Actions → Variables | Leave **unset**. Set to exactly `true` only for the deliberate launch of a shop that has no sellable product yet — `TRUE`, `1` or `yes` fail the gate |
 
 Never store the `service_role` key, the VAPID private key or database passwords
 as Actions variables that a workflow passes to a front-end build; the
 `npm run production:preflight` job fails if one appears in the shipped sources.
+
+### The promotion workflow
+
+`.github/workflows/promote-production.yml` (manual `workflow_dispatch`) is the only path
+that deploys production, and it has three jobs in order:
+
+1. **`catalogue-gate`** — `npm ci` then `npm run catalogue:gate` against
+   `SUPABASE_PROD_URL` / `SUPABASE_PROD_ANON_KEY`. Read-only: two `POST …/rpc/storefront_*`
+   calls with empty bodies, after the shipped SQL has been proven read-only. Fails when
+   nothing is sellable, unless `ALLOW_EMPTY_STOREFRONT` is exactly `true`.
+2. **`release`** (`needs: catalogue-gate`) — `VITE_APP_MODE=production` preflight,
+   `check:production-guard --require-clean`, `npm run build`, then
+   `release:probe --expect-sha`.
+3. **`promote`** (`needs` both) — POSTs the Vercel deploy hook. Nothing in the workflow
+   merges, pushes or writes to the database.
+
+Inputs: `deploy` (default `true`; `false` runs the gate and the build without promoting) and
+`catalogue_only` (runs the gate alone). The workflow holds a non-cancelling `concurrency`
+group, so two promotions cannot race.
 
 ## 4. Actions permissions
 
@@ -90,7 +114,7 @@ Project → **Settings**:
 | Build & Deployment → Build Command | `npm run build` | The same command CI verifies. |
 | Build & Deployment → Output Directory | `dist` | `vite-plugin-singlefile` emits one self-contained `index.html` plus `release.json`. |
 | Node.js Version | 22.x | Same major as CI; a different runtime is an untested build matrix. |
-| Environment Variables | `VITE_APP_MODE` | `production` — **required**. Without it the build is still treated as live when credentials exist, but the release probe warns. |
+| Environment Variables | `VITE_APP_MODE` | `production` — **required, with no fallback**. A build that omits it fails with `APP_MODE_MISSING` instead of inferring a mode from the credentials. Every existing Vercel project needs this variable added once before its next deploy; `demo` is the only way to ask for the evaluation bundle. |
 | Environment Variables | `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` | The production project URL and anon/publishable key. A missing or malformed pair now **fails the build** (`SUPABASE_UNCONFIGURED` / `SUPABASE_INCOMPLETE`), which is the point: a Vercel deploy with a half-configured environment cannot publish. |
 | Environment Variables | `VITE_DEMO_SEED` | `off`. |
 | Environment Variables | `VITE_APP_VERSION`, `VITE_BUILD_SHA` | From the frozen release; Vercel also exposes `VERCEL_GIT_COMMIT_SHA`, which can be passed through as `VITE_BUILD_SHA`. |

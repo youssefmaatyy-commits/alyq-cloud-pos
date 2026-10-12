@@ -157,6 +157,45 @@ check(
   "the manual GitHub/Vercel settings are documented",
 );
 
+// ── the release conditions that must not be removable by accident ──────────
+// `VITE_APP_MODE` is required: the template must ship a real value, not an
+// empty one, or `cp .env.example .env` would produce a build that cannot run.
+check(
+  /^VITE_APP_MODE=(production|demo)\s*$/m.test(env),
+  "the environment template declares a concrete VITE_APP_MODE (an unset mode is a build failure)",
+);
+
+// The commercial catalogue gate is the condition that says "this deployment can
+// sell something". It must run in the promotion workflow — not only in the demo
+// CI build — and it must be wired with the two public RPCs and the explicit
+// ALLOW_EMPTY_STOREFRONT escape hatch.
+const promoteWorkflowPath = path.join(root, ".github", "workflows", "promote-production.yml");
+const promoteWorkflow = fs.existsSync(promoteWorkflowPath) ? read(".github/workflows/promote-production.yml") : "";
+check(promoteWorkflow.length > 0, "the production promotion workflow exists");
+check(
+  /npm run catalogue:gate/.test(promoteWorkflow)
+    && /SUPABASE_PROD_URL/.test(promoteWorkflow)
+    && /ALLOW_EMPTY_STOREFRONT/.test(promoteWorkflow)
+    && /needs: catalogue-gate/.test(promoteWorkflow),
+  "the promotion workflow gates the release on the commercial catalogue gate",
+);
+check(
+  /^\s*VITE_APP_MODE\s*:\s*production\s*$/m.test(promoteWorkflow) && /npm run build/.test(promoteWorkflow),
+  "the promotion workflow builds the production artifact with an explicit production mode",
+);
+
+// The two storefront functions the gate calls must still be read-only in the
+// shipped SQL. A migration that made either one mutating would otherwise let a
+// probe hold a function that writes.
+const catalogueGate = read("src/lib/qa/catalogueGate.ts");
+check(
+  /storefront_catalogue/.test(read("supabase/migrations/0080_branch_stock_operations.sql"))
+    && /public\.storefront_catalogue\s*\(\s*\)[\s\S]{0,2000}?\bstable\b/i.test(read("supabase/migrations/0080_branch_stock_operations.sql"))
+    && /public\.storefront_branch_product_variants\s*\(\s*\)[\s\S]{0,2000}?\bstable\b/i.test(read("supabase/migrations/0080_branch_stock_operations.sql"))
+    && /CATALOGUE_GATE_FUNCTIONS/.test(catalogueGate),
+  "the two public storefront functions the gate calls are still declared stable",
+);
+
 for (const message of passes) console.log(`✓ ${message}`);
 for (const message of failures) console.error(`✗ ${message}`);
 console.log(`\nProduction pre-flight: ${passes.length} passed, ${failures.length} failed`);

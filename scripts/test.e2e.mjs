@@ -151,6 +151,11 @@ const SUITES = [
     file: "scripts/poslayout.flow.mjs",
     title: "POS scan/search workspace: no grid, capped results, exact-code adds, stable checkout and RTL",
   },
+  {
+    id: "health",
+    file: "scripts/health.flow.mjs",
+    title: "Health/Diagnostics (PR #23 blocker 3): release identity (version, SHA, build time, mode) with no URL/key, and the route guard refusing a session without the capability",
+  },
   { id: "crash", file: "scripts/crash.flow.mjs", title: "Crash recovery (ErrorBoundary: the screen, no leaked detail, the sibling survives)" },
   {
     id: "authprovider",

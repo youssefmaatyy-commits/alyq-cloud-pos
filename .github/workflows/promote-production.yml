@@ -1,0 +1,137 @@
+# Production promotion — the only path to a live deployment.
+#
+# The order is the point of this workflow: nothing is built, and nothing is
+# deployed, until the *commercial catalogue gate* has proved that the production
+# Supabase project can actually sell something. `ci.yml` answers "is the code
+# good?"; this answers "should this go live?".
+#
+#   1. `catalogue-gate` reads the two public storefront functions as an
+#      anonymous visitor and fails when nothing is buyable. It never writes:
+#      the plan is two empty-bodied RPC calls, the functions are proved
+#      read-only from the shipped SQL, and the credential is the anon key.
+#   2. `release` builds the real production artifact (`VITE_APP_MODE=production`,
+#      which fails the build if the configuration is missing or dangerous),
+#      runs the read-only release probe against it, and uploads it.
+#   3. `promote` calls the Vercel deploy hook. It runs only if both of the above
+#      are green, and only when `deploy` was asked for.
+#
+# Required repository settings (Settings → Environments → `production`, and
+# Settings → Secrets and variables → Actions) are listed in
+# docs/production/manual-github-settings.md. `npm run production:preflight`
+# fails if this workflow stops running the gate.
+
+name: Promote to production
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: Call the Vercel deploy hook after the artifact is built
+        type: boolean
+        default: true
+      catalogue_only:
+        description: Run only the commercial catalogue gate (no build, no deploy)
+        type: boolean
+        default: false
+
+concurrency:
+  # A promotion is never cancelled by a second one: the deploy hook decides when
+  # production moves, and two overlapping hooks are how a half-deployed release
+  # happens.
+  group: promote-production
+  cancel-in-progress: false
+
+jobs:
+  catalogue-gate:
+    name: Commercial catalogue gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    env:
+      SUPABASE_PROD_URL: ${{ secrets.SUPABASE_PROD_URL }}
+      SUPABASE_PROD_ANON_KEY: ${{ secrets.SUPABASE_PROD_ANON_KEY }}
+      # The deliberate escape hatch for a deployment that is meant to be empty.
+      # Only the exact value `true` counts; anything else fails closed.
+      ALLOW_EMPTY_STOREFRONT: ${{ vars.ALLOW_EMPTY_STOREFRONT }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Reads the two public storefront functions from the production project and
+      # fails when no sellable product/variant exists. Read-only by construction:
+      # see the script header for the three properties that make that true.
+      - name: Read the public catalogue (never writes)
+        run: npm run catalogue:gate
+
+  release:
+    name: Production release artifact
+    needs: catalogue-gate
+    if: ${{ !inputs.catalogue_only }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    env:
+      VITE_APP_MODE: production
+      VITE_SUPABASE_URL: ${{ secrets.SUPABASE_PROD_URL }}
+      VITE_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_PROD_ANON_KEY }}
+      VITE_DEMO_SEED: "off"
+      WEB_PUSH_VAPID_PUBLIC_KEY: ${{ vars.WEB_PUSH_VAPID_PUBLIC_KEY }}
+      VITE_APP_VERSION: ${{ vars.ALYQ_APP_VERSION }}
+      VITE_BUILD_SHA: ${{ github.sha }}
+      # VITE_BUILD_TIME is deliberately left unset: the build stamps the moment
+      # it ran, which is what a build-time fact should say.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Repository-level release conditions that need no network.
+      - run: npm run production:preflight
+      # Three real builds: an undeclared mode and an unconfigured production
+      # build are both refused; a complete one succeeds.
+      - run: npm run check:production-guard -- --require-clean
+      - name: Build the production bundle
+        run: npm run build
+      # Read-only: validates dist/release.json (mode production, explicit mode,
+      # clean worktree, this commit) and boots the shipped bundle against an
+      # empty catalogue to prove it does not write anything.
+      - name: Release probe (read-only)
+        run: npm run release:probe -- --expect-sha "${{ github.sha }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: production-dist
+          path: dist
+          retention-days: 30
+
+  promote:
+    name: Promote (Vercel deploy hook)
+    needs: [catalogue-gate, release]
+    if: ${{ !inputs.catalogue_only && inputs.deploy }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    steps:
+      - name: Require the deploy hook
+        env:
+          VERCEL_DEPLOY_HOOK_URL: ${{ secrets.VERCEL_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -z "$VERCEL_DEPLOY_HOOK_URL" ]; then
+            echo "::error::VERCEL_DEPLOY_HOOK_URL is not configured for the production environment."
+            echo "Add it in Settings → Environments → production → Secrets, or run this workflow with deploy=false to build the artifact without promoting it."
+            exit 1
+          fi
+      - name: Trigger the deploy hook
+        env:
+          VERCEL_DEPLOY_HOOK_URL: ${{ secrets.VERCEL_DEPLOY_HOOK_URL }}
+        run: |
+          # The hook is a POST to a Vercel-owned URL; it carries no credential of
+          # ours and creates no database row.
+          curl --fail --silent --show-error --max-time 60 -X POST "$VERCEL_DEPLOY_HOOK_URL"
+          echo
+          echo "Deploy hook accepted. Verify the live commit afterwards:"
+          echo "  npm run release:probe -- --url <production-domain> --expect-sha ${{ github.sha }}"

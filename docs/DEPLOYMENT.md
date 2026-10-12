@@ -47,18 +47,30 @@ Vite inlines `VITE_*` at **build** time. Two consequences that catch people out:
 | --- | --- |
 | `production` | A live deployment. A missing, half-set, malformed, plain-`http` or secret-shaped Supabase configuration is a **build failure** — there is no fallback to demo data. A bundle built with such a configuration anyway shows the configuration-error screen, not the till. |
 | `demo` | The in-browser dataset on purpose. Supabase values, if present, are ignored so a demonstration can never reach a project. |
-| *(unset)* | Legacy inference: a valid pair means live, none means demo. Supported so existing deployments keep building, but `npm run release:probe` warns — name the mode. |
+| *(unset)* | **Fatal, in both directions: `npm run build` fails** (`APP_MODE_MISSING`, or `APP_MODE_UNKNOWN` for an unrecognised value). There is no inference left to fall back on — a build that does not say what it is must not exist. A bundle produced some other way renders the configuration-error screen and never mounts the till. |
 
 The rules are enforced at build time (`vite.config.ts`, via `src/lib/appMode.ts`)
-and proved end-to-end by `npm run check:production-guard`, which performs three
-real builds: production without configuration (must fail), production with a
-configuration (must succeed), and demo (must succeed and be labelled `demo`).
+and proved end-to-end by `npm run check:production-guard`, which performs real
+builds: production without configuration (must fail), production with a
+configuration (must succeed), demo with no credentials (must succeed and be
+labelled `demo`), and **unset mode with no credentials at all (must fail — no
+demo artifact)**.
 
-Leaving both Supabase values empty **without** declaring a mode is still the
-local-development default, but it is not a production configuration — demo data
-lives in the visitor's browser. Set `VITE_APP_MODE=production` on the host
-(Vercel: Project → Settings → Environment Variables) so a broken configuration
-fails the build instead of shipping a demo till.
+#### Migrating an existing deployment (one edit, per environment)
+
+Every deployment that exists today was built by a pipeline where the mode was
+optional. That is no longer true, so before the next rebuild of an environment,
+add the variable to **that environment's** build settings:
+
+| Environment | Set | Result |
+| --- | --- | --- |
+| Live web / Desktop / Mobile | `VITE_APP_MODE=production` (+ the Supabase pair) | Live build, exactly as before |
+| Evaluation / demo host | `VITE_APP_MODE=demo` | The local dataset, explicitly chosen |
+| A forgotten variable | *(nothing)* | The build **fails** with `APP_MODE_MISSING`, naming the variable |
+
+Demo data lives in the visitor's browser, so a mode-less build must never be
+deployable: before this change, an environment variable that never reached the
+build produced a working-looking till that wrote to `localStorage`.
 
 ### The storefront URL (`VITE_STOREFRONT_URL`)
 
@@ -476,8 +488,24 @@ VITE_APP_MODE=production \
 In CI the same Vite build writes `dist/release.json` — version, commit, build
 time and the declared mode — and `npm run release:probe` reads it back and walks
 the shipped bundle against an empty catalogue without writing anything. Both are
-part of the release job in `.github/workflows/ci.yml`; the admin-only settings
-that CI cannot change itself (branch protection, Pages) are listed in
+part of the release job in `.github/workflows/ci.yml`.
+
+Two further gates protect a *promotion* (`.github/workflows/promote-production.yml`,
+a manual dispatch):
+
+```bash
+npm run catalogue:gate            # read-only probe of the live storefront RPCs
+npm run check:production-guard -- --require-clean
+```
+
+`catalogue:gate` is the commercial one: it proves the shipped
+`storefront_catalogue()` / `storefront_branch_product_variants()` bodies are
+read-only in `supabase/migrations/*.sql`, then sends exactly two
+`POST …/rest/v1/rpc/…` requests with empty bodies and the anon key. It fails when
+the public shop has nothing sellable, and permits an empty catalogue only when
+`ALLOW_EMPTY_STOREFRONT` is exactly `true`. Nothing in it writes to Supabase. The
+admin-only settings that CI cannot change itself (branch protection, Pages, the
+promotion secrets and the `ALLOW_EMPTY_STOREFRONT` variable) are listed in
 `docs/production/manual-github-settings.md`.
 
 `dist/` is a static bundle: serve it over HTTPS from any static host or CDN.
@@ -489,8 +517,9 @@ Before releasing, in order:
 ```bash
 npm run db:check                                         # schema builds and matches the code
 npm run test:all                                         # types, logic suites, E2E
-npm run check:production-guard                           # three real builds: the gate fails closed
+npm run check:production-guard                           # real builds: the gate fails closed
 npm run release:probe                                    # manifest + empty-catalogue walk, read-only
+npm run catalogue:gate                                   # the live shop has something to sell (read-only)
 npm run db:check -- --driver=psql --url="$DATABASE_URL" --verify-only   # deployed schema still matches
 ```
 

@@ -96,9 +96,15 @@ than remembered.
 
 ### 2.4 Moving off the demo dependency
 
+> **Superseded in part (release integrity).** Step 1 below — *inferring* live mode from the
+> presence of a valid credential pair — is no longer the behaviour. `VITE_APP_MODE` is now
+> required and unset is a build failure, so demo mode is not a "fallback" either: it is a
+> mode somebody asked for. See
+> [`production/production-environment.md`](production/production-environment.md).
+
 Demo mode is **kept** (decision D5) but demoted to an explicit, documented fallback:
 
-1. Live mode is selected whenever `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` are valid — unchanged behaviour.
+1. Live mode is selected whenever `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` are valid — unchanged behaviour at the time this plan was written; see the note above.
 2. Demo-only affordances must be invisible in live mode: the login credential hint (already conditional), the catalog Reset button (already conditional), any seeded demo data.
 3. A **mode-parity contract test** (§9-L2) runs the same assertions against both repositories of every module, so "demo works, live doesn't" becomes a test failure rather than a discovery.
 4. Demo storage keys get a single owner module, so "are we depending on localStorage?" has one place to look.

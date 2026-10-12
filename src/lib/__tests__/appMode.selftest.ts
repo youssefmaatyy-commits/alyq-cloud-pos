@@ -9,15 +9,13 @@
  *   · an explicit `production` build with a missing, half, malformed, insecure
  *     or dangerous configuration is FATAL — no demo fallback, no silent start;
  *   · an explicit `demo` build ignores credentials on purpose and says so;
- *   · an unset mode keeps the legacy inference (valid credentials → live, none
- *     → demo) but is always reported as a warning, because a release must be
- *     explicit;
- *   · a misspelled mode is treated as production and refused rather than
- *     quietly starting the demo dataset.
+ *   · an unset or misspelled mode is FATAL — there is no inference left, in
+ *     either direction, because inferring from the credentials is what let a
+ *     missing environment variable ship a demo artifact that looked live.
  */
 import assert from "node:assert/strict";
 
-import { resolveAppMode } from "../appMode";
+import { isDeclaredAppMode, resolveAppMode } from "../appMode";
 
 let passed = 0;
 const check = (label: string, fn: () => void) => {
@@ -138,12 +136,16 @@ check("Supabase's current publishable key shape is accepted", () => {
   assert.equal(result.supabase.configured, true);
 });
 
-check("a production build that did not set VITE_APP_MODE is runnable but warned", () => {
+check("an unset VITE_APP_MODE is fatal even with a complete, valid configuration", () => {
+  // The old behaviour inferred `production` here and merely warned. A warning is
+  // invisible in a pipeline, and the same defect with the credentials removed
+  // inferred *demo* — a working-looking till on localStorage.
   const result = resolveAppMode({ supabaseUrl: PROJECT_URL, supabaseAnonKey: ANON_JWT });
-  assert.equal(result.mode, "production");
-  assert.equal(result.source, "derived-live");
-  assert.equal(result.runnable, true);
-  assert.ok(codes(result).includes("APP_MODE_MISSING"));
+  assert.equal(result.mode, "unset");
+  assert.equal(result.source, "unset");
+  assert.equal(result.runnable, false);
+  assert.equal(result.supabase.configured, false, "an undeclared build never gets a live client");
+  assert.deepEqual(fatals(result), ["APP_MODE_MISSING"]);
 });
 
 check("VITE_DEMO_SEED left on in a production build is reported", () => {
@@ -181,21 +183,47 @@ check("demo mode never inherits a malformed pair as fatal (nothing can use it)",
   assert.deepEqual(fatals(result), []);
 });
 
-check("an unconfigured build keeps the legacy demo inference, with a warning", () => {
+check("a build with nothing set at all is refused — it must never become a demo artifact", () => {
   const result = resolveAppMode({});
-  assert.equal(result.mode, "demo");
-  assert.equal(result.source, "derived-demo");
-  assert.equal(result.runnable, true);
-  assert.ok(codes(result).includes("APP_MODE_MISSING"));
+  assert.equal(result.mode, "unset");
+  assert.equal(result.source, "unset");
+  assert.equal(result.runnable, false);
+  assert.equal(result.supabase.configured, false);
+  assert.deepEqual(fatals(result), ["APP_MODE_MISSING"]);
+  assert.match(result.issues[0].message, /no inference from the credentials/);
+});
+
+check("an empty VITE_APP_MODE is the same defect as a missing one", () => {
+  const result = resolveAppMode({ appMode: "   ", supabaseUrl: PROJECT_URL, supabaseAnonKey: ANON_JWT });
+  assert.equal(result.mode, "unset");
+  assert.equal(result.runnable, false);
+  assert.deepEqual(fatals(result), ["APP_MODE_MISSING"]);
+});
+
+check("demo is reachable only by asking for it by name", () => {
+  assert.equal(resolveAppMode({ appMode: "demo" }).mode, "demo");
+  assert.equal(resolveAppMode({ appMode: "DEMO" }).mode, "demo");
+  for (const nothing of [{}, { appMode: "" }, { supabaseUrl: "", supabaseAnonKey: "" }]) {
+    assert.notEqual(resolveAppMode(nothing).mode, "demo", JSON.stringify(nothing));
+  }
+});
+
+check("isDeclaredAppMode is the single list of buildable modes", () => {
+  assert.equal(isDeclaredAppMode("production"), true);
+  assert.equal(isDeclaredAppMode(" Demo "), true);
+  assert.equal(isDeclaredAppMode(""), false);
+  assert.equal(isDeclaredAppMode(undefined), false);
+  assert.equal(isDeclaredAppMode("staging"), false);
 });
 
 /* ── typos ───────────────────────────────────────────────────────────────── */
 
-check("an unknown mode value is refused; it is never treated as demo", () => {
+check("an unknown mode value is refused; it is never treated as demo or production", () => {
   const result = resolveAppMode({ appMode: "prod", supabaseUrl: PROJECT_URL, supabaseAnonKey: ANON_JWT });
-  assert.equal(result.mode, "production");
+  assert.equal(result.mode, "unset");
   assert.equal(result.runnable, false);
-  assert.ok(fatals(result).includes("APP_MODE_UNKNOWN"));
+  assert.deepEqual(fatals(result), ["APP_MODE_UNKNOWN"]);
+  assert.equal(result.supabase.configured, false);
 });
 
 check("mode matching is case-insensitive and trims whitespace", () => {

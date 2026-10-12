@@ -53,34 +53,45 @@ function releaseIdentity(root: string, outDir: string): ReleaseIdentity {
 /**
  * Fail closed at build time.
  *
- * A `VITE_APP_MODE=production` build whose Supabase configuration is missing,
- * incomplete, malformed or dangerous must not produce an artifact at all — the
- * runtime screen in `src/components/ConfigurationErrorScreen.tsx` is the second
- * line of defence, for the case where environment variables are changed after
- * the build (they cannot be: Vite inlines them, which is exactly why the build
- * step is the right place to stop). The validation policy is imported from
- * `src/lib/appMode.ts`; this file does not re-implement it.
+ * Two things must never produce an artifact:
+ *
+ *   1. a build that did not declare its mode (`VITE_APP_MODE` unset, empty or
+ *      misspelt) — the previous release inferred the mode from the credentials,
+ *      so a pipeline with a variable that never arrived produced a *demo*
+ *      artifact that looked like a live shop. Missing environment variables now
+ *      fail the build instead of picking a mode;
+ *   2. a `VITE_APP_MODE=production` build whose Supabase configuration is
+ *      missing, incomplete, malformed or dangerous.
+ *
+ * The runtime screen in `src/components/ConfigurationErrorScreen.tsx` is the
+ * second line of defence, for a bundle that somehow exists. The validation
+ * policy is imported from `src/lib/appMode.ts`; this file does not re-implement
+ * it — it only decides that any *fatal* policy finding stops the build.
  */
-function productionConfigurationGuard(resolved: ResolvedAppMode): Plugin {
+function appConfigurationGuard(resolved: ResolvedAppMode, requestedMode: string): Plugin {
   return {
-    name: "alyq-production-configuration-guard",
+    name: "alyq-app-configuration-guard",
     apply: "build",
     configResolved() {
-      if (resolved.mode !== "production") return;
       const fatal = resolved.issues.filter((issue) => issue.severity === "fatal");
-      if (fatal.length === 0) {
-        const warnings = resolved.issues.filter((issue) => issue.severity === "warning");
-        for (const issue of warnings) {
-          console.warn(`\n[alyq] production configuration warning · ${issue.code} · ${issue.field}\n  ${issue.message}\n`);
-        }
-        return;
+      const warnings = resolved.issues.filter((issue) => issue.severity === "warning");
+      for (const issue of warnings) {
+        console.warn(`\n[alyq] configuration warning · ${issue.code} · ${issue.field}\n  ${issue.message}\n`);
       }
+      if (fatal.length === 0) return;
+
       const detail = fatal.map((issue) => `  ✗ ${issue.code} · ${issue.field}\n    ${issue.message}`).join("\n");
+      const undeclared = !requestedMode;
       throw new Error(
-        `\n[alyq] refusing to build a production bundle with an unusable Supabase configuration.\n` +
+        `\n[alyq] refusing to build: ` +
+          (undeclared
+            ? "VITE_APP_MODE was not set, so this artifact would not say what it is.\n"
+            : "the declared mode cannot be built with this configuration.\n") +
           `${detail}\n\n` +
-          `  Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY (see docs/production/production-environment.md),\n` +
-          `  or build the evaluation bundle with VITE_APP_MODE=demo.\n`,
+          `  Declare the artifact explicitly:\n` +
+          `    VITE_APP_MODE=production  with VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY\n` +
+          `    VITE_APP_MODE=demo        for the evaluation build (in-browser dataset)\n` +
+          `  See docs/production/production-environment.md.\n`,
       );
     },
   };
@@ -140,14 +151,16 @@ export default defineConfig(({ mode }) => {
       react(),
       tailwindcss(),
       viteSingleFile(),
-      productionConfigurationGuard(resolvedMode),
+      appConfigurationGuard(resolvedMode, requestedMode),
       releaseManifestPlugin(identity, resolvedMode, requestedMode),
     ],
     define: {
       "import.meta.env.WEB_PUSH_VAPID_PUBLIC_KEY": JSON.stringify(webPushPublicKey),
-      // The resolved mode is stamped into the artifact so a demonstration build
-      // is visibly a demonstration build even when it is opened offline.
-      "import.meta.env.VITE_APP_MODE": JSON.stringify(requestedMode || resolvedMode.mode),
+      // The mode the operator declared is stamped into the artifact verbatim —
+      // never a derived substitute. A build that declared nothing fails above,
+      // and `vite dev` with nothing declared stamps "" so the runtime renders
+      // the configuration screen instead of guessing.
+      "import.meta.env.VITE_APP_MODE": JSON.stringify(requestedMode),
       "import.meta.env.VITE_APP_VERSION": JSON.stringify(identity.version),
       "import.meta.env.VITE_BUILD_SHA": JSON.stringify(identity.sha),
       "import.meta.env.VITE_BUILD_TIME": JSON.stringify(identity.builtAt),

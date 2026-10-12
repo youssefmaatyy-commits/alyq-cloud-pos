@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:demo": "node scripts/dev.mode.mjs demo",
+    "dev:production": "node scripts/dev.mode.mjs production",
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
@@ -27,6 +29,7 @@
     "mobile:doctor": "cap doctor",
     "production:preflight": "node scripts/production-preflight.mjs",
     "release:probe": "node scripts/release.probe.mjs",
+    "catalogue:gate": "node scripts/catalogue.gate.mjs",
     "check:production-guard": "node scripts/production-guard.check.mjs"
   },
   "dependencies": {

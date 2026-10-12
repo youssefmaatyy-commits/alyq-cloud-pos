@@ -11,7 +11,8 @@
  * tell the difference, and no way for a reviewer to see the intent in the
  * build.
  *
- * `VITE_APP_MODE` makes the intent explicit and reviewable:
+ * `VITE_APP_MODE` makes the intent explicit and reviewable, and it is
+ * **required**: there is no inference left to fall back on.
  *
  *   production  Live Supabase only. Missing, malformed or dangerous
  *               configuration is FATAL: the app renders a configuration-error
@@ -21,26 +22,35 @@
  *   demo        The in-browser dataset, deliberately and visibly. Supabase
  *               credentials are ignored even when present, so an evaluation
  *               build can never touch a real project.
- *   (unset)     Legacy auto-detection, retained only so an existing deployment
- *               that never set the variable keeps working: valid credentials →
- *               production, no credentials → demo. A *partially* configured or
- *               malformed pair is still fatal, because that is exactly the
- *               "typo" case this module exists to catch. Unset is reported as a
- *               warning and is disallowed for release builds by the release
- *               probe (`scripts/release.probe.mjs`).
+ *   (unset)     FATAL, in both directions. The previous release inferred the
+ *               mode from the credentials — no credentials meant "demo" — and
+ *               that is precisely the failure this module exists to prevent: a
+ *               release pipeline with a variable that never arrived produced a
+ *               *demo* artifact that looked like a live shop. A build that does
+ *               not say what it is must not exist, so `vite build` fails and a
+ *               bundle that exists anyway renders the configuration screen.
+ *
+ * Deployment consequence: every existing deployment must set
+ * `VITE_APP_MODE=production` before it is rebuilt. A redeploy that forgets it
+ * now fails the build instead of silently shipping the local dataset; see
+ * `docs/production/production-environment.md`.
  *
  * Nothing here is secret: the anon key is a browser-shipped public credential
  * and the checks below are about *configuration safety*, not authentication.
  */
 import { RELEASE } from "./release";
 
-export type AppMode = "production" | "demo";
+/**
+ * `production` and `demo` are the two buildable modes. `unset` exists so that a
+ * build which declared nothing is described honestly — as a defect — instead of
+ * being dressed up as one of the two real answers.
+ */
+export type AppMode = "production" | "demo" | "unset";
 
 /** Where the resolved mode came from — printed in diagnostics and the probe. */
 export type AppModeSource =
   | "explicit" // VITE_APP_MODE was set by the operator
-  | "derived-live" // unset, but a complete Supabase configuration was present
-  | "derived-demo"; // unset and unconfigured: the legacy evaluation default
+  | "unset"; // VITE_APP_MODE was missing: a build that must not ship
 
 export type ConfigField =
   | "VITE_APP_MODE"
@@ -305,21 +315,37 @@ export function resolveAppMode(inputs: AppModeInputs = {}): ResolvedAppMode {
   const key = (inputs.supabaseAnonKey ?? "").trim();
   const demoSeed = (inputs.demoSeed ?? "").trim().toLowerCase();
 
-  const known = rawMode === "" || (APP_MODE_VALUES as readonly string[]).includes(rawMode);
+  // ── the mode is a declaration, not a guess ────────────────────────────────
+  // Every build states which artifact it is. Anything else — missing, empty,
+  // misspelt — stops here, because the alternative is a release that cannot be
+  // told apart from an evaluation copy.
+  const known = (APP_MODE_VALUES as readonly string[]).includes(rawMode);
+  const mode: AppMode = known ? (rawMode as AppMode) : "unset";
+  const source: AppModeSource = known ? "explicit" : "unset";
+
   if (!known) {
     issues.push({
-      code: "APP_MODE_UNKNOWN",
+      code: rawMode ? "APP_MODE_UNKNOWN" : "APP_MODE_MISSING",
       field: "VITE_APP_MODE",
       severity: "fatal",
-      message: `VITE_APP_MODE is "${rawMode}"; expected one of ${APP_MODE_VALUES.join(" | ")} (or unset).`,
+      message: rawMode
+        ? `VITE_APP_MODE is "${rawMode}"; expected exactly one of ${APP_MODE_VALUES.join(" | ")}.`
+        : "VITE_APP_MODE is not set. Every build must declare VITE_APP_MODE=production or VITE_APP_MODE=demo; there is no inference from the credentials, because a missing environment variable used to produce a demo artifact that looked live.",
     });
+    return {
+      mode,
+      source,
+      runnable: false,
+      issues,
+      supabase: { projectUrl: "", anonKey: "", configured: false },
+    };
   }
 
   const credentialsPresent = url.length > 0 || key.length > 0;
   const credentialIssues = [...inspectSupabaseUrl(url), ...inspectSupabaseAnonKey(key)];
 
-  // A missing pair is only "unconfigured" — the legacy demo default. A *partial*
-  // or malformed pair is always fatal: that is the silent-typo case.
+  // A missing pair is "unconfigured". A *partial* or malformed pair is always
+  // fatal: that is the silent-typo case.
   // (An empty issue list means the configuration is COMPLETE and valid, so
   // `unconfigured` must require at least one finding.)
   const unconfigured = credentialIssues.length > 0
@@ -329,28 +355,6 @@ export function resolveAppMode(inputs: AppModeInputs = {}): ResolvedAppMode {
   // (a legacy /rest/v1 URL, say) must not hide the usable configuration.
   const malformed = credentialsPresent && !unconfigured
     && credentialIssues.some((issue) => issue.severity === "fatal");
-
-  let mode: AppMode;
-  let source: AppModeSource;
-  if (known && rawMode === "production") {
-    mode = "production";
-    source = "explicit";
-  } else if (known && rawMode === "demo") {
-    mode = "demo";
-    source = "explicit";
-  } else if (!known) {
-    // An unrecognised value is a typo in a release pipeline. Fail closed at the
-    // safest possible place: treat the build as production so the missing
-    // configuration stays an error instead of becoming demo data.
-    mode = "production";
-    source = "explicit";
-  } else if (credentialsPresent && !unconfigured) {
-    mode = "production";
-    source = "derived-live";
-  } else {
-    mode = "demo";
-    source = "derived-demo";
-  }
 
   if (mode === "production") {
     if (!credentialsPresent) {
@@ -374,15 +378,6 @@ export function resolveAppMode(inputs: AppModeInputs = {}): ResolvedAppMode {
     } else {
       issues.push(...credentialIssues);
     }
-    if (source === "derived-live") {
-      issues.push({
-        code: "APP_MODE_MISSING",
-        field: "VITE_APP_MODE",
-        severity: "warning",
-        message:
-          'VITE_APP_MODE is unset and was inferred from the credentials. Release builds must set VITE_APP_MODE="production" explicitly.',
-      });
-    }
     if (demoSeed && demoSeed !== "off") {
       issues.push({
         code: "DEMO_SEED_NOT_DISABLED",
@@ -392,10 +387,10 @@ export function resolveAppMode(inputs: AppModeInputs = {}): ResolvedAppMode {
       });
     }
   } else {
-    // Explicit demo (or the legacy unconfigured default): the credentials, if
-    // any, are ignored — the app never constructs a Supabase client in this
-    // mode. A malformed pair is therefore reported, not fatal: nothing can use
-    // it. `describeAppMode()` keeps the finding visible in diagnostics.
+    // Explicit demo: the credentials, if any, are ignored — the app never
+    // constructs a Supabase client in this mode. A malformed pair is therefore
+    // reported, not fatal: nothing can use it. `describeAppMode()` keeps the
+    // finding visible in diagnostics.
     if (credentialsPresent) {
       issues.push(...credentialIssues.map((issue) => ({ ...issue, severity: "warning" as const })));
     }
@@ -406,15 +401,6 @@ export function resolveAppMode(inputs: AppModeInputs = {}): ResolvedAppMode {
         severity: "warning",
         message:
           "VITE_APP_MODE=demo: the configured Supabase credentials are ignored and the app runs on the local demo dataset.",
-      });
-    }
-    if (source === "derived-demo") {
-      issues.push({
-        code: "APP_MODE_MISSING",
-        field: "VITE_APP_MODE",
-        severity: "warning",
-        message:
-          "VITE_APP_MODE is unset and no Supabase configuration is present: running on the local demo dataset.",
       });
     }
   }
@@ -433,6 +419,15 @@ export function resolveAppMode(inputs: AppModeInputs = {}): ResolvedAppMode {
       configured,
     },
   };
+}
+
+/**
+ * True when a raw `VITE_APP_MODE` value names a buildable mode. Callers that
+ * accept the value from a file or a flag (the dev launcher, the guard) use this
+ * instead of re-listing the two strings.
+ */
+export function isDeclaredAppMode(raw: string | undefined | null): boolean {
+  return (APP_MODE_VALUES as readonly string[]).includes((raw ?? "").trim().toLowerCase());
 }
 
 /** The app's own resolution, from the build-time environment. */

@@ -59,10 +59,13 @@ jobs:
       # Three real builds prove `VITE_APP_MODE=production` fails closed without a
       # Supabase configuration and succeeds with one; see the script header.
       - run: npm run check:production-guard -- --require-clean
-      # The evaluation build. It carries `dist/release.json` (mode demo, the
-      # commit, the build time), so the probe below and the artifact both name
-      # exactly what was built.
+      # The evaluation build. `VITE_APP_MODE` is required — a build that does
+      # not declare its mode is refused — and it carries `dist/release.json`
+      # (mode demo, the commit, the build time), so the probe below and the
+      # artifact both name exactly what was built.
       - run: npm run build
+        env:
+          VITE_APP_MODE: demo
       # Non-mutating release probe: reads the manifest it just produced and
       # boots the shipped bundle in jsdom against an EMPTY catalogue, asserting
       # that nothing is written and no request leaves the process.

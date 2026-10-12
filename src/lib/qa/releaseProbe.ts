@@ -154,9 +154,10 @@ export function inspectReleaseManifest(
       modeRequested
         ? { level: "pass", code: "release.mode_requested", message: `mode requested explicitly as ${modeRequested}` }
         : {
-            level: "warn",
+            level: "fail",
             code: "release.mode_requested",
-            message: "VITE_APP_MODE was not set for this build; it was inferred from the credentials",
+            message:
+              "release.json records no requested mode: this artifact was not built by a pipeline that declared what it is (a release build cannot infer its mode any more)",
           },
     );
   }
@@ -173,13 +174,17 @@ export function inspectReleaseManifest(
     );
   }
 
-  if (modeSource && modeSource !== "explicit") {
-    findings.push({
-      level: "warn",
-      code: "release.mode_source",
-      message: `mode source is "${modeSource}"; release builds should set VITE_APP_MODE explicitly`,
-    });
-  }
+  findings.push(
+    modeSource === "explicit"
+      ? { level: "pass", code: "release.mode_source", message: "the artifact declares its mode explicitly" }
+      : {
+          level: expectations.requireExplicitMode === false ? "warn" : "fail",
+          code: "release.mode_source",
+          message: modeSource
+            ? `mode source is "${modeSource}"; a shipped artifact must name VITE_APP_MODE explicitly`
+            : "release.json does not record where its mode came from",
+        },
+  );
 
   const issues = Array.isArray(manifest.configuration_issues) ? manifest.configuration_issues : [];
   const fatalCodes = issues.filter((code) => /UNCONFIGURED|INVALID|INSECURE|LOOKS_SECRET|INCOMPLETE|UNKNOWN/.test(String(code)));

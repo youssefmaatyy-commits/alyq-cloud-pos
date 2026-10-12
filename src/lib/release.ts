@@ -53,6 +53,34 @@ export const RELEASE: ReleaseIdentity = Object.freeze({
 export const RELEASE_IS_STAMPED =
   RELEASE.version !== "0.0.0" && RELEASE.sha !== "unknown" && RELEASE.builtAt !== null;
 
+/**
+ * The release identity as the Health/Diagnostics screen shows it.
+ *
+ * Exactly four facts — version, commit, build time, mode — plus the `dirty`
+ * flag, and **nothing else**. There is deliberately no place to put a project
+ * URL, an anon key, a VAPID key or a path: the shape of this object is what
+ * keeps a diagnostics panel from becoming a place a credential leaks from, and
+ * the UI test asserts the rendered panel contains no URL and no key.
+ */
+export interface ReleaseDiagnostics {
+  version: string;
+  sha: string;
+  built_at: string | null;
+  mode: string;
+  dirty: boolean;
+}
+
+/** Build the credential-free release identity block for diagnostics and the UI. */
+export function releaseDiagnostics(identity: ReleaseIdentity = RELEASE): ReleaseDiagnostics {
+  return {
+    version: identity.version,
+    sha: identity.sha,
+    built_at: identity.builtAt,
+    mode: identity.mode === "unknown" ? "unset" : identity.mode,
+    dirty: identity.dirty,
+  };
+}
+
 /** One line, safe to log, copy into a bug report or print on a receipt. */
 export function releaseLine(identity: ReleaseIdentity = RELEASE): string {
   const parts = [`v${identity.version}`];

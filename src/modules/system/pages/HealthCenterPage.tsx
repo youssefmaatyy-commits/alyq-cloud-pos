@@ -11,6 +11,7 @@ import { useRealtimeStatus } from "@/lib/supabase/useRealtimeWatch";
 import { usePos } from "@/modules/pos";
 import { ensureOfflineSchema, type OfflineSchemaHealth } from "@/modules/pos/offline/schema";
 import { SHIPPED_LATEST_MIGRATION, SHIPPED_MIGRATION_COUNT } from "@/modules/operations/types";
+import { RELEASE, releaseDiagnostics } from "@/lib/release";
 import { buildOperationalHealth, type OperationalHealthState } from "@/modules/operations/services/health";
 import { probeSystemBackend, type BackendHealthProbe } from "../services/healthService";
 import { safeDiagnosticsJson } from "../services/diagnostics";
@@ -55,6 +56,9 @@ export function HealthCenterPage() {
     imageUnknown: "غير معروف — لم يتم رفع ملف تجريبي.", expected: "المخطط المتوقع", noSecrets: "لا تشمل التشخيصات رموز الدخول أو ملفات الارتباط أو كلمات المرور أو أرقام PIN أو حمولات الدفع الخام.",
     desktop: "تطبيق سطح المكتب", register: "هوية السجل", hardware: "الطابعة / الدرج", webRuntime: "تشغيل ويب — لا يوجد جسر أصلي", physicalUnknown: "الحالة المادية غير معروفة؛ لا يثبت ظهور التعريف وجود ورق أو فتح الدرج.",
     ready: "جاهز", setupRequired: "يتطلب إعدادًا",
+    release: "إصدار التطبيق", releaseVersion: "الإصدار", releaseCommit: "بصمة الالتزام",
+    releaseBuilt: "تاريخ البناء", releaseMode: "وضع التشغيل", releaseDirty: "شجرة عمل غير نظيفة",
+    releaseUnset: "غير محدد", releaseNote: "أربعة حقول فقط: الإصدار، والالتزام، ووقت البناء، والوضع — بلا أسرار أو مفاتيح أو عناوين.",
   } : {
     title: "System Health Center", subtitle: "A safe, factual answer to “Is ALYQ healthy?” without secrets or dangerous repair actions.",
     check: "Retry health checks", refresh: "Refresh session and branch", sync: "Open Sync Center", diagnostics: "Copy safe diagnostics",
@@ -64,6 +68,9 @@ export function HealthCenterPage() {
     imageUnknown: "Unknown — no junk file was uploaded to test it.", expected: "Expected schema", noSecrets: "Diagnostics exclude auth tokens, cookies, passwords, PINs, secrets and raw payment payloads.",
     desktop: "Desktop application", register: "Register identity", hardware: "Printer / Drawer", webRuntime: "Web runtime — no native bridge", physicalUnknown: "Physical state is Unknown; driver visibility does not prove paper or drawer movement.",
     ready: "Ready", setupRequired: "Setup required",
+    release: "Build & release identity", releaseVersion: "Version", releaseCommit: "Commit",
+    releaseBuilt: "Built at", releaseMode: "Application mode", releaseDirty: "Unclean worktree",
+    releaseUnset: "unset", releaseNote: "Four fields only — version, commit, build time and mode. No secrets, keys or project URLs.",
   };
 
   const run = useCallback(async () => {
@@ -112,6 +119,10 @@ export function HealthCenterPage() {
     },
   }), [activeBranchId, auth.session, auth.status, backend, branchError, pos.connectivityState, pos.lastSuccessfulSyncAt, pos.syncConflictCount, pos.syncDeferredCount, pos.syncErrorCount, pos.syncPendingCount, realtime, storage]);
 
+  // The four facts the Health screen reports about this bundle. Read once, from
+  // the build-time identity — never from the network, never from a credential.
+  const release = useMemo(() => releaseDiagnostics(RELEASE), []);
+
   const labels = {
     application: copy.app, backend: copy.backend, authentication: copy.auth, realtime: copy.realtime,
     offline_queue: copy.queue, storage: copy.storage, migration: copy.migration, branch: copy.branch,
@@ -120,6 +131,9 @@ export function HealthCenterPage() {
   const diagnostics = () => ({
     generated_at: new Date().toISOString(),
     application: "ALYQ Cloud POS",
+    // Which build this is: version, commit, build time, mode. Credential-free by
+    // construction — see `releaseDiagnostics()`.
+    release: releaseDiagnostics(),
     expected_migration: SHIPPED_LATEST_MIGRATION,
     expected_migration_count: SHIPPED_MIGRATION_COUNT,
     connectivity: pos.connectivitySnapshot,
@@ -199,6 +213,43 @@ export function HealthCenterPage() {
         </Card>
         <Card><p className="text-[11px] font-bold uppercase text-stone-500">{copy.hardware}</p><Badge className="mt-2" tone="neutral">{copy.unknown}</Badge><p className="mt-2 text-xs text-stone-600">{copy.physicalUnknown}</p>{desktop?.printerConfigured ? <p className="mt-1 text-xs text-stone-500">{desktop.paperWidthMm}mm · driver {desktop.configuredPrinterVisible ? "visible" : "not visible"}</p> : null}</Card>
       </div>
+      {/* `Card` takes `testId`, not `data-testid`: the prop is explicit there, so a
+          `data-testid` attribute is dropped silently and a suite would look for a
+          card that never existed. */}
+      <Card className="mt-3" testId="health-release">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <p className="text-[11px] font-bold uppercase text-stone-500">{copy.release}</p>
+            <p className="mt-1 text-xs text-stone-500">{copy.releaseNote}</p>
+          </div>
+          <Badge tone={release.mode === "production" ? "success" : "neutral"}>
+            {release.mode === "unset" ? copy.releaseUnset : release.mode}
+          </Badge>
+        </div>
+        <dl className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div>
+            <dt className="text-[11px] font-bold uppercase tracking-wide text-stone-500">{copy.releaseVersion}</dt>
+            <dd dir="ltr" className="mt-1 font-mono text-sm font-bold text-stone-900" data-testid="release-version">{release.version}</dd>
+          </div>
+          <div>
+            <dt className="text-[11px] font-bold uppercase tracking-wide text-stone-500">{copy.releaseCommit}</dt>
+            <dd dir="ltr" className="mt-1 break-all font-mono text-xs text-stone-800" data-testid="release-sha">{release.sha}</dd>
+          </div>
+          <div>
+            <dt className="text-[11px] font-bold uppercase tracking-wide text-stone-500">{copy.releaseBuilt}</dt>
+            <dd dir="ltr" className="mt-1 font-mono text-xs text-stone-800" data-testid="release-built-at">
+              {release.built_at ?? copy.unknown}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-[11px] font-bold uppercase tracking-wide text-stone-500">{copy.releaseMode}</dt>
+            <dd dir="ltr" className="mt-1 font-mono text-xs text-stone-800" data-testid="release-mode">
+              {release.mode === "unset" ? copy.releaseUnset : release.mode}
+              {release.dirty ? ` · ${copy.releaseDirty}` : ""}
+            </dd>
+          </div>
+        </dl>
+      </Card>
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
         <Card><p className="text-[11px] font-bold uppercase text-stone-500">{copy.imageStorage}</p><Badge className="mt-2" tone="neutral">{copy.unknown}</Badge><p className="mt-2 text-xs text-stone-600">{copy.imageUnknown}</p></Card>
         <Card><p className="text-[11px] font-bold uppercase text-stone-500">{copy.expected}</p><p dir="ltr" className="mt-2 font-mono text-xs font-bold text-stone-800">{SHIPPED_MIGRATION_COUNT} · {SHIPPED_LATEST_MIGRATION}</p><p className="mt-2 text-xs text-stone-500">{backend ? `${copy.checked}: ${date(backend.checkedAt)}` : copy.unknown}</p></Card>

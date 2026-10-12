@@ -780,3 +780,45 @@ persistence for stocktake sessions. Recorded as a Final Audit blocker; this
 phase did not rewrite stocktake.
 
 Do not deploy 0055 to hosted Supabase from this session. Canonical is not pushed.
+
+---
+
+## Addendum — Release integrity (mode, catalogue gate, build identity)
+
+Written after the snapshot above; it describes behaviour added on top of the
+phase list, not a new phase.
+
+**1. `VITE_APP_MODE` is required — there is no inference left.** Until this
+change a build without credentials silently produced the demo artifact, so a
+release pipeline missing an environment variable shipped a working-looking till
+that wrote to `localStorage`. Now:
+
+| `VITE_APP_MODE` | Result |
+| --- | --- |
+| `production` | Live build; a missing/half-set/malformed/plain-`http`/secret-shaped Supabase pair fails the build |
+| `demo` | The evaluation bundle, credentials ignored even when present |
+| unset / empty / unknown | **The build fails** (`APP_MODE_MISSING` / `APP_MODE_UNKNOWN`) |
+
+Every existing deployment must add `VITE_APP_MODE=production` to its build
+environment before its next rebuild — see
+[`production/production-environment.md`](production/production-environment.md).
+`npm run check:production-guard` proves the cases with real builds, including the
+credential-free build with no mode, which must fail and leave no demo artifact.
+
+**2. The commercial catalogue gate.** `npm run catalogue:gate` is a read-only
+probe of the two public RPCs the storefront calls — `storefront_catalogue()` and
+`storefront_branch_product_variants()`. It refuses to send anything until the
+shipped SQL proves both bodies read-only, then issues exactly two
+`POST …/rest/v1/rpc/…` requests with empty bodies and the anon key. It fails when
+no public product or variant is sellable, and permits an empty shop only when
+`ALLOW_EMPTY_STOREFRONT` is exactly `true`. It runs as the first job of
+`.github/workflows/promote-production.yml`, before the release job — the jsdom
+empty-catalogue walk in `release:probe` remains a UI contract, not this one.
+
+**3. Build identity in the Health/Diagnostics screen.** The existing
+authenticated panel now shows the four release facts — version, commit,
+build time and mode — in a card with no field for a URL, a key or a path
+(`releaseDiagnostics()` in `src/lib/release.ts`), and the copied "safe
+diagnostics" JSON carries the same block. `scripts/health.flow.mjs` proves the
+values, the absence of credential shapes, and that a session without the
+capability the route asks for is refused it.

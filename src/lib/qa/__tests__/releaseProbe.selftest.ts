@@ -87,12 +87,29 @@ check("a demo bundle published as a release fails the mode rule", () => {
   assert.deepEqual(levels(findings, "release.mode"), ["fail"]);
 });
 
-check("an inferred mode warns; an explicit one passes", () => {
-  const inferred = inspectReleaseManifest({ ...GOOD_MANIFEST, mode_source: "derived-live", mode_requested: "" });
-  assert.deepEqual(levels(inferred, "release.mode_requested"), ["warn"]);
-  assert.deepEqual(levels(inferred, "release.mode_source"), ["warn"]);
+check("a release whose mode was not declared fails; an explicit one passes", () => {
+  const inferred = inspectReleaseManifest({ ...GOOD_MANIFEST, mode_source: "unset", mode_requested: "" });
+  assert.deepEqual(levels(inferred, "release.mode_requested"), ["fail"]);
+  assert.deepEqual(levels(inferred, "release.mode_source"), ["fail"]);
   const explicit = inspectReleaseManifest(GOOD_MANIFEST);
   assert.deepEqual(levels(explicit, "release.mode_requested"), ["pass"]);
+  assert.deepEqual(levels(explicit, "release.mode_source"), ["pass"]);
+});
+
+check("a release with no provenance at all is refused on both counts", () => {
+  const anonymous = inspectReleaseManifest({ ...GOOD_MANIFEST, mode_source: undefined, mode_requested: undefined });
+  assert.deepEqual(levels(anonymous, "release.mode_requested"), ["fail"]);
+  assert.deepEqual(levels(anonymous, "release.mode_source"), ["fail"]);
+});
+
+check("the evaluation build may still be probed, and only warns", () => {
+  const demo = inspectReleaseManifest({ ...GOOD_MANIFEST, mode: "demo", mode_source: "unset", mode_requested: "" }, {
+    mode: "demo",
+    requireExplicitMode: false,
+    requireClean: false,
+  });
+  assert.deepEqual(levels(demo, "release.mode_requested"), []);
+  assert.deepEqual(levels(demo, "release.mode_source"), ["warn"]);
 });
 
 check("the expected release SHA is matched exactly or by prefix", () => {

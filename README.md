@@ -14,13 +14,14 @@ npm install
 npm run dev          # http://localhost:5173
 ```
 
-With no environment file the app runs in **demo mode**: an in-browser dataset in
-`localStorage`, seeded with five accounts — one per role — all using the
-password `alyq1234`. Declare the mode explicitly with `VITE_APP_MODE`:
+Every build and every dev server **must name its mode**. There is no inference:
+`VITE_APP_MODE` unset is fatal (`APP_MODE_MISSING`), because a build that does
+not say what it is must not exist — an environment variable that never arrived
+used to produce a demo artifact that looked like a live shop.
 
 ```bash
-VITE_APP_MODE=demo        # the in-browser dataset, deliberately
-VITE_APP_MODE=production  # live Supabase; a missing or invalid configuration fails the build
+npm run dev:demo          # the in-browser dataset, deliberately (VITE_APP_MODE=demo)
+npm run dev:production    # live Supabase; a missing or invalid configuration fails the build
 ```
 
 | Username | Role | Can do |
@@ -31,11 +32,24 @@ VITE_APP_MODE=production  # live Supabase; a missing or invalid configuration fa
 | `inventory_clerk` | Inventory clerk | catalog and stock, plus the online-order queue |
 | `viewer` | Viewer | read-only: dashboard, catalog, customers, sales history |
 
-Demo mode is for development and evaluation. It is per-browser, has no
-server-side enforcement, and must never be used for real money. A
-`VITE_APP_MODE=production` build never falls back to it: a missing, half-set,
-malformed or dangerous Supabase configuration stops the build, and a bundle that
-exists anyway shows a configuration-error screen instead of the application.
+The in-browser dataset holds five accounts — one per role — all using the
+password `alyq1234`. Demo mode is for development and evaluation: it is
+per-browser, has no server-side enforcement, and must never be used for real
+money. A `VITE_APP_MODE=production` build never falls back to it: a missing,
+half-set, malformed or dangerous Supabase configuration stops the build, and a
+bundle that exists anyway shows a configuration-error screen instead of the
+application.
+
+**Existing deployments:** add `VITE_APP_MODE=production` to the host's build
+environment before the next rebuild (Vercel → Project → Settings → Environment
+Variables). The mode used to be inferred from the credentials; it no longer is.
+
+Promotion also runs one read-only commercial gate:
+
+```bash
+npm run catalogue:gate    # the live shop has something sellable (two public RPCs, no writes)
+```
+
 
 ## Live mode (Supabase)
 

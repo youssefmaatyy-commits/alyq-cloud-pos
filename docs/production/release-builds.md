@@ -19,10 +19,18 @@ Every build declares its mode with `VITE_APP_MODE`:
 | --- | --- | --- |
 | `production` | A live build. `dist/release.json` records `mode: production`, `mode_requested: production` and the commit. | A missing, half-set, malformed, plain-http or `service_role`/`sb_secret_` configuration: `npm run build` fails, and a bundle that exists anyway renders the configuration-error screen instead of the app. It never falls back to demo data. |
 | `demo` | The evaluation bundle: in-browser dataset, credentials ignored even when present. `release.json` records `mode: demo`. | Nothing — this is the deliberate artifact for a smoke test or a sales demonstration. It must never be the artifact behind a real till. |
-| *(unset)* | Legacy inference: valid credentials → live, none → demo. Recorded as `mode_source: derived-live`/`derived-demo`. | A half-set or malformed pair is treated exactly as in production: fatal. The release probe warns, because a release must be explicit. |
+| *(unset)* | **Nothing: the build fails.** There is no inference left. `APP_MODE_MISSING` (or `APP_MODE_UNKNOWN` for an unrecognised value) is fatal before a bundle is written; a bundle produced some other way renders the configuration-error screen and never mounts the app. | A build that does not name its mode. A release pipeline whose variable never arrived now fails loudly instead of producing a demo artifact that looks like a live shop. |
 
-`npm run check:production-guard` proves all three cases with real builds;
-`npm run release:probe` reads the result back (see below).
+`npm run check:production-guard` proves all three cases with real builds — including the
+unset, credential-free build, which must **fail** (`APP_MODE_MISSING`) and must leave no
+demo artifact behind; `npm run release:probe` reads the result back (see below).
+
+### Existing deployments must name their mode
+
+An environment that used to rely on inference needs one edit before its next rebuild:
+`VITE_APP_MODE=production` in the host's build environment (Vercel project variables, the
+CI workflow env). `VITE_APP_MODE=demo` is the only way to ask for the evaluation bundle.
+See `production-environment.md` → *Migrating an existing deployment to explicit mode*.
 
 ## Release metadata
 
@@ -68,6 +76,33 @@ npm run mobile:sync
 ```
 
 Build with production `VITE_*` values, `VITE_DEMO_SEED=off`, and frozen SHA metadata. Scan artifacts before signing. Never publish from a dirty checkout — the probe fails a manifest that says `dirty: true`.
+
+## The commercial catalogue gate
+
+The release probe walks an empty catalogue in a browser; that is a UI contract, not the
+commercial one. Promotion also runs `npm run catalogue:gate`, a separate **read-only** probe
+of the real public RPCs the storefront calls:
+
+```bash
+VITE_APP_MODE=demo npm run catalogue:gate                      # reads SUPABASE_PROD_URL / SUPABASE_PROD_ANON_KEY
+npm run catalogue:gate -- --url https://… --anon-key … --json   # explicit, machine-readable
+ALLOW_EMPTY_STOREFRONT=true npm run catalogue:gate              # a deliberately empty storefront
+```
+
+- it first inspects the shipped `storefront_catalogue()` / `storefront_branch_product_variants()`
+  bodies in `supabase/migrations/*.sql` and refuses to send anything unless both are proven
+  read-only;
+- then it issues exactly two `POST …/rest/v1/rpc/<fn>` requests with `{}` bodies, using the
+  anon key — no other method, URL or body is ever produced (the plan is asserted before the
+  first byte is sent);
+- it fails when no public product or variant is sellable, and permits zero products **only**
+  when `ALLOW_EMPTY_STOREFRONT` is exactly `true`;
+- exit codes: `0` sellable (or declared empty), `1` gate failed, `2` unusable invocation.
+
+`npm run catalogue:gate` is `catalogue-gate` in `.github/workflows/promote-production.yml`,
+and it runs **before** the release job: a production promotion cannot start until the shop
+has something to sell. Its policy tests live in
+`src/lib/qa/__tests__/catalogueGate.selftest.ts` and run inside `npm test`.
 
 ## The release probe
 

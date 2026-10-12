@@ -276,9 +276,25 @@ async function main() {
     setField("#cost_price", "50");
     setField("#tax_rate", "0");
     setField("#stock_quantity", String(stock));
+    // The picker is fed by the catalog provider, which re-reads the shelves when
+    // the form mounts; on a fast machine the list is still the placeholder for a
+    // moment. Wait for the shelf to be offered rather than racing the render —
+    // and re-query, because React replaces the select node when options arrive.
+    await waitFor(
+      () =>
+        [...(document.querySelector("#category_id")?.options ?? [])].some((o) =>
+          (o.textContent ?? "").includes(categoryLabel),
+        ),
+      { label: `${categoryLabel} to be offered in the product form` },
+    );
     const catSelect = document.querySelector("#category_id");
     const option = [...catSelect.options].find((o) => (o.textContent ?? "").includes(categoryLabel));
-    assert.ok(option, `${categoryLabel} is offered in the product form`);
+    assert.ok(
+      option,
+      `${categoryLabel} is offered in the product form (options: ${[...catSelect.options]
+        .map((o) => (o.textContent ?? "").trim())
+        .join(" / ")})`,
+    );
     setField("#category_id", option.value);
     clickExact("Save");
     await waitFor(() => !dom.window.location.hash.includes("/new") && dom.window.location.hash.includes("/products"), {

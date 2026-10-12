@@ -64,10 +64,15 @@ export function bundleFileUrl(outfile = process.env.ALYQ_TEST_BUNDLE || DEFAULT_
 export const testDefine = () => {
   const url = (process.env.VITE_SUPABASE_URL ?? "").trim();
   const key = (process.env.VITE_SUPABASE_ANON_KEY ?? "").trim();
-  // The suites are a demo-mode contract unless the live CI job supplies real
-  // credentials (that job's whole purpose is the live surface), so the mode is
-  // named explicitly here instead of being inferred at run time.
-  const appMode = (process.env.VITE_APP_MODE ?? "").trim() || (url && key ? "production" : "demo");
+  // The suites are a demo-mode contract; the live CI job passes
+  // `VITE_APP_MODE=production` (with credentials) because its whole purpose is
+  // the live surface. Either way the mode is *named here* — the application no
+  // longer infers one, and a test bundle that did would be testing a build the
+  // release pipeline refuses to produce.
+  const appMode = (process.env.VITE_APP_MODE ?? "").trim() || "demo";
+  if (url && key && appMode !== "production") {
+    console.warn(`[alyq] test bundle: credentials present with VITE_APP_MODE=${appMode}; the app will ignore them`);
+  }
   return {
     "import.meta.env": JSON.stringify({
       VITE_CURRENCY: process.env.VITE_CURRENCY ?? "EGP",

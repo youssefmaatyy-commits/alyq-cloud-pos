@@ -4,18 +4,21 @@
  *
  *   node scripts/production-guard.check.mjs
  *
- * Three cases, each a genuine `vite build` into a throwaway directory:
+ * Four cases, each a genuine `vite build` into a throwaway directory:
  *
- *   1. `VITE_APP_MODE=production` with NO Supabase configuration → the build
- *      MUST fail, and the failure must name the configuration problem. If this
- *      case ever succeeds, a release pipeline with a missing environment
- *      variable would ship a till that writes to `localStorage`.
- *   2. `VITE_APP_MODE=production` with a complete, valid-looking configuration →
+ *   1. **No `VITE_APP_MODE` and no Supabase configuration at all** → the build
+ *      MUST fail, and it must name the missing declaration. This is the
+ *      regression the release train exists for: an environment variable that
+ *      never reached the build used to produce a *demo* artifact, which looks
+ *      like a working shop and writes to `localStorage`.
+ *   2. `VITE_APP_MODE=production` with NO Supabase configuration → the build
+ *      MUST fail, and the failure must name the configuration problem.
+ *   3. `VITE_APP_MODE=production` with a complete, valid-looking configuration →
  *      the build MUST succeed and `release.json` must say `production` with
  *      `mode_requested: "production"` and `dirty: false`.
- *   3. `VITE_APP_MODE=demo` with no configuration → the build MUST succeed and
- *      `release.json` must say `demo`, because the evaluation bundle is a
- *      deliberate artifact, not an accident.
+ *   4. `VITE_APP_MODE=demo` → the build MUST succeed and `release.json` must say
+ *      `demo`, because the evaluation bundle is a deliberate artifact, not an
+ *      accident.
  *
  * The anon key used in case 2 is a syntactically valid JWT with `role: "anon"`
  * and no real project behind it: this script builds, it never connects.
@@ -53,6 +56,14 @@ const FAKE_ANON_JWT = [
   "guard-check-signature",
 ].join(".");
 
+/**
+ * Run a real `vite build`.
+ *
+ * `VITE_APP_MODE`, `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` are blanked
+ * before `env` is applied, and blanked means *unset* to the build: Vite's
+ * `loadEnv` merges `process.env` over any `.env` file, so these cases are
+ * deterministic even on a developer machine that has a populated `.env`.
+ */
 function build(outDir, env) {
   const result = spawnSync(
     process.execPath,
@@ -78,16 +89,24 @@ function build(outDir, env) {
   };
 }
 
+const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "alyq-guard-"));
+
 const failures = [];
 const check = (ok, label) => {
   console.log(ok ? c.green(`✓ ${label}`) : c.red(`✗ ${label}`));
   if (!ok) failures.push(label);
 };
 
-console.log(c.bold("\nProduction fail-closed gate — three real builds\n"));
+console.log(c.bold("\nProduction fail-closed gate — four real builds\n"));
 
-/* 1 · production without configuration must fail */
-const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "alyq-guard-"));
+/* 1 · an undeclared mode must fail, whatever the credentials say */
+const undeclared = build(path.relative(ROOT, path.join(tempRoot, "undeclared")), {});
+check(undeclared.status !== 0, "a build that did not declare VITE_APP_MODE is refused");
+check(/APP_MODE_MISSING|APP_MODE_UNKNOWN/.test(undeclared.output), "the refusal names the missing mode declaration");
+check(undeclared.manifest === null, "the undeclared build wrote no release manifest (so no demo artifact exists)");
+if (undeclared.status === 0) console.log(c.dim(undeclared.output.slice(0, 400)));
+
+/* 2 · production without configuration must fail */
 const dir1 = path.relative(ROOT, path.join(tempRoot, "noconfig"));
 const noConfig = build(dir1, { VITE_APP_MODE: "production" });
 check(noConfig.status !== 0, "a production build with no Supabase configuration is refused");
@@ -95,7 +114,7 @@ check(/SUPABASE_UNCONFIGURED|VITE_SUPABASE_URL/.test(noConfig.output), "the refu
 check(noConfig.manifest === null, "the refused build wrote no release manifest");
 if (noConfig.status === 0) console.log(c.dim(noConfig.output.slice(0, 400)));
 
-/* 2 · production with a complete configuration must succeed */
+/* 3 · production with a complete configuration must succeed */
 const dir2 = path.relative(ROOT, path.join(tempRoot, "configured"));
 const configured = build(dir2, {
   VITE_APP_MODE: "production",
@@ -113,7 +132,7 @@ if (requireClean) {
 check(typeof configured.manifest?.sha === "string" && configured.manifest.sha.length >= 7, "and a real commit SHA");
 if (configured.status !== 0) console.log(c.dim(configured.output.slice(0, 800)));
 
-/* 3 · the evaluation build stays available and is labelled as such */
+/* 4 · the evaluation build stays available and is labelled as such */
 const dir3 = path.relative(ROOT, path.join(tempRoot, "demo"));
 const demo = build(dir3, { VITE_APP_MODE: "demo" });
 check(demo.status === 0, "an explicit demo build succeeds");
