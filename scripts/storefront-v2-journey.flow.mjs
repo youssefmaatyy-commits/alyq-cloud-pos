@@ -58,7 +58,7 @@ const ux = await createUxHarness({ beforeImport: ({ localStorage }) => {
     products, variants }));
   localStorage.setItem("alyq.demo.delivery_zones.v1", JSON.stringify(zones));
 } });
-const { dom, document, assert, waitFor, navigate, clickEl, setField, readJson, sleep, finish } = {
+const { dom, document, assert, waitFor, navigate, clickEl, setField, readJson, finish } = {
   ...ux, document: ux.dom.window.document,
 };
 const cart = () => readJson("alyq.store.cart.v2")?.lines ?? [];
@@ -73,27 +73,29 @@ const selectOption = (scope, query) => {
 };
 const selectPickup = async () => {
   const choice = button(testid("v2-checkout").querySelector(".v2-choice-grid"), "Pickup");
-  assert.ok(choice, "pickup choice exists"); clickEl(choice); await sleep(90);
+  assert.ok(choice, "pickup choice exists"); clickEl(choice);
+  await waitFor(() => choice.getAttribute("aria-pressed") === "true", { label: "pickup fulfilment selected" });
 };
 
-await navigate("#/store/cart", 800);
+await navigate("#/store/cart");
 await waitFor(() => Boolean(testid("v2-cart")), { label: "the V2 cart" });
 check("an empty canonical V2 bag offers a real browse link", Boolean(document.querySelector('.v2-journey-empty a[href="#/store/products"]')));
-await navigate("#/store/products?color=gold&size=18&availability=out_of_stock", 400);
+await navigate("#/store/products?color=gold&size=18&availability=out_of_stock");
 await waitFor(() => Boolean(testid(`v2-card-${ring.id}`)), { label: "out-of-stock exact gold 18 filter" });
 check("the catalogue filters a published sold-out variant but does not offer quick add", testid(`v2-quick-add-${ring.id}`).disabled);
-await navigate("#/store/products?color=silver&size_label=XS", 400);
+await navigate("#/store/products?color=silver&size_label=XS");
 await waitFor(() => Boolean(testid(`v2-card-${ring.id}`)), { label: "published XS label filter" });
+await waitFor(() => testid(`v2-quick-add-${ring.id}`)?.disabled === false, { label: "Silver / XS URL filter committed to its in-stock exact shelf" });
 check("letter-size and colour are URL-backed and yield the exact shelf", testid(`v2-quick-add-${ring.id}`)?.disabled === false);
 
-await navigate(`#/store/products/${ring.id}`, 350);
+await navigate(`#/store/products/${ring.id}`);
 selectOption(document, '[data-testid="v2-color-gold"]');
-await sleep(30);
+await waitFor(() => testid("v2-size-17"), { label: "published Gold / 17 shelf" });
 selectOption(document, '[data-testid="v2-size-17"]');
-await sleep(30);
+await waitFor(() => testid("v2-pdp-add")?.disabled === false, { label: "Gold / 17 exact add enabled" });
 selectOption(document, '[data-testid="v2-pdp-add"]');
 await waitFor(() => cart().some((line) => line.variant_id === UUID.gold17), { label: "exact Gold 17 cart line" });
-await navigate("#/store/cart", 350);
+await navigate("#/store/cart");
 check("bag displays the exact variant UUID, SKU, quantity and advisory breakdown",
   testid("v2-cart-line")?.getAttribute("data-variant-id") === UUID.gold17 &&
   testid("v2-cart-variant")?.textContent.includes("17") && Boolean(testid("v2-cart-totals")));
@@ -102,7 +104,7 @@ await waitFor(() => cart().find((line) => line.variant_id === UUID.gold17)?.quan
 selectOption(document, '[aria-label="Decrease quantity"]');
 await waitFor(() => cart().find((line) => line.variant_id === UUID.gold17)?.quantity === 1, { label: "exact line decreased" });
 
-await navigate("#/store/checkout", 350);
+await navigate("#/store/checkout");
 check("checkout uses the same V2 shell and no legacy store layout", Boolean(testid("v2-checkout")) && !testid("store-layout"));
 await selectPickup();
 selectOption(document, '[data-testid="v2-place-order"]');
@@ -110,7 +112,7 @@ await waitFor(() => Boolean(document.querySelector('.v2-field-error')), { label:
 check("empty name and phone cannot place an order", orders().length === 0);
 setField('.v2-checkout-form input[autocomplete="name"]', "Mona Mahmoud");
 setField('.v2-checkout-form input[autocomplete="tel"]', "01012345678");
-await sleep(70);
+await waitFor(() => testid("v2-place-order")?.disabled === false, { label: "contact and authoritative checkout ready" });
 // A synchronous second click is ignored before React's disabled state can update.
 selectOption(document, '[data-testid="v2-place-order"]');
 selectOption(document, '[data-testid="v2-place-order"]');
@@ -127,7 +129,7 @@ check("short-lived session receipt contains only a reference+phone pair",
   JSON.parse(dom.window.sessionStorage.getItem("alyq.v2.confirmation.session")).order === cod.order_number &&
   !dom.window.sessionStorage.getItem("alyq.v2.confirmation.session").includes("items"));
 
-await navigate("#/store/track", 300);
+await navigate("#/store/track");
 const trackForm = () => document.querySelector(".v2-track-form");
 setField('input[autocomplete="off"]', cod.order_number, trackForm());
 setField('input[autocomplete="tel"]', "01999999999", trackForm());
@@ -142,7 +144,7 @@ check("reference + correct phone show real order status and timeline", testid("v
 check("tracking URL exposes reference but not phone", dom.window.location.hash.includes(cod.order_number) &&
   !dom.window.location.hash.includes(cod.customer_phone));
 
-await navigate("#/store/account", 300);
+await navigate("#/store/account");
 selectOption(document, '.v2-account-tabs button[aria-pressed="false"]');
 await waitFor(() => Boolean(document.querySelector('.v2-account-form input[autocomplete="name"]')),
   { label: "registration form" });
@@ -155,10 +157,13 @@ await waitFor(() => Boolean(document.querySelector('.v2-account-nav')), { label:
 check("local shopper account offers profile, saved addresses, wishlist and private history",
   document.querySelectorAll('.v2-account-nav button').length === 4 &&
   document.body.textContent.includes("stay in this browser"));
-const tab = async (name) => { clickEl(button(document.querySelector('.v2-account-nav'), name)); await sleep(110); };
+const tab = async (name) => {
+  clickEl(button(document.querySelector('.v2-account-nav'), name));
+  await waitFor(() => button(document.querySelector('.v2-account-nav'), name)?.getAttribute("aria-current") === "page", { label: "requested private account tab" });
+};
 await tab("Addresses");
 clickEl(button(testid("v2-account"), "Add address"));
-await sleep(90);
+await waitFor(() => document.querySelector('.v2-account-content .v2-account-form'), { label: "new saved-address form" });
 const addressForm = document.querySelector('.v2-account-content .v2-account-form');
 for (const [label, value] of [["Label", "Home"], ["City", "Cairo"], ["Area", "Maadi"], ["Street", "19 Street"]]) {
   const field = [...addressForm.querySelectorAll("label")].find((node) => node.textContent.trim().startsWith(label));
@@ -167,18 +172,18 @@ for (const [label, value] of [["Label", "Home"], ["City", "Cairo"], ["Area", "Ma
 clickEl(button(addressForm, "Save"));
 await waitFor(() => Boolean(document.querySelector('.v2-address-card strong')), { label: "saved address" });
 check("an address saves in the shared account provider", document.querySelector('.v2-address-card')?.textContent.includes("Maadi"));
-await navigate(`#/store/products/${ring.id}`, 300);
+await navigate(`#/store/products/${ring.id}`);
 clickEl(document.querySelector('.v2-pdp-wishlist'));
-await sleep(170);
-await navigate("#/store/account?tab=wishlist", 300);
+await waitFor(() => document.querySelector('.v2-pdp-wishlist')?.getAttribute("aria-pressed") === "true", { label: "product saved to private wishlist" });
+await navigate("#/store/account?tab=wishlist");
 check("wishlist shows the V2 card for an exact published product", Boolean(testid(`v2-card-${ring.id}`)));
 // Tracking a guest order while signed in remembers its reference in this browser.
-await navigate("#/store/track", 300);
+await navigate("#/store/track");
 setField('input[autocomplete="off"]', cod.order_number, trackForm());
 setField('input[autocomplete="tel"]', cod.customer_phone, trackForm());
 clickEl(testid("v2-track-submit"));
 await waitFor(() => Boolean(testid("v2-tracked-order")), { label: "claim guest history via private lookup" });
-await navigate("#/store/account?tab=orders", 350);
+await navigate("#/store/account?tab=orders");
 await waitFor(() => Boolean(testid("v2-history-order")) &&
   document.querySelector('.v2-account-content button.v2-text-link')?.disabled === false,
 { label: "settled private order history" });
@@ -188,10 +193,10 @@ await waitFor(() => Boolean(testid("v2-cart")), { label: "exact-variant reorder 
 check("reorder adds Gold 17 UUID, not the same-size silver or sold-out Gold 18",
   cart().length === 1 && cart()[0].variant_id === UUID.gold17);
 
-await navigate("#/store/checkout", 400);
+await navigate("#/store/checkout");
 await selectPickup();
 clickEl(button(testid("v2-checkout"), "InstaPay"));
-await sleep(60);
+await waitFor(() => document.querySelector('.v2-payment-instructions'), { label: "InstaPay employee-verification instructions" });
 check("configured InstaPay option explains employee verification before order placement",
   document.body.textContent.includes("employee confirms the payment"));
 clickEl(testid("v2-place-order"));
@@ -213,7 +218,7 @@ await waitFor(() => Boolean(orders().at(-1)?.payment_submitted_at), { label: "pr
 check("uploading proof leaves payment awaiting human verification",
   orders().at(-1).payment_status === "verification_required" &&
   orders().at(-1).payment_reference === "P3-TRANSFER-421" && Boolean(orders().at(-1).payment_proof_url));
-await navigate("#/store/account?tab=orders", 400);
+await navigate("#/store/account?tab=orders");
 await waitFor(() => document.querySelectorAll('[data-testid="v2-history-order"]').length === 2 &&
   document.querySelector('.v2-account-content button.v2-text-link')?.disabled === false,
 { label: "settled account order history after signed-in placement" });
@@ -222,21 +227,21 @@ check("signed-in order reference is saved in existing local account and read pri
 
 // A third path exercises real delivery-zone pricing + the existing promotion
 // precheck and proves the final order snapshots differ from a browser estimate.
-await navigate("#/store/products/prd-2001", 320);
+await navigate("#/store/products/prd-2001");
 clickEl(testid("v2-pdp-add"));
 await waitFor(() => cart().some((line) => line.product_id === "prd-2001"), { label: "plain catalogue line" });
-await navigate("#/store/cart", 320);
+await navigate("#/store/cart");
 const coupon = testid("v2-coupon");
 setField('input[autocomplete="off"]', "WELCOME10", coupon);
 clickEl(button(coupon, "Apply"));
 await waitFor(() => coupon.textContent.includes("WELCOME10") && coupon.textContent.includes("Coupon applied"),
   { label: "advisory coupon eligibility" });
 check("coupon precheck stays explicitly advisory on V2", coupon.textContent.includes("previews"));
-await navigate("#/store/checkout", 350);
+await navigate("#/store/checkout");
 clickEl(button(testid("v2-checkout").querySelector(".v2-choice-grid"), "Delivery"));
-await sleep(90);
+await waitFor(() => button(testid("v2-checkout").querySelector(".v2-choice-grid"), "Delivery")?.getAttribute("aria-pressed") === "true", { label: "delivery fulfilment selected" });
 clickEl(button(testid("v2-checkout"), "Cash on delivery"));
-await sleep(50);
+await waitFor(() => button(testid("v2-checkout"), "Cash on delivery")?.getAttribute("aria-pressed") === "true", { label: "cash-on-delivery selected" });
 // Issue #1 (8th follow-up round): the zone picker is now a closed-by-default
 // dropdown, not an always-visible card list — opening/reading/selecting a
 // zone goes through the trigger button and its popup listbox instead of a
@@ -246,7 +251,7 @@ assert.ok(zoneTrigger, "zone dropdown trigger exists");
 check("zone dropdown starts closed and shows the placeholder, not an always-visible list",
   zoneTrigger.getAttribute("aria-expanded") === "false" && !testid("v2-zone-select-popup"));
 clickEl(zoneTrigger);
-await sleep(30);
+await waitFor(() => testid("v2-zone-select-popup"), { label: "configured zone listbox opened" });
 const zonePopup = testid("v2-zone-select-popup");
 assert.ok(zonePopup, "zone dropdown popup opens on click");
 check("opening the dropdown flips aria-expanded and renders a listbox popup", zoneTrigger.getAttribute("aria-expanded") === "true" &&
@@ -256,7 +261,7 @@ assert.ok(cairo, "published delivery zone exists in the dropdown popup");
 // The final user change is the zone, after payment/fulfilment have settled.
 // Checkout must read that live zone instead of a stale callback closure.
 clickEl(cairo);
-await sleep(30);
+await waitFor(() => !testid("v2-zone-select-popup") && testid("v2-zone-select-value")?.textContent.includes("Cairo"), { label: "Cairo selected and zone popup closed" });
 const cairoZone = readJson("alyq.demo.delivery_zones.v1").find((zone) => zone.key === "cairo");
 check("selecting a zone option closes the dropdown popup",
   zoneTrigger.getAttribute("aria-expanded") === "false" && !testid("v2-zone-select-popup"));
@@ -278,7 +283,7 @@ check("delivery form uses saved browser-local address and selected configured zo
 // virtualized away, however many a shop configures (12 here, well past the
 // 8-12+ the manual report asked to be exercised).
 clickEl(zoneTrigger);
-await sleep(30);
+await waitFor(() => testid("v2-zone-select-popup"), { label: "zone listbox reopened with selected zone" });
 const reopenedPopup = testid("v2-zone-select-popup");
 const options = [...reopenedPopup.querySelectorAll('[role="option"]')];
 check(`all ${zones.length} zone rows render as options inside the popup`, options.length === zones.length);
@@ -287,7 +292,7 @@ check("the previously-selected zone option is marked selected (checkmark contrac
   selectedOption?.getAttribute("aria-selected") === "true" && selectedOption?.getAttribute("data-selected") === "true" &&
   options.filter((row) => row.getAttribute("aria-selected") === "true").length === 1);
 clickEl(zoneTrigger);
-await sleep(30);
+await waitFor(() => !testid("v2-zone-select-popup"), { label: "zone dropdown toggled closed" });
 check("dropdown toggles closed when the trigger is clicked again", !testid("v2-zone-select-popup"));
 
 // Issue #1 (8th follow-up round): the popup is a bounded, independently
@@ -355,16 +360,16 @@ check("delivery and WELCOME10 are server-repriced and snapshotted once",
   delivered.discount_code === "WELCOME10" && delivered.payment_method === "cod" &&
   delivered.total === delivered.subtotal - delivered.discount_amount + delivered.delivery_fee);
 
-await navigate("#/store/about", 200);
+await navigate("#/store/about");
 check("About reads configured shop content under the V2 shell", Boolean(testid("v2-about")) &&
   !testid("store-about"));
-await navigate("#/store/contact", 200);
+await navigate("#/store/contact");
 check("Contact shows configured details, no fictional web inbox", Boolean(testid("v2-contact")) &&
   document.querySelector('.v2-contact-list')?.textContent.includes("Phone"));
-await navigate("#/store/a-route-that-does-not-exist", 220);
+await navigate("#/store/a-route-that-does-not-exist");
 check("unknown public shop URL returns safely to the canonical homepage", dom.window.location.hash === "#/store" &&
   Boolean(testid("v2-home")));
-await navigate("#/store/cart", 320);
+await navigate("#/store/cart");
 check("the canonical bag stays inside the same V2 shell and shared cart provider", Boolean(testid("store-v2")) &&
   Boolean(testid("v2-cart")) && Boolean(document.querySelector('a[href="#/store/products"]')));
 console.log("\nV2 Phase 3 DOM customer journey passed.");

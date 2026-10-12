@@ -21,6 +21,21 @@ The original complete run was **20/31**, exit 1 (633.280 s). It reproduced eleve
 | `variants` (additional baseline failure) | **Timing**: category options were still loading; default-color effect had not rendered exact Gold/17 sizes. **Real compatibility defect discovered**: legacy numeric-only labels/sorting ignored merchant flexible size values. | Wait for hydrated form/exact shelf; use shared flexible-size/order helpers and prefer `size_value` while preserving legacy numeric snapshots/color-only shelves. Exact balanced stock, refusal and disable-block assertions retained; dedicated label regressions added. |
 | `poslayout` (additional baseline failure) | **Timing**: product form/save and controlled native input changes were observed before commitment. | Committed form/save routes and same-renderer setters; preserve exact-code additions, service/inactive exclusion, cap, long-cart/checkout and RTL checks. |
 
+
+### Additional full-run readiness regressions
+
+The first frozen-commit attempt (`9c4bbfb`, not the final release SHA) passed all ten requested suites but failed five other suites, **26/31**. That partial gate is retained as failed evidence, not a successful release. Investigating the stricter harness exposed these additional assumptions; none of the suites or their assertions were removed.
+
+| Suite | Proven timing/readiness cause | Correction without weakening coverage |
+|---|---|---|
+| `storefront-v2` | A rendered home/card did not prove the passive SEO effect had committed; same-path query changes could still show the previous catalogue result. | Wait for indexable robots + exact canonical home URL and the new search input + intentional empty state. Wait for selected swatches, real shelves, enabled exact add, price and inert drawer rather than fixed sleeps. |
+| `v2-social` | Same pathname did not prove the requested settings tab was mounted; storage persisted before the asynchronous save callback finished normalizing the draft, so the next reset raced that callback. | Wait for the actual V2/Social/General editor and acknowledge the completed first appearance Save before a subsequent reset. Keep unsafe-link/phone rejection, atomic refusal, saved shared channels, reset and bilingual/private-data coverage. |
+| `v2-journey` | Query navigation on a still-mounted catalogue could inspect the previous sold-out Gold/18 quick-add state instead of Silver/XS. | Wait for the enabled in-stock exact-shelf action; use selected fulfilment/payment, enabled checkout, private tabs, wishlist and zone-popup/selection states instead of sleeps. All exact UUID, one-order, payment, stock, tracking privacy and pricing assertions retained. |
+| `v2-cutover` | A transient old-preview route marker and an already mounted page did not prove the final sanitized redirect or private-page SEO. | Use the app's actual preview canonicalization in the test-only entry; require final hash/query and committed private robots. Preserve legacy-bookmark, tracking-phone/token stripping, canonical/JSON-LD and noindex not-found assertions. |
+| `posux` | The dialog mounted before its default-colour effect populated Gold/17; raw keyboard/customer events and fixed delays did not prove a committed selection. | Wait for exact picker grids; flush native events with the same renderer; wait for real form/save/search/customer/receipt states. Add explicit disabled-shelf assertion for the third Gold attempt, keeping both exact UUIDs, stock refusal, customer persistence, receipt and exactly-once shelf-barcode coverage. |
+
+Shared route readiness now distinguishes a transient redirect from the final URL/search and recognizes a legitimate PDP not-found state. It never exports raw queries into DOM diagnostics or logs. Both public root `/` and `/store` retain their actual registered routes. The five additional suites also contain **no fixed settle sleeps**; existing runner coverage and business assertions remain intact.
+
 The ten requested suites contain **no fixed settle sleeps**. Shared waits yield only while checking observable conditions; polling/request-animation-frame timers are not arbitrary settle delays. Unused numeric settle arguments were removed. React's `flushSync` comes from the **same test bundle/renderer**, not a second React copy. Production entry has no test exports/globals. Existing active-V2 and test-only legacy rollback projections remain unchanged in the runner; all 31 suites still run, with no exclusions/retry-on-failure policy.
 
 The ten original scripts retain their original counts of direct business assertions (nav gains an additional redirect assertion); stale route/startup/menu expectations are corrected rather than removed. Assertion-count comparison is supplementary evidence, not a substitute for executing the full tests.
@@ -46,7 +61,7 @@ Rollback/environment migration: see `production-environment.md` and `rollback-ru
 
 ## Changed files and reasons
 
-(86 changed/added/removed files; generated build outputs, logs, provider metadata and credentials are not tracked.)
+(91 changed/added/removed files; generated build outputs, logs, provider metadata and credentials are not tracked.)
 
 | File | Reason |
 |---|---|
@@ -73,18 +88,23 @@ Rollback/environment migration: see `production-environment.md` and `rollback-ru
 | `scripts/dashboardux.flow.mjs` | Stabilize dashboardux with canonical/legacy route readiness, flushed native updates and observable business/UI state; preserve coverage (see root-cause table). |
 | `scripts/final.flow.mjs` | Stabilize final with canonical/legacy route readiness, flushed native updates and observable business/UI state; preserve coverage (see root-cause table). |
 | `scripts/lib/app-bundle.mjs` | Always isolated explicit Demo despite ambient Production values; real release metadata and test-only same-renderer entry. |
-| `scripts/lib/app-entry.ts` | Test-only flushSync export from the identical ReactDOM renderer; no Production global/entry change. |
+| `scripts/lib/app-entry.ts` | Test-only same-renderer flushSync and real preview canonicalization exports; no Production global/entry change. |
 | `scripts/lib/candidate-release.mjs` | Verify served immutable candidate nonsecret metadata before domain movement; no bypass token. |
 | `scripts/lib/catalogue-probe.mjs` | Anonymous STABLE GET-only catalogue/exact variants/representative pricing, counts-only failure/empty controls. |
 | `scripts/lib/github-release-gate.mjs` | Trusted latest exact-SHA/run checks/current main and independent reviewer/main-only environment policy; fail closed. |
 | `scripts/lib/release-artifact.d.mts` | Typed build-plugin/release identity contract for Vite. |
 | `scripts/lib/release-artifact.mjs` | Nonsecret exact checkout identity, copied-file digests, final-byte secret/escaped-value scan and labelled Demo manifest. |
 | `scripts/lib/test-production-env.mjs` | Clearly synthetic .invalid public configuration for offline contract tests only. |
-| `scripts/lib/ui-waits.mjs` | Yielding committed-route/UI readiness, exact form/category/permission/filter/product signals. |
+| `scripts/lib/ui-waits.mjs` | Yielding final hash/query + committed-route/UI readiness, exact form/category/permission/tab/filter/product/not-found signals. |
 | `scripts/lib/ux-harness.mjs` | Canonical semantic route/auth/action/cart/checkout waits; correctly flushed native events, no shared settle sleeps. |
 | `scripts/lifecycle.flow.mjs` | Stabilize lifecycle with canonical/legacy route readiness, flushed native updates and observable business/UI state; preserve coverage (see root-cause table). |
 | `scripts/nav.flow.mjs` | Stabilize nav with canonical/legacy route readiness, flushed native updates and observable business/UI state; preserve coverage (see root-cause table). |
 | `scripts/poslayout.flow.mjs` | Stabilize poslayout with canonical/legacy route readiness, flushed native updates and observable business/UI state; preserve coverage (see root-cause table). |
+| `scripts/posux.flow.mjs` | Exact default-colour grid, native keyboard/customer and form/search/receipt readiness; remove settle sleeps and strengthen exhausted-shelf refusal. |
+| `scripts/storefront-v2.flow.mjs` | Await committed SEO/search/exact swatch/shelf/price/drawer states; remove sleeps without changing business assertions. |
+| `scripts/storefront-v2-social.flow.mjs` | Wait for correct settings editor and completed Save before next reset; retain all shared-channel/security checks. |
+| `scripts/storefront-v2-journey.flow.mjs` | Await same-path exact-shelf state and checkout/account/zone/wishlist milestones, replacing fixed sleeps. |
+| `scripts/storefront-v2-cutover.flow.mjs` | Final sanitized redirect/private robots readiness using real canonicalization; retain all old-bookmark/privacy/SEO checks. |
 | `scripts/production-preflight.mjs` | Validate actual supplied mode/config plus final checkout/dist integrity and secrets, not only the env template. |
 | `scripts/promotions.flow.mjs` | Stabilize promotions with canonical/legacy route readiness, flushed native updates and observable business/UI state; preserve coverage (see root-cause table). |
 | `scripts/release-safety.test.mjs` | 19 groups: fail-closed config/real Vite artifacts/bootstrap/secret/integrity/GET probes and exact-SHA/protected-candidate authorization. |

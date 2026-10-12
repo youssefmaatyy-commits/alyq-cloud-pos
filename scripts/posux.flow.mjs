@@ -32,7 +32,6 @@ const {
   assert,
   dom,
   documentWrites,
-  sleep,
   bodyText,
   waitFor,
   navigate,
@@ -62,10 +61,11 @@ const resultsBox = () => testid("pos-search-results");
 const rows = () => [...document.querySelectorAll('[data-pos-result-index]')];
 const rowFor = (name) => rows().find((b) => (b.textContent ?? "").includes(name));
 const pressKey = (key) =>
-  searchBox().dispatchEvent(new dom.window.KeyboardEvent("keydown", { key, bubbles: true }));
+  ux.flushSync(() => searchBox().dispatchEvent(new dom.window.KeyboardEvent("keydown", { key, bubbles: true })));
 const searchFor = async (text) => {
   setField('[data-testid="pos-scan-search"]', text);
-  await sleep(450);
+  await waitFor(() => searchBox()?.value === text && (text.trim()
+    ? resultsBox() || testid("pos-search-no-results") : testid("pos-catalog")), { label: "typed POS search committed" });
 };
 
 await signInAs("admin");
@@ -101,7 +101,7 @@ const colorsArea = [...genDialog.querySelectorAll("textarea")].find((t) => (t.pl
 setNative(colorsArea, dom.window.HTMLTextAreaElement)("Gold | ذهبي | #d4af37\nSilver | فضي | #c0c0c0");
 const sizesInput = [...genDialog.querySelectorAll("input")].find((i) => (i.placeholder ?? "").includes("16, 16.5"));
 setNative(sizesInput, dom.window.HTMLInputElement)("17");
-await sleep(250);
+await waitFor(() => [...genDialog.querySelectorAll("button")].some((b) => b.textContent.trim() === "Create 2" && !b.disabled), { label: "two exact shelves ready to generate" });
 clickEl([...genDialog.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === "Create 2"));
 await waitFor(() => testid(`variant-row-${GOLD_SKU}`), { label: "the gold row" });
 clickEl(testid("variant-mode-toggle"));
@@ -141,7 +141,7 @@ setReactValue(barcodeInput, "6220100999117");
 const saveVariantBtn = [...dialogs().at(-1).querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === "Save");
 assert.ok(saveVariantBtn, "the variant form has a Save button");
 clickEl(saveVariantBtn);
-await sleep(700);
+await waitFor(() => dialogs().length === 0 && catalog().variants.find((v) => v.sku === SILVER_SKU)?.barcode === "6220100999117", { label: "shelf barcode saved and form closed" });
 assert.ok(!dialogs().length, "the variant form closed");
 assert.equal(catalog().variants.find((v) => v.sku === SILVER_SKU)?.barcode, "6220100999117", "the shelf is labelled");
 console.log("  ✓ seeded the two-shelf ring: Gold / 17 = 2, Silver / 17 = 2 (Silver carries a shelf barcode)");
@@ -150,7 +150,7 @@ console.log("  ✓ seeded the two-shelf ring: Gold / 17 = 2, Silver / 17 = 2 (Si
 await navigate("#/shifts");
 await waitFor(() => bodyText().includes("No shift is currently open"), { label: "a closed drawer" });
 click("Open shift");
-await sleep(400);
+await waitFor(() => dialogs().at(-1)?.querySelector('input[inputmode="decimal"]'), { label: "opening shift form" });
 const shiftDialog = dialogs().at(-1);
 const shiftInputs = [...shiftDialog.querySelectorAll("input")];
 setInputValue(shiftInputs.find((i) => !i.readOnly && i.type === "text"), "Main branch");
@@ -158,7 +158,7 @@ setInputValue(shiftInputs.find((i) => i.inputMode === "decimal"), "100");
 clickEl([...shiftDialog.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === "Open shift"));
 await waitFor(() => /SH-\d{6}/.test(bodyText()), { label: "the shift to open" });
 
-await navigate("#/pos", 700);
+await navigate("#/pos");
 await waitFor(() => searchBox(), { label: "the scan/search box" });
 await waitFor(() => document.activeElement === searchBox(), { label: "the box to take focus" });
 assert.equal(searchBox().getAttribute("aria-label"), "Scan or search");
@@ -210,11 +210,11 @@ await waitFor(() => testid("pos-search-no-results"), { label: "the no-results me
 assert.equal(rows().length, 0, "nothing to select on a miss");
 assert.ok(testid("pos-search-no-results").textContent.includes("No matching products"));
 await searchFor("Wrapping");
-await sleep(450);
+await waitFor(() => testid("pos-search-no-results") && rows().length === 0, { label: "unsellable search shows no rows" });
 assert.equal(rows().length, 0, "the non-tracked service is never offered");
 assert.ok(testid("pos-search-no-results"), "the miss message shows instead");
 await searchFor("Watch");
-await sleep(450);
+await waitFor(() => testid("pos-search-no-results") && rows().length === 0, { label: "unsellable search shows no rows" });
 assert.equal(rows().length, 0, "the inactive product is never offered");
 console.log("  ✓ misses, services and inactive products offer no row");
 
@@ -225,10 +225,10 @@ await searchFor("ALYQ-10");
 await waitFor(() => rows().length === 4, { label: "the four matching seed rows" });
 assert.ok(!testid("pos-search-no-results"), "matches, not the miss message");
 pressKey("ArrowDown");
-await sleep(200);
+await waitFor(() => rows()[0]?.getAttribute("aria-selected") === "true", { label: "first keyboard row highlighted" });
 assert.equal(rows()[0].getAttribute("aria-selected"), "true", "first row highlighted");
 pressKey("ArrowDown");
-await sleep(200);
+await waitFor(() => rows()[1]?.getAttribute("aria-selected") === "true", { label: "second keyboard row highlighted" });
 assert.equal(rows()[0].getAttribute("aria-selected"), "false", "highlight moved on");
 assert.equal(rows()[1].getAttribute("aria-selected"), "true", "second row highlighted");
 assert.ok(rows()[1].textContent.includes("ALYQ-1002"), "the highlight sits on the Classic Gold Ring");
@@ -243,14 +243,14 @@ console.log("  ✓ arrows move the highlight; Enter adds exactly that row");
 await searchFor("ALYQ-10");
 await waitFor(() => rows().length === 4, { label: "the list to reopen" });
 pressKey("Escape");
-await sleep(200);
+await waitFor(() => !resultsBox(), { label: "Escape dismissed POS results" });
 assert.ok(!resultsBox(), "Escape closes the result list");
 assert.equal(searchBox().value, "ALYQ-10", "Escape keeps the typed query");
 await searchFor("");
 await waitFor(() => testid("pos-catalog"), { label: "the catalog" });
 const confirmClearCart = async () => {
   clickEl(testid("pos-clear-cart"));
-  await sleep(120);
+  await waitFor(() => [...document.querySelectorAll('[role="dialog"]')].some((d) => d.textContent.includes("Clear items")), { label: "clear merchandise confirmation" });
   const dialog = [...document.querySelectorAll('[role="dialog"]')].pop();
   const confirm = [...(dialog?.querySelectorAll("button") ?? [])].find((button) =>
     (button.textContent ?? "").includes("Clear items"),
@@ -284,11 +284,13 @@ await waitFor(() => picker(), { label: "the combination picker" });
 assert.equal(cartLines().length, 0, "the picker opened instead of adding");
 const sizeButton = (label) =>
   [...picker().querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") ?? "").startsWith(`${label} — `));
+await waitFor(() => sizeButton("Gold / 17"), { label: "Gold / 17 grid committed after default-colour effect" });
 assert.ok(!sizeButton("Silver / 17"), "the grid shows only the chosen colour's shelves");
 assert.ok(sizeButton("Gold / 17"), "Gold / 17 is a shelf in the grid");
 console.log("  ✓ no auto-add: the exact-shelf picker stands between tap and cart");
 
 // ── 5 · Gold / 17 × 2 accepted, under its exact UUID ────────────────────────
+await waitFor(() => sizeButton("Gold / 17"), { label: "exact Gold / 17 picker shelf" });
 clickEl(sizeButton("Gold / 17"));
 await waitFor(() => !picker(), { label: "the picker to close after the first pick" });
 await waitFor(() => testid(`cart-line-${productId}::${goldId}`), { label: "the Gold cart line" });
@@ -299,6 +301,7 @@ await searchFor("UX2");
 await waitFor(() => rowFor("UX2 Ring"), { label: "the ring row again" });
 clickEl(rowFor("UX2 Ring"));
 await waitFor(() => picker(), { label: "the picker again" });
+await waitFor(() => sizeButton("Gold / 17"), { label: "exact Gold / 17 picker shelf" });
 clickEl(sizeButton("Gold / 17"));
 await waitFor(() => qtyOf(goldId) === "2", { label: "two Gold / 17 on the exact line" });
 await waitFor(() => cartLines().length === 1, { label: "one cart line" });
@@ -310,8 +313,9 @@ await searchFor("UX2");
 await waitFor(() => rowFor("UX2 Ring"), { label: "the ring row a third time" });
 clickEl(rowFor("UX2 Ring"));
 await waitFor(() => picker(), { label: "the picker a third time" });
+await waitFor(() => sizeButton("Gold / 17"), { label: "exact Gold / 17 picker shelf" });
+assert.equal(sizeButton("Gold / 17").disabled, true, "the exhausted exact shelf is disabled before the third attempt");
 clickEl(sizeButton("Gold / 17"));
-await sleep(500);
 assert.ok(picker(), "the refused pick leaves the picker open — nothing was added");
 assert.equal(qtyOf(goldId), "2", "the THIRD Gold / 17 never reached the cart");
 console.log("  ✓ the third Gold / 17 is refused (shelf = 2, the Phase 43 rule holds)");
@@ -322,7 +326,7 @@ const colorChip = (name) =>
     (b) => !(b.getAttribute("aria-label") ?? "").includes("—") && (b.textContent ?? "").includes(name),
   );
 clickEl(colorChip("Silver"));
-await sleep(250);
+await waitFor(() => sizeButton("Silver / 17"), { label: "Silver / 17 colour grid" });
 clickEl(sizeButton("Silver / 17"));
 await waitFor(() => !picker(), { label: "the picker to close" });
 await waitFor(() => cartLines().length === 2, { label: "two cart lines" });
@@ -336,7 +340,7 @@ await waitFor(() => document.querySelector('input[aria-label="Select customer"]'
   label: "the customer picker",
 });
 setField('input[aria-label="Select customer"]', "سارة");
-await sleep(600);
+await waitFor(() => [...(document.querySelector('[role="listbox"]')?.querySelectorAll("button") ?? [])].some((b) => b.textContent.includes("سارة")), { label: "matching customer offered" });
 const listbox = document.querySelector('[role="listbox"]');
 assert.ok(listbox, "the picker's listbox is open");
 const option = [...listbox.querySelectorAll("button")].find((b) => (b.textContent ?? "").includes("سارة"));
@@ -344,9 +348,11 @@ assert.ok(option, "the matching customer is offered");
 // the options pick on mousedown (beating the input's blur) — press it like a
 // finger, then require the at-rest input to show the chosen NAME, which only
 // a real selection produces (the typed query would satisfy nothing)
-option.dispatchEvent(new dom.window.MouseEvent("mousedown", { bubbles: true, cancelable: true }));
-option.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
-await sleep(300);
+ux.flushSync(() => {
+  option.dispatchEvent(new dom.window.MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+  option.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+});
+await waitFor(() => document.querySelector('input[aria-label="Select customer"]')?.value === "سارة المحمود", { label: "selected customer attached, not just a typed query" });
 assert.equal(
   document.querySelector('input[aria-label="Select customer"]').value,
   "سارة المحمود",
@@ -397,7 +403,7 @@ console.log("  ✓ increase, decrease, discounts, remove and re-add preserve the
 
 // ── 9 · complete the sale through the existing flow ─────────────────────────
 setField('[data-testid="cash-input"]', "500");
-await sleep(250);
+await waitFor(() => buttons().some((b) => b.textContent.trim().startsWith("✓") && b.textContent.includes("Complete sale") && !b.disabled), { label: "cash sale payable" });
 const completeBtn = buttons().find(
   (b) => (b.textContent ?? "").trim().startsWith("✓") && (b.textContent ?? "").includes("Complete sale"),
 );
@@ -414,7 +420,7 @@ console.log("  ✓ the sale completes through the proven flow, with change and t
 const printBtn = buttons().find((b) => (b.textContent ?? "").includes("Print receipt"));
 assert.ok(printBtn, "the print action is on the confirmation");
 clickEl(printBtn);
-await sleep(800);
+await waitFor(() => documentWrites.join("\n").includes(receiptNo) && documentWrites.join("\n").includes("Silver / 17"), { label: "exact-shelf receipt rendered" });
 const receiptHtml = documentWrites.join("\n");
 assert.ok(receiptHtml.includes("Gold / 17"), "the receipt line names Gold / 17");
 assert.ok(receiptHtml.includes("Silver / 17"), "the receipt line names Silver / 17");
@@ -423,14 +429,12 @@ console.log("  ✓ the printed receipt preserves both exact shelves");
 
 // ── 11 · a shelf barcode scan adds the exact variant, exactly once ──────────
 clickExact("New sale");
-await sleep(400);
 await waitFor(() => cartLines().length === 0, { label: "the fresh sale" });
 expectCustomer("opening a new, empty sale");
 const silver = catalog().variants.find((v) => v.sku === SILVER_SKU);
 assert.ok(silver?.barcode, `Silver / 17 carries a barcode (${silver?.barcode})`);
 setField('[data-testid="pos-scan-search"]', silver.barcode);
-searchBox().dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-await sleep(600);
+pressKey("Enter");
 await waitFor(() => cartLines().length === 1, { label: "one scanned line" });
 assert.equal(quantityFor("Silver / 17"), "1", "the scan added exactly one unit — never a double");
 assert.ok(testid(`cart-line-${productId}::${silverId}`), "the scan resolved Silver / 17 to its exact UUID");
@@ -441,7 +445,7 @@ await confirmClearCart();
 await waitFor(() => cartLines().length === 0, { label: "clear items to empty the cart" });
 expectCustomer("Clear items (which must NOT clear the customer)");
 setField('[data-testid="pos-scan-search"]', silver.barcode);
-searchBox().dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+pressKey("Enter");
 await waitFor(() => cartLines().length === 1, { label: "scanning after clearing the cart" });
 expectCustomer("scanning after Clear items");
 clickEl(cartLines()[0].querySelector('[data-testid^="cart-remove-"]'));
@@ -454,5 +458,4 @@ await waitFor(() => customerName() === "", { label: "explicitly clearing the cus
 console.log("  ✓ shelf barcode targets Silver / 17 exactly once; Clear items and last-line removal keep the customer until explicitly cleared");
 
 await navigate("#/");
-await sleep(400);
 ux.finish("POS UX");

@@ -32,7 +32,7 @@ let passed = 0;
 function check(name, condition) { assert.ok(condition, name); console.log(`  ✓ ${++passed}. ${name}`); }
 
 await signInAs("admin");
-await navigate("#/dashboard/online/website?tab=v2", 750);
+await navigate("#/dashboard/online/website?tab=v2");
 await waitFor(() => group("facebook") && testid("v2-draft-preview"), { label: "shared channel editor and V2 preview" });
 check("all four channels editable in the V2 Studio, labelled Legacy + V2",
   ["facebook", "instagram", "tiktok", "whatsapp"].every((platform) => group(platform)) &&
@@ -57,7 +57,7 @@ check("malformed profile blocks the entire save and leaves previous settings int
 // must now name the exact platform, jump the admin to the Social tab to fix
 // it, and leave every other still-invalid draft field (their unsaved store
 // name edit included) exactly where they left it — nothing is saved half way.
-await navigate("#/dashboard/online/website?tab=general", 500);
+await navigate("#/dashboard/online/website?tab=general");
 const storeNameInput = () => [...document.querySelectorAll("label")]
   .find((label) => label.textContent?.trim().startsWith("Store name (English)"))
   ?.closest("div")?.querySelector("input");
@@ -71,7 +71,7 @@ check("refusal switches the admin straight to the Social tab that needs fixing",
   dom.window.location.hash.includes("tab=social"));
 check("previous saved settings are untouched by the refused cross-tab save — no half-applied write",
   JSON.stringify(saved()) === first);
-await navigate("#/dashboard/online/website?tab=v2", 500);
+await navigate("#/dashboard/online/website?tab=v2");
 
 value("instagram", "https://www.instagram.com/new.shop/");
 toggle("instagram");
@@ -100,7 +100,7 @@ check("one settings document stores four enable switches and bilingual prefill",
   channels.length === 4 && row("whatsapp").message_ar === arabicMessage &&
   saved().social.facebook === "https://www.facebook.com/new-shop" &&
   saved().social.whatsapp === "201001234567");
-await navigate("#/store", 750);
+await navigate("#/store");
 await waitFor(() => link("whatsapp"), { label: "public V2 social footer" });
 check("saved V2 footer renders exactly four recognizable brand SVG icons",
   document.querySelectorAll('.v2-footer-social a').length === 4 &&
@@ -126,7 +126,7 @@ await waitFor(() => testid("store-v2")?.getAttribute("dir") === "ltr", { label: 
 
 // Reopen from storage, not the in-memory React draft; appearance reset must
 // leave shared social/contact untouched even after another Save.
-await navigate("#/online/website?tab=v2", 750);
+await navigate("#/online/website?tab=v2");
 await waitFor(() => group("whatsapp"), { label: "reloaded editor" });
 check("Admin reload restores four channel values and WhatsApp copy",
   testid("social-url-instagram").value === "https://www.instagram.com/new.shop/" &&
@@ -140,6 +140,10 @@ check("V2-only reset has not touched the saved shared social rows", JSON.stringi
 setReactValue(testid("v2-hex-header_bg"), "#123456");
 await save();
 await waitFor(() => saved()?.storefront_v2?.header_bg === "#123456", { label: "V2 appearance first save" });
+// Storage changes before the async save callback commits the normalized draft.
+// Do not start the next reset while that previous save still owns the form.
+await waitFor(() => saveButton()?.disabled && !saveButton()?.querySelector(".animate-spin"),
+  { label: "first appearance save acknowledged and form settled" });
 clickTestid("v2-reset-open");
 await waitFor(() => testid("v2-reset-confirm"), { label: "V2 reset confirmation after save" });
 clickTestid("v2-reset-confirm");
@@ -160,14 +164,14 @@ await waitFor(() => saved()?.social_links?.every((entry) => !entry.enabled), { l
 check("disabling preserves row URLs/messages while hiding shared legacy flat channels",
   saved().social_links.every((entry) => Boolean(entry.url)) && saved().social.whatsapp === "" &&
   saved().social.facebook === "" && saved().social_links.find((entry) => entry.platform === "whatsapp").message_ar === arabicMessage);
-await navigate("#/store", 700);
+await navigate("#/store");
 check("disabled channels have no footer icon or WhatsApp contact action after reload",
   !document.querySelector(".v2-footer-social a") && !testid("v2-whatsapp-contact"));
-await navigate("#/store/contact", 650);
+await navigate("#/store/contact");
 check("canonical V2 Contact also hides disabled shared channels",
   Boolean(testid("v2-contact")) && !document.querySelector('.v2-contact-channels a') &&
   !document.querySelector('a[aria-label="Facebook"]') && !document.querySelector('a[aria-label="WhatsApp"]'));
-await navigate("#/pos", 650);
+await navigate("#/pos");
 check("POS remains outside the V2 presentation scope", !testid("store-v2") &&
   !document.querySelector('[data-testid="v2-social-icons"]'));
 console.log(`\n${passed} Phase 2 Amendment 2 Admin/social DOM checks passed.`);

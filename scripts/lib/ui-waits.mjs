@@ -7,8 +7,15 @@ export async function waitForCondition(condition, { label = 'UI state', timeout 
   }
 }
 
-export async function waitForRoute(dom, hash) {
-  const target = (hash.replace(/^#/, '') || '/').split('?')[0];
+export async function waitForRoute(dom, hash, { normalizeStorePath = (value) => value } = {}) {
+  let normalized = normalizeStorePath(hash.replace(/^#/, '') || '/');
+  let target = normalized.split('?')[0];
+  // Canonical unknown public pages redirect home too; PDP identifiers remain
+  // dynamic and may legitimately render a noindex not-found state.
+  if (target.startsWith('/store/') && !/^\/store\/(products(?:\/[^/]+)?|cart|checkout|confirmation|track|account|about|contact)$/.test(target)) {
+    target = '/store'; normalized = '/store';
+  }
+  const expectedSearch = normalized.includes('?') ? '?' + normalized.split('?').slice(1).join('?') : '';
   const canonical = /^\/(pos|products|categories|catalog|management|inventory|sync|system-health|sales|customers|returns|refunds|shifts|expenses|approvals|reports|online|audit|settings)(\/|$)/.test(target)
     ? `/dashboard${target}` : target;
   const document = dom.window.document;
@@ -17,20 +24,30 @@ export async function waitForRoute(dom, hash) {
     // An anonymous direct staff deep link must finish at Login, not mount a shell.
     if (canonical.startsWith('/dashboard') && committed === '/login') return Boolean(document.querySelector("input[autocomplete='username']"));
     if (committed !== canonical) return false;
+    const actual = dom.window.location.hash.replace(/^#/, '');
+    // A transient <Navigate> route is not a completed redirect. Same-path query
+    // navigation must also leave the previous query before readiness is claimed.
+    if (actual.split('?')[0] !== canonical || (actual.includes('?') ? '?' + actual.split('?').slice(1).join('?') : '') !== expectedSearch) return false;
     if (document.querySelector('[role="progressbar"], [aria-busy="true"], .animate-spin')) return false;
     if (/\/products\/(new|[^/]+\/edit)$/.test(canonical)) {
       return Boolean(document.querySelector('#sku')) && (document.querySelector('#category_id')?.options.length ?? 0) > 1;
     }
     if (document.querySelector('[data-testid="route-access-denied"]')) return true;
-    if (canonical === '/store') return Boolean(document.querySelector('main section, [data-testid="v2-home"]'));
+    if (canonical === '/' || canonical === '/store') return Boolean(document.querySelector('main section, [data-testid="v2-home"]'));
     if (canonical === '/dashboard/inventory/stock') {
       const filter = document.querySelector('select[aria-label="Status"]');
       const wanted = new URLSearchParams(hash.split('?')[1] || '').get('status');
       return Boolean(filter) && (!wanted || filter.value === wanted);
     }
     if (canonical === '/dashboard') return Boolean(document.querySelector('[data-testid="dash-kpi-row"]'));
+    if (canonical === '/dashboard/online/website') {
+      const tab = new URLSearchParams(expectedSearch).get('tab') || 'general';
+      if (tab === 'v2') return Boolean(document.querySelector('[data-testid="v2-social-editor"]') && document.querySelector('[data-testid="v2-draft-preview"]'));
+      if (tab === 'social') return Boolean(document.querySelector('[data-testid="social-settings"]'));
+      if (tab === 'general') return Boolean(document.querySelector('input[placeholder="201001234567"]'));
+    }
     if (canonical.startsWith('/dashboard')) return Boolean(document.querySelector('main h1'));
-    if (/^\/store\/products\/[^/]+$/.test(canonical)) return Boolean(document.querySelector('[data-testid="product-add-to-cart"], [data-testid="v2-pdp-add"]'));
+    if (/^\/store\/products\/[^/]+$/.test(canonical)) return Boolean(document.querySelector('[data-testid="product-add-to-cart"], [data-testid="v2-pdp-add"], .v2-not-found h1'));
     if (canonical === '/login') return Boolean(document.querySelector("input[autocomplete='username']"));
     return Boolean(document.querySelector('header, h1'));
   }, { label: `committed and ready route ${canonical}` });

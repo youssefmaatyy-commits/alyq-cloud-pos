@@ -126,7 +126,7 @@ export async function createUxHarness({ beforeImport } = {}) {
   // not booted yet — the demo repositories seed on boot, so clearing later
   // would destroy the shelf instead of resetting it.
   if (beforeImport) beforeImport({ localStorage: dom.window.localStorage });
-  const { flushSync } = await import(bundleFileUrl());
+  const { flushSync, canonicalConfiguredStorePath } = await import(bundleFileUrl());
 
   // ── helpers ─────────────────────────────────────────────────────────────
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -144,7 +144,7 @@ export async function createUxHarness({ beforeImport } = {}) {
   const navigate = async (hash) => {
     dom.window.location.hash = hash;
     flushSync(() => dom.window.dispatchEvent(new dom.window.HashChangeEvent("hashchange")));
-    await waitForRoute(dom, hash);
+    await waitForRoute(dom, hash, { normalizeStorePath: canonicalConfiguredStorePath });
   };
 
   const clickEl = (el) =>
