@@ -27,7 +27,13 @@ export async function waitForRoute(dom, hash, { normalizeStorePath = (value) => 
     const actual = dom.window.location.hash.replace(/^#/, '');
     // A transient <Navigate> route is not a completed redirect. Same-path query
     // navigation must also leave the previous query before readiness is claimed.
-    if (actual.split('?')[0] !== canonical || (actual.includes('?') ? '?' + actual.split('?').slice(1).join('?') : '') !== expectedSearch) return false;
+    if (actual.split('?')[0] !== canonical) return false;
+    const actualSearch = actual.includes('?') ? '?' + actual.split('?').slice(1).join('?') : '';
+    // Inventory consumes a valid initial status with replace after applying it.
+    // Its selected filter below remains mandatory; other queries must match.
+    const consumedStatus = canonical === '/dashboard/inventory/stock' && actualSearch === '' &&
+      ['in', 'low', 'out'].includes(new URLSearchParams(expectedSearch).get('status'));
+    if (actualSearch !== expectedSearch && !consumedStatus) return false;
     if (document.querySelector('[role="progressbar"], [aria-busy="true"], .animate-spin')) return false;
     if (/\/products\/(new|[^/]+\/edit)$/.test(canonical)) {
       return Boolean(document.querySelector('#sku')) && (document.querySelector('#category_id')?.options.length ?? 0) > 1;

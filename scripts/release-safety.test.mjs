@@ -11,6 +11,7 @@ import { assertReleaseChecks, REQUIRED_RELEASE_CHECKS, assertCIReleaseRun, asser
 import { probeCatalogue } from './lib/catalogue-probe.mjs';
 import { verifyCandidateRelease } from './lib/candidate-release.mjs';
 import { testProductionEnv } from './lib/test-production-env.mjs';
+import { waitForRoute } from './lib/ui-waits.mjs';
 
 let passed = 0;
 const test = async (label, fn) => { await fn(); passed += 1; console.log(`  ✓ release safety: ${label}`); };
@@ -58,6 +59,40 @@ await test('frontend scanner rejects private keys and authority, permits only pu
   const fixture = 'synthetic-only-opaque"value';
   assert.throws(() => assertNoFrontendSecrets(JSON.stringify(fixture), { RELEASE_TOKEN: fixture }));
   assert.throws(() => assertNoFrontendSecrets(encodeURIComponent(fixture), { RELEASE_TOKEN: fixture }));
+});
+
+
+await test('route readiness requires final redirects, current queries and applied consumed stock filters', async () => {
+  // Mutable read stubs simulate the next render on the next polling pass. No
+  // settle sleeps, second renderer, production globals or private query logs.
+  const route = (path, hash, status) => {
+    const reads = { hash: 0, status: 0 };
+    return { reads, dom: { window: {
+      location: { get hash() { return hash(++reads.hash); } },
+      document: { querySelector(selector) {
+        if (selector === '[data-testid="route-location"]') return { getAttribute: () => path };
+        if (selector === 'select[aria-label="Status"]' && status) return { value: status(++reads.status) };
+        if (selector === 'header, h1') return {};
+        return null;
+      } },
+    } } };
+  };
+  const stock = route('/dashboard/inventory/stock', () => '#/dashboard/inventory/stock',
+    (read) => read === 1 ? 'all' : 'low');
+  await waitForRoute(stock.dom, '#/dashboard/inventory/stock?status=low');
+  assert.ok(stock.reads.status >= 2, 'clearing the URL does not bypass the applied low-stock filter');
+  const query = route('/store/account', (read) => read === 1
+    ? '#/store/account?tab=profile' : '#/store/account?tab=orders');
+  await waitForRoute(query.dom, '#/store/account?tab=orders');
+  assert.ok(query.reads.hash >= 2, 'an existing pathname is not the new requested query');
+  const redirect = route('/store/account', (read) => read === 1
+    ? '#/store/v2/account?tab=orders' : '#/store/account?tab=orders');
+  let normalized;
+  await waitForRoute(redirect.dom, '#/store/v2/account?tab=orders', { normalizeStorePath(value) {
+    normalized = value; return '/store/account?tab=orders';
+  } });
+  assert.equal(normalized, '/store/v2/account?tab=orders');
+  assert.ok(redirect.reads.hash >= 2, 'a transient old-preview URL is not a completed redirect');
 });
 
 const product = { id: 'synthetic-product', active: true, show_on_website: true, selling_price: 100, stock_tracking_enabled: true, stock_quantity: 1 };
