@@ -3281,10 +3281,13 @@ begin
     null;
   end;
 
+  -- 0095: completed-sale cancellation is disabled for EVERY role. The refusal
+  -- is the feature_not_supported SQLSTATE, not a capability check, so a manager or
+  -- admin is refused in the same way (asserted further down).
   begin
     perform public.pos_void_sale(v_void_id, v_viewer::text, 'Vera Viewer', 'viewer should not void');
-    raise exception 'a viewer voided a completed sale';
-  exception when insufficient_privilege then
+    raise exception 'a viewer cancelled a completed sale';
+  exception when feature_not_supported then
     null;
   end;
 
@@ -3296,8 +3299,8 @@ begin
   end if;
   begin
     perform public.pos_void_sale(v_void_id, v_cashier::text, 'Karim Cashier', 'cashier should not void');
-    raise exception 'a cashier voided a sale, which only a manager or admin may do';
-  exception when insufficient_privilege then
+    raise exception 'a cashier cancelled a completed sale';
+  exception when feature_not_supported then
     null;
   end;
 
@@ -3311,7 +3314,15 @@ begin
   perform public.pos_confirm_payment(v_pending_id, v_cashier::text, 'Karim Cashier');
 
   perform pg_temp.become(v_admin, 'authenticated');
-  perform public.pos_void_sale(v_void_id, v_admin::text, 'Amina Admin', 'entry error');
+  begin
+    perform public.pos_void_sale(v_void_id, v_admin::text, 'Amina Admin', 'entry error');
+    raise exception 'an admin cancelled a completed sale';
+  exception when feature_not_supported then
+    null;
+  end;
+  if (select status::text from public.sales where id = v_void_id) <> 'completed' then
+    raise exception 'a refused cancellation changed the completed sale';
+  end if;
 
   -- ── the online path the guard could so easily have broken ──────────────────
   -- `resolve_online_order` completes a customer's order by calling

@@ -1451,7 +1451,7 @@ export class DemoOnlineRepository
     if (index === -1) throw new OnlineError("order_not_found", `Order ${id} not found`);
 
     const order = this.orders[index];
-    const check = checkAction(order, input.action, { canVoidSale: true });
+    const check = checkAction(order, input.action);
     if (!check.ok) {
       // Transition refusals (wrong state, backwards, unknown) read as "this
       // order cannot be moved to that status" — the same code live mode maps
@@ -1636,14 +1636,6 @@ export class DemoOnlineRepository
               ? { ...reservation, status: "released" as const, resolved_at: at }
               : reservation,
           );
-
-          if (order.sale_id) {
-            await getDemoSalesRepository().voidSale(order.sale_id, {
-              user_id: input.user_id,
-              user_name: input.user_name,
-              reason: `Online order ${order.order_number} cancelled${reason ? `: ${reason}` : ""}`,
-            });
-          }
 
           // Safe coupon & promotion lifecycle: release consumed count ONLY if order was approved
           if ((order.status === "approved" || order.sale_id) && order.discount_code) {

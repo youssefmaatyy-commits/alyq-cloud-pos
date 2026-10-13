@@ -18,6 +18,7 @@
 import assert from "node:assert/strict";
 import type { Category, Product } from "@/modules/products/types";
 import { getDemoRepository } from "@/modules/products/data/demoRepository";
+import { getDemoSalesRepository } from "@/modules/pos/data/demoRepository";
 import { dictionaries } from "@/lib/i18n/dictionary";
 import type { TranslationKey } from "@/lib/i18n/dictionary";
 import type { PickBilingual, Translate } from "@/lib/export";
@@ -1088,10 +1089,15 @@ test("unverified InstaPay money never becomes a sale", () => {
   assert.deepEqual(checkAction(verified, "approve"), { ok: true, next: "approved" });
 });
 
-test("cancelling an order that already became a sale needs the void capability", () => {
+test("an order that already became a sale cannot be cancelled by anybody (0095)", () => {
+  // Completed-sale cancellation is disabled. The correction is a sales return.
   const approved = makeOrder({ status: "approved", sale_id: "sale-1", sale_number: "S-000001" });
-  assert.deepEqual(checkAction(approved, "cancel"), { ok: false, reason: "needs_void_capability" });
-  assert.deepEqual(checkAction(approved, "cancel", { canVoidSale: true }), { ok: true, next: "cancelled" });
+  assert.deepEqual(checkAction(approved, "cancel"), { ok: false, reason: "sale_cancellation_disabled" });
+  assert.deepEqual(checkAction(makeOrder({ status: "ready", sale_id: "sale-1" }), "cancel"), {
+    ok: false,
+    reason: "sale_cancellation_disabled",
+  });
+  // A pending order has no sale and can still be cancelled, releasing its holds.
   assert.deepEqual(checkAction(makeOrder({ status: "pending" }), "cancel"), { ok: true, next: "cancelled" });
 });
 
@@ -1138,7 +1144,7 @@ test("payment verification is a separate axis from the order status", () => {
 
 test("the actions an employee sees depend on the order and on their capability", () => {
   const pendingCod = makeOrder({ status: "pending", payment_method: "cod" });
-  assert.deepEqual(availableActions(pendingCod, { canVoidSale: false, canConfirmPayment: true }), [
+  assert.deepEqual(availableActions(pendingCod, { canConfirmPayment: true }), [
     "approve",
     "cancel",
     "complete",
@@ -1146,34 +1152,26 @@ test("the actions an employee sees depend on the order and on their capability",
     "payment_reject",
   ]);
 
-  const cashier = availableActions(
-    makeOrder({ status: "approved", sale_id: "sale-1" }),
-    { canVoidSale: false, canConfirmPayment: false },
-  );
-  assert.equal(cashier.includes("cancel"), false, "a cashier cannot unwind a sale");
-  assert.deepEqual(cashier, ["processing", "ready", "complete"]);
-
-  const manager = availableActions(makeOrder({ status: "approved", sale_id: "sale-1" }), {
-    canVoidSale: true,
+  const approvedSale = availableActions(makeOrder({ status: "approved", sale_id: "sale-1" }), {
     canConfirmPayment: false,
   });
-  assert.equal(manager.includes("cancel"), true);
+  assert.equal(approvedSale.includes("cancel"), false, "nobody is offered to cancel a completed sale");
+  assert.deepEqual(approvedSale, ["processing", "ready", "complete"]);
 
   const unverified = availableActions(
     makeOrder({ status: "pending", payment_method: "instapay", payment_status: "verification_required" }),
-    { canVoidSale: false, canConfirmPayment: true },
+    { canConfirmPayment: true },
   );
   assert.equal(unverified.includes("approve"), false, "approval is not offered while the money is unverified");
   assert.deepEqual(unverified, ["cancel", "complete", "payment_approve", "payment_reject"]);
 
   const verified = availableActions(
     makeOrder({ status: "pending", payment_method: "instapay", payment_status: "paid" }),
-    { canVoidSale: false, canConfirmPayment: true },
+    { canConfirmPayment: true },
   );
   assert.equal(verified[0], "approve", "once the payment is confirmed, approval is the next thing to do");
 
   const done = availableActions(makeOrder({ status: "completed", payment_status: "paid" }), {
-    canVoidSale: true,
     canConfirmPayment: true,
   });
   assert.deepEqual(done, [], "a paid, completed order has nothing left to do");
@@ -2145,7 +2143,7 @@ test("cancelling a pending order releases the stock and keeps the record with it
   assert.equal(remaining, 0);
 });
 
-test("cancelling an approved order voids the sale and puts the stock back", async () => {
+test("cancelling an approved order is refused: the sale and its stock stay as they were (0095)", async () => {
   const repository = getDemoOnlineRepository();
   const product = await demoProduct("ALYQ-2001");
 
@@ -2159,18 +2157,26 @@ test("cancelling an approved order voids the sale and puts the stock back", asyn
     lines: [{ product_id: product.id, qty: 1 }],
   });
   const approved = await repository.resolveOrder(placed.order.id, { action: "approve", ...STAFF });
+  assert.ok(approved.sale_id, "approval created the sale");
   const afterApprove = (await getDemoRepository().listProducts()).find((p) => p.id === product.id)?.stock_quantity ?? 0;
+  const saleBefore = (await getDemoSalesRepository().getSale(approved.sale_id as string)).status;
 
-  const cancelled = await repository.resolveOrder(approved.id, {
-    action: "cancel",
-    reason: "Damaged in packing",
-    ...STAFF,
-  });
-  assert.equal(cancelled.status, "cancelled");
-  assert.ok(cancelled.sale_id, "the sale link is kept for the audit trail");
+  await assert.rejects(
+    repository.resolveOrder(approved.id, { action: "cancel", reason: "Damaged in packing", ...STAFF }),
+    (error: unknown) => {
+      const detail = (error as { detail?: { reason?: string } }).detail;
+      return detail?.reason === "sale_cancellation_disabled";
+    },
+    "a converted order's cancellation is refused with the disabled-cancellation reason",
+  );
 
+  const stillApproved = (await repository.listOrders()).find((o) => o.id === approved.id);
+  assert.equal(stillApproved?.status, "approved", "the order was not cancelled");
+  const saleAfter = (await getDemoSalesRepository().getSale(approved.sale_id as string)).status;
+  assert.equal(saleAfter, saleBefore, "the sale was not voided or otherwise changed");
+  assert.notEqual(saleAfter, "voided");
   const afterCancel = (await getDemoRepository().listProducts()).find((p) => p.id === product.id)?.stock_quantity ?? 0;
-  assert.equal(afterCancel, afterApprove + 1, "voiding the sale restored the unit");
+  assert.equal(afterCancel, afterApprove, "no stock moved on the refused cancellation");
 });
 
 test("InstaPay proof is verified by a person and never approves itself", async () => {
@@ -2279,6 +2285,21 @@ test("the POS list can be filtered by status and by what needs attention", async
   const all = await repository.listOrders({ status: "all", paymentStatus: "all", search: "" });
   assert.ok(all.length >= 5, "the scenarios above left a realistic list behind");
 
+  // Cancelled orders are pending ones (no sale to unwind — 0095); make two here
+  // so this list check does not depend on what earlier scenarios left behind.
+  const listProduct = await demoProduct("ALYQ-1002");
+  for (const ref of ["ref-list-cancel-1", "ref-list-cancel-2"]) {
+    const placed = await repository.placeOrder({
+      client_ref: ref,
+      customer_name: "Mona",
+      customer_phone: "01001234567",
+      delivery_type: "pickup",
+      address: null,
+      payment_method: "cod",
+      lines: [{ product_id: listProduct.id, qty: 1 }],
+    });
+    await repository.resolveOrder(placed.order.id, { action: "cancel", reason: "Changed mind", ...STAFF });
+  }
   const cancelled = await repository.listOrders({ status: "cancelled" });
   assert.ok(cancelled.length >= 2);
   assert.ok(cancelled.every((order) => order.status === "cancelled"));
@@ -2288,7 +2309,8 @@ test("the POS list can be filtered by status and by what needs attention", async
   assert.ok(found.some((order) => order.id === all[0]!.id), "search matches the phone number");
 
   const counts = await repository.counts();
-  assert.equal(counts.total, all.length);
+  const allNow = await repository.listOrders({ status: "all", paymentStatus: "all", search: "" });
+  assert.equal(counts.total, allNow.length);
   assert.equal(
     counts.pending + counts.approved + counts.processing + counts.ready + counts.completed + counts.cancelled,
     counts.total,
@@ -2467,9 +2489,14 @@ test("a coupon's use is counted when an order is placed and given back when it i
   const approvedUsed = (await repository.listCoupons()).find((coupon) => coupon.code === "E2E10");
   assert.equal(approvedUsed?.used_count, 1, "approved order atomically consumes coupon usage");
 
-  await repository.resolveOrder(placed.order.id, { action: "cancel", reason: "Customer request", ...STAFF });
-  const given = (await repository.listCoupons()).find((coupon) => coupon.code === "E2E10");
-  assert.equal(given?.used_count, 0, "a cancelled approved order gives the coupon back");
+  // An approved order is a sale, and a sale is not cancelled (0095). Its coupon
+  // use therefore stays consumed — the refusal must not half-release it.
+  await assert.rejects(
+    repository.resolveOrder(placed.order.id, { action: "cancel", reason: "Customer request", ...STAFF }),
+    /Cannot cancel/,
+  );
+  const kept = (await repository.listCoupons()).find((coupon) => coupon.code === "E2E10");
+  assert.equal(kept?.used_count, 1, "a refused cancellation leaves the coupon usage exactly as the sale has it");
 
   await assert.rejects(
     repository.placeOrder({

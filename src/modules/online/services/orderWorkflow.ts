@@ -32,7 +32,7 @@ export type WorkflowRejection =
   | "already_completed"
   | "payment_unverified"
   | "payment_already_paid"
-  | "needs_void_capability"
+  | "sale_cancellation_disabled"
   | "backwards"
   | "not_approved"
   | "unknown";
@@ -84,7 +84,7 @@ export function orderProgress(status: OnlineOrderStatus): number | null {
  */
 export function availableActions(
   order: OnlineOrder,
-  abilities: { canVoidSale: boolean; canConfirmPayment: boolean },
+  abilities: { canConfirmPayment: boolean },
 ): OrderAction[] {
   const actions: OrderAction[] = [];
 
@@ -108,8 +108,9 @@ export function availableActions(
   ) {
     actions.push("payment_approve", "payment_reject");
   }
-  // Cancelling an approved order unwinds a sale, which is a manager's decision.
-  if (order.status !== "pending" && order.sale_id !== null && !abilities.canVoidSale) {
+  // An order that already became a sale cannot be cancelled: completed-sale
+  // cancellation is disabled (migration 0095). Its correction is a sales return.
+  if (order.sale_id !== null) {
     const index = actions.indexOf("cancel");
     if (index >= 0) actions.splice(index, 1);
   }
@@ -119,16 +120,13 @@ export function availableActions(
 /**
  * May this action be performed on this order?
  *
- * `abilities.canVoidSale` matters only for cancelling an order that already
- * became a sale: that path voids the sale and puts the stock back, so it needs
- * the same authority as voiding at the till. A cashier can therefore cancel a
- * pending order but not unwind an approved one — and the UI says so rather than
- * showing a button that fails.
+ * Cancelling an order that already became a sale is refused for everybody:
+ * completed-sale cancellation is disabled (migration 0095). A pending order can
+ * still be cancelled, which releases its holds.
  */
 export function checkAction(
   order: OnlineOrder,
   action: OrderAction,
-  abilities: { canVoidSale: boolean } = { canVoidSale: false },
 ): WorkflowCheck {
   if (order.status === "cancelled" && action !== "cancel") {
     return { ok: false, reason: "already_cancelled" };
@@ -148,8 +146,10 @@ export function checkAction(
     case "cancel": {
       if (order.status === "cancelled") return { ok: false, reason: "already_cancelled" };
       if (order.status === "completed") return { ok: false, reason: "already_completed" };
-      if (order.sale_id !== null && !abilities.canVoidSale) {
-        return { ok: false, reason: "needs_void_capability" };
+      // Completed-sale cancellation is disabled for everybody (migration 0095).
+      // The order keeps its sale; a sales return is the correction.
+      if (order.sale_id !== null) {
+        return { ok: false, reason: "sale_cancellation_disabled" };
       }
       return { ok: true, next: "cancelled" };
     }
@@ -192,7 +192,7 @@ export function requiresReason(action: OrderAction): boolean {
 
 /** The status an action produces, for optimistic UI. `null` = refused. */
 export function nextStatusOf(order: OnlineOrder, action: OrderAction): OnlineOrderStatus | null {
-  const check = checkAction(order, action, { canVoidSale: true });
+  const check = checkAction(order, action);
   return check.ok ? check.next : null;
 }
 

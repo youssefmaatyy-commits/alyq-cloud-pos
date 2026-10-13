@@ -16,7 +16,7 @@ Three layers decide every act, and a row is only complete when all three agree:
 | `adjust_stock` | inventory | — | `assertCanAdjustStock` <sub>stock.adjust</sub><br>`assertCanCorrectStock` <sub>stock.correct</sub><br>`assertCanRepairReservations` <sub>reservation.repair</sub> | public.inventory_adjust_stock — writes the movement and the product in one call | ✓ | ✓ | · | ✓ | · |
 | `sell` | sales | `/pos/sales`<br>`/pos` | `assertCanCompleteSale` <sub>sale.complete</sub> | public.pos_complete_sale — reprices server-side; sales has no direct-write policy | ✓ | ✓ | ✓ | ✓ | · |
 | `apply_discount` | sales | — | `assertCanDiscountSale` <sub>sale.discount</sub> | pos_complete_sale accepts a discount only from a caller public.can('apply_discount') allows | ✓ | ✓ | · | · | · |
-| `void_sale` | sales | — | `assertCanVoidSale` <sub>sale.void</sub><br>`assertCanDeleteSale` <sub>sale.delete</sub> | public.pos_void_sale — restocks once, refuses an already-voided sale | ✓ | ✓ | · | · | · |
+| `void_sale` | sales | — | `assertCanVoidSale` <sub>sale.void</sub><br>`assertCanDeleteSale` <sub>sale.delete</sub> | DISABLED (migration 0095): public.pos_void_sale refuses every caller; no screen offers a cancel. The capability is kept for the record. | ✓ | ✓ | · | · | · |
 | `confirm_payment` | sales | — | `assertCanConfirmPayment` <sub>sale.confirm_payment</sub> | public.pos_confirm_payment — idempotent, never changes totals | ✓ | ✓ | ✓ | ✓ | · |
 | `process_return` | returns | `/returns` | `assertCanCreateReturn` <sub>return.create</sub> | public.pos_process_return — restocks, caps at the sale's refundable amount | ✓ | ✓ | ✓ | ✓ | · |
 | `process_refund` | returns | `/refunds` | `assertCanRecordRefund` <sub>refund.record</sub> | public.pos_process_return writes the refund row; refund_records has no direct write | ✓ | ✓ | ✓ | ✓ | · |
@@ -31,7 +31,7 @@ Three layers decide every act, and a row is only complete when all three agree:
 | `view_audit_log` | settings | `/audit` | `assertCanViewAudit` <sub>audit.view</sub> | RLS select on audit_log — oversight roles only | ✓ | ✓ | · | · | · |
 | `manage_online_orders` | online | `/online/orders`<br>`/online/reservations`<br>`/online/reports` | — | public.can('manage_online_orders') in 0017×6, 0018×1, 0020×1 | ✓ | ✓ | ✓ | ✓ | · |
 | `manage_website` | online | `/online/website`<br>`/online/marketing`<br>`/online/content` | — | public.can('manage_website') in 0017×13, 0020×1 | ✓ | ✓ | · | · | · |
-| `edit_sale` | sales | — | `assertCanEditSale` <sub>sale.edit</sub> | no write path — a completed sale is immutable; corrections go through returns or a void | ✓ | ✓ | · | · | · |
+| `edit_sale` | sales | — | `assertCanEditSale` <sub>sale.edit</sub> | no write path — a completed sale is immutable; corrections go through returns (cancellation is disabled, 0095) | ✓ | ✓ | · | · | · |
 | `add_product` | products | — | `assertCanCreateProduct` <sub>product.create</sub><br>`assertCanCreateCategory` <sub>category.create</sub> | RLS insert on products — add_product | ✓ | ✓ | ✓ | ✓ | · |
 | `edit_product` | products | — | `assertCanEditProduct` <sub>product.edit</sub><br>`assertCanEditCategory` <sub>category.edit</sub><br>`assertCanToggleProduct` <sub>product.activate</sub> | RLS update on products — edit_product | ✓ | ✓ | ✓ | ✓ | · |
 | `change_price` | products | — | `assertCanChangePrice` <sub>product.price_change</sub> | RLS update on products — change_price is checked separately from edit_product | ✓ | ✓ | ✓ | ✓ | · |

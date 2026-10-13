@@ -17,7 +17,7 @@ import {
 } from "@/components/ui";
 import { Link } from "react-router-dom";
 import { usePos } from "../hooks/PosProvider";
-import { canVoidSale, canConfirmPayment } from "../permissions";
+import { canConfirmPayment } from "../permissions";
 import type { Sale } from "../types";
 import type { RefundRecord, SalesReturn } from "@/modules/returns/types";
 import { buildReceiptHtml, customerInfoIssue } from "../services/receipt";
@@ -25,17 +25,15 @@ import { printReceiptDocument } from "../services/hardware";
 import { salesReceiptStrings } from "../services/receiptStrings";
 import { loadBrand } from "@/lib/branding/brand";
 import { getSalesRepository } from "../data";
-import {
-  confirmPayment as confirmPaymentAction,
-  voidSale as voidSaleAction,
-} from "../services/saleService";
+import { confirmPayment as confirmPaymentAction } from "../services/saleService";
 import { getCurrentUser } from "@/modules/inventory/permissions";
 import { useReturns } from "@/modules/returns";
 import { ReturnFormModal } from "@/modules/returns/components/ReturnFormModal";
 
 /**
- * Sale detail — a receipt-style view with a print action and (for managers)
- * a void action that returns stock to inventory.
+ * Sale detail — a receipt-style view with print, payment confirmation and sales
+ * return actions. A completed sale is never cancelled here: completed-sale
+ * cancellation is disabled (migration 0095); corrections are sales returns.
  */
 export function SaleDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -51,8 +49,6 @@ export function SaleDetailPage() {
   const [detailRefreshToken, setDetailRefreshToken] = useState(0);
   const [saleReturns, setSaleReturns] = useState<SalesReturn[]>([]);
   const [saleRefunds, setSaleRefunds] = useState<RefundRecord[]>([]);
-  const [confirmVoid, setConfirmVoid] = useState(false);
-  const [voiding, setVoiding] = useState(false);
   const [confirmPay, setConfirmPay] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [returnOpen, setReturnOpen] = useState(false);
@@ -143,31 +139,6 @@ export function SaleDetailPage() {
     else if (outcome === "failed") toast.error(t("barcode.printBlocked"));
   }, [sale, isRTL, t, toast]);
 
-  const voidSale = useCallback(async () => {
-    if (!sale) return;
-    setVoiding(true);
-    try {
-      const user = getCurrentUser();
-      const repo = getSalesRepository();
-      // The service asserts `void_sale`; the page only decides whether to show
-      // the button. A denial arrives as AppError("FORBIDDEN") and is reported
-      // like any other failure to void.
-      await voidSaleAction(sale.id, {
-        user_id: user.id,
-        user_name: user.name,
-        reason: null,
-      });
-      toast.success(t("pos.voided"));
-      setConfirmVoid(false);
-      await refreshSales();
-      const updated = (await repo.listSales()).find((s) => s.id === sale.id) ?? null;
-      setSale(updated);
-    } catch {
-      toast.error(t("pos.saleFailed"));
-    } finally {
-      setVoiding(false);
-    }
-  }, [sale, t, toast, refreshSales]);
 
   const confirmPayment = useCallback(async () => {
     if (!sale) return;
@@ -237,7 +208,6 @@ export function SaleDetailPage() {
     );
   }
 
-  const canVoid = canVoidSale() && sale.status !== "voided";
   // Authorized action: any still-pending InstaPay payment can be confirmed.
   const awaitingInstaPay =
     sale.status !== "voided" &&
@@ -264,11 +234,6 @@ export function SaleDetailPage() {
             {canReturn && sale.status !== "voided" ? (
               <Button variant="secondary" onClick={() => setReturnOpen(true)}>
                 ↩ {t("returns.newReturn")}
-              </Button>
-            ) : null}
-            {canVoid ? (
-              <Button variant="danger" onClick={() => setConfirmVoid(true)}>
-                {t("pos.void")}
               </Button>
             ) : null}
             <Button onClick={() => void print()}>🖨 {t("pos.printReceipt")}</Button>
@@ -554,17 +519,6 @@ export function SaleDetailPage() {
           }}
         />
       )}
-
-      <ConfirmDialog
-        open={confirmVoid}
-        onCancel={() => setConfirmVoid(false)}
-        onConfirm={() => void voidSale()}
-        title={t("pos.void")}
-        body={t("pos.voidConfirm")}
-        confirmLabel={t("pos.void")}
-        tone="danger"
-        loading={voiding}
-      />
 
       <ConfirmDialog
         open={confirmPay}

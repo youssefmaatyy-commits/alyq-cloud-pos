@@ -25,7 +25,11 @@ export function canApplyDiscount(user: InventoryUser = getCurrentUser()): boolea
   return canActAs(user, "apply_discount");
 }
 
-/** Voiding a completed sale is restricted to managers / admins. */
+/**
+ * The `void_sale` capability predicate. It records the matrix's answer only:
+ * completed-sale cancellation is disabled (migration 0095), and no screen,
+ * service or RPC acts on this predicate. Do not use it to show a cancel control.
+ */
 export function canVoidSale(user: InventoryUser = getCurrentUser()): boolean {
   return canActAs(user, "void_sale");
 }

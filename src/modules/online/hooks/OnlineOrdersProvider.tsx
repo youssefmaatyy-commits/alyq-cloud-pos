@@ -79,7 +79,6 @@ export interface OnlineOrdersContextValue {
   actionsFor: (order: OnlineOrder) => OrderAction[];
 
   canManage: boolean;
-  canVoidSale: boolean;
   canVerifyPayment: boolean;
 
   /** The sale an approved order created — the link into the register. */
@@ -142,7 +141,6 @@ export function OnlineOrdersProvider({ children }: { children: ReactNode }) {
   const canManage = canActAs(user, "manage_online_orders");
   // Unwinding an approved order voids its sale and restores the stock, so it
   // needs the same authority as voiding at the till.
-  const canVoidSale = canActAs(user, "void_sale");
   const canVerifyPayment = canActAs(user, "confirm_payment");
 
   const actor = useMemo(() => getCurrentUser(), [user]);
@@ -284,8 +282,8 @@ export function OnlineOrdersProvider({ children }: { children: ReactNode }) {
 
   const actionsFor = useCallback(
     (order: OnlineOrder): OrderAction[] =>
-      availableActions(order, { canVoidSale, canConfirmPayment: canVerifyPayment }),
-    [canVoidSale, canVerifyPayment],
+      availableActions(order, { canConfirmPayment: canVerifyPayment }),
+    [canVerifyPayment],
   );
 
   const saleFor = useCallback(
@@ -339,7 +337,6 @@ export function OnlineOrdersProvider({ children }: { children: ReactNode }) {
       perform,
       actionsFor,
       canManage,
-      canVoidSale,
       canVerifyPayment,
       saleFor,
       sales,
@@ -366,7 +363,6 @@ export function OnlineOrdersProvider({ children }: { children: ReactNode }) {
       perform,
       actionsFor,
       canManage,
-      canVoidSale,
       canVerifyPayment,
       saleFor,
       sales,

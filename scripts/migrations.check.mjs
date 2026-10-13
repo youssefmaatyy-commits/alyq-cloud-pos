@@ -72,6 +72,7 @@ const FACTORY_RESET_0091_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "
 const FACTORY_RESET_0093_MIGRATION_FILE = path.join(ROOT, "supabase", "migrations", "0093_factory_reset_notification_cleanup_repair.sql");
 const PUSH_0092_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "push_0092_scenarios.sql");
 const WEB_PUSH_0094_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "web_push_0094_scenarios.sql");
+const SALE_CANCEL_0095_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "sale_cancellation_fulfilment_0095_scenarios.sql");
 const SEED_FILE = path.join(ROOT, "supabase", "seed.sql");
 const SRC_DIR = path.join(ROOT, "src");
 
@@ -505,6 +506,20 @@ if (!VERIFY_ONLY) {
       console.log(`  ${c.red("✗")} a focused Migration 0094 Web Push scenario failed`);
       if (error?.stack) console.log(c.dim(error.stack));
       failures.push({ name: "Migration 0094 Web Push scenarios", phase: "scenario", error: String(error.message) });
+    }
+  }
+
+  if (failures.length === 0 && runScenarios) {
+    console.log(c.bold("\nMigration 0095 focused scenarios (completed-sale cancellation, fulfilment stock, variants)"));
+    try {
+      const sql = fs.readFileSync(SALE_CANCEL_0095_SCENARIOS_FILE, "utf8");
+      await driver.exec(sql, "sale_cancellation_fulfilment_0095_scenarios.sql");
+      console.log(`  ${c.green("✓")} every focused Migration 0095 scenario passed`);
+      for (const notice of sql.matchAll(/raise notice '([^']+)'/gi)) console.log(c.dim(`      ${notice[1]}`));
+    } catch (error) {
+      console.log(`  ${c.red("✗")} a focused Migration 0095 scenario failed`);
+      if (error?.stack) console.log(c.dim(error.stack));
+      failures.push({ name: "Migration 0095 scenarios", phase: "scenario", error: String(error.message) });
     }
   }
 

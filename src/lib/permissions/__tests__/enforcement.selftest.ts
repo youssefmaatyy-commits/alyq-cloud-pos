@@ -336,7 +336,6 @@ const FUNNELS: { name: string; call: () => unknown | Promise<unknown> }[] = [
   { name: "catalogService.deleteCategory", call: () => catalogService.deleteCategory("cat-x", { products: [], categories: [] }) },
   { name: "catalogService.setProductActive", call: () => catalogService.setProductActive("p-x", false) },
   { name: "catalogService.deleteProduct", call: () => catalogService.deleteProduct("p-x") },
-  { name: "saleService.voidSale", call: () => saleService.voidSale("sale-x", {} as never) },
   { name: "saleService.confirmPayment", call: () => saleService.confirmPayment("sale-x", {} as never) },
   { name: "saleService.editSale", call: () => saleService.editSale("sale-x", {} as never) },
   { name: "saleService.deleteSale", call: () => saleService.deleteSale("sale-x") },
@@ -469,6 +468,34 @@ test("sales are immutable for everyone; product deletion follows the lifecycle",
   signInAs("viewer");
   assert.equal(await refusalCode(() => saleService.editSale("sale-x", {} as never)), "FORBIDDEN");
   assert.equal(await refusalCode(() => catalogService.deleteProduct("p-x")), "FORBIDDEN");
+});
+
+test("completed-sale cancellation is disabled for every role, admin included (0095)", async () => {
+  installStorageStub();
+  const input = { user_id: "u-x", user_name: "Tester", reason: "entry error" };
+  for (const role of APP_ROLES) {
+    signInAs(role);
+    // Refused on the rule itself, not on the capability: no role reaches a
+    // repository, so no RPC is called and no sale is touched.
+    assert.equal(
+      await refusalCode(() => saleService.voidSale("sale-x", input)),
+      "VALIDATION",
+      `${role} is refused a cancellation of a completed sale`,
+    );
+  }
+});
+
+test("no screen offers to cancel a completed sale or an approved online order (0095)", () => {
+  const root = repoRoot();
+  const read = (file: string): string => fs.readFileSync(path.join(root, file), "utf8");
+  const detail = read("src/modules/pos/pages/SaleDetailPage.tsx");
+  assert.equal(detail.includes("voidSaleAction"), false, "the sale page does not import the cancellation");
+  assert.equal(detail.includes('t("pos.void")'), false, "the sale page renders no void button");
+  assert.equal(detail.includes("confirmVoid"), false, "the sale page has no void confirmation");
+
+  const workflow = read("src/modules/online/services/orderWorkflow.ts");
+  assert.ok(workflow.includes("sale_cancellation_disabled"), "the workflow refuses cancelling a converted order");
+  assert.equal(workflow.includes("needs_void_capability"), false, "the capability route to cancellation is gone");
 });
 
 test("the audit vocabulary and the register agree about who may read the trail", () => {

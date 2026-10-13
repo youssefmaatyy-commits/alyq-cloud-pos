@@ -6,7 +6,7 @@
  * made before rendering a button: `canSell` in the provider's state, and a hidden
  * Void control on the detail page. Hiding a button is a courtesy. A keyboard
  * shortcut, a stale tab whose role changed, a provider callback invoked from a
- * test, or a hand-written call to `getSalesRepository().voidSale(…)` walked
+ * test, or a hand-written call to the repository's cancellation walked
  * straight past all of it.
  *
  * So the mutations live here, and each one asserts its capability *first*, using
@@ -15,21 +15,22 @@
  *   · completing a sale needs `sell`, and needs `apply_discount` as well when the
  *     cart carries a discount — checked against the input, not against what the
  *     cart setter allowed earlier, because the input is what gets written;
- *   · voiding needs `void_sale`; confirming a pending InstaPay needs
- *     `confirm_payment`.
+ *   · confirming a pending InstaPay needs `confirm_payment`. Cancelling a
+ *     completed sale is disabled for everybody (see `voidSale`).
  *
  * Two actions in the register have no implementation on purpose, and saying so
  * here is the point of them:
  *
  *   · **a completed sale cannot be edited.** `sales`, `sale_items` and
  *     `sale_payments` refuse every direct write for `authenticated` (migration
- *     0007), and no RPC updates a finished sale. A correction is a return, a
- *     refund or a void — each of which leaves a trail. `editSale()` therefore
+ *     0007), and no RPC updates a finished sale. A correction is a return or a
+ *     refund — each of which leaves a trail. Cancelling a completed sale is
+ *     disabled altogether (migration 0095). `editSale()` therefore
  *     refuses for everybody, admin included, and `edit_sale` stays in the matrix
  *     as the gate for the day an amendment path is actually built.
- *   · **a sale cannot be deleted.** Same reason, and the same answer: `void_sale`
- *     is the sanctioned reversal, and it keeps the row, the number and the stock
- *     movement.
+ *   · **a sale cannot be deleted.** Same reason, and the same answer: a sales
+ *     return is the sanctioned correction, and it keeps the row, the number and
+ *     the stock movement.
  *
  * In live mode these are the second of three layers: the RPC re-checks
  * `public.can()` and the tables have no write policy at all, so a client that
@@ -98,7 +99,11 @@ export function assertCanDiscountSale(): void {
   assertSensitiveAction("sale.discount");
 }
 
-/** Voiding is the sanctioned reversal of a completed sale. */
+/**
+ * Completed-sale cancellation is disabled (migration 0095). The guard is kept so
+ * the register entry `sale.void` stays wired to a real function, but the only
+ * thing it can do is refuse — see `voidSale`.
+ */
 export function assertCanVoidSale(): void {
   assertSensitiveAction("sale.void");
 }
@@ -183,28 +188,23 @@ export async function completeSale(
   return sale;
 }
 
-/** Void a completed sale, restocking once and keeping the record. */
-export async function voidSale(id: string, input: VoidSaleInput): Promise<Sale> {
-  assertCanVoidSale();
-  const sale = await getSalesRepository().voidSale(id, input);
-  // The reversal of a financial record, so the trail keeps the reason, the
-  // amount taken out of revenue and how far the money had got (a void of a paid
-  // invoice is a different event from a void of a pending one — one of them
-  // still needs the cash back out of the drawer).
-  void recordAudit({
-    action: "sale.voided",
-    entity: "sale",
-    entity_id: sale.id,
-    entity_label: sale.sale_number,
-    details: {
-      total: sale.total,
-      items: sale.items.length,
-      payment_status: sale.payment_status,
-      source: sale.source ?? "pos",
-      reason: input.reason ?? null,
-    },
-  });
-  return sale;
+/**
+ * Completed-sale cancellation is disabled.
+ *
+ * A sale that has been completed is a financial record that already left the
+ * till, the stock and the shift totals. It is corrected by a sales return
+ * (`pos_process_return`), which keeps the refund, the stock movement and the
+ * audit trail. This function never reaches the repository: no RPC is called and
+ * no audit row is written, so an old bookmark, a stale tab or a hand-written
+ * call refuses without modifying the sale. Historical voided sales remain
+ * readable everywhere they were before.
+ */
+export async function voidSale(_id: string, _input: VoidSaleInput): Promise<never> {
+  throw new AppError(
+    "VALIDATION",
+    "A completed sale cannot be cancelled. Record a sales return instead.",
+    "sale",
+  );
 }
 
 /** Confirm a pending InstaPay payment. Totals, items and stock are untouched. */
@@ -219,23 +219,23 @@ export async function confirmPayment(id: string, input: ConfirmPaymentInput): Pr
  * A completed sale is a financial record: editing one would silently disagree
  * with the receipt already in the customer's hand, the stock already moved, and
  * the shift summary already counted. The sanctioned corrections are a return
- * (`return.create`), a refund (`refund.settle`) or a void (`sale.void`).
+ * (`return.create`) or a refund (`refund.settle`); cancelling is disabled.
  */
 export async function editSale(_id: string, _patch: unknown): Promise<never> {
   assertCanEditSale();
   throw new AppError(
     "VALIDATION",
-    "A completed sale cannot be edited. Record a return, or void the sale.",
+    "A completed sale cannot be edited. Record a sales return instead.",
     "sale",
   );
 }
 
-/** Refused for everybody — see `editSale`. Voiding keeps the trail; deleting erases it. */
+/** Refused for everybody — see `editSale`. Deleting would erase the trail. */
 export async function deleteSale(_id: string): Promise<never> {
   assertCanDeleteSale();
   throw new AppError(
     "VALIDATION",
-    "A sale cannot be deleted. Void it instead, which keeps the record and the stock movement.",
+    "A sale cannot be deleted. Record a sales return instead, which keeps the record and the stock movement.",
     "sale",
   );
 }

@@ -7,7 +7,6 @@ import type {
   Sale,
   SaleItem,
   SalePayment,
-  VoidSaleInput,
 } from "../types";
 import type { SaleListQuery, SalesRepository } from "./repository";
 import { SALES_ROW_CAP } from "./repository";
@@ -418,24 +417,6 @@ export class SupabaseSalesRepository implements SalesRepository {
         p_sale_id: id,
         p_user_id: input.user_id,
         p_user_name: input.user_name,
-      });
-      if (error) throw toAppError(error);
-      const saleId = (data as { sale_id?: string } | null)?.sale_id ?? id;
-      return this.getSale(saleId);
-    } catch (error) {
-      if (error instanceof AppError) throw error;
-      throw toAppError(error);
-    }
-  }
-
-  async voidSale(id: string, input: VoidSaleInput): Promise<Sale> {
-    try {
-      const client = this.require();
-      const { data, error } = await client.rpc("pos_void_sale", {
-        p_sale_id: id,
-        p_user_id: input.user_id,
-        p_user_name: input.user_name,
-        p_reason: input.reason,
       });
       if (error) throw toAppError(error);
       const saleId = (data as { sale_id?: string } | null)?.sale_id ?? id;

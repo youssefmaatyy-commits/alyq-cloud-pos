@@ -74,7 +74,7 @@ export const SENSITIVE_ACTIONS: readonly SensitiveAction[] = [
     capability: "void_sale",
     guard: "assertCanVoidSale",
     file: "src/modules/pos/services/saleService.ts",
-    db: "public.pos_void_sale — restocks once, refuses an already-voided sale",
+    db: "DISABLED (migration 0095): public.pos_void_sale refuses every caller and writes nothing. Completed sales are corrected by returns.",
   },
   {
     key: "sale.confirm_payment",

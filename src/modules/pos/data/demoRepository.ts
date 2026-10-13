@@ -4,7 +4,6 @@ import type {
   ConfirmPaymentInput,
   Sale,
   SaleItem,
-  VoidSaleInput,
 } from "../types";
 import { AppError } from "@/modules/products/data/repository";
 import { getDemoRepository } from "@/modules/products/data/demoRepository";
@@ -567,41 +566,6 @@ export class DemoSalesRepository implements SalesRepository {
     return delay(sale);
   }
 
-  async voidSale(id: string, input: VoidSaleInput): Promise<Sale> {
-    const sales = [...this.sales];
-    const index = sales.findIndex((s) => s.id === id);
-    if (index === -1) throw new AppError("NOT_FOUND");
-    const sale = sales[index];
-    if (sale.status === "voided") return delay(sale);
-
-    // Return stock for every line with a reversing movement.
-    for (const item of sale.items) {
-      const current = await getDemoRepository().listProducts();
-      await applyDemoAdjustment(
-        {
-          productId: item.product_id,
-          type: "adjustment_in",
-          reason: "other",
-          quantity: item.quantity,
-          notes: `Void of ${sale.sale_number}${input.reason ? `: ${input.reason}` : ""}`,
-          userId: input.user_id,
-          userName: input.user_name,
-        },
-        current,
-      );
-    }
-
-    const updated: Sale = {
-      ...sale,
-      status: "voided",
-      voided_at: nowIso(),
-      void_reason: input.reason,
-    };
-    sales[index] = updated;
-    this.sales = sales;
-    this.persist();
-    return delay(updated);
-  }
 }
 
 let singleton: DemoSalesRepository | null = null;

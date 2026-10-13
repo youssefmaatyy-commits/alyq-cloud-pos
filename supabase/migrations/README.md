@@ -181,7 +181,7 @@ The only writers are the `security definer` RPCs, which run as the table owner:
 | --- | --- |
 | `pos_complete_sale(jsonb)` | `sales`, `sale_items`, `sale_payments`, `stock_movements`, product stock |
 | `pos_confirm_payment(jsonb)` | `sale_payments`, `sales.payment_status` |
-| `pos_void_sale(...)` | `sales.status`, restores stock via `stock_movements` |
+| `pos_void_sale(...)` | **Disabled since 0095** — refuses every caller with `feature_not_supported` and writes nothing. Corrections are returns. |
 | `pos_process_return(jsonb)` | `sales_returns`, `return_items`, `refund_records`, restores stock via `stock_movements` |
 | `pos_settle_refund(uuid, text, text, text, text)` | `refund_records.status` + settlement stamp, and the `refund.settled` / `refund.rejected` audit row |
 

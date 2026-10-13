@@ -58,6 +58,7 @@ import { AppError } from "@/modules/products/data/repository";
 import { completeSale } from "@/modules/pos/services/saleService";
 import type { CompleteSaleInput } from "@/modules/pos/types";
 import { voidSale } from "@/modules/pos/services/saleService";
+import { getSalesRepository } from "@/modules/pos/data";
 import { loadCatalog, saveProduct } from "@/modules/products/services/catalogService";
 import { adjustStock } from "@/modules/inventory/services/inventoryService";
 import { getAuditRepository } from "@/modules/audit/data";
@@ -356,7 +357,7 @@ test("an undiscounted sale writes no discount entry", async () => {
   );
 });
 
-test("a void is recorded with the reason and the amount taken out of revenue", async () => {
+test("cancelling a completed sale is refused and writes no audit row (0095)", async () => {
   signInAs("admin");
   const { products } = await loadCatalog();
   const target = products.find((p) => p.sku === "ALYQ-1002");
@@ -376,19 +377,24 @@ test("a void is recorded with the reason and the amount taken out of revenue", a
   });
 
   const before = await mark();
-  await voidSale(sale.id, {
-    user_id: "u-admin",
-    user_name: "ALYQ Admin",
-    reason: "Customer walked out before paying",
-  });
+  await assert.rejects(
+    voidSale(sale.id, {
+      user_id: "u-admin",
+      user_name: "ALYQ Admin",
+      reason: "Customer walked out before paying",
+    }),
+    /cannot be cancelled/,
+  );
   const written = await entriesSince(before);
-
-  const recorded = await expectAction(written, "sale.voided");
-  assert.equal(recorded.entity_id, sale.id);
-  assert.equal(recorded.entity_label, sale.sale_number);
-  assert.equal(recorded.details.reason, "Customer walked out before paying");
-  assert.equal(recorded.details.total, sale.total);
-  assert.equal(recorded.details.items, 1);
+  assert.equal(
+    written.some((e) => e.action === "sale.voided"),
+    false,
+    "a refused cancellation must not leave a sale.voided row that claims it happened",
+  );
+  // The sale itself is untouched: still completed, still counted.
+  const after = await getSalesRepository().getSale(sale.id);
+  assert.equal(after.status, "completed");
+  assert.equal(after.voided_at ?? null, null);
 });
 
 test("a price move is recorded with the value before and after", async () => {
