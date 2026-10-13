@@ -11,7 +11,7 @@ const canonical = () => document.querySelector('link[rel="canonical"]')?.getAttr
 let passed = 0;
 function check(name, result) { assert.ok(result, name); console.log(`  ✓ ${++passed}. ${name}`); }
 const go = async (hash, id) => {
-  await navigate(hash, 320);
+  await navigate(hash);
   await waitFor(() => testid(id), { label: `${hash} renders ${id}` });
 };
 
@@ -82,6 +82,7 @@ await waitFor(() => document.querySelector('.v2-track-form [role="alert"]'),
 check("tracking requires a phone even when the reference came from an old link",
   !testid("v2-tracked-order") && Boolean(document.querySelector('.v2-track-form [role="alert"]')));
 await go("#/store/v2/account?tab=orders&token=secret", "v2-account");
+await waitFor(() => dom.window.location.hash === "#/store/account?tab=orders" && robots() === "noindex, nofollow", { label: "account redirect and private indexing committed" });
 check("old account tab query survives redirect without exposing private history",
   dom.window.location.hash === "#/store/account?tab=orders" && robots() === "noindex, nofollow");
 await go("#/store/v2/does-not-exist?phone=01012345678", "v2-home");
@@ -181,7 +182,7 @@ check("missing product stays inside V2, shows a noindex not-found state and no o
   await go("#/store", "v2-home");
 }
 
-await navigate("#/login", 320);
+await navigate("#/login");
 await signInAs("admin");
 await go("#/online/website?tab=v2", "v2-studio");
 check("Admin opens saved design at the canonical public URL, not a draft or preview route",

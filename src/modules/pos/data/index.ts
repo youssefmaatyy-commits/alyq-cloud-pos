@@ -1,4 +1,4 @@
-import { getSupabaseClient, isSupabaseConfigured } from "@/lib/supabase/client";
+import { getRepositoryMode } from "@/lib/supabase/client";
 import { DemoSalesRepository, getDemoSalesRepository } from "./demoRepository";
 import { SupabaseSalesRepository, getSupabaseSalesRepository } from "./supabaseRepository";
 import type { SalesRepository } from "./repository";
@@ -6,14 +6,14 @@ import type { SalesRepository } from "./repository";
 export type SalesMode = "supabase" | "demo";
 
 export function getSalesRepository(): SalesRepository {
-  if (isSupabaseConfigured && getSupabaseClient()) {
+  if (getRepositoryMode() === "supabase") {
     return getSupabaseSalesRepository();
   }
   return getDemoSalesRepository();
 }
 
 export function getSalesMode(): SalesMode {
-  return isSupabaseConfigured && getSupabaseClient() ? "supabase" : "demo";
+  return getRepositoryMode() === "supabase" ? "supabase" : "demo";
 }
 
 export { DemoSalesRepository, SupabaseSalesRepository };

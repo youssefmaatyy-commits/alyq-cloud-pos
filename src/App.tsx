@@ -1,3 +1,6 @@
+import { useEffect, useState } from "react";
+import { applicationConfig, getRepositoryMode } from "@/lib/supabase/client";
+import { ApplicationConfigurationScreen } from "@/lib/config/ApplicationConfigurationScreen";
 import { HashRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { I18nProvider } from "@/lib/i18n/I18nProvider";
 import {
@@ -198,15 +201,21 @@ function LegacyStaffRedirect({ target }: { target?: string } = {}) {
 }
 
 export default function App() {
+  // This gate precedes Auth, storefront and every business provider, including
+  // direct login/POS/admin/checkout deep links. It never exposes env values.
+  if (!applicationConfig.ok) return <ApplicationConfigurationScreen code={applicationConfig.code} />;
+  try { getRepositoryMode(); } catch { return <ApplicationConfigurationScreen code="SUPABASE_CLIENT_UNAVAILABLE" />; }
   return (
     // Outermost, and therefore outside the providers too: a crash while the i18n
     // or auth provider renders is still a crash, and this is the screen that
     // catches it. Before this the whole tree could unmount to a blank page.
     <ErrorBoundary>
+      {applicationConfig.mode === "demo" ? <div role="status" data-testid="application-mode-banner" className="sticky top-0 z-[100] bg-amber-300 px-4 py-2 text-center text-sm font-bold text-black">DEMO — Local test data. Not for real transactions. · نسخة تجريبية</div> : null}
       <I18nProvider>
         <AuthProvider>
           <ToastProvider>
             <HashRouter>
+              <RouteLocationMarker />
               <Routes>
                 <Route path="/login" element={<LoginRoute />} />
                 {/* Password recovery is public by definition: the person using it
@@ -332,6 +341,14 @@ export default function App() {
       </I18nProvider>
     </ErrorBoundary>
   );
+}
+
+/** Safe rendered-route signal for diagnostics and condition-based UI tests. */
+function RouteLocationMarker() {
+  const location = useLocation();
+  const [committed, setCommitted] = useState("");
+  useEffect(() => { setCommitted(location.pathname); }, [location.pathname]);
+  return <span hidden data-testid="route-location" data-path={committed} />;
 }
 
 /** The signed-in application: session guard, providers, shell, screens. */

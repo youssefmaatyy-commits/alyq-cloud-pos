@@ -1,6 +1,8 @@
 /// <reference types="vite/client" />
 
 interface ImportMetaEnv {
+  readonly VITE_APP_MODE?: "production" | "demo";
+  readonly VITE_RELEASE_ENVIRONMENT?: "production" | "staging" | "preview" | "demo";
   readonly VITE_SUPABASE_URL?: string;
   readonly VITE_SUPABASE_ANON_KEY?: string;
   readonly VITE_CURRENCY?: string;

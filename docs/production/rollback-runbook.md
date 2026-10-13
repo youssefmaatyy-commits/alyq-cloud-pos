@@ -14,7 +14,9 @@ Stop at the failed file. Determine whether its transaction committed and compare
 
 ### Web regression
 
-Redeploy the prior immutable artifact and matching client-safe configuration; invalidate HTML/bootstrap cache only. Verify backend/schema compatibility and smoke tests.
+Re-promote only the prior **verified Production** immutable artifact with its matching public backend configuration under the protected release operator/approval process; invalidate HTML/bootstrap cache only. Verify backend/schema compatibility, authenticated Health SHA/time/environment and the public read-only catalogue probe. Never return to an old missing-variable artifact that implicitly boots Demo. If the previous artifact cannot meet the explicit Production safety contract, retain the last verified deployment or controlled unavailable screen and forward-fix instead.
+
+This release-safety patch adds **no database migration**, edits no historical migration and requires no production data rewrite. `0001`–`0094` remain unchanged. Keep existing local Demo data isolated: there is no automatic Demo→Production data conversion, seeding or restore. Switching mode requires rebuilding, not changing live variables alone. Do not delete browser storage or real financial records as a rollback shortcut. Production promotion has not been executed by this audit; reverting the PR before deployment requires no database action.
 
 ### Desktop regression
 

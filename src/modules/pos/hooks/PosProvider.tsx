@@ -15,9 +15,8 @@ import {
   type ProductVariant,
 } from "@/modules/products/variants";
 import { AppError } from "@/modules/products/data/repository";
-import { getDemoRepository } from "@/modules/products/data/demoRepository";
-import { getSupabaseRepository } from "@/modules/products/data/supabaseRepository";
-import { isSupabaseConfigured, getSupabaseClient } from "@/lib/supabase/client";
+import { getCatalogRepository } from "@/modules/products/data";
+import { getSupabaseClient } from "@/lib/supabase/client";
 import { useRealtimeWatch } from "@/lib/supabase/useRealtimeWatch";
 import { useBranch } from "@/lib/branch";
 import { useAuth } from "@/lib/auth";
@@ -277,10 +276,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
   // Catalog load — extracted so the POS page can refresh after catalog
   // changes (e.g. a demo reset, an inventory adjustment or a new product).
   const loadCatalog = useCallback(async () => {
-    const repo =
-      isSupabaseConfigured && getSupabaseClient()
-        ? getSupabaseRepository()
-        : getDemoRepository();
+    const repo = getCatalogRepository();
     try {
       const [list, categoryList, combinations, website] = await Promise.all([
         repo.listProducts(),

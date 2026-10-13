@@ -1,0 +1,53 @@
+name: Promote Production
+# Never PR code with production credentials. Only a completed CI run on main
+# may request approval in the protected Vercel Production GitHub environment.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+permissions:
+  contents: read
+  checks: read
+  actions: read
+  deployments: read
+concurrency:
+  group: vercel-production
+  cancel-in-progress: false
+jobs:
+  promote:
+    name: Verified Production promotion
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_repository.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: vercel-production
+    env:
+      RELEASE_CI_RUN_ID: ${{ github.event.workflow_run.id }}
+      RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
+      VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+      # These are intentionally public. Server credentials are NEVER provided.
+      VITE_APP_MODE: production
+      VITE_RELEASE_ENVIRONMENT: production
+      VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+      VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
+      ALLOW_EMPTY_STOREFRONT: ${{ vars.ALLOW_EMPTY_STOREFRONT || 'false' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Rebuild and rerun the complete gate on the approved exact SHA. No test
+      # ever consumes the production Supabase pair: all writers use Demo/stubs.
+      - run: npm run test:all
+      - run: npm run production:catalogue
+      - name: Stage candidate and promote only after fresh GitHub/artifact checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: node scripts/vercel-release.mjs

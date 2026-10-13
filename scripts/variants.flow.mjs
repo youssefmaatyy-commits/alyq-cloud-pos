@@ -1,3 +1,4 @@
+import { waitForRoute } from "./lib/ui-waits.mjs";
 /**
  * Variant Test Ring E2E (Phase 43) — the acceptance example, driven through the
  * real bundle in jsdom, demo mode, exactly as an admin would:
@@ -93,7 +94,7 @@ process.on("unhandledRejection", (reason) => {
 });
 dom.window.open = () => ({ document: { open() {}, write() {}, close() {} }, focus() {}, print() {} });
 
-await import(bundleFileUrl());
+const { flushSync } = await import(bundleFileUrl());
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -109,14 +110,14 @@ async function waitFor(condition, { label, timeout = 15_000, interval = 150 } = 
   }
 }
 
-const navigate = async (hash, settle = 400) => {
+const navigate = async (hash) => {
   dom.window.location.hash = hash;
-  dom.window.dispatchEvent(new dom.window.HashChangeEvent("hashchange"));
-  await sleep(settle);
+  flushSync(() => dom.window.dispatchEvent(new dom.window.HashChangeEvent("hashchange")));
+  await waitForRoute(dom, hash);
 };
 
 const clickEl = (el) =>
-  el.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  flushSync(() => el.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true })));
 const click = (label, scope = document) => {
   const el = [...scope.querySelectorAll("button, a")].find((n) =>
     (n.textContent ?? "").trim().includes(label),
@@ -135,9 +136,9 @@ const clickExact = (label, scope = document) => {
 };
 const setNative = (input, proto) => (value) => {
   Object.getOwnPropertyDescriptor(proto.prototype, "value").set.call(input, value);
-  input.dispatchEvent(
+  flushSync(() => input.dispatchEvent(
     new dom.window.Event(input.tagName === "SELECT" ? "change" : "input", { bubbles: true }),
-  );
+  ));
 };
 /** Set any field by selector: input, textarea or select. */
 const setField = (selector, value) => {
@@ -175,8 +176,7 @@ const isSignedIn = () => bodyText().includes("Signed in as");
 const signOut = async () => {
   if (!isSignedIn()) return;
   click("Sign out");
-  for (let i = 0; i < 20 && !usernameField(); i += 1) await sleep(200);
-  await sleep(200);
+  await waitFor(() => usernameField() && !isSignedIn(), { label: "sign-out and Login to finish" });
 };
 const signInAs = async (username, password = DEMO_PASSWORD) => {
   await signOut();
@@ -504,7 +504,7 @@ async function main() {
       input,
       value,
     );
-    input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+    flushSync(() => input.dispatchEvent(new dom.window.Event("input", { bubbles: true })));
   };
   fillShift(shiftInputs.find((i) => !i.readOnly && i.type === "text"), "Main branch");
   fillShift(shiftInputs.find((i) => i.inputMode === "decimal"), "100");
@@ -545,6 +545,7 @@ async function main() {
       (b) => (b.getAttribute("aria-label") ?? "").startsWith(`${label} — `),
     );
   assert.ok(colorChip("Gold") && colorChip("Silver"), "both colours are offered");
+  await waitFor(() => sizeButton("Gold / 17"), { label: "Gold / 17 size grid after colour effect" });
   assert.ok(sizeButton("Gold / 17"), "Gold / 17 is a shelf in the grid");
   assert.equal(
     (sizeButton("Gold / 17").getAttribute("aria-label") ?? "").endsWith("2"),
@@ -553,6 +554,7 @@ async function main() {
   );
   assert.ok(!sizeButton("Silver / 17"), "the grid never mixes two colours' sizes");
 
+  await waitFor(() => sizeButton("Gold / 17"), { label: "exact shelf after picker colour commit" });
   clickEl(sizeButton("Gold / 17")); // 1st
   await waitFor(() => !picker(), { label: "the picker to close after the first pick" });
   const qtyOnLine = () =>
@@ -564,6 +566,7 @@ async function main() {
   await waitFor(() => row(), { label: "the ring row again" });
   clickEl(row());
   await waitFor(() => picker(), { label: "the picker again" });
+  await waitFor(() => sizeButton("Gold / 17"), { label: "exact shelf after picker colour commit" });
   clickEl(sizeButton("Gold / 17")); // 2nd
   await waitFor(() => qtyOnLine() === "2", { label: "the cart line to show two rings" });
 
@@ -571,6 +574,7 @@ async function main() {
   await waitFor(() => row(), { label: "the ring row a third time" });
   clickEl(row());
   await waitFor(() => picker(), { label: "the picker a third time" });
+  await waitFor(() => sizeButton("Gold / 17"), { label: "exact shelf after picker colour commit" });
   clickEl(sizeButton("Gold / 17"));
   await sleep(500);
   assert.ok(picker(), "the refused pick leaves the picker open — nothing was added");
@@ -708,7 +712,7 @@ async function main() {
   // 9 ─ the reports screen reads the shelves too: the Variants tab renders the
   //      per-combination performance from the rows this device holds (demo has
   //      no database, so this exercises the fallback that mirrors the RPC).
-  await navigate("#/reports/advanced", 700);
+  await navigate("#/reports/advanced");
   const tabButton = [...document.querySelectorAll("button")].find(
     (b) => (b.textContent ?? "").trim().startsWith("Variants"),
   );

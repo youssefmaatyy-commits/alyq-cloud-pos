@@ -1,3 +1,4 @@
+import { waitForCondition as waitFor, waitForRoute } from "./lib/ui-waits.mjs";
 /**
  * Product lifecycle E2E — permanent delete vs archive (Phase: safe delete flow).
  *
@@ -105,30 +106,21 @@ process.on("unhandledRejection", (reason) => {
 });
 dom.window.open = () => ({ document: { open() {}, write() {}, close() {} }, focus() {}, print() {} });
 
-await import(bundleFileUrl());
+const { flushSync } = await import(bundleFileUrl());
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const bodyText = () => document.body.textContent ?? "";
 
-async function waitFor(condition, { label, timeout = 15_000, interval = 150 } = {}) {
-  const deadline = Date.now() + timeout;
-  for (;;) {
-    if (condition()) return;
-    if (Date.now() > deadline) throw new Error(`Timed out waiting for ${label}.`);
-    await sleep(interval);
-  }
-}
 
-const navigate = async (hash, settle = 400) => {
+const navigate = async (hash) => {
   dom.window.location.hash = hash;
-  dom.window.dispatchEvent(new dom.window.HashChangeEvent("hashchange"));
-  await sleep(settle);
+  flushSync(() => dom.window.dispatchEvent(new dom.window.HashChangeEvent("hashchange")));
+  await waitForRoute(dom, hash);
 };
 
 const clickEl = (el) =>
-  el.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  flushSync(() => el.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true })));
 const click = (label, scope = document) => {
   const el = [...scope.querySelectorAll("button, a")].find((n) =>
     (n.textContent ?? "").trim().includes(label),
@@ -156,7 +148,7 @@ const setField = (selector, value) => {
   if (!input) throw new Error(`field not found: ${selector}`);
   const proto = input.tagName === "SELECT" ? dom.window.HTMLSelectElement : dom.window.HTMLInputElement;
   Object.getOwnPropertyDescriptor(proto.prototype, "value").set.call(input, value);
-  input.dispatchEvent(new dom.window.Event(input.tagName === "SELECT" ? "change" : "input", { bubbles: true }));
+  flushSync(() => input.dispatchEvent(new dom.window.Event(input.tagName === "SELECT" ? "change" : "input", { bubbles: true })));
 };
 const selectOption = (selector, predicate) => {
   const select = document.querySelector(selector);
@@ -187,22 +179,22 @@ const isSignedIn = () => bodyText().includes("Signed in as");
 const signOut = async () => {
   if (!isSignedIn()) return;
   click("Sign out");
-  for (let i = 0; i < 20 && !usernameField(); i += 1) await sleep(200);
-  await sleep(200);
+  await waitFor(() => usernameField() && !isSignedIn(), { label: "sign-out and Login to finish" });
 };
 const signInAs = async (username, password = DEMO_PASSWORD) => {
   await signOut();
+  if (!usernameField()) await navigate("#/login");
   await waitFor(() => Boolean(usernameField()), { label: "the login screen" });
   setField("input[autocomplete='username']", username);
   setField("input[autocomplete='current-password']", password);
   click("Sign in");
   await waitFor(() => isSignedIn(), { label: `${username} to sign in` });
-  await sleep(400);
+
 };
 
 /** The products list, filtered to one SKU; returns its live table row. */
 const openProductsList = async (sku) => {
-  await navigate("#/products");
+  await navigate("#/dashboard/products");
   await waitFor(() => document.querySelector('input[type="search"]'), {
     label: "the products screen",
   });
@@ -213,7 +205,7 @@ const openProductsList = async (sku) => {
   setField('input[type="search"]', "");
   await waitFor(() => bodyText().includes("ALYQ-1001"), { label: "the products list" });
   setField('input[type="search"]', sku);
-  await sleep(350);
+
   const row = [...document.querySelectorAll("tbody tr")].find((tr) =>
     (tr.textContent ?? "").includes(sku),
   );
@@ -249,7 +241,7 @@ const confirmOnceWithDoubleSubmitGuard = async (label) => {
   // React batches the state update past the synchronous dispatch, so settle one
   // tick: the page has marked the row busy by then, and the ~60 ms demo
   // repository round trip is still on the wire — the confirm must be disabled.
-  await sleep(0);
+
   assert.equal(button.disabled, true, "confirm is disabled while the action is in flight");
   clickEl(button); // fired while busy: must be a no-op (the busyId guard)
   await waitFor(() => dialog() === null, { label: "the dialog to close" });
@@ -259,16 +251,17 @@ const confirmOnceWithDoubleSubmitGuard = async (label) => {
 
 async function main() {
   console.log("\nProduct lifecycle · delete vs archive\n");
-  await sleep(500);
+
 
   // 0 ─ sign in as admin (full capability, including product.delete)
-  assert.ok(usernameField(), "the app boots on the login screen");
+  await navigate("#/login");
+  assert.ok(usernameField(), "Login is explicitly reached from the public root");
   await signInAs("admin");
   assert.ok(isSignedIn(), "admin signed in");
 
   // 1 ─ create a truly unused product through the form
   const unusedSku = "LCY-UNUSED";
-  await navigate("#/products/new");
+  await navigate("#/dashboard/products/new");
   await waitFor(() => document.querySelector("#sku"), { label: "the product form" });
   setField("#name_ar", "منتج محذوف");
   setField("#name_en", "Lifecycle Unused");
@@ -283,7 +276,7 @@ async function main() {
   // the form page itself (barcode preview), so a text wait alone can race the
   // navigation and have the pending route clobber the next one.
   clickExact("Save");
-  await waitFor(() => dom.window.location.hash === "#/products", {
+  await waitFor(() => dom.window.location.hash === "#/dashboard/products", {
     label: "the save to route back to the catalogue",
   });
   await waitFor(() => bodyText().includes(unusedSku), { label: "the new product to appear" });
@@ -312,7 +305,7 @@ async function main() {
 
   // 3 ─ a second product that will earn history, created through the form too
   const ringSku = "LCY-RING";
-  await navigate("#/products/new");
+  await navigate("#/dashboard/products/new");
   await waitFor(() => document.querySelector("#sku"), { label: "the product form" });
   setField("#name_ar", "خاتم دورة الحياة");
   setField("#name_en", "Lifecycle Ring");
@@ -324,25 +317,25 @@ async function main() {
   setField("#low_stock_level", "2");
   selectOption("#category_id", (o) => o.value !== "");
   clickExact("Save");
-  await waitFor(() => dom.window.location.hash === "#/products", {
+  await waitFor(() => dom.window.location.hash === "#/dashboard/products", {
     label: "the save to route back to the catalogue",
   });
   await waitFor(() => bodyText().includes(ringSku), { label: "the ring to appear" });
 
   // Phase 27: a till sale requires an open shift — the suite rings up sales
   // twice (baseline and re-sale), so open one once, here, as the admin.
-  await navigate("#/shifts");
+  await navigate("#/dashboard/shifts");
   await waitFor(() => bodyText().includes("No shift is currently open"), { label: "a closed drawer" });
   const openShiftBtn = [...document.querySelectorAll("button")].find((b) =>
     (b.textContent ?? "").trim().includes("Open shift"),
   );
   clickEl(openShiftBtn);
-  await sleep(400);
+
   const shiftDialog = [...document.querySelectorAll('[role="dialog"]')].pop();
   const shiftInputs = [...shiftDialog.querySelectorAll("input")];
   const fillShift = (input, value) => {
     Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value").set.call(input, value);
-    input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+    flushSync(() => input.dispatchEvent(new dom.window.Event("input", { bubbles: true })));
   };
   fillShift(shiftInputs.find((i) => !i.readOnly && i.type === "text"), "Main branch");
   fillShift(shiftInputs.find((i) => i.inputMode === "decimal"), "100");
@@ -353,11 +346,11 @@ async function main() {
   // Sell one unit through the POS so the ring is referenced by sale_items and
   // a stock movement. Baseline first: right now it IS sellable and IS on the
   // storefront — the two things archiving must take away.
-  await navigate("#/pos");
+  await navigate("#/dashboard/pos");
   await waitFor(() => document.querySelector('[data-testid="pos-scan-search"]'), { label: "the scan/search box" });
   const searchFor = async (text) => {
     setField('[data-testid="pos-scan-search"]', text);
-    await sleep(450);
+
   };
   const rowsFor = (name) =>
     [...document.querySelectorAll("[data-pos-result-index]")].filter((b) =>
@@ -367,24 +360,24 @@ async function main() {
   await waitFor(() => rowsFor("Lifecycle Ring").length > 0, { label: "the ring in the POS results" });
   console.log("  ✓ baseline: the new product is sellable at the POS");
 
-  await navigate("#/store/products", 700);
+  await navigate("#/store/products");
   await waitFor(() => document.querySelectorAll("article").length > 0, { label: "the storefront catalogue" });
   setField('input[type="search"]', "Lifecycle Ring");
-  await sleep(400);
+
   assert.ok(
     [...document.querySelectorAll("article h3")].some((h) => (h.textContent ?? "").trim() === "Lifecycle Ring"),
     "baseline: the new product is visible on the storefront",
   );
   console.log("  ✓ baseline: the new product is visible on the storefront");
 
-  await navigate("#/pos");
+  await navigate("#/dashboard/pos");
   await waitFor(() => document.querySelector('[data-testid="pos-scan-search"]'), { label: "the scan/search box" });
   await searchFor("Lifecycle Ring");
   await waitFor(() => rowsFor("Lifecycle Ring").length > 0, { label: "the ring in the POS results" });
   clickEl(rowsFor("Lifecycle Ring")[0]);
-  await sleep(300);
+
   setField('[data-testid="cash-input"]', "120");
-  await sleep(250);
+
   const completeBtn = [...document.querySelectorAll("button")].find(
     (b) => (b.textContent ?? "").trim().startsWith("✓") && (b.textContent ?? "").includes("Complete sale"),
   );
@@ -392,7 +385,7 @@ async function main() {
   clickEl(completeBtn);
   await waitFor(() => /INV-\d{6}/.test(bodyText()), { label: "the sale to complete" });
   click("New sale");
-  await sleep(300);
+
   console.log("  ✓ sold one unit at the POS — the product now carries history");
 
   const historyBefore = {
@@ -404,6 +397,8 @@ async function main() {
   // 4 ─ permanent delete is now blocked: the affordance is disabled and says why
   row = await openProductsList(ringSku);
   assert.ok(row, "the referenced product is still listed");
+  await waitFor(() => document.querySelector(`button[aria-label="${HISTORY_REASON}"]`), { label: "refreshed reference counts to disable permanent delete" });
+  row = [...document.querySelectorAll("tbody tr")].find((tr) => tr.textContent.includes(ringSku));
   const blockedDelete = row.querySelector(`button[aria-label="${HISTORY_REASON}"]`);
   assert.ok(blockedDelete, "the referenced product shows the disabled delete with the reason");
   assert.equal(blockedDelete.disabled, true, "the reason-labeled delete cannot be clicked");
@@ -470,9 +465,10 @@ async function main() {
   console.log("  ✓ archive: cancel is safe; confirm disables double-submit and toasts success");
 
   // 7 ─ it disappears from POS search…
-  await navigate("#/pos");
+  await navigate("#/dashboard/pos");
   await waitFor(() => document.querySelector('[data-testid="pos-scan-search"]'), { label: "the scan/search box" });
   await searchFor("Lifecycle Ring");
+  await waitFor(() => rowsFor("Lifecycle Ring").length === 0, { label: "archived product removed from refreshed POS search" });
   assert.ok(
     rowsFor("Lifecycle Ring").length === 0,
     "archived product is not sellable at the POS",
@@ -481,10 +477,10 @@ async function main() {
   console.log("  ✓ archived product is hidden from POS search");
 
   // 8 ─ …and from the storefront / new-order selection…
-  await navigate("#/store/products", 700);
+  await navigate("#/store/products");
   await waitFor(() => document.querySelectorAll("article").length > 0, { label: "the storefront catalogue" });
   setField('input[type="search"]', "Lifecycle Ring");
-  await sleep(400);
+
   assert.ok(
     ![...document.querySelectorAll("article h3")].some((h) => (h.textContent ?? "").trim() === "Lifecycle Ring"),
     "archived product is not offered on the storefront",
@@ -515,14 +511,14 @@ async function main() {
   console.log("  ✓ reactivate from the list with confirmation and success feedback");
 
   // 11 ─ …and it is sellable again at the POS (history now 2 lines, still no cascade)
-  await navigate("#/pos");
+  await navigate("#/dashboard/pos");
   await waitFor(() => document.querySelector('[data-testid="pos-scan-search"]'), { label: "the scan/search box" });
   await searchFor("Lifecycle Ring");
   await waitFor(() => rowsFor("Lifecycle Ring").length > 0, { label: "the ring back in the POS results" });
   clickEl(rowsFor("Lifecycle Ring")[0]);
-  await sleep(300);
+
   setField('[data-testid="cash-input"]', "120");
-  await sleep(250);
+
   const completeBtn2 = [...document.querySelectorAll("button")].find(
     (b) => (b.textContent ?? "").trim().startsWith("✓") && (b.textContent ?? "").includes("Complete sale"),
   );
@@ -530,12 +526,12 @@ async function main() {
   clickEl(completeBtn2);
   await waitFor(() => /INV-\d{6}/.test(bodyText()), { label: "the second sale to complete" });
   click("New sale");
-  await sleep(300);
+
   assert.ok(saleLinesForSku(ringSku).length >= 2, "the second sale line is recorded for the ring SKU");
   console.log("  ✓ reactivated product sells again; history keeps accumulating, never removed");
 
   // 12 ─ the audit log tells the full story, under the right SKUs, by the admin
-  await navigate("#/audit");
+  await navigate("#/dashboard/audit");
   await waitFor(
     () => document.querySelector('input[placeholder="Search by user, action, or record..."]'),
     { label: "the audit log" },
@@ -544,7 +540,7 @@ async function main() {
     setField('input[placeholder="Search by user, action, or record..."]', term);
   };
   auditSearch(ringSku);
-  await sleep(400);
+
   const auditBody = () => bodyText();
   assert.ok(auditBody().includes("Product archived"), "archived event rendered");
   assert.ok(auditBody().includes("Product reactivated"), "reactivated event rendered");
@@ -559,7 +555,7 @@ async function main() {
     "archived and reactivated are under the referenced SKU",
   );
   auditSearch(unusedSku);
-  await sleep(400);
+
   const unusedRows = [...document.querySelectorAll("tbody tr")].filter((tr) =>
     (tr.textContent ?? "").includes(unusedSku),
   );
@@ -570,7 +566,7 @@ async function main() {
   );
   assert.ok((unusedRows[0].textContent ?? "").includes("ALYQ Admin"), "the delete names the admin");
   auditSearch("");
-  await sleep(200);
+
   console.log("  ✓ audit: archived + reactivated under the ring SKU; exactly one permanent delete");
 
   // ── end: fail on any console error or stray network use ───────────────────

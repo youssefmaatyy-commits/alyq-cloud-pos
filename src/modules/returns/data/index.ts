@@ -1,4 +1,4 @@
-import { getSupabaseClient, isSupabaseConfigured } from "@/lib/supabase/client";
+import { getRepositoryMode } from "@/lib/supabase/client";
 import { DemoReturnRepository, getDemoReturnRepository } from "./demoRepository";
 import { SupabaseReturnRepository, getSupabaseReturnRepository } from "./supabaseRepository";
 import type { ReturnRepository } from "./repository";
@@ -6,14 +6,14 @@ import type { ReturnRepository } from "./repository";
 export type ReturnMode = "supabase" | "demo";
 
 export function getReturnRepository(): ReturnRepository {
-  if (isSupabaseConfigured && getSupabaseClient()) {
+  if (getRepositoryMode() === "supabase") {
     return getSupabaseReturnRepository();
   }
   return getDemoReturnRepository();
 }
 
 export function getReturnMode(): ReturnMode {
-  return isSupabaseConfigured && getSupabaseClient() ? "supabase" : "demo";
+  return getRepositoryMode() === "supabase" ? "supabase" : "demo";
 }
 
 export { DemoReturnRepository, SupabaseReturnRepository };

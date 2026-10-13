@@ -8,29 +8,46 @@ Current application version is `6.0.0`; Desktop 5.0.0 remains a historical miles
 - Desktop: package version + `ALYQ_BUILD_SHA`; Windows x64 NSIS target.
 - Android: `versionName` follows release version; monotonically increase `versionCode`.
 - iOS: `CFBundleShortVersionString` follows release version; monotonically increase `CFBundleVersion`.
-- Schema: exact highest successfully applied migration, currently expected `0085`.
+- Schema: exact highest successfully applied migration, currently expected `0094_web_push_subscriptions.sql`.
 
 ## Reproducible sequence
 
 ```bash
+# Freeze/commit the release first; use public Production configuration.
 npm ci
-npm run production:preflight
 npm run typecheck
-npm run lint -- --quiet
-npm test
+npm run lint
+npm run test
 npm run db:check
-npm run build
-npm run test:bundle
 npm run test:e2e
+npm run build
+npm run production:preflight
+
+# A second COMPLETE gate (including a fresh all-31 E2E run) is mandatory.
+npm run test:all
+
+# Separate commercial read-only check; real approved public config required.
+npm run production:catalogue
+```
+
+`test:all` expands to types → lint → release-safety/all logic → isolated database → all 31 E2E → build → final artifact preflight. Do not use `--allow-dirty` for release evidence, skip a suite or rerun only failed checks to authorize a release.
+
+Use explicit `VITE_APP_MODE=production` and the approved backend pair/environment. `VITE_DEMO_SEED=off` is a compatible deprecated Demo veto, not the mode selector; see `production-environment.md`. An optional explicit `VITE_BUILD_SHA` must match HEAD; full SHA, UTC build time and environment are automatically embedded in the client and `release.json`, displayed in authenticated Health and included in safe diagnostics. `build-integrity.json` covers the final inlined HTML and all copied assets. Scan the **built** artifacts before signing or promotion; never publish from a dirty checkout.
+
+CI validates the Production contract against synthetic `.invalid` public configuration with environment `preview`. That is **offline evidence only**, not a real commercial preflight or catalogue approval. Tests always bundle isolated Demo/stubs/PGlite even if public Production variables exist in the release runner environment.
+
+Desktop/native packaging remains a separate signed-platform acceptance gate:
+
+```bash
 npm run desktop:build
 npm run mobile:sync
 ```
 
-Build with production `VITE_*` values, `VITE_DEMO_SEED=off`, and frozen SHA metadata. Scan artifacts before signing. Never publish from a dirty checkout.
+## Web hosting / protected promotion
 
-## Web hosting
+Use the protected exact-SHA flow in [`vercel-release-gate.md`](vercel-release-gate.md), not a direct production deploy. Disable independent Vercel Git Production/domain-assignment paths and enforce required GitHub checks/environment approval first. Missing or malformed Production config fails the build and never produces an automatic Demo release. The obsolete unsupported Pages publishing workflow was removed.
 
-Serve `dist/index.html` over HTTPS with hash-route compatibility. Use no-store/short cache for HTML and release metadata; immutable long cache only for content-hashed assets. Enable compression, HSTS after domain validation, `X-Content-Type-Options: nosniff`, restrictive referrer policy, frame protections, and a tested CSP covering the exact Supabase/Storage origins. Do not use wildcard privileged origins. Keep prior immutable artifact/config for rollback.
+Serve `dist/index.html` over HTTPS with hash-route compatibility. Use no-store/short cache for HTML and release metadata; immutable long cache only for content-hashed assets. Enable compression, HSTS after domain validation, `X-Content-Type-Options: nosniff`, restrictive referrer policy, frame protections, and a tested CSP covering the exact Supabase/Storage origins. Do not use wildcard privileged origins. Keep the prior **verified Production** immutable artifact/config for rollback; never roll back to an implicit-Demo release.
 
 ## Windows CI and signing
 
@@ -49,7 +66,7 @@ release_version: TBD
 release_date_utc: TBD
 git_sha: TBD
 migration_max_before: TBD
-migration_max_after: 0085_first_admin_bootstrap.sql
+migration_max_after: 0094_web_push_subscriptions.sql
 backup_id: TBD
 backup_verified_by: TBD
 restore_drill_id: TBD

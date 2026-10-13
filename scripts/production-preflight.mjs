@@ -1,10 +1,13 @@
 #!/usr/bin/env node
 /**
- * Local, read-only production pre-flight. It never opens a network or database
+ * Local, offline production pre-flight (promotion also requires production:catalogue). It never opens a network or database
  * connection and never writes repository files. Run from a clean frozen SHA;
  * --allow-dirty exists only so the script itself can be validated before commit.
  */
 import fs from "node:fs";
+import { loadEnv } from "vite";
+import { assertBuildEnvironment } from "../src/lib/config/application-mode.mjs";
+import { inspectReleaseArtifact } from "./lib/release-artifact.mjs";
 import path from "node:path";
 import process from "node:process";
 import { execFileSync } from "node:child_process";
@@ -83,7 +86,7 @@ check(
   "0093 database health contract reports its migration count and filename",
 );
 
-const requiredEnv = ["VITE_SUPABASE_URL", "VITE_SUPABASE_ANON_KEY", "WEB_PUSH_VAPID_PUBLIC_KEY", "VITE_CURRENCY", "VITE_STOREFRONT_URL", "VITE_DEMO_SEED", "VITE_APP_VERSION", "VITE_BUILD_SHA"];
+const requiredEnv = ["VITE_APP_MODE", "VITE_RELEASE_ENVIRONMENT", "VITE_SUPABASE_URL", "VITE_SUPABASE_ANON_KEY", "WEB_PUSH_VAPID_PUBLIC_KEY", "VITE_CURRENCY", "VITE_STOREFRONT_URL", "VITE_DEMO_SEED", "VITE_APP_VERSION", "VITE_BUILD_SHA"];
 check(requiredEnv.every((name) => env.includes(name)), "all client-safe production variable names are documented");
 check(
   webManifest.name && webManifest.short_name && webManifest.start_url === "/#/mobile"
@@ -142,6 +145,19 @@ check(!/(?:SUPABASE_SERVICE_ROLE_KEY|service[_-]?role[_-]?key)\s*[:=]\s*["'](?!t
 const trackedKeys = git("ls-files").split("\n").filter((name) => /\.(?:pem|p12|pfx|jks|keystore|mobileprovision)$/i.test(name));
 check(trackedKeys.length === 0, "no signing/private-key artifact is tracked");
 check(lock.packages?.["node_modules/brace-expansion"]?.version === "5.0.12", "brace-expansion security patch is locked at 5.0.12");
+
+// Real environment and final dist verification. No connection, writes, or values
+// in output. The separate production:catalogue check is mandatory at promotion.
+try {
+  const releaseEnv = { ...loadEnv("production", root, ""), ...process.env };
+  const config = assertBuildEnvironment(releaseEnv);
+  check(config.mode === "production", "preflight refuses Demo release artifacts");
+  const identity = inspectReleaseArtifact(path.join(root, "dist"), { gitSha: git("rev-parse", "HEAD"), config, env: releaseEnv });
+  check(identity.appMode === "production", "final artifact uses Production mode and the checked-out Git SHA");
+  check(true, "final built files pass integrity and frontend-secret scans");
+} catch (error) {
+  check(false, error.message);
+}
 
 for (const message of passes) console.log(`✓ ${message}`);
 for (const message of failures) console.error(`✗ ${message}`);

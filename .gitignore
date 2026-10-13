@@ -38,3 +38,6 @@ coverage/
 supabase/.temp/
 # Desktop packaging output (generated installers/unpacked apps)
 release/
+
+# Local Vercel project metadata and pulled environment (never tracked)
+.vercel/

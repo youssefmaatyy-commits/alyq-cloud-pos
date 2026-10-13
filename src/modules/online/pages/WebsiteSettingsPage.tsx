@@ -456,6 +456,8 @@ export function WebsiteSettingsPage() {
           <button
             key={entry.key}
             type="button"
+            data-settings-tab={entry.key}
+            aria-pressed={tab === entry.key}
             onClick={() => setTab(entry.key)}
             className={`shrink-0 rounded-lg px-4 py-1.5 text-xs font-bold transition-all ${
               tab === entry.key ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"

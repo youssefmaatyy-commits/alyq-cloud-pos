@@ -1,56 +1,39 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
-/**
- * Central Supabase access for ALYQ Cloud POS.
- *
- * The client is created lazily and only when BOTH `VITE_SUPABASE_URL` and
- * `VITE_SUPABASE_ANON_KEY` are present. When they are missing the application
- * automatically runs in **demo mode** (in-memory, browser-persisted data) so the
- * UI is always usable. Nothing here throws at import time.
- */
+import { resolveApplicationConfig } from "@/lib/config/application-mode.mjs";
 
-const env = import.meta.env ?? {};
+export const applicationConfig = resolveApplicationConfig(import.meta.env);
 
-/**
- * Supabase's JavaScript client expects a project URL, not one of its API URLs.
- *
- * Some existing deployments supplied the PostgREST endpoint here
- * (`https://<project>.supabase.co/rest/v1`). Passing that endpoint through made
- * supabase-js append its own API paths beneath it, including
- * `/rest/v1/functions/v1/<function>`. Accept the existing configuration while
- * always handing the SDK the project base URL it requires.
- */
+/** Retained low-level URL adapter for historical integrations; the application
+ * configuration contract validates the input before a business provider mounts. */
 export function toSupabaseProjectUrl(configuredUrl: string): string {
   const trimmed = configuredUrl.trim();
-  if (!trimmed) return "";
-
   try {
     const url = new URL(trimmed);
-    const path = url.pathname.replace(/\/+$/, "").toLowerCase();
-    if (path === "/rest/v1") {
-      url.pathname = "/";
-      url.search = "";
-      url.hash = "";
-      return url.href.replace(/\/$/, "");
-    }
-  } catch {
-    // Keep invalid input intact. `isSupabaseConfigured` retains the existing
-    // configuration gate, and supabase-js remains responsible for reporting a
-    // malformed URL if a caller tries to create a live client.
-  }
-
+    if (url.pathname.replace(/\/+$/, "").toLowerCase() === "/rest/v1") return url.origin;
+  } catch { /* the fail-closed application gate reports invalid configuration */ }
   return trimmed;
 }
 
-export const SUPABASE_URL = (env.VITE_SUPABASE_URL ?? "").trim();
+export const SUPABASE_URL = typeof import.meta.env.VITE_SUPABASE_URL === "string" ? import.meta.env.VITE_SUPABASE_URL.trim() : "";
 export const SUPABASE_PROJECT_URL = toSupabaseProjectUrl(SUPABASE_URL);
-export const SUPABASE_ANON_KEY = (env.VITE_SUPABASE_ANON_KEY ?? "").trim();
+export const SUPABASE_ANON_KEY = typeof import.meta.env.VITE_SUPABASE_ANON_KEY === "string" ? import.meta.env.VITE_SUPABASE_ANON_KEY.trim() : "";
+export const isSupabaseConfigured = applicationConfig.ok && applicationConfig.mode === "production";
 
-/** True when real Supabase credentials are available. */
-export const isSupabaseConfigured =
-  SUPABASE_PROJECT_URL.length > 0 &&
-  /^https?:\/\//i.test(SUPABASE_PROJECT_URL) &&
-  SUPABASE_ANON_KEY.length > 0;
+export class ApplicationConfigurationError extends Error {
+  constructor(code: string) {
+    super(`Application configuration error: ${code}`);
+    this.name = "ApplicationConfigurationError";
+  }
+}
+
+/** Only explicit Demo may select a local repository. Invalid Production throws. */
+export function getRepositoryMode(): "supabase" | "demo" {
+  if (!applicationConfig.ok) throw new ApplicationConfigurationError(applicationConfig.code);
+  if (applicationConfig.mode === "demo") return "demo";
+  getSupabaseClient(); // SDK construction failure is an error, never Demo.
+  return "supabase";
+}
 
 interface SupabaseClientFactoryOptions {
   /** Test seam; production uses the platform fetch implementation. */
@@ -87,9 +70,14 @@ let client: SupabaseClient | null = null;
 
 /** Returns the shared Supabase client, or `null` in demo mode. */
 export function getSupabaseClient(): SupabaseClient | null {
-  if (!isSupabaseConfigured) return null;
+  if (!applicationConfig.ok) throw new ApplicationConfigurationError(applicationConfig.code);
+  if (applicationConfig.mode === "demo") return null;
   if (!client) {
-    client = createSupabaseClient(SUPABASE_PROJECT_URL, SUPABASE_ANON_KEY);
+    try {
+      client = createSupabaseClient(applicationConfig.supabaseUrl, applicationConfig.supabaseKey);
+    } catch {
+      throw new ApplicationConfigurationError("SUPABASE_CLIENT_UNAVAILABLE");
+    }
   }
   return client;
 }

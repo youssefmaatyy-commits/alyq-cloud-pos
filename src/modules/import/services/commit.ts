@@ -29,7 +29,7 @@ import {
   assertCanImportStock,
 } from "@/modules/inventory/services/inventoryService";
 import { assertCanImportProducts } from "@/modules/products/services/catalogService";
-import { getSupabaseClient, isSupabaseConfigured } from "@/lib/supabase/client";
+import { getSupabaseClient, getRepositoryMode } from "@/lib/supabase/client";
 import { findCode, type PreviewCatalogue } from "./preview";
 import type {
   CommitMode,
@@ -105,7 +105,7 @@ export async function commitImport(input: {
   // Live Mode: execute via authoritative server-side PostgreSQL transaction RPC
   const client = getSupabaseClient();
   if (
-    isSupabaseConfigured &&
+    (getRepositoryMode() === "supabase") &&
     client &&
     (input.preview.kind === "catalog_unified" ||
       input.preview.kind === "products" ||

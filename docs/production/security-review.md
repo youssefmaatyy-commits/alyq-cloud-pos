@@ -24,3 +24,12 @@ Before Go-Live, compare hosted functions, grants, policies, publications, Auth a
 ## Abuse and availability boundaries
 
 Supabase/provider throttling is surfaced for sign-in/reset paths, manager approval failures are bounded/audited, drawer commands are locally rate-limited, realtime retries back off and offline replay stops after five automatic attempts. Public checkout/proof-upload edge/WAF quotas, bot controls and provider-specific Auth thresholds require production configuration and measured testing; absence of that evidence is a Go-Live NO-GO.
+
+
+## Release-safety addendum — 2026-10-11
+
+The application now selects Production/Demo explicitly and validates public backend configuration before business providers mount. There is no credential-absence/network-failure Demo fallback. Final built/copy artifacts receive identity, integrity and private-credential scans; authenticated Health/support diagnostics expose only nonsecret release fields. Anonymous go-live checks call STABLE public catalogue/variant/pricing RPCs using GET only and never write or seed Production.
+
+CI gates all 31 E2E suites twice plus types/build/lint/logic/isolated database. Promotion validates trusted exact-SHA/latest CI checks, current main, independent environment reviewers/main-only policy, authoritative pulled Vercel configuration, verified prebuilt bytes and the served candidate identity before domain movement. Deployment tokens are restricted to the guarded client step; no production service-role credential is provided to tests or app builds. No RLS/grant/capability/SQL migration or business assertion was weakened.
+
+Residual release blockers: branch-protection API access returned 403; existing listed deployment environments had no protection rules; Vercel automatic Production path/RBAC/settings and a real catalogue probe/provider negative-release drill remain unverified. Dependency audit risk and existing lint warnings must be recorded, not treated as remediation. See `vercel-release-gate.md`. No commercial GO is claimed from offline tests.

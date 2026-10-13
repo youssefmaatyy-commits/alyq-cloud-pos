@@ -106,7 +106,7 @@ export function VariantPicker({
               const selected = variant.id === chosenVariantId;
               const available = availableOf(variant);
               const buyable = available === null || available > 0;
-              const size = storeSizeLabel(variant.size, variant.size_label);
+              const size = storeSizeLabel(variant.size, variant.size_label, variant.size_value);
               const name = pick(
                 variant.color_ar,
                 variant.color_en,
@@ -118,7 +118,7 @@ export function VariantPicker({
                   role="option"
                   aria-selected={selected}
                   aria-disabled={!buyable}
-                  data-testid={`variant-size-${storeSizeLabel(variant.size, variant.size_label)}`}
+                  data-testid={`variant-size-${storeSizeLabel(variant.size, variant.size_label, variant.size_value)}`}
                   title={
                     !buyable
                       ? t("store.variants.soldOut")

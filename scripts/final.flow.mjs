@@ -32,7 +32,6 @@ const ux = await createUxHarness({
 const {
   assert,
   dom,
-  sleep,
   bodyText,
   waitFor,
   navigate,
@@ -87,10 +86,10 @@ await waitFor(() => catalog().products.length > 0, { label: "the demo catalogue 
 console.log("  ✓ 1 · the admin is in");
 
 // ── 2 · the shift opens ─────────────────────────────────────────────────────
-await navigate("#/shifts");
+await navigate("#/dashboard/shifts");
 await waitFor(() => bodyText().includes("No shift is currently open"), { label: "a closed drawer" });
 click("Open shift");
-await sleep(400);
+
 {
   const shiftDialog = dialogs().at(-1);
   const shiftInputs = [...shiftDialog.querySelectorAll("input")];
@@ -102,7 +101,7 @@ await waitFor(() => /SH-\d{6}/.test(bodyText()), { label: "the shift to open" })
 console.log("  ✓ 2 · the drawer opens");
 
 // ── 3 · a customer is created ───────────────────────────────────────────────
-await navigate("#/customers", 800);
+await navigate("#/dashboard/customers");
 await waitFor(() => buttons().some((b) => (b.textContent ?? "").includes("customer")), {
   label: "the customers screen",
 });
@@ -112,16 +111,17 @@ await waitFor(() => dialogs().length > 0, { label: "the customer form" });
   const form = dialogs().at(-1);
   setNative(form.querySelector("#cust-name"), dom.window.HTMLInputElement)("نهى المصري");
   setNative(form.querySelector("#cust-phone"), dom.window.HTMLInputElement)("01222110099");
-  await sleep(200);
+
   const save = [...form.querySelectorAll("button")].find((b) => /^(Save|Create)/.test((b.textContent ?? "").trim()));
   clickEl(save);
 }
-await sleep(600);
+
+await waitFor(() => !dialogs().length && squeezed().includes("نهىالمصري"), { label: "saved customer listed outside modal" });
 assert.ok(squeezed().includes("نهىالمصري") || squeezed().includes("01222110099"), "the customer is listed");
 console.log("  ✓ 3 · the customer exists");
 
 // ── 4 · the ring: Gold/17 = 2, Silver/17 = 2 ────────────────────────────────
-await navigate("#/products/new");
+await navigate("#/dashboard/products/new");
 await waitFor(() => document.querySelector("#sku"), { label: "the product form" });
 setField("#name_ar", "خاتم الختام");
 setField("#name_en", "Finale Ring");
@@ -137,11 +137,11 @@ setField("#low_stock_level", "1");
   if (option) setReactValue(categorySelect, option.value);
 }
 clickExact("Save");
-await waitFor(() => ux.dom.window.location.hash === "#/products", { label: "the save to land" });
+await waitFor(() => ux.dom.window.location.hash === "#/dashboard/products", { label: "the save to land" });
 const productId = catalog().products.find((p) => p.sku === RING_SKU)?.id;
 assert.ok(productId, "the ring is in the catalogue");
 
-await navigate(`#/products/${productId}/edit`);
+await navigate(`#/dashboard/products/${productId}/edit`);
 await waitFor(() => testid("variant-editor"), { label: "the variant editor" });
 clickEl(testid("variant-generate"));
 await waitFor(() => dialogs().length > 0, { label: "the generator" });
@@ -151,7 +151,7 @@ await waitFor(() => dialogs().length > 0, { label: "the generator" });
   setNative(colorsArea, dom.window.HTMLTextAreaElement)("Gold | ذهبي | #d4af37\nSilver | فضي | #c0c0c0");
   const sizesInput = [...genDialog.querySelectorAll("input")].find((i) => (i.placeholder ?? "").includes("16, 16.5"));
   setNative(sizesInput, dom.window.HTMLInputElement)("17");
-  await sleep(250);
+
   clickEl([...genDialog.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === "Create 2"));
 }
 await waitFor(() => testid(`variant-row-${GOLD_SKU}`), { label: "the gold row" });
@@ -169,12 +169,12 @@ assert.equal(stockOf(SILVER_SKU), 2, "Silver / 17 = 2");
 console.log("  ✓ 4 · the ring stands: Gold/17 = 2, Silver/17 = 2");
 
 // ── 5 · POS sells Gold/17 ×2, to the customer ───────────────────────────────
-await navigate("#/pos", 700);
+await navigate("#/dashboard/pos");
 await waitFor(() => testid("pos-scan-search"), { label: "the scan/search box" });
 assert.ok(!testid("pos-grid"), "no product-card grid");
 const searchFor = async (text) => {
   setField('[data-testid="pos-scan-search"]', text);
-  await sleep(450);
+
 };
 const rowFor = (name) =>
   [...document.querySelectorAll("[data-pos-result-index]")].find((b) => (b.textContent ?? "").includes(name));
@@ -187,12 +187,15 @@ await waitFor(() => picker(), { label: "the exact-shelf picker" });
 const sizeButton = (label) =>
   [...picker().querySelectorAll("button")].find((b) => (b.getAttribute("aria-label") ?? "").startsWith(`${label} — `));
 const cartLines = () => [...document.querySelectorAll('[data-testid^="cart-line-"]')];
+await waitFor(() => sizeButton("Gold / 17"), { label: "the selected colour's exact size button" });
+await waitFor(() => sizeButton("Gold / 17"), { label: "exact shelf after picker colour commit" });
 clickEl(sizeButton("Gold / 17"));
 await waitFor(() => !picker(), { label: "the picker to close" });
 await searchFor("Finale");
 await waitFor(() => rowFor("Finale Ring"), { label: "the ring row again" });
 clickEl(rowFor("Finale Ring"));
 await waitFor(() => picker(), { label: "the picker again" });
+await waitFor(() => sizeButton("Gold / 17"), { label: "exact shelf after picker colour commit" });
 clickEl(sizeButton("Gold / 17"));
 await waitFor(() => cartLines().length === 1 && cartLines()[0].textContent.includes("Gold / 17"), {
   label: "Gold / 17 ×2 on one line",
@@ -202,29 +205,30 @@ await waitFor(() => cartLines().length === 1 && cartLines()[0].textContent.inclu
 // the input's blur), so the flow presses the option the way a finger would
 await waitFor(() => document.querySelector('input[aria-label="Select customer"]'), { label: "the customer picker" });
 setField('input[aria-label="Select customer"]', "نهى");
-await sleep(600);
+
 {
   const listbox = document.querySelector('[role="listbox"]');
   assert.ok(listbox, "the picker's listbox is open");
   const option = [...listbox.querySelectorAll("button")].find((b) => (b.textContent ?? "").includes("نهى المصري"));
   assert.ok(option, "the matching customer is offered");
-  option.dispatchEvent(new dom.window.MouseEvent("mousedown", { bubbles: true, cancelable: true }));
-  option.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  ux.flushSync(() => option.dispatchEvent(new dom.window.MouseEvent("mousedown", { bubbles: true, cancelable: true })));
+  ux.flushSync(() => option.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true })));
 }
-await sleep(300);
+
 {
   // real proof of attachment: the at-rest input shows the chosen NAME, and the
   // completed sale will carry it (asserted after the sale lands)
   const pickerInput = document.querySelector('input[aria-label="Select customer"]');
+  await waitFor(() => pickerInput.value === "نهى المصري", { label: "chosen customer attachment committed" });
   assert.equal(pickerInput.value, "نهى المصري", "the picker holds the chosen customer");
 }
 setField('[data-testid="cash-input"]', "1000");
-await sleep(250);
+
 clickEl(buttons().find((b) => (b.textContent ?? "").trim().startsWith("✓") && (b.textContent ?? "").includes("Complete sale")));
 await waitFor(() => /INV-\d{6}/.test(bodyText()), { label: "the till sale to complete" });
 const tillSaleNumber = (bodyText().match(/INV-\d{6}/) ?? [])[0];
 clickExact("New sale");
-await sleep(300);
+
 assert.equal(stockOf(GOLD_SKU), 0, "Gold / 17 emptied by the sale");
 const tillSale = sales().find((s) => s.sale_number === tillSaleNumber);
 assert.ok(tillSale, "the sale exists in the till");
@@ -239,25 +243,26 @@ await waitFor(() => picker(), { label: "the picker a third time" });
 {
   // the sold-out shelf is not even offered: Gold shows 0 on its chip and no
   // Gold / 17 button exists to press — the Phase 43 refusal at its strongest
+  await waitFor(() => sizeButton("Silver / 17"), { label: "remaining Silver shelf after default colour selection" });
   const pickerText = picker()?.textContent.replace(/\s+/g, " ") ?? "";
   assert.ok(/Gold\s*0/.test(pickerText), `Gold reads 0 on its chip: ${pickerText.slice(0, 160)}`);
   assert.equal(sizeButton("Gold / 17"), undefined, "no Gold / 17 shelf is offered");
   assert.ok(sizeButton("Silver / 17"), "the stocked Silver / 17 remains available");
 }
-await sleep(400);
+
 assert.equal(cartLines().length, 0, "a new cart, and the third Gold never reached it");
 {
   const escape = new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true });
   document.activeElement?.dispatchEvent(escape);
   document.dispatchEvent(escape);
 }
-await sleep(250);
+
 console.log("  ✓ 6 · the third Gold / 17 is refused (shelf = 0)");
 
 // ── 7 · Gold/17 ×1 comes back ───────────────────────────────────────────────
-await navigate("#/returns");
+await navigate("#/dashboard/returns");
 await waitFor(() => bodyText().includes("Returns & Refunds"), { label: "the returns screen" });
-await sleep(400);
+
 clickExact("New return");
 await waitFor(() => dialogs().length > 0, { label: "the return modal" });
 {
@@ -267,25 +272,27 @@ await waitFor(() => dialogs().length > 0, { label: "the return modal" });
   );
   assert.ok(saleSelect, "the invoice selector lists the sale");
   setReactValue(saleSelect, [...saleSelect.options].find((o) => (o.textContent ?? "").includes(tillSaleNumber)).value);
-  await sleep(400);
+
+  await waitFor(() => returnModal().querySelector('input[placeholder="0"]'), { label: "selected invoice return lines" });
   const qtyInput = [...returnModal().querySelectorAll('input[placeholder="0"]')][0];
   setInputValue(qtyInput, "1");
-  qtyInput.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
-  await sleep(200);
+  ux.flushSync(() => qtyInput.dispatchEvent(new dom.window.Event("input", { bubbles: true })));
+
   const reasonInput = returnModal().querySelector("#return-reason");
   setInputValue(reasonInput, "Final flow: one Gold back");
-  reasonInput.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
-  await sleep(200);
+  ux.flushSync(() => reasonInput.dispatchEvent(new dom.window.Event("input", { bubbles: true })));
+
   clickEl([...returnModal().querySelectorAll("button")].find((b) => (b.textContent ?? "").includes("Process return")));
 }
 await waitFor(() => /RET-\d{6}/.test(bodyText() + (ux.toastText?.() ?? "")), { label: "the return to be created" });
-await sleep(300);
+
 {
   const closeButton = [...(dialogs().at(-1)?.querySelectorAll("button") ?? [])].find(
     (b) => ["Close", "Done"].some((t) => (b.textContent ?? "").trim() === t) || (b.textContent ?? "").includes("Done"),
   );
   if (closeButton) clickEl(closeButton);
 }
+await waitFor(() => ux.dom.window.location.hash.startsWith("#/dashboard/returns/ret-"), { label: "return-success navigation completed before shopper journey" });
 // ── 8 · the shelf reads 1, on the exact combination ─────────────────────────
 await waitFor(() => stockOf(GOLD_SKU) === 1, { label: "Gold / 17 to read 1" });
 assert.equal(stockOf(GOLD_SKU), 1, "Gold / 17 = 1 after the partial return");
@@ -294,21 +301,23 @@ console.log("  ✓ 7+8 · one Gold / 17 returned — the exact shelf reads 1");
 
 // ── 9 · the storefront picks Silver / 17 on the PDP ─────────────────────────
 await ux.clearStoreCart();
-await navigate(`#/store/products/${productId}`, 900);
+await navigate(`#/store/products/${productId}`);
 await waitFor(() => document.querySelector("article, main"), { label: "the product page" });
-await sleep(400);
+
 {
   // the PDP variant picker: colour chips and size shelves carry testids
+  await waitFor(() => testid("variant-color-silver"), { label: "Silver colour in loaded PDP" });
   const silverChip = [...document.querySelectorAll('button[data-testid^="variant-color-"]')].find(
     (b) => (b.textContent ?? "").includes("Silver") || (b.textContent ?? "").includes("فضي"),
   );
   assert.ok(silverChip, "the Silver colour chip is on the PDP");
   clickEl(silverChip);
-  await sleep(300);
+
+  await waitFor(() => testid("variant-size-17"), { label: "Silver exact size shelf" });
   const size17 = testid("variant-size-17");
   assert.ok(size17, "the 17 shelf is offered for Silver");
   clickEl(size17);
-  await sleep(250);
+
 }
 clickExact("Add to cart");
 {
@@ -354,8 +363,8 @@ await ux.addToCartFromStore();
 const instaNumber = await ux.placeOrder({ payment: "instapay", fulfilment: "Pickup" });
 assert.ok(instaNumber, "the InstaPay order was placed");
 // proof: the confirmation/track page accepts a screenshot
-await navigate("#/store/track", 700);
-await sleep(500);
+await navigate("#/store/track");
+
 if (!bodyText().includes(instaNumber)) {
   const inputs = [...document.querySelectorAll("input")];
   const numberInput = inputs.find((i) => (i.placeholder ?? "").includes("WEB-"));
@@ -380,8 +389,8 @@ await waitFor(() => bodyText().includes(instaNumber), { label: "the tracked Inst
   const proof = fileInputs()[0];
   const file = new dom.window.File(["proof-bytes"], "instapay-final.png", { type: "image/png" });
   Object.defineProperty(proof, "files", { value: [file], configurable: true });
-  proof.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
-  await sleep(300);
+  ux.flushSync(() => proof.dispatchEvent(new dom.window.Event("change", { bubbles: true })));
+
   clickExact("Send the proof");
 }
 await waitFor(() => bodyText().includes("verification") || bodyText().includes("Verification"), {
@@ -392,7 +401,7 @@ assert.equal(instaOrder.payment_status, "verification_required", "a screenshot i
 console.log(`  ✓ 12 · ${instaNumber}: InstaPay proof sent — verification pending`);
 
 // ── 14 · the shop settles both orders; stock moves ──────────────────────────
-await navigate("#/online/orders", 900);
+await navigate("#/dashboard/online/orders");
 await waitFor(() => bodyText().includes(codNumber), { label: "the COD order in the POS" });
 {
   // approve COD: delivery + cash on delivery → sale + stock move
@@ -405,7 +414,7 @@ await waitFor(() => bodyText().includes(codNumber), { label: "the COD order in t
   await waitFor(() => (modal().textContent ?? "").includes("Approved"), { label: "the COD approval" });
   const escape = new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true });
   document.dispatchEvent(escape);
-  await sleep(400);
+
 }
 await waitFor(() => stockOf(SILVER_SKU) === 1, { label: "Silver / 17 to move to 1" });
 assert.equal(stockOf(SILVER_SKU), 1, "the COD approval moved exactly one Silver / 17");
@@ -418,6 +427,7 @@ assert.equal(stockOf(SILVER_SKU), 1, "the COD approval moved exactly one Silver 
   assert.ok((modal().textContent ?? "").includes("Approve payment"), "the money is offered a decision");
   assert.equal((modal().textContent ?? "").includes("Approve order"), false,
     "no order approval while the money is unverified");
+  await waitFor(() => [...modal().querySelectorAll("button")].some((b) => (b.textContent ?? "").includes("Approve payment") && !b.disabled), { label: "payment-verification control enabled after previous order action" });
   clickEl([...modal().querySelectorAll("button")].find((b) => (b.textContent ?? "").includes("Approve payment")));
   await waitFor(() => (modal().textContent ?? "").includes("Paid"), { label: "the payment to verify" });
   await waitFor(() => {
@@ -430,7 +440,7 @@ assert.equal(stockOf(SILVER_SKU), 1, "the COD approval moved exactly one Silver 
   const escape = new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true });
   document.dispatchEvent(escape);
 }
-await sleep(500);
+
 const instaSettled = orders().find((o) => o.order_number === instaNumber);
 assert.ok(instaSettled.sale_id, "the verified InstaPay order became a sale");
 const plainAfter = catalog().products.find((p) => p.id === plain.id)?.stock_quantity;
@@ -438,7 +448,7 @@ assert.equal(plainAfter, plain.stock_quantity - 1, "and only then did the plain 
 console.log("  ✓ 14 · both orders settled — stock moved once each, on approval");
 
 // ── 15 · category archive → reactivate ──────────────────────────────────────
-await navigate("#/categories", 700);
+await navigate("#/dashboard/categories");
 await waitFor(() => treeRow("خواتم") || treeRow("Rings") || document.querySelector("li p"), {
   label: "the category tree",
 });
@@ -452,29 +462,34 @@ await waitFor(() => treeRow("خواتم") || treeRow("Rings") || document.queryS
   setField("#cat-name-ar", "خاتم مؤقت");
   setField("#cat-name-en", "Final Scratch");
   clickExact("Save");
-  await sleep(700);
+  await waitFor(() => !document.querySelector("#cat-name-en") && treeRow("Final Scratch"), { label: "new category committed to active tree" });
+
   rowAction("Final Scratch", "Deactivate");
   await waitFor(() => squeezed().includes("willbehiddenfromnewproducts"), { label: "the archive confirm" });
   click("Deactivate");
-  await sleep(700);
+  await waitFor(() => !dialogs().length && tabByLabel("Archived") && tabByLabel("Active") && !treeRow("Final Scratch"), { label: "category archive completed" });
+
   const archivedTab = tabByLabel("Archived");
   assert.ok(archivedTab, "the Archived tab exists");
   clickEl(archivedTab);
-  await sleep(400);
+  await waitFor(() => treeRow("Final Scratch"), { label: "archived category row mounted" });
+
   rowAction("Final Scratch", "Activate");
   await waitFor(() => squeezed().includes("willbecomeselectablefornewproductsagain"), { label: "the activate confirm" });
   click("Activate");
-  await sleep(700);
+  await waitFor(() => !dialogs().length && tabByLabel("Archived") && tabByLabel("Active") && !treeRow("Final Scratch"), { label: "category reactivation completed" });
+
   const activeTab = tabByLabel("Active");
   clickEl(activeTab);
-  await sleep(400);
+  await waitFor(() => treeRow("Final Scratch"), { label: "reactivated category in active tree" });
+
   assert.ok(treeRow("Final Scratch"), "Final Scratch is back under Active");
   console.log("  ✓ 15 · Final Scratch: archived, then reactivated — nothing lost");
 }
 
 // ── 16 · the website customization is still visible ─────────────────────────
-await navigate("#/store", 900);
-await sleep(700);
+await navigate("#/store");
+
 assert.ok(bodyText().includes("ALYQ") || bodyText().includes("Accessories"), "the shopfront renders");
 assert.ok(
   document.querySelectorAll("article").length > 0 || document.querySelector("img"),
@@ -483,7 +498,7 @@ assert.ok(
 console.log("  ✓ 16 · the storefront stands, customized");
 
 // ── 17 · the dashboard KPIs reconcile ───────────────────────────────────────
-await navigate("#/", 800);
+await navigate("#/dashboard");
 await waitFor(() => testid("dash-kpi-row"), { label: "the KPI row" });
 {
   // today: 1 till sale + 2 online sales; 2 web orders placed, both approved
@@ -497,8 +512,8 @@ await waitFor(() => testid("dash-kpi-row"), { label: "the KPI row" });
 console.log("  ✓ 17 · KPIs: 3 sales today, 2 web orders — the same facts the ledger holds");
 
 // ── 18 · the reports reconcile ──────────────────────────────────────────────
-await navigate("#/pos/sales", 900);
-await sleep(700);
+await navigate("#/dashboard/pos/sales");
+
 assert.ok(bodyText().includes(tillSaleNumber), "the ledger lists the till invoice");
 assert.ok(bodyText().includes("300"), "with its 300.00 total");
 const onlineSales = sales().filter((s) => s.source === "online");
@@ -513,14 +528,14 @@ assert.ok(document.body.textContent.includes("ALYQ"), "the brand wordmark is on 
 console.log("  ✓ 19 · branding displays");
 
 // ── 20 · the Danger Zone, PREVIEW ONLY ──────────────────────────────────────
-await navigate("#/settings/system", 900);
+await navigate("#/dashboard/settings/system");
 await waitFor(() => testid("dz-cards"), { label: "the Danger Zone cards" });
 clickEl(testid("dz-open-clear"));
 await waitFor(() => testid("dz-step-scope"), { label: "the scope step" });
 clickEl(testid("dz-option-sales"));
 clickEl(testid("dz-option-orders"));
 clickEl(testid("dz-option-shifts"));
-await sleep(200);
+
 assert.ok(testid("dz-option-returns").checked && testid("dz-option-returns").disabled,
   "returns ride locked with sales");
 clickEl(testid("dz-preview"));
@@ -537,7 +552,7 @@ await waitFor(() => testid("dz-step-preview"), { label: "the server preview" });
   // close the wizard — the final flow NEVER executes a reset
   const escape = new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true });
   document.dispatchEvent(escape);
-  await sleep(400);
+
 }
 assert.equal(sales().length, 3, "nothing was destroyed — the preview was a preview");
 console.log("  ✓ 20 · Danger Zone preview only: counts are the server's, nothing fired");
@@ -545,18 +560,18 @@ console.log("  ✓ 20 · Danger Zone preview only: counts are the server's, noth
 // ── 21 · a restricted role is refused ───────────────────────────────────────
 await signOut();
 await signInAs("viewer");
-await navigate("#/settings/system", 900);
-await sleep(500);
+await navigate("#/dashboard/settings/system");
+
 assert.ok(!testid("dz-cards"), "the viewer gets no Danger Zone");
 assert.ok(!testid("dz-open-clear"), "and no reset action anywhere");
 await signOut();
 await signInAs("admin");
-await sleep(300);
+
 console.log("  ✓ 21 · the viewer is refused; the admin session survives");
 
 // ── 22 · the audit trail holds it all ───────────────────────────────────────
-await navigate("#/audit", 800);
-await sleep(500);
+await navigate("#/dashboard/audit");
+
 assert.ok(bodyText().includes("Audit"), "the audit screen renders");
 const actions = () => trail().map((e) => e.action);
 // the trail records the funnel's ACTS: returns, order settlements, the payment
@@ -573,6 +588,6 @@ assert.ok(trail().every((e) => !JSON.stringify(e.details ?? {}).toLowerCase().in
   "no password ever reached the trail");
 console.log(`  ✓ 22 · the audit trail holds ${trail().length} rows, password-free`);
 
-await navigate("#/");
-await sleep(400);
+await navigate("#/dashboard");
+
 ux.finish("Final Integrated Flow");

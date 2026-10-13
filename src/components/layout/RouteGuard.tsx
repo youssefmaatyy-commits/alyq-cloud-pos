@@ -43,7 +43,7 @@ export function RouteGuard({ children }: { children: ReactNode }) {
     session.custom_role_name || ROLE_LABELS[user.role as keyof typeof ROLE_LABELS] || user.role;
 
   return (
-    <Card>
+    <Card testId="route-access-denied">
       <EmptyState
         icon="🔒"
         title={t("perm.denied")}

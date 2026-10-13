@@ -31,7 +31,6 @@ const ux = await createUxHarness({
 const {
   assert,
   bodyText,
-  sleep,
   waitFor,
   navigate,
   clickEl,
@@ -57,8 +56,8 @@ const setInputValue = (el, value) => {
   assert.ok(el, "field exists");
   const proto = el.tagName === "SELECT" ? ux.dom.window.HTMLSelectElement : ux.dom.window.HTMLInputElement;
   Object.getOwnPropertyDescriptor(proto.prototype, "value").set.call(el, value);
-  el.dispatchEvent(new ux.dom.window.Event(el.tagName === "SELECT" ? "change" : "input", { bubbles: true }));
-  el.dispatchEvent(new ux.dom.window.Event("change", { bubbles: true }));
+  ux.flushSync(() => el.dispatchEvent(new ux.dom.window.Event(el.tagName === "SELECT" ? "change" : "input", { bubbles: true })));
+  ux.flushSync(() => el.dispatchEvent(new ux.dom.window.Event("change", { bubbles: true })));
   return el;
 };
 const setField = (selector, value, scope = document) => {
@@ -70,14 +69,14 @@ const setField = (selector, value, scope = document) => {
 
 async function main() {
   console.log("\nPromotions · zones, automatic discounts, promo codes\n");
-  await sleep(600);
+
 
   // ── 0 · admin signs in ────────────────────────────────────────────────────
   await signInAs("admin");
   await waitFor(() => testid("shell-brand"), { label: "the shell" });
 
   // ── 1 · the seeded zones are the shop window from day one ─────────────────
-  await navigate("#/online/zones");
+  await navigate("#/dashboard/online/zones");
   await waitFor(() => testid("zones-table"), { label: "the zones table" });
   check(
     "Ismailia / Cairo / Suez / Other governorates ship priced",
@@ -97,7 +96,7 @@ async function main() {
   check("Ismailia 0 → 30 takes effect from the admin screen", true);
 
   // ── 3 · a storewide automatic discount ────────────────────────────────────
-  await navigate("#/online/discounts");
+  await navigate("#/dashboard/online/discounts");
   await waitFor(() => testid("promo-new"), { label: "the discounts page" });
   clickTestid("promo-new");
   await waitFor(() => testid("promo-name-en"), { label: "the discount editor" });
@@ -115,7 +114,7 @@ async function main() {
   await waitFor(() => document.querySelector('[data-testid="product-grid"]'), {
     label: "the product listing",
   });
-  await sleep(800);
+
   const struck = () =>
     [...document.querySelectorAll('[data-testid="product-grid"] .line-through')].length;
   const struckBefore = struck();
@@ -126,12 +125,12 @@ async function main() {
   // sale takes 15% off the ring (68 → 57.80), and the pricing ladder assesses
   // coupon minimums on the live subtotal — the number the customer sees — not
   // the struck list price. A min of 500 would refuse a 462.40 cart by design.
-  await navigate("#/online/marketing");
+  await navigate("#/dashboard/online/marketing");
   await waitFor(() => testid("coupon-new"), { label: "the marketing page" });
   clickEl(
     [...document.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim().startsWith("Coupons")),
   );
-  await sleep(400);
+
   clickTestid("coupon-new");
   await waitFor(() => testid("coupon-code"), { label: "the coupon editor" });
   setField('[data-testid="coupon-code"]', "E2E10");
@@ -164,10 +163,10 @@ async function main() {
     );
     assert.ok(inc && !inc.disabled, "the stepper offers more");
     clickEl(inc);
-    await sleep(150);
+
   }
   clickTestid("product-add-to-cart");
-  await sleep(500);
+
   await navigate("#/store/cart");
   // Reconcile the quantity through the cart's authoritative controls. React may
   // process a burst of product-page clicks after navigation, and the cart can
@@ -182,7 +181,7 @@ async function main() {
   for (let i = 0; i < 30 && quantityText() !== "8"; i += 1) {
     if (!decrease || quantityText() === "1") break;
     clickEl(decrease);
-    await sleep(150);
+
   }
   await waitFor(() => quantityText() === "8", {
     label: "the cart quantity to settle at eight",
@@ -205,7 +204,7 @@ async function main() {
   assert.ok(applyBtn, "the Apply button exists");
   assert.ok(!applyBtn.disabled, "the Apply button is enabled with a code typed");
   clickEl(applyBtn);
-  await sleep(2500);
+
   console.log(`  … after Apply: couponError region: ${(document.body.textContent ?? "").includes("46.24") ? "discount visible" : "NO DISCOUNT YET"}`);
   console.log(
     `  … coupon chip: ${bodyText().includes("E2E10") ? "CODE SHOWN" : "code absent"} | err: ${[...document.querySelectorAll("p")].filter((p) => (p.textContent ?? "").toLowerCase().includes("code")).map((p) => p.textContent?.trim()).join(" ;; ").slice(0, 300)}`,
@@ -218,7 +217,7 @@ async function main() {
   await waitFor(() => bodyText().includes("Checkout") || bodyText().includes("إتمام"), {
     label: "the checkout",
   });
-  await sleep(1200);
+
   const fill = (selector, value) => {
     const el = document.querySelector(selector);
     assert.ok(el, `checkout field: ${selector}`);
@@ -250,7 +249,7 @@ async function main() {
   check(`checkout places ${webNumber} with the previewed discount`, true);
 
   // ── 9 · approval carries the discount into the till sale ──────────────────
-  await navigate("#/online/orders");
+  await navigate("#/dashboard/online/orders");
   await waitFor(() => bodyText().includes(webNumber), { label: "the order in the queue" });
   // The detail opens from the row's View button, not the row itself — the
   // same opener every other suite uses.
@@ -263,7 +262,7 @@ async function main() {
   );
   assert.ok(view, "the row offers its detail");
   clickEl(view);
-  await sleep(800);
+
   const dialog = () => document.querySelector('[role="dialog"]');
   await waitFor(() => (dialog()?.textContent ?? "").includes(webNumber), {
     label: "the order detail",
@@ -284,13 +283,13 @@ async function main() {
   check("approving creates the sale with the 127.84 markdown (81.60 sale + 46.24 code)", true);
 
   // ── 10 · the return refunds the discounted unit, never list ───────────────
-  await navigate("#/returns");
+  await navigate("#/dashboard/returns");
   await waitFor(() => bodyText().includes("Returns"), { label: "the returns screen" });
   clickExact("New return");
   await waitFor(() => document.querySelectorAll('[role="dialog"]').length > 0, {
     label: "the return modal",
   });
-  await sleep(500);
+
   const modal = () => [...document.querySelectorAll('[role="dialog"]')].at(-1);
   // The modal re-reads invoices on open: wait for the online-approved sale to
   // arrive rather than assuming the first paint has it.
@@ -309,7 +308,7 @@ async function main() {
     saleSelect,
     [...saleSelect.options].find((o) => (o.textContent ?? "").includes(sale.sale_number)).value,
   );
-  await sleep(500);
+
   const qtyInput = [...modal().querySelectorAll('input[placeholder="0"]')][0];
   assert.ok(qtyInput, "the quantity input exists");
   qtyInput.focus();
@@ -336,13 +335,13 @@ async function main() {
   // The success handler routes to the return detail once the catalog refresh
   // settles — after our own navigation, so wait for its landing first, or it
   // overwrites the next screen mid-step.
-  await waitFor(() => ux.dom.window.location.hash.startsWith("#/returns/ret-"), {
+  await waitFor(() => ux.dom.window.location.hash.startsWith("#/dashboard/returns/ret-"), {
     label: "the return detail",
   });
 
   // ── 11 · disabling the sale restores list for new carts ───────────────────
-  await navigate("#/online/discounts");
-  await sleep(500);
+  await navigate("#/dashboard/online/discounts");
+
   await waitFor(() => document.querySelector('[data-testid^="promo-row-"]'), {
     label: "the discounts table",
   });
@@ -363,9 +362,9 @@ async function main() {
     label: "the sale switched off",
   });
   clickTestid("promo-save");
-  await sleep(800);
+
   await navigate("#/store/products");
-  await sleep(800);
+
   const struckAfter = () =>
     [...document.querySelectorAll('[data-testid="product-grid"] .line-through')].length;
   // The seeded flash sale still strikes its own two shelves: disabling the E2E

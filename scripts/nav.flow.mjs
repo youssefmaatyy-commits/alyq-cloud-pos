@@ -39,7 +39,6 @@ const ux = await createUxHarness({
 const {
   assert,
   bodyText,
-  sleep,
   waitFor,
   navigate,
   clickEl,
@@ -60,7 +59,7 @@ function check(label, condition) {
 
 /**
  * hrefs of the static (persistent) sidebar — the first <aside> in the DOM.
- * Deduplicated: the brand block and the Dashboard door both point at "#/".
+ * Deduplicated: the brand block and the Dashboard door both point at "#/dashboard".
  */
 const sidebarHrefs = () =>
   [...new Set(
@@ -71,7 +70,7 @@ const sidebarHrefs = () =>
 
 async function main() {
   console.log("\nPhase 49 · Admin navigation — six doors, no clutter\n");
-  await sleep(600);
+
 
   // ── 0 · admin signs in ────────────────────────────────────────────────────
   await signInAs("admin");
@@ -80,15 +79,15 @@ async function main() {
   });
 
   // ── 1 · exactly the six module doors (+ the storefront shortcut) ─────────
-  const MODULES = ["#/dashboard", "#/dashboard/pos", "#/dashboard/management", "#/dashboard/online", "#/dashboard/reports", "#/dashboard/settings"];
+  const MODULES = ["#/dashboard", "#/dashboard/pos", "#/dashboard/management", "#/dashboard/online", "#/dashboard/reports", "#/dashboard/settings", "#/mobile/notifications"];
   const hrefs = sidebarHrefs();
   check(
-    "the sidebar carries exactly the six module doors + the storefront shortcut",
-    MODULES.every((m) => hrefs.includes(m)) && hrefs.includes("#/store") && hrefs.length === 7,
+    "the sidebar carries exactly the six module doors, Notifications + the storefront shortcut",
+    MODULES.every((m) => hrefs.includes(m)) && hrefs.includes("#/store") && hrefs.length === 8,
   );
 
   // ── 2 · no sub-screen in the sidebar ──────────────────────────────────────
-  const STRAYS = ["#/sales", "#/catalog", "#/inventory", "#/customers", "#/products", "#/categories", "#/inventory/movements", "#/pos/sales", "#/returns", "#/refunds", "#/shifts", "#/expenses", "#/audit", "#/approvals", "#/online/orders", "#/online/website", "#/settings/branding", "#/settings/users", "#/settings/backup"];
+  const STRAYS = ["#/dashboard/sales", "#/dashboard/catalog", "#/dashboard/inventory", "#/dashboard/customers", "#/dashboard/products", "#/dashboard/categories", "#/dashboard/inventory/movements", "#/dashboard/pos/sales", "#/dashboard/returns", "#/dashboard/refunds", "#/dashboard/shifts", "#/dashboard/expenses", "#/dashboard/audit", "#/dashboard/approvals", "#/dashboard/online/orders", "#/dashboard/online/website", "#/dashboard/settings/branding", "#/dashboard/settings/users", "#/dashboard/settings/backup"];
   check("no sub-screen (products, audit, shifts, branding…) leaks into the sidebar", STRAYS.every((s) => !hrefs.includes(s)));
 
   // ── 3 · Settings appears exactly once and opens the grouped home ──────────
@@ -105,19 +104,19 @@ async function main() {
   await waitFor(() => testid("breadcrumbs")?.textContent.includes("Branding"), { label: "the Branding page" });
   check("Settings → Branding opens, breadcrumb reads Settings › Branding", Boolean(testid("branding-save")));
 
-  await navigate("#/settings");
+  await navigate("#/dashboard/settings");
   await waitFor(() => testid("settings-card-users"), { label: "the settings home again" });
   clickTestid("settings-card-users");
   await waitFor(() => testid("breadcrumbs")?.textContent.includes("Users"), { label: "the Users page" });
   check("Settings → Users opens under the same door", Boolean(testid("breadcrumbs")) && (testid("breadcrumbs").textContent ?? "").includes("Users"));
 
-  await navigate("#/settings");
+  await navigate("#/dashboard/settings");
   await waitFor(() => testid("settings-card-backup"), { label: "the backup card" });
   clickTestid("settings-card-backup");
   await waitFor(() => testid("breadcrumbs")?.textContent.includes("Backup"), { label: "the Backup page" });
   check("Settings → Backup opens", bodyText().length > 0);
 
-  await navigate("#/settings");
+  await navigate("#/dashboard/settings");
   await waitFor(() => testid("settings-card-system"), { label: "the Danger Zone card" });
   clickTestid("settings-card-system");
   await waitFor(() => bodyText().includes("Danger Zone") || bodyText().includes("Factory reset"), {
@@ -185,22 +184,23 @@ async function main() {
   check("Online → Website customization opens (the only website-settings door)", window.location.hash.includes("/online/website"));
 
   window.history.back();
-  await sleep(500);
+
   await waitFor(() => testid("module-online"), { label: "the Online home after going back" });
   check("the browser's back button returns from a room to its module home", true);
 
   // ── 16 · legacy deep routes still resolve ────────────────────────────────
   await navigate("#/products");
   await waitFor(() => testid("breadcrumbs")?.textContent.includes("Products"), { label: "the bookmarked products URL" });
+  assert.ok(window.location.hash.startsWith("#/dashboard/products"), "legacy product bookmark redirects to the canonical staff route");
   await navigate("#/pos/sales");
   await waitFor(() => testid("breadcrumbs")?.textContent.includes("Invoices") || testid("breadcrumbs"), {
     label: "the invoices URL",
   });
-  check("bookmarked deep routes (#/products, #/pos/sales) still resolve unchanged", true);
+  check("bookmarked deep routes (#/products, #/pos/sales) still resolve", window.location.hash.startsWith("#/dashboard/pos/sales"));
 
   // ── 17 · the inventory pre-filter hydrates one level deeper ───────────────
-  await navigate("#/inventory/stock?status=low");
-  await sleep(500);
+  await navigate("#/dashboard/inventory/stock?status=low");
+
   const statusSelect = document.querySelector('select[aria-label="Status"]');
   check(
     "the stock deep-link hydrates its ?status=low filter under the module landing",
@@ -216,8 +216,8 @@ async function main() {
   // settings capability, so the Settings door (and everything under it) hides,
   // and a typed URL to a hidden room is refused by the route guard.
   await navigate("#/dashboard/settings/branding");
-  await sleep(600);
-  const guardRefused = bodyText().includes("Access") || bodyText().includes("permission") || bodyText().includes("restricted") || bodyText().includes("denied") || bodyText().includes("Settings");
+
+  const guardRefused = Boolean(testid("route-access-denied")) && !document.querySelector("#brand-name-en");
   check(
     "a cashier sees no Settings door (their modules stay) and a direct URL to Branding is refused",
     !cashierHrefs.some((h) => h.includes("/settings")) && cashierHrefs.some((h) => h.includes("/pos")) && cashierHrefs.some((h) => h.includes("/management")) && cashierHrefs.some((h) => h.includes("/online")) && cashierHrefs.some((h) => h.includes("/reports")) && guardRefused,
@@ -229,7 +229,7 @@ async function main() {
   await navigate("#/dashboard");
   await waitFor(() => testid("shell-brand"), { label: "the shell" });
   clickExact("العربية");
-  await sleep(400);
+
   assert.equal(document.documentElement.getAttribute("dir"), "rtl", "the shell flips to RTL");
   const hamburger = [...document.querySelectorAll("header button")].find(
     (b) => (b.getAttribute("aria-label") ?? "") === "القائمة",

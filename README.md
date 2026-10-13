@@ -10,12 +10,14 @@ React 19 · TypeScript · Vite · Tailwind 4 · Supabase (Postgres + Auth + Stor
 ## Quick start
 
 ```bash
-npm install
-npm run dev          # http://localhost:5173
+npm ci
+VITE_APP_MODE=demo npm run dev  # explicit local evaluation, http://localhost:5173
 ```
 
-With no environment file the app runs in **demo mode**: an in-browser dataset in
-`localStorage`, seeded with five accounts — one per role — all using the
+With no mode/configuration the app now **fails closed**. For local evaluation,
+run `VITE_APP_MODE=demo npm run dev` (or explicitly set `demo` in `.env` and
+remove/empty `VITE_DEMO_SEED`). Demo is visibly labelled, with an in-browser
+`localStorage` dataset and five evaluation accounts — one per role — all using the
 password `alyq1234`.
 
 | Username | Role | Can do |
@@ -32,13 +34,13 @@ server-side enforcement, and must never be used for real money.
 ## Live mode (Supabase)
 
 ```bash
-cp .env.example .env      # fill in VITE_SUPABASE_URL + VITE_SUPABASE_ANON_KEY
+cp .env.example .env      # production mode + approved public Supabase URL/key
 npm run db:check          # verify the migrations build the schema the app needs
 npm run build
 ```
 
-Then apply `supabase/migrations/*.sql` in numeric order — via the Supabase CLI
-(`supabase db push`) or by pasting them into the SQL editor. See
+Production migrations/deployment require the approved backup, staging and
+operator runbooks; `db:check` alone never authorizes hosted writes. See
 [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
 `VITE_*` values are inlined at **build** time, so a running dev server needs a
@@ -46,15 +48,18 @@ restart after changing `.env`. The anon key is safe to ship — row-level securi
 decides what it can reach. Never put the `service_role` key in the front end;
 it bypasses RLS.
 
+Production rollout, mandatory checks/approval and real read-only catalogue gate:
+[`docs/production/vercel-release-gate.md`](docs/production/vercel-release-gate.md).
+
 ## Checks
 
 ```bash
 npm run typecheck    # tsc; also guarantees the EN/AR dictionary is complete
-npm run build        # production bundle
+npm run build        # explicit mode/config required; validates final artifact
 npm test             # logic suites: money math, validation, permissions, repos
 npm run db:check     # migrations apply, are idempotent, and satisfy the code
 npm run test:e2e     # the real bundle driven in jsdom (smoke + auth + store flows)
-npm run test:all     # typecheck + logic + e2e
+npm run test:all     # types + lint + release safety/logic + db + all 31 e2e + build/preflight
 ```
 
 `npm run db:check` runs a WebAssembly PostgreSQL in-process, so no Docker or
@@ -62,7 +67,9 @@ database server is required. It applies every migration (twice), runs the role
 scenarios as each of the five roles, and asserts that the schema matches the
 code: every table and RPC the repositories name, every column of every `…Row`
 interface, RLS enabled everywhere, and the capability matrix, audit vocabulary
-and role aliases identical on both sides. Point it at a real project with
+and role aliases identical on both sides. The npm entry point forces isolated PGlite even if an ambient database URL exists.
+For a separately authorized read-only hosted inspection, invoke
+`node scripts/migrations.check.mjs` directly with
 `--driver=psql --url=postgres://… --verify-only` to check what is deployed.
 
 ## Online store

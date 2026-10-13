@@ -16,7 +16,7 @@
  * because the shape of the answer is decided in the database rather than here.
  */
 
-import { getSupabaseClient, isSupabaseConfigured } from "@/lib/supabase/client";
+import { getSupabaseClient, getRepositoryMode } from "@/lib/supabase/client";
 import type { Product, Category } from "@/modules/products/types";
 import type { StoreVariant } from "@/modules/online/services/pricing";
 import { getDemoRepository } from "@/modules/products/data/demoRepository";
@@ -121,7 +121,7 @@ export async function fetchStorefrontCatalog(): Promise<{
   colorImages: StoreColorImage[];
   mode: "supabase" | "demo";
 }> {
-  if (isSupabaseConfigured) {
+  if (getRepositoryMode() === "supabase") {
     const client = getSupabaseClient();
     if (!client) throw new Error("Supabase client unavailable");
 

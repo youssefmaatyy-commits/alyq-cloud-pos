@@ -1,3 +1,4 @@
+import { releaseMetadata } from "@/lib/config/release";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { PageHeader } from "@/components/layout/AppShell";
@@ -120,6 +121,7 @@ export function HealthCenterPage() {
   const diagnostics = () => ({
     generated_at: new Date().toISOString(),
     application: "ALYQ Cloud POS",
+    release: releaseMetadata,
     expected_migration: SHIPPED_LATEST_MIGRATION,
     expected_migration_count: SHIPPED_MIGRATION_COUNT,
     connectivity: pos.connectivitySnapshot,
@@ -181,8 +183,12 @@ export function HealthCenterPage() {
           {mayOpenSync ? <Link to="/sync" className="inline-flex items-center rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800">{copy.sync}</Link> : null}
         </div>
       )} />
+      <Card testId="release-metadata" className="mb-4">
+        <h2 className="font-semibold">Release identity · هوية الإصدار</h2>
+        <dl className="mt-2 break-all text-sm"><dt>Environment</dt><dd>{releaseMetadata.environment}</dd><dt>Git commit</dt><dd>{releaseMetadata.gitSha}</dd><dt>Built at (UTC)</dt><dd>{releaseMetadata.builtAt}</dd></dl>
+      </Card>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {facts.map((fact) => <Card key={fact.key} data-testid={`health-${fact.key}`}>
+        {facts.map((fact) => <Card key={fact.key} testId={`health-${fact.key}`}>
           <p className="text-[11px] font-bold uppercase tracking-wide text-stone-500">{labels[fact.key]}</p>
           <Badge className="mt-2" tone={tone[fact.state]}>{copy[fact.state]}</Badge>
           {fact.detail ? <p dir={fact.key === "branch" || fact.key === "migration" ? "ltr" : undefined} className="mt-2 break-words text-xs text-stone-600">{fact.detail}</p> : null}

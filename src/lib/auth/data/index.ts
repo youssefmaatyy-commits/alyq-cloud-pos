@@ -1,4 +1,4 @@
-import { getSupabaseClient, isSupabaseConfigured } from "@/lib/supabase/client";
+import { getRepositoryMode } from "@/lib/supabase/client";
 import { getDemoUserRepository, resetDemoUserRepository } from "./demoRepository";
 import { getSupabaseUserRepository, resetSupabaseUserRepository } from "./supabaseRepository";
 import type { UserRepository } from "./repository";
@@ -7,12 +7,12 @@ export type AuthMode = "supabase" | "demo";
 
 /** The repository for the current environment (same rule as every other module). */
 export function getUserRepository(): UserRepository {
-  if (isSupabaseConfigured && getSupabaseClient()) return getSupabaseUserRepository();
+  if (getRepositoryMode() === "supabase") return getSupabaseUserRepository();
   return getDemoUserRepository();
 }
 
 export function getAuthMode(): AuthMode {
-  return isSupabaseConfigured && getSupabaseClient() ? "supabase" : "demo";
+  return getRepositoryMode() === "supabase" ? "supabase" : "demo";
 }
 
 export { DemoUserRepository, getDemoUserRepository, resetDemoUserRepository } from "./demoRepository";
