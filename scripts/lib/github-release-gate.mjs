@@ -32,12 +32,12 @@ export function assertCIReleaseRun(run, sha, repository) {
 
 export function assertReleaseEnvironment(environment, policies) {
   const reviewers = environment.protection_rules?.find((rule) => rule.type === 'required_reviewers');
-  if (!reviewers?.prevent_self_review || !reviewers.reviewers?.length
+  if (!reviewers?.reviewers?.length || environment.can_admins_bypass !== false
       || !environment.deployment_branch_policy?.custom_branch_policies
       || environment.deployment_branch_policy?.protected_branches
       || policies.branch_policies?.length !== 1 || policies.branch_policies[0].name !== 'main'
       || policies.branch_policies[0].type !== 'branch') {
-    throw new Error('Production environment must require independent reviewers and allow only the main branch.');
+    throw new Error('Production environment must require a named reviewer, disable administrator bypass, and allow only the main branch.');
   }
 }
 
