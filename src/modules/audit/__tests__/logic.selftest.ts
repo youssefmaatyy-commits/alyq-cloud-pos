@@ -356,7 +356,7 @@ test("an undiscounted sale writes no discount entry", async () => {
   );
 });
 
-test("a void is recorded with the reason and the amount taken out of revenue", async () => {
+test("a completed-sale cancellation is refused and writes no sale.voided row", async () => {
   signInAs("admin");
   const { products } = await loadCatalog();
   const target = products.find((p) => p.sku === "ALYQ-1002");
@@ -375,20 +375,24 @@ test("a void is recorded with the reason and the amount taken out of revenue", a
     user_name: "ALYQ Admin",
   });
 
+  // Completed-sale cancellation is retired (migration 0095). The refusal is
+  // explicit, and it writes no `sale.voided` row: the audit trail of a sale is
+  // never extended by an attempt that did not happen.
   const before = await mark();
-  await voidSale(sale.id, {
-    user_id: "u-admin",
-    user_name: "ALYQ Admin",
-    reason: "Customer walked out before paying",
-  });
+  await assert.rejects(
+    () => voidSale(sale.id, {
+      user_id: "u-admin",
+      user_name: "ALYQ Admin",
+      reason: "Customer walked out before paying",
+    }),
+    (error: unknown) => error instanceof Error && /cannot be cancelled/i.test(error.message),
+  );
   const written = await entriesSince(before);
-
-  const recorded = await expectAction(written, "sale.voided");
-  assert.equal(recorded.entity_id, sale.id);
-  assert.equal(recorded.entity_label, sale.sale_number);
-  assert.equal(recorded.details.reason, "Customer walked out before paying");
-  assert.equal(recorded.details.total, sale.total);
-  assert.equal(recorded.details.items, 1);
+  assert.equal(
+    written.some((entry) => entry.action === "sale.voided" && entry.entity_id === sale.id),
+    false,
+    "a refused cancellation wrote a sale.voided row",
+  );
 });
 
 test("a price move is recorded with the value before and after", async () => {

@@ -3284,8 +3284,8 @@ begin
   begin
     perform public.pos_void_sale(v_void_id, v_viewer::text, 'Vera Viewer', 'viewer should not void');
     raise exception 'a viewer voided a completed sale';
-  exception when insufficient_privilege then
-    null;
+  exception when feature_not_supported then
+    null; -- migration 0095: completed-sale cancellation is refused for everyone
   end;
 
   -- ── DENY: a cashier may sell but not void — the guard reads the matrix, it
@@ -3296,9 +3296,9 @@ begin
   end if;
   begin
     perform public.pos_void_sale(v_void_id, v_cashier::text, 'Karim Cashier', 'cashier should not void');
-    raise exception 'a cashier voided a sale, which only a manager or admin may do';
-  exception when insufficient_privilege then
-    null;
+    raise exception 'a cashier voided a sale, which nobody may do after migration 0095';
+  exception when feature_not_supported then
+    null; -- migration 0095: refused before any permission is consulted
   end;
 
   -- ── ALLOW: the seats that legitimately hold each capability still work ─────
@@ -3310,8 +3310,18 @@ begin
 
   perform public.pos_confirm_payment(v_pending_id, v_cashier::text, 'Karim Cashier');
 
+  -- Migration 0095 retired completed-sale cancellation: even an admin is refused,
+  -- and the refused sale must be exactly as it was.
   perform pg_temp.become(v_admin, 'authenticated');
-  perform public.pos_void_sale(v_void_id, v_admin::text, 'Amina Admin', 'entry error');
+  begin
+    perform public.pos_void_sale(v_void_id, v_admin::text, 'Amina Admin', 'entry error');
+    raise exception 'an admin cancelled a completed sale; that path is retired';
+  exception when feature_not_supported then
+    null;
+  end;
+  if (select status from public.sales where id = v_void_id) <> 'completed' then
+    raise exception 'a refused cancellation modified the sale';
+  end if;
 
   -- ── the online path the guard could so easily have broken ──────────────────
   -- `resolve_online_order` completes a customer's order by calling

@@ -132,6 +132,9 @@ interface VariantRow {
   size_value: string | null;
   size_sort_order: number | string | null;
   image_url: string | null;
+  display_name_ar?: string | null;
+  display_name_en?: string | null;
+  images?: unknown;
   price_override: number | string | null;
   cost_override: number | string | null;
   stock_quantity: number | string | null;
@@ -163,6 +166,11 @@ function mapVariant(row: VariantRow): ProductVariant {
     size_value: row.size_value ?? row.size_label ?? (row.size == null ? null : String(row.size)),
     size_sort_order: toNumber(row.size_sort_order),
     image_url: row.image_url ?? null,
+    display_name_ar: row.display_name_ar ?? null,
+    display_name_en: row.display_name_en ?? null,
+    images: Array.isArray(row.images)
+      ? row.images.filter((url): url is string => typeof url === "string" && url.length > 0)
+      : [],
     price_override: toNullableNumber(row.price_override),
     cost_override: toNullableNumber(row.cost_override),
     stock_quantity: toNumber(row.stock_quantity),

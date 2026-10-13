@@ -7,6 +7,7 @@ import {
   compareVariants,
   variantLabel,
   variantPrice,
+  isFreeSizeModel,
   type ProductVariant,
 } from "@/modules/products/variants";
 import { usePos } from "../hooks/PosProvider";
@@ -63,7 +64,10 @@ export function VariantPicker({ product, variants, onPick, onClose }: VariantPic
   );
   const inCart = (id: string) => lines.find((line) => line.variant_id === id)?.qty ?? 0;
   const hasColors = active.some((variant) => Boolean(variant.color_key));
-  const colorsOnly = active.length > 0 && active.every((variant) => !variantSizeValue(variant));
+  // A free-size product: every active combination is a named model with no
+  // colour and no size. The cashier picks the model; no size is ever asked for.
+  const freeSize = active.length > 0 && active.every((variant) => isFreeSizeModel(variant));
+  const colorsOnly = active.length > 0 && active.every((variant) => !variantSizeValue(variant)) && !freeSize;
 
   const pick = (variant: ProductVariant) => {
     if (!variant.active || variant.stock_quantity <= inCart(variant.id)) return;
@@ -92,7 +96,7 @@ export function VariantPicker({ product, variants, onPick, onClose }: VariantPic
               {lang === "ar" ? product.name_ar : product.name_en}
             </p>
             <p className="mt-0.5 font-mono text-[11px] text-stone-500">
-              {product.sku} · {t("pos.variants.choose")}
+              {product.sku} · {freeSize ? t("pos.variants.chooseModel") : t("pos.variants.choose")}
             </p>
           </div>
           <button
@@ -144,9 +148,9 @@ export function VariantPicker({ product, variants, onPick, onClose }: VariantPic
         </div>}
 
         {/* Only offered, active colour/size IDs are buttons; no inferred grid. */}
-        {!colorsOnly && <div>
+        {(!colorsOnly || freeSize) && <div>
           <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-stone-500">
-            {t("pos.variants.size")}
+            {freeSize ? t("pos.variants.model") : t("pos.variants.size")}
           </p>
           <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-4">
             {sizes.map((variant) => {

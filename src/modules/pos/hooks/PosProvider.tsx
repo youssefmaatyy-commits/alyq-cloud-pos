@@ -582,6 +582,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
         color_en: variant?.color_en ?? null,
         size: variant?.size ?? null,
         size_label: variant?.size_label ?? null,
+        display_name_ar: variant?.display_name_ar ?? null,
+        display_name_en: variant?.display_name_en ?? null,
         sku: variant?.sku ?? current.sku,
         name_ar: current.name_ar,
         name_en: current.name_en,
@@ -959,6 +961,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
             color_ar: line.color_ar,
             color_en: line.color_en,
             size_value: line.size_label ?? (line.size == null ? null : String(line.size)),
+            display_name_ar: line.display_name_ar ?? null,
+            display_name_en: line.display_name_en ?? null,
             unit_price: line.unit_price,
           })),
           {

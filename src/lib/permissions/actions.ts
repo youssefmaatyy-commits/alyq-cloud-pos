@@ -74,7 +74,7 @@ export const SENSITIVE_ACTIONS: readonly SensitiveAction[] = [
     capability: "void_sale",
     guard: "assertCanVoidSale",
     file: "src/modules/pos/services/saleService.ts",
-    db: "public.pos_void_sale — restocks once, refuses an already-voided sale",
+    db: "public.pos_void_sale — RETIRED (migration 0095): refuses every caller with feature_not_supported and writes nothing",
   },
   {
     key: "sale.confirm_payment",
@@ -88,7 +88,7 @@ export const SENSITIVE_ACTIONS: readonly SensitiveAction[] = [
     capability: "edit_sale",
     guard: "assertCanEditSale",
     file: "src/modules/pos/services/saleService.ts",
-    db: "no write path — a completed sale is immutable; corrections go through returns or a void",
+    db: "no write path — a completed sale is immutable; corrections go through sales returns (cancellation is retired)",
   },
   {
     key: "sale.delete",

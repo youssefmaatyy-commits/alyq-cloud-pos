@@ -14,7 +14,8 @@
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { cn } from "@/utils/cn";
 import type { StoreVariant, StoreVariantColorGroup } from "../../services/pricing";
-import { storeSizeLabel, variantColorLabel } from "../../services/variantLabel";
+import { modelNameOf, storeSizeLabel, variantColorLabel } from "../../services/variantLabel";
+import { isFreeSizeStoreVariant, storeVariantPicture } from "../../services/variantModels";
 
 export function VariantPicker({
   groups,
@@ -33,6 +34,20 @@ export function VariantPicker({
   onVariant: (variant: StoreVariant) => void;
 }) {
   const { t, pick, lang } = useI18n();
+
+  // A free-size product (every combination is a named model, with no colour and
+  // no size) is chosen by model — a picture and a name — never by a size chip.
+  const everyVariant = groups.flatMap((group) => group.variants);
+  if (everyVariant.length > 0 && everyVariant.every(isFreeSizeStoreVariant)) {
+    return (
+      <FreeSizeModelPicker
+        variants={everyVariant}
+        chosenVariantId={chosenVariantId}
+        availableOf={availableOf}
+        onVariant={onVariant}
+      />
+    );
+  }
 
   // The sizes shown are the chosen colour's; no colour chosen yet → the prompt
   // below, never a silent default.
@@ -150,6 +165,82 @@ export function VariantPicker({
           {t("store.variants.pickColorFirst")}
         </p>
       )}
+    </div>
+  );
+}
+
+/**
+ * A free-size model grid: one card per model, its own picture first, its own
+ * name, and an honest sold-out state. Nothing is preselected and no size is
+ * asked for.
+ */
+export function FreeSizeModelPicker({
+  variants,
+  chosenVariantId,
+  availableOf,
+  onVariant,
+}: {
+  variants: readonly StoreVariant[];
+  chosenVariantId: string | null;
+  availableOf: (variant: StoreVariant) => number | null;
+  onVariant: (variant: StoreVariant) => void;
+}) {
+  const { t, lang } = useI18n();
+  return (
+    <div className="mt-4 space-y-2" data-testid="store-model-picker">
+      <p className="text-[11px] font-black uppercase tracking-wider text-[var(--store-text-secondary)]">
+        {t("store.variants.chooseModel")}
+      </p>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3" role="listbox" aria-label={t("store.variants.chooseModel")}>
+        {variants.map((variant) => {
+          const selected = variant.id === chosenVariantId;
+          const available = availableOf(variant);
+          const buyable = available === null || available > 0;
+          const name = modelNameOf(variant, lang) ?? "";
+          const picture = storeVariantPicture(variant);
+          return (
+            <button
+              key={variant.id}
+              type="button"
+              role="option"
+              aria-selected={selected}
+              aria-disabled={!buyable}
+              data-testid={`variant-model-${variant.sku}`}
+              title={buyable ? name : t("store.variants.soldOut")}
+              onClick={() => buyable && onVariant(variant)}
+              className={cn(
+                "flex flex-col overflow-hidden border text-start transition",
+                selected
+                  ? "border-[var(--store-primary)] ring-1 ring-[var(--store-primary)]"
+                  : "border-[var(--store-border)] hover:border-[var(--store-primary)]",
+                !buyable && "cursor-not-allowed opacity-60",
+              )}
+              style={{ borderRadius: "var(--store-radius-button)" }}
+            >
+              {picture ? (
+                <img
+                  src={picture}
+                  alt={name}
+                  loading="lazy"
+                  className="aspect-square w-full object-cover"
+                />
+              ) : (
+                <span className="flex aspect-square w-full items-center justify-center bg-[var(--store-surface-muted,#f5f5f4)] text-xs text-[var(--store-text-secondary)]">
+                  {name}
+                </span>
+              )}
+              <span className="px-2 py-1.5 text-xs font-black text-[var(--store-text-primary)]">{name}</span>
+              <span className="px-2 pb-2 text-[11px] font-bold text-[var(--store-text-secondary)]">
+                {!buyable
+                  ? t("store.variants.soldOut")
+                  : available !== null && available <= 5
+                    ? t("store.product.onlyLeft", { count: available })
+                    : t("pos.variants.freeSize")}
+              </span>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }

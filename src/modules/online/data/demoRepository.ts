@@ -1629,21 +1629,18 @@ export class DemoOnlineRepository
         }
 
         case "cancel": {
-          // Give the units back: the hold is released, and if a sale already
-          // exists it is voided, which is what restores the stock.
+          // A converted order is a completed sale and cannot be cancelled
+          // (migration 0095). checkAction refuses it before this point; this is
+          // the same refusal, kept here so the demo can never void a sale.
+          if (order.sale_id) {
+            throw new OnlineError("workflow_refused", "Completed sales cannot be cancelled. Process a sales return instead.");
+          }
+          // Give the units back: the hold is released.
           this.reservations = this.reservations.map((reservation) =>
             reservation.online_order_id === order.id && reservation.status === "reserved"
               ? { ...reservation, status: "released" as const, resolved_at: at }
               : reservation,
           );
-
-          if (order.sale_id) {
-            await getDemoSalesRepository().voidSale(order.sale_id, {
-              user_id: input.user_id,
-              user_name: input.user_name,
-              reason: `Online order ${order.order_number} cancelled${reason ? `: ${reason}` : ""}`,
-            });
-          }
 
           // Safe coupon & promotion lifecycle: release consumed count ONLY if order was approved
           if ((order.status === "approved" || order.sale_id) && order.discount_code) {

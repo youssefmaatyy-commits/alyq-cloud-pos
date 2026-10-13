@@ -66,6 +66,9 @@ export interface OfflineSaleLine {
   color_ar?: string | null;
   color_en?: string | null;
   size_value?: string | null;
+  /** Free-size model name frozen at cart time (migration 0096). */
+  display_name_ar?: string | null;
+  display_name_en?: string | null;
   unit_price: number;
 }
 
@@ -185,6 +188,8 @@ export interface SafeSyncOperation {
     color_ar: string | null;
     color_en: string | null;
     size_value: string | null;
+    display_name_ar?: string | null;
+    display_name_en?: string | null;
     qty: number;
   }>;
   synced_at: string | null;
@@ -238,6 +243,7 @@ export function offlineSaleToDisplaySale(record: OfflineSaleRecord, lines: Offli
         variant_color_en: line.color_en ?? null,
         variant_size: line.size_value && /^[0-9]+(?:\.[0-9]{1,2})?$/.test(line.size_value) ? Number(line.size_value) : null,
         variant_size_label: line.size_value ?? null,
+        variant_display_name: line.display_name_en ?? line.display_name_ar ?? null,
         name_ar: line.name_ar,
         name_en: line.name_en,
         sku: line.sku,

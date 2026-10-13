@@ -35,9 +35,13 @@ import { AppError, type VariantActor, type VariantOpening } from "../data/reposi
 import type { Product } from "../types";
 import { deriveBarcodeFromSku } from "./barcode";
 import {
+  VARIANT_GALLERY_LIMIT,
   colorKeyOf,
   compareVariants,
+  modelKeyOf,
+  modelNameOf,
   summarizeVariants,
+  variantGalleryProblem,
   variantLabel,
   variantSizeValue,
   type NewProductVariant,
@@ -183,12 +187,41 @@ export async function saveVariant({
   }
 
   const colorKey = values.color_key?.trim() || colorKeyOf(values);
+  const sizeValue = (values.size_value ?? values.size_label ?? (values.size == null ? "" : String(values.size))).trim();
+  const model = modelNameOf(values);
+
+  // A variant must name something. A free-size model names itself; a colour or
+  // size variant needs one of those.
+  if (!colorKey && !sizeValue && !model) {
+    throw new AppError(
+      "VALIDATION",
+      "Give this variant a colour, a size, or a model name (for a free-size ring)",
+      "display_name_en",
+    );
+  }
+  // Parent product owns the selling price in this phase: a named model cannot
+  // carry its own price override.
+  if (model && values.price_override !== null && values.price_override !== undefined) {
+    throw new AppError(
+      "VALIDATION",
+      "A named model uses the product price. Clear the price override to save.",
+      "price_override",
+    );
+  }
+  const galleryProblem = variantGalleryProblem(values.images ?? []);
+  if (galleryProblem === "too_many") {
+    throw new AppError("VALIDATION", `A variant can have at most ${VARIANT_GALLERY_LIMIT} photos`, "images");
+  }
+  if (galleryProblem === "invalid_url") {
+    throw new AppError("VALIDATION", "Each variant photo must be an http(s) link", "images");
+  }
+
   if (!currentId) {
     const twin = others.find(
       (v) =>
         v.color_key === colorKey &&
-        variantSizeValue(v).toLocaleLowerCase() ===
-          (values.size_value ?? values.size_label ?? (values.size == null ? "" : String(values.size))).trim().toLocaleLowerCase(),
+        variantSizeValue(v).toLocaleLowerCase() === sizeValue.toLocaleLowerCase() &&
+        modelKeyOf(v) === modelKeyOf(values),
     );
     if (twin) {
       throw new AppError(
@@ -351,6 +384,34 @@ export async function generateVariants({
  * it readable — it only stops the combination being sellable. Reactivating is
  * the way back; nothing here deletes history.
  */
+/**
+ * Move one variant one place up (-1) or down (+1) among the variants that share
+ * its colour group. The display order everywhere (admin, register, storefront)
+ * reads `size_sort_order` before anything else, so that is the one column this
+ * writes. Only positions that actually change are written.
+ */
+export async function moveVariant(
+  variantId: string,
+  direction: -1 | 1,
+  siblings: readonly ProductVariant[],
+): Promise<void> {
+  assertCanEditVariant();
+  const target = siblings.find((variant) => variant.id === variantId);
+  if (!target) return;
+  const group = siblings.filter((variant) => variant.color_key === target.color_key).sort(compareVariants);
+  const index = group.findIndex((variant) => variant.id === variantId);
+  const other = index + direction;
+  if (index < 0 || other < 0 || other >= group.length) return;
+  [group[index], group[other]] = [group[other], group[index]];
+  const repository = getCatalogRepository();
+  for (const [position, variant] of group.entries()) {
+    const desired = position + 1;
+    if (variant.size_sort_order !== desired) {
+      await repository.updateVariant(variant.id, { size_sort_order: desired });
+    }
+  }
+}
+
 export async function setVariantActive(id: string, active: boolean): Promise<ProductVariant> {
   assertCanToggleVariant();
   const repository = getCatalogRepository();

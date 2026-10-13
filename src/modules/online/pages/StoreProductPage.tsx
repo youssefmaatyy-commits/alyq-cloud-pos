@@ -35,6 +35,7 @@ import {
 } from "../services/pricing";
 import { variantAvailableToPromise } from "../services/availability";
 import { variantLabelOf } from "../services/variantLabel";
+import { variantGalleryOf } from "@/modules/products/variants";
 import { productContentSections } from "../types";
 import { VariantPicker } from "../components/storefront/VariantPicker";
 import {
@@ -273,13 +274,17 @@ export function StoreProductPage() {
       .sort((a, b) => a.sort_order - b.sort_order)
       .map((item) => item.url.trim())
       .filter(Boolean);
+    // A chosen combination with its own pictures shows exactly those: the
+    // gallery follows the shelf the shopper picked, never a sibling's photos.
+    const own = chosenVariant ? variantGalleryOf(chosenVariant) : [];
+    if (own.length) return own;
     const colorGallery = chosenColorKey
       ? colorGalleryFor(product.id, chosenColorKey).map((image) => image.image_url)
       : [];
     if (colorGallery.length) return [...new Set(colorGallery)];
     const fallback = [...base, ...media.filter((url) => !base.includes(url))];
     return [...new Set(chosenVariant?.image_url ? [chosenVariant.image_url, ...fallback] : fallback)];
-  }, [content, product, chosenColorKey, chosenVariant?.image_url, colorGalleryFor]);
+  }, [content, product, chosenColorKey, chosenVariant, colorGalleryFor]);
 
   // Alt text per gallery image where the admin wrote one (content media).
   const altOf = useCallback(

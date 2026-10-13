@@ -1,4 +1,4 @@
-import type { CompleteSaleInput, ConfirmPaymentInput, Sale, VoidSaleInput } from "../types";
+import type { CompleteSaleInput, ConfirmPaymentInput, Sale } from "../types";
 import { AppError } from "@/modules/products/data/repository";
 
 /**
@@ -75,7 +75,6 @@ export interface SalesRepository {
    */
   countSales(query?: SaleListQuery): Promise<number | null>;
   getSale(id: string): Promise<Sale>;
-  voidSale(id: string, input: VoidSaleInput): Promise<Sale>;
   /** Confirm a pending InstaPay payment. Idempotent; never changes totals. */
   confirmPayment(id: string, input: ConfirmPaymentInput): Promise<Sale>;
 }

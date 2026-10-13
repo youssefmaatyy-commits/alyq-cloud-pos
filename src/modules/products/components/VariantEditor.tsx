@@ -38,6 +38,7 @@ import {
   listVariants,
   listColorImages,
   labelOf,
+  moveVariant,
   replaceColorImages,
   saveVariant,
   setVariantActive,
@@ -47,6 +48,8 @@ import {
   colorKeyOf,
   formatSizes,
   generateCombinations,
+  isFreeSizeModel,
+  modelNameOf,
   parseSizes,
   suggestVariantSku,
   variantLabel,
@@ -101,9 +104,17 @@ interface VariantFormState {
   low_stock_level: string;
   image_url: string;
   active: boolean;
+  /** Free-size model name (migration 0096). Blank for a colour/size combination. */
+  display_name_en: string;
+  display_name_ar: string;
+  /** One https image link per line; saved as the variant's own gallery. */
+  gallery: string;
 }
 
 const EMPTY_VARIANT_FORM: VariantFormState = {
+  display_name_en: "",
+  display_name_ar: "",
+  gallery: "",
   color_ar: "",
   color_en: "",
   color_hex: "",
@@ -161,6 +172,9 @@ function VariantFormModal({
             low_stock_level: String(current.low_stock_level),
             image_url: current.image_url ?? "",
             active: current.active,
+            display_name_en: current.display_name_en ?? "",
+            display_name_ar: current.display_name_ar ?? "",
+            gallery: (current.images ?? []).join("\n"),
           }
         : EMPTY_VARIANT_FORM,
     );
@@ -210,6 +224,12 @@ function VariantFormModal({
           size_value: values.size.trim() || null,
           size_sort_order: current?.size_sort_order ?? current?.sort_order ?? siblings.length + 1,
           image_url: values.image_url.trim() || null,
+          display_name_en: values.display_name_en.trim() || null,
+          display_name_ar: values.display_name_ar.trim() || null,
+          images: values.gallery
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .filter(Boolean),
           // New combinations start empty: the shelf is filled by the inventory
           // screen, never by a form field.
           stock_quantity: current?.stock_quantity ?? 0,
@@ -267,7 +287,25 @@ function VariantFormModal({
           {t("products.variants.noPermission")}
         </p>
       ) : null}
+      <p className="mb-3 text-xs font-semibold text-slate-600">{t("products.variants.freeSizeHelp")}</p>
       <div className="grid gap-3 sm:grid-cols-2">
+        <Field label={t("products.variants.modelName")} hint={t("products.variants.modelNameHint")}>
+          <TextInput
+            value={values.display_name_en}
+            onChange={(e) => set("display_name_en", e.target.value)}
+            placeholder="Model A"
+            disabled={!allowed}
+            data-testid="variant-form-model-en"
+          />
+        </Field>
+        <Field label={t("products.variants.modelName")}>
+          <TextInput
+            value={values.display_name_ar}
+            onChange={(e) => set("display_name_ar", e.target.value)}
+            placeholder="موديل A"
+            disabled={!allowed}
+          />
+        </Field>
         <Field label={t("products.variants.colorEn")} hint={t("products.variants.colorHint")}>
           <TextInput
             value={values.color_en}
@@ -347,7 +385,14 @@ function VariantFormModal({
             </button>
           </div>
         </Field>
-        <Field label={t("products.variants.priceOverride")} hint={t("products.variants.priceHint")}>
+        <Field
+          label={t("products.variants.priceOverride")}
+          hint={
+            values.display_name_en.trim() || values.display_name_ar.trim()
+              ? t("products.variants.noPriceForModel")
+              : t("products.variants.priceHint")
+          }
+        >
           <TextInput
             dir="ltr"
             inputMode="decimal"
@@ -386,6 +431,18 @@ function VariantFormModal({
             onChange={(e) => set("image_url", e.target.value)}
             placeholder="https://…"
             disabled={!allowed}
+          />
+        </Field>
+        <Field label={t("products.variants.gallery")} hint={t("products.variants.galleryHint")} className="sm:col-span-2">
+          <textarea
+            dir="ltr"
+            rows={3}
+            value={values.gallery}
+            onChange={(e) => set("gallery", e.target.value)}
+            placeholder="https://…/model-a-front.jpg"
+            disabled={!allowed}
+            data-testid="variant-form-gallery"
+            className="w-full rounded-lg border border-slate-200 px-3 py-2 font-mono text-xs text-slate-900 focus:border-indigo-400 focus:outline-none disabled:bg-slate-50"
           />
         </Field>
         <div className="sm:col-span-2">
@@ -1059,12 +1116,22 @@ export function VariantEditor({
                       />
                     </td>
                     <td className="px-3 py-2">
-                      <span className="flex items-center gap-1.5 font-bold text-slate-900">
-                        <Swatch hex={variant.color_hex} />
-                        {pick(variant.color_ar, variant.color_en) || t("store.variants.defaultColor")}
-                        <span className="font-black text-slate-500">/</span>
-                        <span className="tabular-nums">{variantSizeValue(variant)}</span>
-                      </span>
+                      {isFreeSizeModel(variant) ? (
+                        <span className="flex items-center gap-1.5 font-bold text-slate-900" data-testid={`variant-model-${variant.sku}`}>
+                          {modelNameOf(variant, lang)}
+                          <Badge tone="info">{t("pos.variants.freeSize")}</Badge>
+                          {variant.images && variant.images.length > 0 ? (
+                            <span className="text-[10px] font-semibold text-slate-500">{variant.images.length} 📷</span>
+                          ) : null}
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-1.5 font-bold text-slate-900">
+                          <Swatch hex={variant.color_hex} />
+                          {pick(variant.color_ar, variant.color_en) || t("store.variants.defaultColor")}
+                          <span className="font-black text-slate-500">/</span>
+                          <span className="tabular-nums">{variantSizeValue(variant)}</span>
+                        </span>
+                      )}
                     </td>
                     <td className="px-3 py-2 font-mono text-[11px] text-slate-600">{variant.sku}</td>
                     <td className="px-3 py-2">
@@ -1112,6 +1179,26 @@ export function VariantEditor({
                         </button>
                         {canEdit ? (
                           <>
+                            <button
+                              type="button"
+                              disabled={busy}
+                              aria-label={`${t("products.moveUp")} ${variant.sku}`}
+                              onClick={() => void run(() => moveVariant(variant.id, -1, variants))}
+                              className="rounded-md px-1.5 py-1 font-bold text-slate-600 hover:bg-slate-100 disabled:opacity-30"
+                              data-testid={`variant-move-up-${variant.sku}`}
+                            >
+                              ↑
+                            </button>
+                            <button
+                              type="button"
+                              disabled={busy}
+                              aria-label={`${t("products.moveDown")} ${variant.sku}`}
+                              onClick={() => void run(() => moveVariant(variant.id, 1, variants))}
+                              className="rounded-md px-1.5 py-1 font-bold text-slate-600 hover:bg-slate-100 disabled:opacity-30"
+                              data-testid={`variant-move-down-${variant.sku}`}
+                            >
+                              ↓
+                            </button>
                             <button
                               type="button"
                               onClick={() => {
