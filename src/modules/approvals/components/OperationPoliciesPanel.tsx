@@ -7,7 +7,7 @@ import { APP_ROLES, ROLE_LABELS, type AppRole } from "@/lib/permissions/roles";
 import { useSettings } from "@/modules/settings/hooks/SettingsProvider";
 
 const OPERATIONS = [
-  "item_discount", "invoice_discount", "price_override", "void", "refund", "cash_out",
+  "item_discount", "invoice_discount", "price_override", "refund", "cash_out",
 ] as const;
 type Operation = (typeof OPERATIONS)[number];
 type ScopeType = "branch" | "role" | "user";
@@ -16,7 +16,6 @@ const PERMISSION: Record<Operation, string> = {
   item_discount: "apply_discount",
   invoice_discount: "apply_discount",
   price_override: "change_price",
-  void: "void_sale",
   refund: "process_refund",
   cash_out: "cash_out",
 };

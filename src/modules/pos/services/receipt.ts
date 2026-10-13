@@ -244,17 +244,20 @@ function variantLine(
     variant_color_en?: string | null;
     variant_size?: number | null;
     variant_size_label?: string | null;
+    variant_display_name?: string | null;
   },
   rtl: boolean,
 ): string {
   if (!item.variant_id) return "";
   const color =
     (rtl ? item.variant_color_ar || item.variant_color_en : item.variant_color_en || item.variant_color_ar) ?? "";
+  // A free-size model prints its own name ("Model A") where a colour would be.
+  const primary = color.trim() || (item.variant_display_name ?? "").trim();
   const size =
     item.variant_size === null || item.variant_size === undefined
       ? (item.variant_size_label ?? "").trim()
       : String(Math.round(item.variant_size * 100) / 100);
-  return [color.trim(), size].filter(Boolean).join(" / ");
+  return [primary, size].filter(Boolean).join(" / ");
 }
 
 export function buildReceiptHtml({ sale, strings, direction }: ReceiptData): string {
@@ -407,6 +410,7 @@ export interface ReturnReceiptRecord {
     variant_color_en?: string | null;
     variant_size?: number | null;
     variant_size_label?: string | null;
+    variant_display_name?: string | null;
     name_ar: string;
     name_en: string;
     sku: string;

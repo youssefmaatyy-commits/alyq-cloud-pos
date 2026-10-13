@@ -1088,10 +1088,12 @@ test("unverified InstaPay money never becomes a sale", () => {
   assert.deepEqual(checkAction(verified, "approve"), { ok: true, next: "approved" });
 });
 
-test("cancelling an order that already became a sale needs the void capability", () => {
+test("cancelling an order that already became a sale is refused for every role (migration 0095)", () => {
+  // Completed-sale cancellation is retired. A converted order is a sale, so no
+  // capability changes the answer; a pending order that never became a sale still cancels.
   const approved = makeOrder({ status: "approved", sale_id: "sale-1", sale_number: "S-000001" });
-  assert.deepEqual(checkAction(approved, "cancel"), { ok: false, reason: "needs_void_capability" });
-  assert.deepEqual(checkAction(approved, "cancel", { canVoidSale: true }), { ok: true, next: "cancelled" });
+  assert.deepEqual(checkAction(approved, "cancel"), { ok: false, reason: "sale_cancellation_retired" });
+  assert.deepEqual(checkAction(approved, "cancel", { canVoidSale: true }), { ok: false, reason: "sale_cancellation_retired" });
   assert.deepEqual(checkAction(makeOrder({ status: "pending" }), "cancel"), { ok: true, next: "cancelled" });
 });
 
@@ -1157,7 +1159,7 @@ test("the actions an employee sees depend on the order and on their capability",
     canVoidSale: true,
     canConfirmPayment: false,
   });
-  assert.equal(manager.includes("cancel"), true);
+  assert.equal(manager.includes("cancel"), false, "not even a manager is offered a retired cancellation");
 
   const unverified = availableActions(
     makeOrder({ status: "pending", payment_method: "instapay", payment_status: "verification_required" }),
@@ -2145,7 +2147,7 @@ test("cancelling a pending order releases the stock and keeps the record with it
   assert.equal(remaining, 0);
 });
 
-test("cancelling an approved order voids the sale and puts the stock back", async () => {
+test("an approved (converted) online order cannot be cancelled: the sale and its stock stand (migration 0095)", async () => {
   const repository = getDemoOnlineRepository();
   const product = await demoProduct("ALYQ-2001");
 
@@ -2161,16 +2163,23 @@ test("cancelling an approved order voids the sale and puts the stock back", asyn
   const approved = await repository.resolveOrder(placed.order.id, { action: "approve", ...STAFF });
   const afterApprove = (await getDemoRepository().listProducts()).find((p) => p.id === product.id)?.stock_quantity ?? 0;
 
-  const cancelled = await repository.resolveOrder(approved.id, {
-    action: "cancel",
-    reason: "Damaged in packing",
-    ...STAFF,
-  });
-  assert.equal(cancelled.status, "cancelled");
-  assert.ok(cancelled.sale_id, "the sale link is kept for the audit trail");
+  await assert.rejects(
+    repository.resolveOrder(approved.id, {
+      action: "cancel",
+      reason: "Damaged in packing",
+      ...STAFF,
+    }),
+    (error: unknown) => {
+      assert.equal(toOnlineError(error).code, "workflow_refused", "a converted order is refused, whatever the role");
+      return true;
+    },
+  );
 
-  const afterCancel = (await getDemoRepository().listProducts()).find((p) => p.id === product.id)?.stock_quantity ?? 0;
-  assert.equal(afterCancel, afterApprove + 1, "voiding the sale restored the unit");
+  const stillApproved = await repository.getOrder(approved.id);
+  assert.equal(stillApproved.status, "approved", "the refused cancellation changed nothing");
+  assert.ok(stillApproved.sale_id, "the sale link is kept");
+  const afterRefusal = (await getDemoRepository().listProducts()).find((p) => p.id === product.id)?.stock_quantity ?? 0;
+  assert.equal(afterRefusal, afterApprove, "no unit was put back onto the shelf");
 });
 
 test("InstaPay proof is verified by a person and never approves itself", async () => {
@@ -2276,6 +2285,21 @@ test("a customer tracks an order with its number and the phone it was placed wit
 
 test("the POS list can be filtered by status and by what needs attention", async () => {
   const repository = getDemoOnlineRepository();
+  // Converted orders can no longer be cancelled (migration 0095), so the filter
+  // gets its own cancelled rows: two pending orders that never became sales.
+  const filterProduct = await demoProduct("ALYQ-1001");
+  for (const ref of ["ref-filter-cancel-1", "ref-filter-cancel-2"]) {
+    const placed = await repository.placeOrder({
+      client_ref: ref,
+      customer_name: "Mona",
+      customer_phone: "01001234567",
+      delivery_type: "pickup",
+      address: null,
+      payment_method: "cod",
+      lines: [{ product_id: filterProduct.id, qty: 1 }],
+    });
+    await repository.resolveOrder(placed.order.id, { action: "cancel", reason: "Customer changed their mind", ...STAFF });
+  }
   const all = await repository.listOrders({ status: "all", paymentStatus: "all", search: "" });
   assert.ok(all.length >= 5, "the scenarios above left a realistic list behind");
 
@@ -2426,7 +2450,7 @@ test("website accounts are the shop's own, not the till's login", async () => {
   assert.equal(updated.name, "Mona A.");
 });
 
-test("a coupon's use is counted when an order is placed and given back when it is cancelled", async () => {
+test("a coupon's use is counted on approval and stays counted: a converted order cannot be cancelled to return it", async () => {
   const repository = getDemoOnlineRepository();
   const product = await demoProduct("ALYQ-1001");
 
@@ -2467,9 +2491,12 @@ test("a coupon's use is counted when an order is placed and given back when it i
   const approvedUsed = (await repository.listCoupons()).find((coupon) => coupon.code === "E2E10");
   assert.equal(approvedUsed?.used_count, 1, "approved order atomically consumes coupon usage");
 
-  await repository.resolveOrder(placed.order.id, { action: "cancel", reason: "Customer request", ...STAFF });
+  await assert.rejects(
+    repository.resolveOrder(placed.order.id, { action: "cancel", reason: "Customer request", ...STAFF }),
+    (error: unknown) => toOnlineError(error).code === "workflow_refused",
+  );
   const given = (await repository.listCoupons()).find((coupon) => coupon.code === "E2E10");
-  assert.equal(given?.used_count, 0, "a cancelled approved order gives the coupon back");
+  assert.equal(given?.used_count, 1, "the sale stands, so its coupon use is not handed back");
 
   await assert.rejects(
     repository.placeOrder({

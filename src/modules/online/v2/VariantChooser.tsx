@@ -1,6 +1,7 @@
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import type { StoreVariant } from "../services/pricing";
-import { variantColorLabel } from "../services/variantLabel";
+import { modelNameOf, variantColorLabel } from "../services/variantLabel";
+import { isFreeSizeStoreVariant } from "../services/variantModels";
 import { variantModel } from "./variantModel";
 
 /** Same explicit, exact-shelf chooser on a card and on the V2 PDP. A size key
@@ -17,6 +18,39 @@ export function V2VariantChooser({ model, colorKey, variantId, onChoice, compact
   const { t, lang } = useI18n();
   const selectedColor = model.hasColors ? colorKey : "";
   const group = model.groups.find((item) => item.color_key === selectedColor);
+
+  // Free-size models: every combination is a named model with no colour and no
+  // size. The shopper picks the model itself; no size chip is ever rendered.
+  if (model.variants.length > 0 && model.variants.every(isFreeSizeStoreVariant)) {
+    return (
+      <div className={`v2-variant-chooser ${compact ? "v2-variant-compact" : ""}`} data-testid="v2-variant-picker">
+        <div role="group" aria-label={t("store.variants.chooseModel")}>
+          <p className="v2-picker-label">{t("store.variants.chooseModel")}</p>
+          <div className="v2-picker-options">
+            {model.variants.map((variant) => {
+              const name = modelNameOf(variant, lang) ?? "";
+              const out = model.remaining(variant) <= 0;
+              return (
+                <button
+                  key={variant.id}
+                  type="button"
+                  className="v2-size-option"
+                  data-testid={`v2-model-${variant.sku}`}
+                  data-selected={variant.id === variantId}
+                  aria-pressed={variant.id === variantId}
+                  aria-label={`${name}${out ? ` — ${t("store.variants.soldOut")}` : ""}`}
+                  disabled={out}
+                  onClick={() => onChoice(variant, "")}
+                >
+                  {name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={`v2-variant-chooser ${compact ? "v2-variant-compact" : ""}`} data-testid="v2-variant-picker">

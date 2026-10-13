@@ -49,6 +49,15 @@ export interface ProductVariant {
   /** Explicit merchant order for size options. */
   size_sort_order?: number;
   image_url: string | null;
+  /**
+   * Optional model name ("Model A") for a combination that has no colour or
+   * size — a free-size ring. Migration 0096. Absent on legacy rows and on older
+   * payloads, which therefore keep their exact previous behaviour.
+   */
+  display_name_ar?: string | null;
+  display_name_en?: string | null;
+  /** Ordered variant gallery (max 5, https). Empty on legacy rows. */
+  images?: string[];
   /** Null → the product's own selling_price. */
   price_override: number | null;
   /** Null → the product's own cost_price. */
@@ -222,14 +231,72 @@ export function naturalSizeCompare(a: string, b: string): number {
   return naturalSizeCollator.compare(left, right);
 }
 
-/** "Gold / 17" — the colour first, then the size, in the reader's language. */
+/** The model name in the reader's language, falling back across the pair. */
+export function modelNameOf(
+  variant: Partial<Pick<ProductVariant, "display_name_ar" | "display_name_en">>,
+  lang: "ar" | "en" = "en",
+): string | null {
+  const en = (variant.display_name_en ?? "").trim();
+  const ar = (variant.display_name_ar ?? "").trim();
+  const value = lang === "ar" ? ar || en : en || ar;
+  return value || null;
+}
+
+/**
+ * A free-size model: a named combination with no colour and no size. Such a
+ * variant never asks the shopper or the cashier for a size.
+ */
+export function isFreeSizeModel(
+  variant: Partial<Pick<ProductVariant, "color_key" | "color_en" | "color_ar" | "size" | "size_label" | "size_value" | "display_name_ar" | "display_name_en">>,
+): boolean {
+  const hasColour = Boolean((variant.color_key ?? "").trim() || (variant.color_en ?? "").trim() || (variant.color_ar ?? "").trim());
+  const hasSize = Boolean(variantSizeValue({ size: variant.size ?? null, size_label: variant.size_label ?? null, size_value: variant.size_value }));
+  return !hasColour && !hasSize && modelNameOf(variant) !== null;
+}
+
+/**
+ * The variant's own pictures in shop order: its gallery first, then the cover
+ * `image_url` if the gallery does not already carry it. Never shared with a
+ * sibling variant.
+ */
+export function variantGalleryOf(
+  variant: Partial<Pick<ProductVariant, "images" | "image_url">>,
+): string[] {
+  const gallery = (variant.images ?? []).filter((url): url is string => typeof url === "string" && url.trim() !== "");
+  const cover = variant.image_url ?? null;
+  const all = cover && !gallery.includes(cover) ? [...gallery, cover] : gallery;
+  return [...new Set(all)];
+}
+
+/** Identity of a model name inside one product (case- and space-insensitive). */
+export function modelKeyOf(variant: Partial<Pick<ProductVariant, "display_name_ar" | "display_name_en">>): string {
+  return (modelNameOf(variant) ?? "").toLocaleLowerCase();
+}
+
+/** Most photos one variant may carry (mirrors migration 0096). */
+export const VARIANT_GALLERY_LIMIT = 5;
+
+/** Why a gallery cannot be saved, or null when it can. */
+export function variantGalleryProblem(urls: readonly string[]): string | null {
+  if (urls.length > VARIANT_GALLERY_LIMIT) return "too_many";
+  if (urls.some((url) => !/^https?:\/\/\S+$/i.test(url) || url.length > 2048)) return "invalid_url";
+  return null;
+}
+
+/**
+ * "Gold / 17" — the colour first, then the size, in the reader's language. A
+ * free-size model has no colour or size, so its label is the model name
+ * ("Model A").
+ */
 export function variantLabel(
-  variant: Pick<ProductVariant, "color_en" | "color_ar" | "size" | "size_label"> & Partial<Pick<ProductVariant, "size_value">>,
+  variant: Pick<ProductVariant, "color_en" | "color_ar" | "size" | "size_label"> &
+    Partial<Pick<ProductVariant, "size_value" | "display_name_ar" | "display_name_en">>,
   lang: "ar" | "en" = "en",
 ): string {
   const color = (lang === "ar" ? variant.color_ar || variant.color_en : variant.color_en || variant.color_ar) ?? "";
+  const primary = color.trim() || modelNameOf(variant, lang) || "";
   const size = variantSizeValue(variant);
-  return [color.trim(), size].filter(Boolean).join(" / ");
+  return [primary, size].filter(Boolean).join(" / ");
 }
 
 /** The same label from a frozen snapshot (an invoice line, an order line). */

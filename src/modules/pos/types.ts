@@ -54,6 +54,8 @@ export interface SaleItem {
   variant_color_en: string | null;
   variant_size: number | null;
   variant_size_label: string | null;
+  /** Frozen free-size model name (migration 0096); null for colour/size lines. */
+  variant_display_name?: string | null;
   /** Snapshot of the product name at sale time (historical, not a live join). */
   name_ar: string;
   name_en: string;
@@ -279,6 +281,9 @@ export interface CartLine {
   color_en: string | null;
   size: number | null;
   size_label: string | null;
+  /** Frozen free-size model name, so the cart shows "Model A" for a model. */
+  display_name_ar?: string | null;
+  display_name_en?: string | null;
   sku: string;
   name_ar: string;
   name_en: string;

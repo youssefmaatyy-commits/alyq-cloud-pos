@@ -40,6 +40,8 @@ satisfies what the application code queries.
 | `0021_identity_custom_roles.sql` | fourteen new capabilities, `profiles.email/phone/last_login_at/custom_role_id`, `custom_roles` (admin-defined overlays on a system role), `can()` consulting the custom role first, staff/role RPCs, session + user audit vocabulary |
 | `0022_business_controls.sql` | Phases 11–14 business control: `return.created` audit vocabulary for the enforced returns/refund service layer (further sections appended as each increment lands) |
 | `0037_product_lifecycle.sql` | safe product delete/archive lifecycle: `delete_product` (unused products only, reference-counted against the five history tables), `set_product_active` (idempotent archive/reactivate), `product_reference_counts`, and the `product.deleted` / `product.archived` / `product.reactivated` audit vocabulary |
+| `0095_retire_completed_sale_cancellation.sql` | completed-sale cancellation retired: `pos_void_sale` refuses every caller with `feature_not_supported` and writes nothing; the previous body survives as `pos_void_sale_core_0072` for history only. Returns, refunds and historical voided rows are untouched |
+| `0096_free_size_variant_models.sql` | free-size variant models: `display_name_en/ar` and a per-variant `images` gallery on `product_variants`, identity/gallery/price constraints, a model name joins the combination identity, variant snapshot names on sale/return/online lines, product-ownership guards, and the new public read `storefront_branch_product_variants_v2()` (the 0080 function is unchanged) |
 
 ## Column reference — `products`
 

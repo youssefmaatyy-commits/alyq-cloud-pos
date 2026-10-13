@@ -134,7 +134,11 @@ export async function fetchStorefrontCatalog(): Promise<{
     const [productResult, categoryResult, variantResult,colorImageResult] = await Promise.all([
       client.rpc("storefront_catalogue"),
       client.rpc("storefront_categories_v2"),
-      client.rpc("storefront_branch_product_variants"),
+      // v2 carries the model name and gallery (migration 0096). If it is not
+      // deployed yet, the historical read answers exactly as before.
+      client.rpc("storefront_branch_product_variants_v2").then(async (result) =>
+        result.error ? client.rpc("storefront_branch_product_variants") : result,
+      ),
       client.rpc("storefront_color_images"),
     ]);
 
@@ -146,7 +150,17 @@ export async function fetchStorefrontCatalog(): Promise<{
       console.warn("[storefront] variant list unavailable", variantResult.error.message);
     }
 
-    const liveVariants = (variantResult.error ? [] : (variantResult.data ?? [])) as StoreVariant[];
+    // Migration 0096 adds a model name and a per-variant gallery. A gallery that
+    // arrives malformed (or from an older database) is treated as empty, never
+    // as a broken shelf.
+    const liveVariants = ((variantResult.error ? [] : (variantResult.data ?? [])) as StoreVariant[]).map(
+      (variant) => ({
+        ...variant,
+        images: Array.isArray(variant.images)
+          ? variant.images.filter((url): url is string => typeof url === "string" && url.trim() !== "")
+          : [],
+      }),
+    );
     return {
       products: patchVariantsEnabled(
         ((productResult.data ?? []) as StorefrontProductRow[]).map(toProduct),

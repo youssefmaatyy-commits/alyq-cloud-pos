@@ -14,6 +14,9 @@ export type VariantLabelSource = {
   size: number | null;
   size_label: string | null;
   size_value?: string | null;
+  /** Free-size model name (migration 0096). */
+  display_name_ar?: string | null;
+  display_name_en?: string | null;
 };
 
 /** 17 → "17", 17.5 → "17.5" — never "17.00". */
@@ -31,8 +34,10 @@ export function variantLabelOf(
   const color =
     (lang === "ar" ? variant.color_ar || variant.color_en : variant.color_en || variant.color_ar) ??
     "";
+  // A free-size model has no colour: its name is the label ("Model A").
+  const primary = color.trim() || modelNameOf(variant, lang) || "";
   const size = storeSizeLabel(variant.size, variant.size_label, variant.size_value);
-  return [color.trim(), size].filter(Boolean).join(" / ");
+  return [primary, size].filter(Boolean).join(" / ");
 }
 
 /** The colour's own label, without the size — for the picker's swatch row. */
@@ -44,4 +49,15 @@ export function variantColorLabel(
     (lang === "ar" ? variant.color_ar || variant.color_en : variant.color_en || variant.color_ar) ??
     ""
   ).trim();
+}
+
+/** The model name of a free-size combination, in the reader's language (or null). */
+export function modelNameOf(
+  variant: Pick<VariantLabelSource, "display_name_ar" | "display_name_en">,
+  lang: "ar" | "en" = "en",
+): string | null {
+  const en = (variant.display_name_en ?? "").trim();
+  const ar = (variant.display_name_ar ?? "").trim();
+  const value = lang === "ar" ? ar || en : en || ar;
+  return value || null;
 }

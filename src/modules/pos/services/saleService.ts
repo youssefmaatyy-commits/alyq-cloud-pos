@@ -18,8 +18,9 @@
  *   · voiding needs `void_sale`; confirming a pending InstaPay needs
  *     `confirm_payment`.
  *
- * Two actions in the register have no implementation on purpose, and saying so
- * here is the point of them:
+ * Actions in the register that have no implementation on purpose, and saying so
+ * here is the point of them. Completed-sale cancellation is one of them: the
+ * `sale.void` guard refuses every caller since migration 0095.
  *
  *   · **a completed sale cannot be edited.** `sales`, `sale_items` and
  *     `sale_payments` refuse every direct write for `authenticated` (migration
@@ -98,9 +99,20 @@ export function assertCanDiscountSale(): void {
   assertSensitiveAction("sale.discount");
 }
 
-/** Voiding is the sanctioned reversal of a completed sale. */
-export function assertCanVoidSale(): void {
+/**
+ * Completed-sale cancellation is retired (migration 0095). The guard refuses
+ * every caller, whatever their role: a completed invoice is corrected by a sales
+ * return, which records the refund and the returned stock against the sale.
+ */
+export const COMPLETED_SALE_CANCELLATION_REFUSAL =
+  "Completed sales cannot be cancelled. Process a sales return instead.";
+
+export function assertCanVoidSale(): never {
+  // The permission is still read first, so a viewer or cashier gets the usual
+  // permission refusal and only an authorised seat gets the explanation. Either
+  // way nothing is written.
   assertSensitiveAction("sale.void");
+  throw new AppError("VALIDATION", COMPLETED_SALE_CANCELLATION_REFUSAL);
 }
 
 /** Marking a pending InstaPay sale as paid. */
@@ -183,28 +195,13 @@ export async function completeSale(
   return sale;
 }
 
-/** Void a completed sale, restocking once and keeping the record. */
-export async function voidSale(id: string, input: VoidSaleInput): Promise<Sale> {
-  assertCanVoidSale();
-  const sale = await getSalesRepository().voidSale(id, input);
-  // The reversal of a financial record, so the trail keeps the reason, the
-  // amount taken out of revenue and how far the money had got (a void of a paid
-  // invoice is a different event from a void of a pending one — one of them
-  // still needs the cash back out of the drawer).
-  void recordAudit({
-    action: "sale.voided",
-    entity: "sale",
-    entity_id: sale.id,
-    entity_label: sale.sale_number,
-    details: {
-      total: sale.total,
-      items: sale.items.length,
-      payment_status: sale.payment_status,
-      source: sale.source ?? "pos",
-      reason: input.reason ?? null,
-    },
-  });
-  return sale;
+/**
+ * Retired. Kept as an explicit refusal rather than removed, so an old screen, a
+ * stale bundle or a hand-written call gets the reason instead of a missing
+ * export. It performs no read and no write.
+ */
+export async function voidSale(_id: string, _input: VoidSaleInput): Promise<never> {
+  return assertCanVoidSale();
 }
 
 /** Confirm a pending InstaPay payment. Totals, items and stock are untouched. */

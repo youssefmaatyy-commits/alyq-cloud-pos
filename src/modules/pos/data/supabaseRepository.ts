@@ -7,7 +7,6 @@ import type {
   Sale,
   SaleItem,
   SalePayment,
-  VoidSaleInput,
 } from "../types";
 import type { SaleListQuery, SalesRepository } from "./repository";
 import { SALES_ROW_CAP } from "./repository";
@@ -80,6 +79,7 @@ interface SaleItemRow {
   variant_color_en: string | null;
   variant_size: number | string | null;
   variant_size_label?: string | null;
+  variant_display_name?: string | null;
   name_ar: string;
   name_en: string;
   sku: string;
@@ -159,6 +159,7 @@ function mapSale(row: SaleRow, items: SaleItemRow[] = [], payments: SalePaymentR
       variant_size:
         i.variant_size === null || i.variant_size === undefined ? null : toNumber(i.variant_size),
       variant_size_label: i.variant_size_label ?? null,
+      variant_display_name: i.variant_display_name ?? null,
       name_ar: i.name_ar,
       name_en: i.name_en,
       sku: i.sku,
@@ -428,23 +429,6 @@ export class SupabaseSalesRepository implements SalesRepository {
     }
   }
 
-  async voidSale(id: string, input: VoidSaleInput): Promise<Sale> {
-    try {
-      const client = this.require();
-      const { data, error } = await client.rpc("pos_void_sale", {
-        p_sale_id: id,
-        p_user_id: input.user_id,
-        p_user_name: input.user_name,
-        p_reason: input.reason,
-      });
-      if (error) throw toAppError(error);
-      const saleId = (data as { sale_id?: string } | null)?.sale_id ?? id;
-      return this.getSale(saleId);
-    } catch (error) {
-      if (error instanceof AppError) throw error;
-      throw toAppError(error);
-    }
-  }
 }
 
 let singleton: SupabaseSalesRepository | null = null;

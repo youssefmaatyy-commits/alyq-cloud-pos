@@ -33,6 +33,8 @@ export type WorkflowRejection =
   | "payment_unverified"
   | "payment_already_paid"
   | "needs_void_capability"
+  /** The order already became a completed sale; cancelling sales is retired (0095). */
+  | "sale_cancellation_retired"
   | "backwards"
   | "not_approved"
   | "unknown";
@@ -108,8 +110,9 @@ export function availableActions(
   ) {
     actions.push("payment_approve", "payment_reject");
   }
-  // Cancelling an approved order unwinds a sale, which is a manager's decision.
-  if (order.status !== "pending" && order.sale_id !== null && !abilities.canVoidSale) {
+  // An order that became a completed sale can no longer be cancelled: completed
+  // sales are corrected by a sales return (migration 0095), so no screen offers it.
+  if (order.sale_id !== null) {
     const index = actions.indexOf("cancel");
     if (index >= 0) actions.splice(index, 1);
   }
@@ -128,7 +131,9 @@ export function availableActions(
 export function checkAction(
   order: OnlineOrder,
   action: OrderAction,
-  abilities: { canVoidSale: boolean } = { canVoidSale: false },
+  // Kept for callers that still pass it; cancelling a converted order is refused
+  // for every role since migration 0095, so no ability changes the answer.
+  _abilities: { canVoidSale: boolean } = { canVoidSale: false },
 ): WorkflowCheck {
   if (order.status === "cancelled" && action !== "cancel") {
     return { ok: false, reason: "already_cancelled" };
@@ -148,8 +153,10 @@ export function checkAction(
     case "cancel": {
       if (order.status === "cancelled") return { ok: false, reason: "already_cancelled" };
       if (order.status === "completed") return { ok: false, reason: "already_completed" };
-      if (order.sale_id !== null && !abilities.canVoidSale) {
-        return { ok: false, reason: "needs_void_capability" };
+      // Retired: a converted order is a completed sale, and completed-sale
+      // cancellation is refused for every role. Pending orders still cancel.
+      if (order.sale_id !== null) {
+        return { ok: false, reason: "sale_cancellation_retired" };
       }
       return { ok: true, next: "cancelled" };
     }

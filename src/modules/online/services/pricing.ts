@@ -212,6 +212,11 @@ export interface StoreVariant {
   size_value?: string | null;
   size_sort_order?: number;
   image_url: string | null;
+  /** Free-size model name (migration 0096); null for colour/size combinations. */
+  display_name_ar?: string | null;
+  display_name_en?: string | null;
+  /** The combination's own gallery, in shop order (migration 0096). */
+  images?: string[];
   /** Null → the product's own selling_price (campaigns may then apply). */
   price_override: number | null;
   stock_quantity: number;
