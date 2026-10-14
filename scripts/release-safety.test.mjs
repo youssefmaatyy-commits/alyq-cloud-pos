@@ -185,11 +185,14 @@ await test('untrusted CI events and unprotected Production environments cannot a
   for (const change of [{ head_branch: 'feature' }, { event: 'pull_request' }, { event: 'workflow_dispatch' }, { path: '.github/workflows/untrusted.yml' }, { status: 'in_progress' }, { conclusion: 'failure' }, { head_repository: { full_name: 'untrusted/fork' } }]) {
     assert.throws(() => assertCIReleaseRun({ ...run, ...change }, sha, repository));
   }
-  const environment = { protection_rules: [{ type: 'required_reviewers', prevent_self_review: true, reviewers: [{ type: 'User' }] }], deployment_branch_policy: { custom_branch_policies: true, protected_branches: false } };
+  const environment = { can_admins_bypass: false, protection_rules: [{ type: 'required_reviewers', prevent_self_review: false, reviewers: [{ type: 'User', reviewer: { login: 'owner' } }] }], deployment_branch_policy: { custom_branch_policies: true, protected_branches: false } };
   const policies = { branch_policies: [{ name: 'main', type: 'branch' }] };
   assertReleaseEnvironment(environment, policies);
+  assertReleaseEnvironment({ ...environment, protection_rules: [{ ...environment.protection_rules[0], prevent_self_review: true }] }, policies);
   assert.throws(() => assertReleaseEnvironment({ ...environment, protection_rules: [] }, policies));
-  assert.throws(() => assertReleaseEnvironment({ ...environment, protection_rules: [{ type: 'required_reviewers', prevent_self_review: false, reviewers: [{ type: 'User' }] }] }, policies));
+  assert.throws(() => assertReleaseEnvironment({ ...environment, protection_rules: [{ ...environment.protection_rules[0], reviewers: [] }] }, policies));
+  assert.throws(() => assertReleaseEnvironment({ ...environment, can_admins_bypass: true }, policies));
+  assert.throws(() => assertReleaseEnvironment({ ...environment, can_admins_bypass: undefined }, policies));
   assert.throws(() => assertReleaseEnvironment(environment, { branch_policies: [{ name: '*', type: 'branch' }] }));
   assert.throws(() => assertReleaseEnvironment(environment, { branch_policies: [{ name: 'main', type: 'tag' }] }));
 });
