@@ -97,6 +97,8 @@ export interface CatalogContext {
   variants?: ReadonlyMap<string, StoreVariant[]>;
   /** Phase 43: variant id → units held by pending orders. */
   reservedVariant?: ReadonlyMap<string, number>;
+  /** Category id → parent id, so a parent category also lists its sub-categories' products. */
+  categoryParents?: ReadonlyMap<string, string | null>;
   now?: Date;
   newArrivalDays?: number;
 }
@@ -277,7 +279,8 @@ export function searchCatalog(
   const resolved: CatalogProduct[] = [];
   for (const product of storefrontProducts(products)) {
     if (wantedIds && !wantedIds.has(product.id)) continue;
-    if (filters.categoryId !== "all" && product.category_id !== filters.categoryId) continue;
+    if (filters.categoryId !== "all" && (product.category_id === null
+        || !categoryLineage(product.category_id, context.categoryParents ?? new Map()).includes(filters.categoryId))) continue;
 
     const entry = toCatalogProduct(product, context);
 
@@ -464,18 +467,43 @@ export function brandFacet(
 }
 
 /** Category facet with counts, in the catalogue's own order. */
+/** Category id → parent id, for matching a product against a parent category. */
+export function categoryParentMap(categories: readonly Category[]): ReadonlyMap<string, string | null> {
+  return new Map(categories.map((category) => [category.id, category.parent_id]));
+}
+
+/** The product's own category and every ancestor, guarded against cycles. */
+function categoryLineage(categoryId: string, parents: ReadonlyMap<string, string | null>): string[] {
+  const lineage: string[] = [];
+  let current: string | null | undefined = categoryId;
+  while (current && !lineage.includes(current)) {
+    lineage.push(current);
+    current = parents.get(current);
+  }
+  return lineage;
+}
+
+/**
+ * A parent category counts the products of all its sub-categories, so a
+ * parent that holds no products directly still appears with its children.
+ */
 export function categoryFacet(
   products: readonly Product[],
   categories: readonly Category[],
-): { id: string; name_ar: string; name_en: string; count: number }[] {
+): { id: string; parent_id: string | null; name_ar: string; name_en: string; count: number }[] {
+  const parents = categoryParentMap(categories);
   const counts = new Map<string, number>();
   for (const product of storefrontProducts(products)) {
     if (product.category_id === null) continue;
-    counts.set(product.category_id, (counts.get(product.category_id) ?? 0) + 1);
+    for (const id of categoryLineage(product.category_id, parents)) {
+      counts.set(id, (counts.get(id) ?? 0) + 1);
+    }
   }
   return categories
     .map((category) => ({
       id: category.id,
+      // A sub-category whose parent is not listed is shown at the top level.
+      parent_id: category.parent_id && parents.has(category.parent_id) ? category.parent_id : null,
       name_ar: category.name_ar,
       name_en: category.name_en,
       count: counts.get(category.id) ?? 0,

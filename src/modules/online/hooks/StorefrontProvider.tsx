@@ -56,6 +56,7 @@ import { brandsOf, sortStoreVariants, type BrandEntry, type StoreVariant } from 
 import {
   brandFacet,
   categoryFacet,
+  categoryParentMap,
   priceRangeOf,
   type CatalogContext,
 } from "../services/catalogQuery";
@@ -117,6 +118,7 @@ export interface StorefrontContextValue {
   brandsFacet: { key: string; label: string; count: number }[];
   categoriesFacet: {
     id: string;
+    parent_id: string | null;
     name_ar: string;
     name_en: string;
     count: number;
@@ -339,8 +341,9 @@ export function StorefrontProvider({ children }: { children: ReactNode }) {
       reserved,
       variants: variantsByProduct,
       reservedVariant,
+      categoryParents: categoryParentMap(categories.filter((category) => category.active)),
     }),
-    [snapshot.campaigns, units, contentByProduct, reserved, variantsByProduct, reservedVariant],
+    [snapshot.campaigns, units, contentByProduct, reserved, variantsByProduct, reservedVariant, categories],
   );
 
   const sections = useMemo(() => visibleSections(settings), [settings]);

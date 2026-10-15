@@ -73,6 +73,8 @@ import { operationalStageLabelKey, operationalStageOf, queueAgeOf } from "../ser
 import {
   brandFacet,
   categoryFacet,
+  categoryParentMap,
+  EMPTY_CATALOG_CONTEXT,
   EMPTY_CATALOG_FILTERS,
   filtersFromSearchParams,
   filtersToSearchParams,
@@ -947,6 +949,33 @@ test("brands are grouped out of the storefront content, strongest first", () => 
     categories.some((entry) => entry.id === "cat-hair"),
     false,
     "a category the shop does not list is left out, however many products point at it",
+  );
+});
+
+test("a parent category with only sub-category products is listed and filters its children", () => {
+  const rings = { ...CATEGORIES[0]!, id: "cat-rings", name_en: "Rings", parent_id: null };
+  const classic = { ...CATEGORIES[0]!, id: "cat-rings-classic", name_en: "Classic", parent_id: "cat-rings" };
+  const free = { ...CATEGORIES[0]!, id: "cat-rings-free", name_en: "Free size", parent_id: "cat-rings" };
+  const products = [
+    makeProduct({ id: "prd-classic", category_id: "cat-rings-classic" }),
+    makeProduct({ id: "prd-free", category_id: "cat-rings-free" }),
+  ];
+  const facet = categoryFacet(products, [rings, classic, free]);
+  assert.deepEqual(
+    facet.map((entry) => [entry.id, entry.parent_id, entry.count]),
+    [["cat-rings", null, 2], ["cat-rings-classic", "cat-rings", 1], ["cat-rings-free", "cat-rings", 1]],
+  );
+  assert.equal(
+    categoryFacet(products, [classic])[0]?.parent_id,
+    null,
+    "a sub-category whose parent is not listed is shown at the top level",
+  );
+  const context = { ...EMPTY_CATALOG_CONTEXT, categoryParents: categoryParentMap([rings, classic, free]) };
+  const filters = { ...EMPTY_CATALOG_FILTERS, categoryId: "cat-rings" };
+  assert.deepEqual(searchCatalog(products, filters, context).map((entry) => entry.product.id).sort(), ["prd-classic", "prd-free"]);
+  assert.deepEqual(
+    searchCatalog(products, { ...filters, categoryId: "cat-rings-free" }, context).map((entry) => entry.product.id),
+    ["prd-free"],
   );
 });
 

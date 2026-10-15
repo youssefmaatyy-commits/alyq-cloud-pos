@@ -61,7 +61,9 @@ export function StorefrontV2Shell({ children }: { children: ReactNode }) {
     return () => observer.disconnect();
   }, []);
   const messages = useMemo(() => resolvedAnnouncementMessages(settings), [settings]);
-  const categories = categoriesFacet.slice(0, 12);
+  // Only top-level categories lead the menu; sub-categories open beneath them.
+  const categories = categoriesFacet.filter((category) => category.parent_id === null).slice(0, 12);
+  const subcategoriesOf = (parentId: string) => categoriesFacet.filter((category) => category.parent_id === parentId);
   const hasOffers = campaigns.some((campaign) => isCampaignLive(campaign)) || promotions.some((promotion) => isPromotionLive(promotion));
   const brandNameAr = settings.brand.display_name_ar || settings.contact.store_name_ar;
   const brandNameEn = settings.brand.display_name_en || settings.contact.store_name_en;
@@ -92,6 +94,8 @@ export function StorefrontV2Shell({ children }: { children: ReactNode }) {
   const social = resolvedV2SocialChannels(settings, lang);
   const whatsapp = social.find((channel) => channel.platform === "whatsapp");
   const catContent = new Map(categoryContents.map((row) => [row.category_id, row]));
+  const categoryLabel = (category: { id: string; name_ar: string; name_en: string }) =>
+    pick(catContent.get(category.id)?.title_ar || category.name_ar, catContent.get(category.id)?.title_en || category.name_en);
 
   useEffect(() => {
     const media = window.matchMedia?.("(prefers-reduced-motion: reduce)");
@@ -259,11 +263,27 @@ export function StorefrontV2Shell({ children }: { children: ReactNode }) {
         <nav className="v2-desktop-nav" aria-label={t("store.nav.menu")}>
           <Link to="/store">{t("store.nav.home")}</Link>
           <Link to="/store/products">{t("store.nav.products")}</Link>
-          {categories.slice(0, 3).map((category) => (
-            <Link key={category.id} to={`/store/products?category=${encodeURIComponent(category.id)}`}>
-              {pick(catContent.get(category.id)?.title_ar || category.name_ar, catContent.get(category.id)?.title_en || category.name_en)}
-            </Link>
-          ))}
+          {categories.slice(0, 3).map((category) => {
+            const children = subcategoriesOf(category.id);
+            const link = (
+              <Link to={`/store/products?category=${encodeURIComponent(category.id)}`}>
+                {categoryLabel(category)}
+              </Link>
+            );
+            if (children.length === 0) return <span key={category.id} className="v2-nav-item">{link}</span>;
+            return (
+              <div key={category.id} className="v2-nav-item v2-nav-has-menu">
+                {link}
+                <div className="v2-nav-menu">
+                  {children.map((child) => (
+                    <Link key={child.id} to={`/store/products?category=${encodeURIComponent(child.id)}`}>
+                      {categoryLabel(child)}
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
           {hasOffers ? <Link to="/store/products?offer=1">{t("store.section.onSale")}</Link> : null}
           <Link to="/store/about">{t("store.nav.about")}</Link>
         </nav>
@@ -291,9 +311,10 @@ export function StorefrontV2Shell({ children }: { children: ReactNode }) {
             ) : null}
             {hasOffers ? <button type="button" onClick={() => closeAndNavigate("/store/products?offer=1")}>{t("store.section.onSale")}</button> : null}
             <p className="v2-drawer-label">{t("store.nav.categories")}</p>
-            {categories.map((category) => (
-              <button type="button" key={category.id} onClick={() => closeAndNavigate(`/store/products?category=${encodeURIComponent(category.id)}`)}>
-                {pick(catContent.get(category.id)?.title_ar || category.name_ar, catContent.get(category.id)?.title_en || category.name_en)}
+            {categories.flatMap((category) => [category, ...subcategoriesOf(category.id)]).map((category) => (
+              <button type="button" key={category.id} className={category.parent_id ? "v2-drawer-sub" : undefined}
+                onClick={() => closeAndNavigate(`/store/products?category=${encodeURIComponent(category.id)}`)}>
+                {categoryLabel(category)}
               </button>
             ))}
             <p className="v2-drawer-label">{t("store.footer.info")}</p>

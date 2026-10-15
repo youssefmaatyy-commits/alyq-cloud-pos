@@ -18,6 +18,7 @@ import type { ProductContent } from "../types";
 import { V2ProductCard } from "./ProductCard";
 import { V2Image, V2Price, V2ProductGrid, V2Section, V2State } from "./Primitives";
 import { V2VariantChooser } from "./VariantChooser";
+import { hoverZoomHandlers } from "./HoverZoom";
 import { v2Price } from "./viewModel";
 import { variantModel } from "./variantModel";
 
@@ -192,7 +193,8 @@ function V2Detail({ product, entry }: { product: Product; entry: CatalogProduct 
       <div className="v2-pdp-gallery">
         <div className="v2-pdp-main-image"><button type="button" ref={openZoomButton} className="v2-pdp-zoom"
           disabled={!gallery.length} aria-label={t("store.product.viewImage", { number: imageIndex + 1 })}
-          onClick={() => setZoomOpen(true)} data-testid="v2-image-zoom">
+          onClick={() => setZoomOpen(true)} data-testid="v2-image-zoom"
+          {...hoverZoomHandlers}>
           <V2Image src={gallery[imageIndex]} alt={name} priority /></button>
           {badges.length || limited ? <span className="v2-pdp-badges">
             {badges.slice(0, 2).map((badge) => <span key={badge} className="v2-badge">{t(`store.badge.${badge}`)}</span>)}
