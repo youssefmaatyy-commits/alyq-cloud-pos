@@ -123,7 +123,7 @@ export function V2OrderDetails({ order, timeline = false }: { order: OnlineOrder
         const product = products.find((row) => row.id === item.product_id);
         return <li key={item.id}><V2Image src={product?.image_url ?? product?.images[0]} alt={pick(item.name_ar, item.name_en)} />
           <div><strong>{pick(item.name_ar, item.name_en)}</strong>
-            {item.variant_id ? <span data-testid="v2-order-variant">{pick(item.variant_color_ar, item.variant_color_en)}
+            {item.variant_id ? <span data-testid="v2-order-variant">{pick(item.variant_color_ar, item.variant_color_en) || item.variant_display_name || ""}
               {item.variant_size !== null ? ` / ${item.variant_size}` : item.variant_size_label ? ` / ${item.variant_size_label}` : ""}
             </span> : null}
             <small>{t("store.checkout.quantityTimes", { count: item.quantity })} · {item.sku}</small>

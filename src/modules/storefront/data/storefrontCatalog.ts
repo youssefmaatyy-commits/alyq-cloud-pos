@@ -131,22 +131,32 @@ export async function fetchStorefrontCatalog(): Promise<{
     // decided in the database, and it is the public shape — colour, size,
     // swatch, price override, stock on hand — never cost, never a threshold,
     // never an unpublished product or an archived combination.
-    const [productResult, categoryResult, variantResult,colorImageResult] = await Promise.all([
+    const [productResult, categoryResult, variantV2Result, colorImageResult] = await Promise.all([
       client.rpc("storefront_catalogue"),
       client.rpc("storefront_categories_v2"),
-      client.rpc("storefront_branch_product_variants"),
+      client.rpc("storefront_branch_product_variants_v2"),
       client.rpc("storefront_color_images"),
     ]);
 
     if (productResult.error) throw productResult.error;
     if (categoryResult.error) throw categoryResult.error;
+    const variantResult = variantV2Result.error
+      ? await client.rpc("storefront_branch_product_variants")
+      : variantV2Result;
     // A shop upgraded before 0043 has no such function yet; an empty shelf of
     // combinations is the honest answer, not a broken storefront.
     if (variantResult.error) {
       console.warn("[storefront] variant list unavailable", variantResult.error.message);
     }
 
-    const liveVariants = (variantResult.error ? [] : (variantResult.data ?? [])) as StoreVariant[];
+    const liveVariants = ((variantResult.error ? [] : (variantResult.data ?? [])) as StoreVariant[]).map((v) => ({
+      ...v,
+      display_name_ar: v.display_name_ar ?? null,
+      display_name_en: v.display_name_en ?? null,
+      images: Array.isArray(v.images)
+        ? v.images.filter((url): url is string => typeof url === "string" && url.length > 0)
+        : [],
+    }));
     return {
       products: patchVariantsEnabled(
         ((productResult.data ?? []) as StorefrontProductRow[]).map(toProduct),
@@ -189,6 +199,9 @@ export async function fetchStorefrontCatalog(): Promise<{
       size_value: v.size_value,
       size_sort_order: v.size_sort_order,
       image_url: v.image_url,
+      display_name_ar: v.display_name_ar ?? null,
+      display_name_en: v.display_name_en ?? null,
+      images: v.images ?? [],
       price_override: v.price_override,
       stock_quantity: v.stock_quantity,
       active: v.active,

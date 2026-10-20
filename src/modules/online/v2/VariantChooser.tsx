@@ -1,6 +1,6 @@
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import type { StoreVariant } from "../services/pricing";
-import { variantColorLabel } from "../services/variantLabel";
+import { variantColorLabel, variantModelLabel } from "../services/variantLabel";
 import { variantModel } from "./variantModel";
 
 /** Same explicit, exact-shelf chooser on a card and on the V2 PDP. A size key
@@ -17,9 +17,54 @@ export function V2VariantChooser({ model, colorKey, variantId, onChoice, compact
   const { t, lang } = useI18n();
   const selectedColor = model.hasColors ? colorKey : "";
   const group = model.groups.find((item) => item.color_key === selectedColor);
+  const selectedModel = model.hasModels
+    ? model.variants.find((item) => item.id === variantId) ?? null
+    : null;
 
   return (
     <div className={`v2-variant-chooser ${compact ? "v2-variant-compact" : ""}`} data-testid="v2-variant-picker">
+      {model.hasModels ? (
+        <div role="group" aria-label={t("store.variants.chooseModel")} data-testid="v2-model-picker">
+          <p className="v2-picker-label">
+            {t("store.variants.chooseModel")}
+            {selectedModel ? <span> — {variantModelLabel(selectedModel, lang)}</span> : null}
+          </p>
+          <div className="v2-picker-options v2-model-options">
+            {model.models.map(({ variant, available }) => {
+              const label = variantModelLabel(variant, lang) || variant.sku;
+              const thumb = (variant.images ?? [])[0] || variant.image_url;
+              const selected = variant.id === variantId;
+              const out = available <= 0;
+              return (
+                <button
+                  type="button"
+                  key={variant.id}
+                  className="v2-model-option"
+                  data-testid={`v2-model-${variant.sku}`}
+                  data-selected={selected}
+                  aria-pressed={selected}
+                  disabled={out}
+                  title={out ? t("store.variants.soldOut") : `${label} (${available})`}
+                  aria-label={`${t("store.variants.chooseModel")}: ${label}${out ? ` — ${t("store.variants.soldOut")}` : ` — ${available}`}`}
+                  onClick={() => onChoice(out ? null : variant, null)}
+                >
+                  {thumb ? (
+                    <span className="v2-model-thumb" aria-hidden>
+                      <img src={thumb} alt="" />
+                    </span>
+                  ) : null}
+                  <span className="v2-model-option-name">{label}</span>
+                  <span className="v2-model-option-stock" data-testid={`v2-model-stock-${variant.sku}`}>
+                    {out ? "×" : `(${available})`}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          {!compact ? <p className="v2-picker-hint">{t("store.variants.modelHint")}</p> : null}
+        </div>
+      ) : null}
+
       {model.hasColors ? (
         <div role="group" aria-label={t("store.variants.color")}>
           <p className="v2-picker-label">{t("store.variants.color")}

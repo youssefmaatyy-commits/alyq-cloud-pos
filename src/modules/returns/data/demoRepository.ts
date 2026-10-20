@@ -191,6 +191,7 @@ export class DemoReturnRepository implements ReturnRepository {
         variant_color_en: validItem.variant_color_en,
         variant_size: validItem.variant_size,
         variant_size_label: validItem.variant_size_label,
+        variant_display_name: validItem.variant_display_name ?? null,
         name_ar: validItem.name_ar,
         name_en: validItem.name_en,
         sku: validItem.sku,

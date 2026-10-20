@@ -47,8 +47,10 @@ import {
   colorKeyOf,
   formatSizes,
   generateCombinations,
+  modelKeyOf,
   parseSizes,
   suggestVariantSku,
+  variantGalleryProblem,
   variantLabel,
   variantSizeValue,
   type ProductColorImage,
@@ -91,6 +93,9 @@ interface VariantFormState {
   color_ar: string;
   color_en: string;
   color_hex: string;
+  display_name_ar: string;
+  display_name_en: string;
+  images: string;
   size_mode: "number" | "label";
   size: string;
   size_label: string;
@@ -107,6 +112,9 @@ const EMPTY_VARIANT_FORM: VariantFormState = {
   color_ar: "",
   color_en: "",
   color_hex: "",
+  display_name_ar: "",
+  display_name_en: "",
+  images: "",
   size_mode: "number",
   size: "",
   size_label: "",
@@ -151,6 +159,9 @@ function VariantFormModal({
             color_ar: current.color_ar ?? "",
             color_en: current.color_en ?? "",
             color_hex: current.color_hex ?? "",
+            display_name_ar: current.display_name_ar ?? "",
+            display_name_en: current.display_name_en ?? "",
+            images: (current.images ?? []).join("\n"),
             size_mode: "label",
             size: variantSizeValue(current),
             size_label: variantSizeValue(current),
@@ -193,8 +204,22 @@ function VariantFormModal({
 
   const barcodeIsAuto = !values.barcode.trim() || isDerivedFromSku(values.sku, values.barcode);
 
+  const isNamedModel = Boolean(values.display_name_en.trim() || values.display_name_ar.trim());
+  const galleryUrls = values.images
+    .split(/[\r\n,]+/)
+    .map((url) => url.trim())
+    .filter(Boolean);
+
   const save = async () => {
     if (!allowed || saving) return;
+    if (isNamedModel && values.price_override.trim() !== "") {
+      toast.error(t("products.variants.noPriceForModel"));
+      return;
+    }
+    if (variantGalleryProblem(galleryUrls)) {
+      toast.error(t("products.variants.galleryInvalid"));
+      return;
+    }
     setSaving(true);
     try {
       await saveVariant({
@@ -205,15 +230,18 @@ function VariantFormModal({
           color_ar: values.color_ar.trim() || null,
           color_en: values.color_en.trim() || null,
           color_hex: values.color_hex.trim() || null,
+          display_name_ar: values.display_name_ar.trim() || null,
+          display_name_en: values.display_name_en.trim() || null,
+          images: galleryUrls,
           size: /^[0-9]+(?:\.[0-9]{1,2})?$/.test(values.size.trim()) ? Number(values.size.trim()) : null,
           size_label: values.size.trim() || null,
           size_value: values.size.trim() || null,
           size_sort_order: current?.size_sort_order ?? current?.sort_order ?? siblings.length + 1,
-          image_url: values.image_url.trim() || null,
+          image_url: values.image_url.trim() || galleryUrls[0] || null,
           // New combinations start empty: the shelf is filled by the inventory
           // screen, never by a form field.
           stock_quantity: current?.stock_quantity ?? 0,
-          price_override: values.price_override.trim() === "" ? null : Number(values.price_override),
+          price_override: isNamedModel || values.price_override.trim() === "" ? null : Number(values.price_override),
           cost_override:
             canAct("view_cost") && values.cost_override.trim() !== ""
               ? Number(values.cost_override)
@@ -757,7 +785,8 @@ export function VariantEditor({
         // A retry after a partial network failure must not create a duplicate.
         const twin = before ?? (!row.persistedId ? siblings.find((entry) =>
           entry.color_key === (row.color_key || (color ? colorKeyOf(color) : "")) &&
-          variantSizeValue(entry).toLocaleLowerCase() === row.size.trim().toLocaleLowerCase(),
+          variantSizeValue(entry).toLocaleLowerCase() === row.size.trim().toLocaleLowerCase() &&
+          modelKeyOf(entry) === modelKeyOf(row),
         ) : null);
         const previous = before ?? twin ?? null;
         const desired = {
@@ -765,6 +794,9 @@ export function VariantEditor({
           color_key: (previous?.color_key ?? row.color_key) || undefined,
           color_ar: row.color_ar.trim() || null, color_en: row.color_en.trim() || null,
           color_hex: row.color_hex.trim() || null,
+          display_name_ar: (row.display_name_ar ?? "").trim() || null,
+          display_name_en: (row.display_name_en ?? "").trim() || null,
+          images: (row.images ?? []).map((url) => url.trim()).filter(Boolean),
           size: previous?.size ?? (/^[0-9]+(?:\.[0-9]{1,2})?$/.test(row.size.trim()) ? Number(row.size.trim()) : null),
           size_label: previous?.size_label ?? (row.size.trim() || null),
           size_value: previous ? variantSizeValue(previous) : (row.size.trim() || null),
@@ -785,6 +817,9 @@ export function VariantEditor({
             previous.sku === desired.sku && previous.barcode === desired.barcode &&
             previous.color_ar === desired.color_ar && previous.color_en === desired.color_en &&
             previous.color_hex === desired.color_hex && previous.image_url === desired.image_url &&
+            (previous.display_name_ar ?? null) === desired.display_name_ar &&
+            (previous.display_name_en ?? null) === desired.display_name_en &&
+            JSON.stringify(previous.images ?? []) === JSON.stringify(desired.images) &&
             (previous.size_sort_order ?? 0) === desired.size_sort_order &&
             previous.price_override === desired.price_override && previous.cost_override === desired.cost_override &&
             previous.low_stock_level === desired.low_stock_level) continue;

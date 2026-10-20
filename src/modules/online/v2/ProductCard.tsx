@@ -63,8 +63,10 @@ export function V2ProductCard({ entry, priority = false, filters }: {
   const campaignBadge = campaignBadgeText(product.id, campaigns, pick);
   const limited = settings.badges.show_limited && product.stock_tracking_enabled &&
     entry.available !== null && entry.available > 0 && entry.available <= product.low_stock_level;
-  const colorPreview = model.groups.find((group) => group.color_key === colorKey)
-    ?.variants.find((variant) => variant.image_url)?.image_url;
+  const colorPreview =
+    (chosen ? (chosen.images ?? [])[0] || chosen.image_url : null) ||
+    model.groups.find((group) => group.color_key === colorKey)
+      ?.variants.find((variant) => variant.image_url)?.image_url;
 
   function addVariant(variant: StoreVariant | null) {
     // A short window where a second tap is simply ignored, not a second

@@ -294,7 +294,7 @@ export function OrderDetailModal({ order, onClose }: { order: OnlineOrder | null
                               ordered, still readable after any rename. */}
                           {item.variant_id ? (
                             <p className="text-[11px] font-bold text-stone-700" data-testid="order-line-variant">
-                              {pick(item.variant_color_ar, item.variant_color_en)}
+                              {pick(item.variant_color_ar, item.variant_color_en) || item.variant_display_name || ""}
                               {item.variant_size !== null
                                 ? ` / ${Math.round(item.variant_size * 100) / 100}`
                                 : item.variant_size_label

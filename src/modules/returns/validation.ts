@@ -117,6 +117,7 @@ export interface ItemReturnValidation {
   variant_color_en: string | null;
   variant_size: number | null;
   variant_size_label: string | null;
+  variant_display_name?: string | null;
   name_ar: string;
   name_en: string;
   sku: string;
@@ -270,6 +271,7 @@ export function validateReturnDraft(
       variant_color_en: saleItem.variant_color_en ?? null,
       variant_size: saleItem.variant_size ?? null,
       variant_size_label: saleItem.variant_size_label ?? null,
+      variant_display_name: saleItem.variant_display_name ?? null,
       name_ar: saleItem.name_ar,
       name_en: saleItem.name_en,
       sku: saleItem.sku,

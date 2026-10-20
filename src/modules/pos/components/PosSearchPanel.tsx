@@ -8,6 +8,7 @@ import { VariantPicker } from "./VariantPicker";
 import { ProductThumb } from "./ProductThumb";
 import { CameraBarcodeScannerModal } from "./CameraBarcodeScannerModal";
 import { POS_SEARCH_RESULT_CAP, matchPosProducts } from "../services/posSearch";
+import { resolveScannedVariantProduct } from "../services/scanner";
 
 /**
  * Catalog + scan register workspace — the product side of the till.
@@ -48,6 +49,20 @@ export function PosSearchPanel() {
 
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const onOpenPicker = (event: Event) => {
+      const detail = (event as CustomEvent<{ productId?: string }>).detail;
+      if (detail?.productId) {
+        setPicking(detail.productId);
+        setQuery("");
+        setOpen(false);
+        setActiveIndex(-1);
+      }
+    };
+    window.addEventListener("alyq:pos-open-variant-picker", onOpenPicker);
+    return () => window.removeEventListener("alyq:pos-open-variant-picker", onOpenPicker);
+  }, []);
 
   const hits = useMemo(
     () => matchPosProducts(products, variants, query),
@@ -135,6 +150,16 @@ export function PosSearchPanel() {
       afterAdd();
       return;
     }
+    // Shared parent barcode / SKU of a variant or multi-model product (e.g. BR101):
+    // open the visual Model/Variant Picker immediately and never auto-pick.
+    const exactVariantProduct = resolveScannedVariantProduct(code, products, variants);
+    if (exactVariantProduct) {
+      setQuery("");
+      setOpen(false);
+      setActiveIndex(-1);
+      setPicking(exactVariantProduct.id);
+      return;
+    }
     // Not an exact code: Enter acts on the visible matches, and only when
     // the choice is unambiguous — a single match, or the highlighted row.
     // Multiple matches with nothing highlighted stay open; nothing is added.
@@ -160,6 +185,14 @@ export function PosSearchPanel() {
     if (!code) return;
     if (addBySku(code)) {
       afterAdd();
+      return;
+    }
+    const exactVariantProduct = resolveScannedVariantProduct(code, products, variants);
+    if (exactVariantProduct) {
+      setQuery("");
+      setOpen(false);
+      setActiveIndex(-1);
+      setPicking(exactVariantProduct.id);
       return;
     }
     const matches = matchPosProducts(products, variants, code);

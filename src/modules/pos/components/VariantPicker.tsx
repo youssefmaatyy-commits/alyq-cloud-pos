@@ -3,7 +3,10 @@ import { useI18n } from "@/lib/i18n/I18nProvider";
 import { Button } from "@/components/ui";
 import type { Product } from "@/modules/products/types";
 import {
+  isFreeSizeModel,
+  modelNameOf,
   sizeLabelOf,
+  variantGalleryOf,
   variantLabel,
   variantPrice,
   type ProductVariant,
@@ -36,6 +39,7 @@ export function VariantPicker({ product, variants, onPick, onClose }: VariantPic
   const { t, lang } = useI18n();
   const { addLine, lines } = usePos();
   const [colorKey, setColorKey] = useState<string | null>(null);
+  const [requestedQty, setRequestedQty] = useState<number>(1);
 
   const active = useMemo(() => variants.filter((v) => v.active), [variants]);
 
@@ -62,12 +66,21 @@ export function VariantPicker({ product, variants, onPick, onClose }: VariantPic
   );
   const inCart = (id: string) => lines.find((line) => line.variant_id === id)?.qty ?? 0;
   const hasColors = active.some((variant) => Boolean(variant.color_key));
-  const colorsOnly = active.length > 0 && active.every((variant) => variant.size === null && !variant.size_label);
+  const modelsOnly = active.length > 0 && active.every((variant) => isFreeSizeModel(variant));
+  const colorsOnly =
+    !modelsOnly &&
+    active.length > 0 &&
+    active.every((variant) => variant.size === null && !variant.size_label);
 
-  const pick = (variant: ProductVariant) => {
-    if (!variant.active || variant.stock_quantity <= inCart(variant.id)) return;
-    const added = addLine(product, variant);
-    if (added) {
+  const pick = (variant: ProductVariant, count = 1) => {
+    const remaining = Math.max(0, variant.stock_quantity - inCart(variant.id));
+    if (!variant.active || remaining <= 0) return;
+    const units = Math.max(1, Math.min(Math.trunc(count) || 1, remaining));
+    let anyAdded = false;
+    for (let i = 0; i < units; i += 1) {
+      if (addLine(product, variant)) anyAdded = true;
+    }
+    if (anyAdded) {
       onPick(variant);
       onClose();
     }
@@ -77,12 +90,13 @@ export function VariantPicker({ product, variants, onPick, onClose }: VariantPic
     <div
       role="dialog"
       aria-modal="true"
-      aria-label={t("pos.variants.title")}
+      aria-label={t(modelsOnly ? "pos.variants.chooseModel" : "pos.variants.title")}
+      data-testid="pos-variant-picker"
       className="fixed inset-0 z-40 flex items-end justify-center bg-slate-900/40 p-4 sm:items-center"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-md rounded-2xl bg-white p-4 shadow-xl"
+        className="w-full max-w-lg rounded-2xl bg-white p-4 shadow-xl"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="mb-3 flex items-start justify-between gap-3">
@@ -91,7 +105,9 @@ export function VariantPicker({ product, variants, onPick, onClose }: VariantPic
               {lang === "ar" ? product.name_ar : product.name_en}
             </p>
             <p className="mt-0.5 font-mono text-[11px] text-stone-500">
-              {product.sku} · {t("pos.variants.choose")}
+              {product.sku}
+              {product.barcode && product.barcode !== product.sku ? ` (${product.barcode})` : ""} ·{" "}
+              {t(modelsOnly ? "pos.variants.chooseModel" : "pos.variants.choose")}
             </p>
           </div>
           <button
@@ -103,6 +119,103 @@ export function VariantPicker({ product, variants, onPick, onClose }: VariantPic
             ×
           </button>
         </div>
+
+        {/* Visual Model Picker: shared parent barcode, independent photo + stock per model. */}
+        {modelsOnly && (
+          <div data-testid="pos-model-picker">
+            <div className="mb-3 flex items-center justify-between rounded-xl border border-stone-200 bg-stone-50 px-3 py-2" data-testid="pos-model-qty-stepper">
+              <span className="text-xs font-bold text-stone-700">
+                {t("pos.variants.selectQty")}
+              </span>
+              <div className="flex items-center gap-1.5" dir="ltr">
+                <button
+                  type="button"
+                  data-testid="pos-model-qty-dec"
+                  disabled={requestedQty <= 1}
+                  onClick={() => setRequestedQty((q) => Math.max(1, q - 1))}
+                  className="flex h-7 w-7 items-center justify-center rounded-lg border border-stone-300 bg-white text-sm font-bold text-stone-700 disabled:opacity-40"
+                >
+                  −
+                </button>
+                <input
+                  type="number"
+                  min={1}
+                  data-testid="pos-model-qty-input"
+                  value={requestedQty}
+                  onChange={(e) => setRequestedQty(Math.max(1, Math.trunc(Number(e.target.value) || 1)))}
+                  className="h-7 w-12 rounded-lg border border-stone-300 bg-white text-center text-xs font-bold tabular-nums text-stone-900"
+                />
+                <button
+                  type="button"
+                  data-testid="pos-model-qty-inc"
+                  onClick={() => setRequestedQty((q) => q + 1)}
+                  className="flex h-7 w-7 items-center justify-center rounded-lg border border-stone-300 bg-white text-sm font-bold text-stone-700"
+                >
+                  +
+                </button>
+              </div>
+            </div>
+            <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-stone-500">
+              {t("pos.variants.model")}
+            </p>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              {active.map((variant) => {
+                const remaining = Math.max(0, variant.stock_quantity - inCart(variant.id));
+                const out = remaining === 0;
+                const photo = variantGalleryOf(variant)[0] ?? product.image_url;
+                const label = modelNameOf(variant, lang) ?? variantLabel(variant, lang);
+                return (
+                  <button
+                    key={variant.id}
+                    type="button"
+                    disabled={out}
+                    onClick={() => pick(variant, requestedQty)}
+                    data-testid={`pos-model-option-${variant.sku}`}
+                    className={`flex flex-col items-center gap-1.5 rounded-xl border p-2.5 text-center transition ${
+                      out
+                        ? "cursor-not-allowed border-stone-200 bg-stone-50 text-stone-400"
+                        : "border-stone-200 bg-white text-stone-900 hover:border-[#d4bf9a] hover:bg-[#faf5ec]"
+                    }`}
+                    aria-label={`${variantLabel(variant, lang)} — ${remaining}`}
+                  >
+                    {photo ? (
+                      <img
+                        src={photo}
+                        alt={label}
+                        className="h-20 w-full rounded-lg border border-stone-200 object-cover"
+                      />
+                    ) : (
+                      <div className="flex h-20 w-full items-center justify-center rounded-lg border border-dashed border-stone-200 bg-stone-50 text-xs font-bold text-stone-400">
+                        {label}
+                      </div>
+                    )}
+                    <span className="w-full truncate text-sm font-bold">{label}</span>
+                    <span className="font-mono text-[10px] text-stone-400" dir="ltr">
+                      {variant.sku}
+                    </span>
+                    <span
+                      data-testid={`pos-model-stock-${variant.sku}`}
+                      className={`rounded-full px-2 py-0.5 text-[11px] font-bold tabular-nums ${
+                        out
+                          ? "bg-rose-50 text-rose-700"
+                          : "bg-emerald-50 text-emerald-800"
+                      }`}
+                    >
+                      {out
+                        ? variant.stock_quantity === 0
+                          ? t("pos.variants.soldOut")
+                          : t("pos.variants.inCart")
+                        : t("pos.variants.availableUnits", { count: remaining })}
+                    </span>
+                    <span className="text-[11px] font-semibold text-stone-600 tabular-nums" dir="ltr">
+                      {variantPrice(variant, product).toFixed(2)} EGP
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Size-only products do not ask for an imaginary colour. */}
         {hasColors && <div className="mb-3">
@@ -143,7 +256,7 @@ export function VariantPicker({ product, variants, onPick, onClose }: VariantPic
         </div>}
 
         {/* Only offered, active colour/size IDs are buttons; no inferred grid. */}
-        {!colorsOnly && <div>
+        {!modelsOnly && !colorsOnly && <div>
           <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-stone-500">
             {t("pos.variants.size")}
           </p>

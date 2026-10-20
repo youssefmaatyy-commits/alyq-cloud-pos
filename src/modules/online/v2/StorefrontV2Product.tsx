@@ -90,9 +90,16 @@ function V2Detail({ product, entry }: { product: Product; entry: CatalogProduct 
       ...(content?.media?.slice().sort((a, b) => a.sort_order - b.sort_order).map((item) => item.url) ?? [])]
       .filter((url): url is string => Boolean(url?.trim()));
     const colorGallery = color ? colorGalleryFor(product.id, color).map((image) => image.image_url) : [];
-    const selectedFallback = selected?.image_url ? [selected.image_url] : [];
-    return [...new Set(colorGallery.length ? colorGallery : [...selectedFallback, ...original])];
-  }, [product.id,product.image_url, product.images, content?.media, selected?.image_url,color,colorGalleryFor]);
+    const selectedModelGallery = selected
+      ? [...(selected.images ?? []), selected.image_url].filter((url): url is string => Boolean(url?.trim()))
+      : [];
+    const allModelImages = model.hasModels
+      ? model.variants.flatMap((v) => [...(v.images ?? []), v.image_url]).filter((url): url is string => Boolean(url?.trim()))
+      : [];
+    if (colorGallery.length) return [...new Set(colorGallery)];
+    if (selectedModelGallery.length) return [...new Set([...selectedModelGallery, ...original])];
+    return [...new Set([...original, ...allModelImages])];
+  }, [product.id, product.image_url, product.images, content?.media, selected, color, colorGalleryFor, model.hasModels, model.variants]);
   const sections = productContentSections(content);
   const hasSizeGuide = sections.some((section) => section.key === "dimensions");
   const available = product.variants_enabled ? selected ? model.remaining(selected) : 0 : entry.available ?? 0;
@@ -103,7 +110,7 @@ function V2Detail({ product, entry }: { product: Product; entry: CatalogProduct 
     [product, products, catalogContext]);
   const productReviews = reviews.filter((review) => review.visible && review.product_id === product.id);
 
-  useEffect(()=>setImageIndex(0),[color]);
+  useEffect(() => setImageIndex(0), [color, selectedId]);
 
   useEffect(() => {
     const baseUrl = window.location.href.split("#")[0];
@@ -235,10 +242,11 @@ function V2Detail({ product, entry }: { product: Product; entry: CatalogProduct 
             sizeGuide.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
             sizeGuide.current.querySelector("summary")?.focus(); } }}>
           {t("store.product.content.dimensions")}</button> : null}
-        <p className="v2-pdp-stock" role="status">
+        <p className="v2-pdp-stock" role="status" data-testid="v2-pdp-stock">
           {!product.stock_tracking_enabled ? t("store.v2.notOrderable")
             : product.variants_enabled && !selected ? model.sellable.length ? t("store.v2.pleaseChoose") : t("store.product.outOfStock")
               : available <= 0 ? t("store.product.outOfStock")
+                : model.hasModels && selected ? `${t("store.product.inStock")} · ${t("pos.variants.availableUnits", { count: available })}`
                 : available <= product.low_stock_level ? mode === "demo"
                   ? t("store.product.onlyLeft", { count: available }) : t("store.v2.limited")
                   : t("store.product.inStock")}

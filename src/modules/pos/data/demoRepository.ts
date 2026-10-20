@@ -9,7 +9,7 @@ import type {
 import { AppError } from "@/modules/products/data/repository";
 import { getDemoRepository } from "@/modules/products/data/demoRepository";
 import { applyDemoAdjustment } from "@/modules/inventory/data/demoRepository";
-import { variantCost, variantLabel } from "@/modules/products/variants";
+import { modelNameOf, variantCost, variantLabel } from "@/modules/products/variants";
 import { getWebsiteRepository } from "@/modules/online/data";
 import { evaluateCartPricing } from "@/modules/online/services/pricing";
 import { getDemoShiftRepository } from "@/modules/shifts/data/demoRepository";
@@ -207,6 +207,7 @@ export class DemoSalesRepository implements SalesRepository {
           variant_color_en: variant?.color_en ?? null,
           variant_size: variant?.size ?? null,
           variant_size_label: variant?.size_label ?? null,
+          variant_display_name: variant ? modelNameOf(variant) : null,
           name_ar: product.name_ar,
           name_en: product.name_en,
           sku: variant?.sku ?? product.sku,

@@ -9,7 +9,15 @@ import type {
 import type {
   NewProductVariant, ProductColorImage, ProductColorImageInput, ProductVariant, ProductVariantPatch,
 } from "../variants";
-import { colorKeyOf, compareVariants, variantLabel, variantSizeValue } from "../variants";
+import {
+  colorKeyOf,
+  compareVariants,
+  modelKeyOf,
+  modelNameOf,
+  variantGalleryProblem,
+  variantLabel,
+  variantSizeValue,
+} from "../variants";
 import {
   AppError,
   type CatalogRepository,
@@ -272,12 +280,29 @@ export class DemoRepository implements CatalogRepository {
     const sku = input.sku.trim();
     if (!sku) throw new AppError("VALIDATION", "A variant needs a SKU", "sku");
     this.assertUniqueVariantCode("sku", sku);
-    if (input.barcode) this.assertUniqueVariantCode("barcode", input.barcode.trim());
+
+    const isNamedModel = modelNameOf(input) !== null;
+    const rawBarcode = input.barcode?.trim() || null;
+    const normalizedBarcode =
+      isNamedModel && (!rawBarcode || (product.barcode && rawBarcode.toUpperCase() === product.barcode.trim().toUpperCase()))
+        ? null
+        : rawBarcode;
+    if (normalizedBarcode) this.assertUniqueVariantCode("barcode", normalizedBarcode);
+    if (isNamedModel && input.price_override !== null && input.price_override !== undefined) {
+      throw new AppError("VALIDATION", "A named model uses the product price", "price_override", "23514");
+    }
+    const gallery = (input.images ?? []).map((url) => url.trim()).filter(Boolean);
+    if (variantGalleryProblem(gallery)) {
+      throw new AppError("VALIDATION", "Invalid variant gallery", "images", "23514");
+    }
 
     const variant: ProductVariant = {
       ...input,
       sku,
-      barcode: input.barcode?.trim() || null,
+      barcode: normalizedBarcode,
+      display_name_ar: input.display_name_ar?.trim() || null,
+      display_name_en: input.display_name_en?.trim() || null,
+      images: gallery,
       // Identity from the label ONCE (correction 2): a rename later moves the
       // display text, never the identity.
       color_key: input.color_key?.trim() || colorKeyOf(input),
@@ -299,13 +324,13 @@ export class DemoRepository implements CatalogRepository {
     const index = this.state.variants.findIndex((v) => v.id === id);
     if (index === -1) throw new AppError("VARIANT_NOT_FOUND", `Variant ${id} not found`);
     const current = this.state.variants[index];
+    const product = this.state.products.find((p) => p.id === current.product_id);
 
     if (patch.sku !== undefined) {
       const sku = patch.sku.trim();
       if (!sku) throw new AppError("VALIDATION", "A variant needs a SKU", "sku");
       this.assertUniqueVariantCode("sku", sku, id);
     }
-    if (patch.barcode) this.assertUniqueVariantCode("barcode", patch.barcode.trim(), id);
 
     // Omitted patch fields stay on the shelf. In particular an explicitly
     // undefined stock field must never erase the current quantity (or poison
@@ -314,10 +339,37 @@ export class DemoRepository implements CatalogRepository {
     const next: ProductVariant = {
       ...current,
       ...definedPatch,
+      display_name_ar:
+        definedPatch.display_name_ar !== undefined
+          ? definedPatch.display_name_ar?.trim() || null
+          : current.display_name_ar ?? null,
+      display_name_en:
+        definedPatch.display_name_en !== undefined
+          ? definedPatch.display_name_en?.trim() || null
+          : current.display_name_en ?? null,
+      images:
+        definedPatch.images !== undefined
+          ? (definedPatch.images ?? []).map((url) => url.trim()).filter(Boolean)
+          : current.images ?? [],
       // The identity is captured once and never rewritten by a rename.
       color_key: current.color_key,
       updated_at: nowIso(),
     };
+    const isNamedModel = modelNameOf(next) !== null;
+    if (definedPatch.barcode !== undefined) {
+      const rawBarcode = definedPatch.barcode?.trim() || null;
+      next.barcode =
+        isNamedModel && (!rawBarcode || (product?.barcode && rawBarcode.toUpperCase() === product.barcode.trim().toUpperCase()))
+          ? null
+          : rawBarcode;
+      if (next.barcode) this.assertUniqueVariantCode("barcode", next.barcode, id);
+    }
+    if (isNamedModel && next.price_override !== null && next.price_override !== undefined) {
+      throw new AppError("VALIDATION", "A named model uses the product price", "price_override", "23514");
+    }
+    if (variantGalleryProblem(next.images ?? [])) {
+      throw new AppError("VALIDATION", "Invalid variant gallery", "images", "23514");
+    }
     if (!next.color_key) {
       next.color_key = colorKeyOf({
         color_en: next.color_en ?? "",
@@ -612,14 +664,15 @@ export class DemoRepository implements CatalogRepository {
     }
   }
 
-  /** The exact combination — colour identity + numeric size — may exist once. */
+  /** The exact combination — colour identity + numeric size + model name — may exist once. */
   private assertVariantIdentityFree(variant: ProductVariant, excludeId?: string): void {
     const clash = this.state.variants.find(
       (v) =>
         v.id !== excludeId &&
         v.product_id === variant.product_id &&
         v.color_key === variant.color_key &&
-        variantSizeValue(v).toLocaleLowerCase() === variantSizeValue(variant).toLocaleLowerCase(),
+        variantSizeValue(v).toLocaleLowerCase() === variantSizeValue(variant).toLocaleLowerCase() &&
+        modelKeyOf(v) === modelKeyOf(variant),
     );
     if (clash) {
       throw new AppError(

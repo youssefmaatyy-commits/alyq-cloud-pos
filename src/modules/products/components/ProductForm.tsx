@@ -13,7 +13,7 @@ import {
   STOCK_DEFAULT_BY_TYPE,
 } from "../constants";
 import { PRODUCT_TYPES, marginPct, stockStatus, suggestSku, type Product, type ProductType } from "../types";
-import { colorKeyOf, variantSizeValue, type ProductVariant } from "../variants";
+import { colorKeyOf, modelKeyOf, variantSizeValue, type ProductVariant } from "../variants";
 import {
   EMPTY_PRODUCT_FORM,
   fieldErrorKey,
@@ -282,9 +282,11 @@ export function ProductForm({ productId }: { productId?: string }) {
       const numericSize = sizeValue && /^[0-9]+(?:\.[0-9]{1,2})?$/.test(sizeValue)
         ? Number(sizeValue) : null;
       const colorKey = row.color_key || colorKeyOf(row);
+      const modelKey = modelKeyOf(row);
       const previous = created.find((variant) => variant.id === resume.ids.get(row.id)) ?? created.find(
         (variant) => variant.color_key === colorKey &&
-          variantSizeValue(variant).toLocaleLowerCase() === (sizeValue ?? "").toLocaleLowerCase(),
+          variantSizeValue(variant).toLocaleLowerCase() === (sizeValue ?? "").toLocaleLowerCase() &&
+          modelKeyOf(variant) === modelKey,
       );
       const rowValues = {
         sku: row.sku, barcode: row.barcode.trim() || null,
@@ -292,6 +294,9 @@ export function ProductForm({ productId }: { productId?: string }) {
         color_ar: row.color_ar.trim() || null,
         color_en: row.color_en.trim() || null,
         color_hex: row.color_hex.trim() || null,
+        display_name_ar: (row.display_name_ar ?? "").trim() || null,
+        display_name_en: (row.display_name_en ?? "").trim() || null,
+        images: (row.images ?? []).map((url) => url.trim()).filter(Boolean),
         size: numericSize, size_label: sizeValue, size_value: sizeValue,
         size_sort_order: row.size_sort_order,
         image_url: row.image_url.trim() || null,
@@ -306,6 +311,9 @@ export function ProductForm({ productId }: { productId?: string }) {
         previous.sku !== rowValues.sku || previous.barcode !== rowValues.barcode ||
         previous.color_ar !== rowValues.color_ar || previous.color_en !== rowValues.color_en ||
         previous.color_hex !== rowValues.color_hex || previous.image_url !== rowValues.image_url ||
+        (previous.display_name_ar ?? null) !== rowValues.display_name_ar ||
+        (previous.display_name_en ?? null) !== rowValues.display_name_en ||
+        JSON.stringify(previous.images ?? []) !== JSON.stringify(rowValues.images) ||
         variantSizeValue(previous) !== (rowValues.size_value ?? "") ||
         (previous.size_sort_order ?? 0) !== rowValues.size_sort_order ||
         previous.price_override !== rowValues.price_override || previous.cost_override !== rowValues.cost_override ||

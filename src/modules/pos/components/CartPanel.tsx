@@ -365,7 +365,14 @@ function CartRow({
           {line.variant_id && (
             <p className="mt-0.5 text-xs font-semibold text-stone-700" data-testid="pos-line-variant">
               {variantLabel(
-                { color_ar: line.color_ar, color_en: line.color_en, size: line.size, size_label: line.size_label },
+                {
+                  color_ar: line.color_ar,
+                  color_en: line.color_en,
+                  size: line.size,
+                  size_label: line.size_label,
+                  display_name_ar: line.display_name_ar,
+                  display_name_en: line.display_name_en,
+                },
                 lang,
               )}
             </p>

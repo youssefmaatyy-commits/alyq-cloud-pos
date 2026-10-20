@@ -147,6 +147,7 @@ interface OnlineOrderItemRow {
   variant_color_en?: string | null;
   variant_size?: Numeric | null;
   variant_size_label?: string | null;
+  variant_display_name?: string | null;
   name_ar: string;
   name_en: string;
   sku: string;
@@ -396,6 +397,7 @@ function mapItem(row: OnlineOrderItemRow): OnlineOrderItem {
     variant_size:
       row.variant_size === null || row.variant_size === undefined ? null : toNumber(row.variant_size),
     variant_size_label: row.variant_size_label ?? null,
+    variant_display_name: row.variant_display_name ?? null,
     name_ar: row.name_ar,
     name_en: row.name_en,
     sku: row.sku,

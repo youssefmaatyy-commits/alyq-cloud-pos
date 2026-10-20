@@ -8,6 +8,7 @@ import {
 } from "@/lib/storefront/storefrontLink";
 import { usePos } from "../hooks/PosProvider";
 import { useBarcodeScanner } from "../hooks/useBarcodeScanner";
+import { resolveScannedVariantProduct } from "../services/scanner";
 import { PosSearchPanel } from "../components/PosSearchPanel";
 import { CartPanel } from "../components/CartPanel";
 import { SaleCompletedModal } from "../components/SaleCompletedModal";
@@ -34,6 +35,8 @@ export function PosPage() {
   const { t, pick, date } = useI18n();
   const {
     addBySku,
+    products,
+    variants,
     loading,
     error,
     reloadCatalog,
@@ -61,20 +64,29 @@ export function PosPage() {
     void reloadCatalog();
   }, [reloadCatalog]);
 
-  // Scan → add to cart. No-op UI is needed on success (the cart updates);
-  // a miss shows a transient toast plus a pulse on the scan/search box.
+  // Scan → add to cart. When scanning a shared parent barcode of a variant/model
+  // product (e.g. BR101), open the visual Model/Variant Picker instead of
+  // auto-picking or rejecting the scan.
   const onScan = (code: string) => {
     const added = addBySku(code);
-    if (!added) {
-      toast.error(t("pos.codeUnavailable"));
-      // small non-blocking visual cue: pulse the scan/search box via a class
-      const input = document.querySelector<HTMLInputElement>(
-        'input[data-testid="pos-scan-search"]',
+    if (added) return;
+    const variantProduct = resolveScannedVariantProduct(code, products, variants);
+    if (variantProduct) {
+      window.dispatchEvent(
+        new CustomEvent("alyq:pos-open-variant-picker", {
+          detail: { productId: variantProduct.id },
+        }),
       );
-      if (input) {
-        input.classList.add("animate-pulse");
-        window.setTimeout(() => input.classList.remove("animate-pulse"), 600);
-      }
+      return;
+    }
+    toast.error(t("pos.codeUnavailable"));
+    // small non-blocking visual cue: pulse the scan/search box via a class
+    const input = document.querySelector<HTMLInputElement>(
+      'input[data-testid="pos-scan-search"]',
+    );
+    if (input) {
+      input.classList.add("animate-pulse");
+      window.setTimeout(() => input.classList.remove("animate-pulse"), 600);
     }
   };
   useBarcodeScanner(onScan);

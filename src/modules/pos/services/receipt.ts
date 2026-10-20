@@ -244,12 +244,15 @@ function variantLine(
     variant_color_en?: string | null;
     variant_size?: number | null;
     variant_size_label?: string | null;
+    variant_display_name?: string | null;
   },
   rtl: boolean,
 ): string {
   if (!item.variant_id) return "";
   const color =
-    (rtl ? item.variant_color_ar || item.variant_color_en : item.variant_color_en || item.variant_color_ar) ?? "";
+    (rtl
+      ? item.variant_color_ar || item.variant_color_en || item.variant_display_name
+      : item.variant_color_en || item.variant_color_ar || item.variant_display_name) ?? "";
   const size =
     item.variant_size === null || item.variant_size === undefined
       ? (item.variant_size_label ?? "").trim()

@@ -13,6 +13,9 @@ export type VariantLabelSource = {
   color_en: string | null;
   size: number | null;
   size_label: string | null;
+  display_name_ar?: string | null;
+  display_name_en?: string | null;
+  variant_display_name?: string | null;
 };
 
 /** 17 → "17", 17.5 → "17.5" — never "17.00". */
@@ -21,7 +24,17 @@ export function storeSizeLabel(size: number | null, fallback: string | null): st
   return String(Math.round(size * 100) / 100);
 }
 
-/** "Gold / 17", in the reader's language (`"ar"` falls back across the pair). */
+/** The model/shape label in the active language. */
+export function variantModelLabel(
+  variant: Pick<VariantLabelSource, "display_name_ar" | "display_name_en" | "variant_display_name">,
+  lang: "ar" | "en" = "en",
+): string {
+  const ar = (variant.display_name_ar ?? variant.variant_display_name ?? "").trim();
+  const en = (variant.display_name_en ?? variant.variant_display_name ?? "").trim();
+  return lang === "ar" ? ar || en : en || ar;
+}
+
+/** "Gold / 17" or "شكل 1", in the reader's language (`"ar"` falls back across the pair). */
 export function variantLabelOf(
   variant: VariantLabelSource,
   lang: "ar" | "en" = "en",
@@ -29,8 +42,9 @@ export function variantLabelOf(
   const color =
     (lang === "ar" ? variant.color_ar || variant.color_en : variant.color_en || variant.color_ar) ??
     "";
+  const primary = color.trim() || variantModelLabel(variant, lang);
   const size = storeSizeLabel(variant.size, variant.size_label);
-  return [color.trim(), size].filter(Boolean).join(" / ");
+  return [primary, size].filter(Boolean).join(" / ");
 }
 
 /** The colour's own label, without the size — for the picker's swatch row. */

@@ -582,6 +582,7 @@ export function OnlineOrdersPage() {
                                     color_en: item.variant_color_en,
                                     size: item.variant_size,
                                     size_label: item.variant_size_label,
+                                    variant_display_name: item.variant_display_name,
                                   },
                                   lang,
                                 )}`,

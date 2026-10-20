@@ -241,7 +241,7 @@ export function ReturnsPage({ initialTab = "returns" }: { initialTab?: "returns"
                               count: item.quantity,
                               name: pick(item.name_ar, item.name_en),
                               variant: item.variant_id
-                                ? ` · ${item.variant_color_en || item.variant_color_ar}${item.variant_size !== null || item.variant_size_label ? ` / ${item.variant_size !== null ? Math.round(item.variant_size * 100) / 100 : item.variant_size_label}` : ""}`
+                                ? ` · ${item.variant_color_en || item.variant_color_ar || item.variant_display_name || ""}${item.variant_size !== null || item.variant_size_label ? ` / ${item.variant_size !== null ? Math.round(item.variant_size * 100) / 100 : item.variant_size_label}` : ""}`
                                 : "",
                             })}
                           </div>

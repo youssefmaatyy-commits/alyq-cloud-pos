@@ -1,10 +1,20 @@
 import {
-  colorKeyOf, generateCombinations, naturalSizeCompare, suggestVariantSku, variantSizeValue,
-  type ProductColorImage, type ProductVariant, type VariantColorDraft,
+  colorKeyOf,
+  generateCombinations,
+  isFreeSizeModel,
+  modelKeyOf,
+  naturalSizeCompare,
+  suggestModelSku,
+  suggestVariantSku,
+  variantGalleryProblem,
+  variantSizeValue,
+  type ProductColorImage,
+  type ProductVariant,
+  type VariantColorDraft,
 } from "../variants";
 import { deriveBarcodeFromSku } from "./barcode";
 
-export type ProductVariantMode = "none" | "colors" | "sizes" | "colors_sizes";
+export type ProductVariantMode = "none" | "colors" | "sizes" | "colors_sizes" | "models";
 export interface VariantColorRow {
   /** Stable UI identity. For saved colours this is the original color_key. */
   id: string;
@@ -30,6 +40,11 @@ export interface ProductVariantDraft {
   /** Legacy display compatibility. */
   size_label: string;
   size_sort_order: number;
+  /** Model / shape name (for mode === "models"). */
+  display_name_ar?: string;
+  display_name_en?: string;
+  /** Ordered model gallery (max 5 https URLs). */
+  images?: string[];
   sku: string;
   barcode: string;
   stock_quantity: string;
@@ -53,6 +68,40 @@ export const EMPTY_PRODUCT_VARIANT_FORM: ProductVariantFormValue = {
 
 export const usesColors = (mode: ProductVariantMode) => mode === "colors" || mode === "colors_sizes";
 export const usesSizes = (mode: ProductVariantMode) => mode === "sizes" || mode === "colors_sizes";
+export const usesModels = (mode: ProductVariantMode) => mode === "models";
+
+export function createModelDraftRow(
+  productSku: string,
+  modelNumber: number,
+  takenSkus: readonly string[] = [],
+): ProductVariantDraft {
+  const num = Math.max(1, Math.trunc(modelNumber) || 1);
+  const sku = suggestModelSku(productSku, num, takenSkus);
+  return {
+    id: `draft:model:${num}:${Math.random().toString(36).slice(2, 7)}`,
+    persistedId: null,
+    color_id: "",
+    color_key: "",
+    color_ar: "",
+    color_en: "",
+    color_hex: "",
+    size: "",
+    size_label: "",
+    size_sort_order: num - 1,
+    display_name_ar: `شكل ${num}`,
+    display_name_en: `Model ${num}`,
+    images: [],
+    sku,
+    // Models share the parent product's barcode by default (`barcode = ""` -> `null` in DB).
+    barcode: "",
+    stock_quantity: "0",
+    low_stock_level: "0",
+    price_override: "",
+    cost_override: "",
+    image_url: "",
+    active: true,
+  };
+}
 
 /** A color row is considered valid when at least one non-empty name exists in Arabic or English. */
 export function hasValidColorName(color: {
@@ -110,6 +159,25 @@ const rowKey = (row: ProductVariantDraft) => pairKey(row.color_id, row.size);
 /** New combinations are generated as the employee edits chips/rows — no second "generate" step. */
 export function reconcileVariantDraft(value: ProductVariantFormValue, productSku: string): ProductVariantFormValue {
   if (value.mode === "none") return value; // a mode change never silently erases work
+  if (value.mode === "models") {
+    const modelRows = value.rows.filter(
+      (row) => row.persistedId || row.id.startsWith("draft:model:") || (!row.color_id && !row.size),
+    );
+    const taken: string[] = [];
+    const normalizedRows = modelRows.map((row, index) => {
+      let nextSku = row.sku.trim();
+      if (!row.persistedId && (!nextSku || /^MOD-M\d+$/i.test(nextSku)) && productSku.trim()) {
+        nextSku = suggestModelSku(productSku, index + 1, taken);
+      }
+      if (nextSku) taken.push(nextSku);
+      return {
+        ...row,
+        sku: nextSku,
+        size_sort_order: index,
+      };
+    });
+    return { ...value, rows: normalizedRows };
+  }
   const colors = usesColors(value.mode)
     ? value.colors.filter((row) => hasValidColorName(row))
     : [];
@@ -198,7 +266,14 @@ export function variantDraftFromSaved(
   const available = active.length ? active : variants;
   const hasColors = available.some((row) => Boolean(row.color_key));
   const hasSizes = available.some((row) => Boolean(variantSizeValue(row)));
-  const mode: ProductVariantMode = hasColors && hasSizes ? "colors_sizes" : hasColors ? "colors" : "sizes";
+  const hasModels = !hasColors && !hasSizes && available.some((row) => isFreeSizeModel(row));
+  const mode: ProductVariantMode = hasModels
+    ? "models"
+    : hasColors && hasSizes
+      ? "colors_sizes"
+      : hasColors
+        ? "colors"
+        : "sizes";
   const colors: VariantColorRow[] = [];
   const sizes: string[] = [];
   for (const row of available) {
@@ -225,6 +300,9 @@ export function variantDraftFromSaved(
       color_ar: row.color_ar ?? "", color_en: row.color_en ?? "", color_hex: row.color_hex ?? "",
       size: variantSizeValue(row), size_label: variantSizeValue(row),
       size_sort_order: row.size_sort_order ?? row.sort_order,
+      display_name_ar: row.display_name_ar ?? "",
+      display_name_en: row.display_name_en ?? "",
+      images: row.images ?? [],
       sku: row.sku, barcode: row.barcode ?? "", stock_quantity: String(row.stock_quantity),
       low_stock_level: String(row.low_stock_level),
       price_override: row.price_override === null ? "" : String(row.price_override),
@@ -242,6 +320,19 @@ export function variantDraftTotal(rows: readonly ProductVariantDraft[]): number 
 /** Refuse bad drafts *before* creating a product (a partly written product is not a form error). */
 export function validateVariantDraft(value: ProductVariantFormValue, productSku: string, productBarcode = ""): string | null {
   if (value.mode === "none") return null;
+
+  if (usesModels(value.mode)) {
+    if (value.rows.length === 0) return "modelsRequired";
+    const seenModelKeys = new Set<string>();
+    for (const row of value.rows) {
+      const key = modelKeyOf(row);
+      if (!key) return "modelNameRequired";
+      if (seenModelKeys.has(key)) return "duplicateModelName";
+      seenModelKeys.add(key);
+      if (row.price_override.trim()) return "invalidPrice";
+      if (variantGalleryProblem(row.images ?? [])) return "invalidGallery";
+    }
+  }
 
   if (usesColors(value.mode)) {
     if (!value.colors.length || value.colors.some((c) => !hasValidColorName(c))) {
@@ -268,14 +359,16 @@ export function validateVariantDraft(value: ProductVariantFormValue, productSku:
 
   if (value.rows.length === 0) return "nothingToGenerate";
   const codes = new Set([productSku.trim().toUpperCase()]);
-  const barcodes = new Set(productBarcode.trim() ? [productBarcode.trim().toUpperCase()] : []);
+  const parentBarcode = productBarcode.trim().toUpperCase();
+  const barcodes = new Set(parentBarcode ? [parentBarcode] : []);
   for (const row of value.rows) {
     const sku = row.sku.trim().toUpperCase();
     if (!sku || codes.has(sku) || sku.length > 40) return "duplicateSku";
     codes.add(sku);
     const barcode = row.barcode.trim().toUpperCase();
-    if (barcode && (barcodes.has(barcode) || barcode.length > 80)) return "duplicateBarcode";
-    if (barcode) barcodes.add(barcode);
+    const sharesParentBarcode = usesModels(value.mode) && (!barcode || barcode === parentBarcode);
+    if (!sharesParentBarcode && barcode && (barcodes.has(barcode) || barcode.length > 80)) return "duplicateBarcode";
+    if (!sharesParentBarcode && barcode) barcodes.add(barcode);
     if (!/^(0|[1-9]\d*)$/.test(row.stock_quantity) ||
         !/^(0|[1-9]\d*)$/.test(row.low_stock_level)) return "invalidQuantity";
     if (!row.active && Number(row.stock_quantity) > 0 && !row.persistedId) return "inactiveStock";

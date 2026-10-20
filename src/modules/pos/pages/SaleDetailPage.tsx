@@ -356,7 +356,14 @@ export function SaleDetailPage() {
                     </p>
                     {item.variant_id ? (
                       <p className="text-[10px] font-semibold text-slate-600" data-testid="sale-item-variant">
-                        {[isRTL ? item.variant_color_ar || item.variant_color_en : item.variant_color_en || item.variant_color_ar, item.variant_size_label || item.variant_size].filter(Boolean).join(" / ")}
+                        {[
+                          isRTL
+                            ? item.variant_color_ar || item.variant_color_en || item.variant_display_name
+                            : item.variant_color_en || item.variant_color_ar || item.variant_display_name,
+                          item.variant_size_label || item.variant_size,
+                        ]
+                          .filter(Boolean)
+                          .join(" / ")}
                       </p>
                     ) : null}
                     {item.automatic_promotion_name ? (

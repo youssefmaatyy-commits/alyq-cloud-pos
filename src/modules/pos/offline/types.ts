@@ -66,6 +66,7 @@ export interface OfflineSaleLine {
   color_ar?: string | null;
   color_en?: string | null;
   size_value?: string | null;
+  variant_display_name?: string | null;
   unit_price: number;
 }
 
@@ -238,6 +239,7 @@ export function offlineSaleToDisplaySale(record: OfflineSaleRecord, lines: Offli
         variant_color_en: line.color_en ?? null,
         variant_size: line.size_value && /^[0-9]+(?:\.[0-9]{1,2})?$/.test(line.size_value) ? Number(line.size_value) : null,
         variant_size_label: line.size_value ?? null,
+        variant_display_name: line.variant_display_name ?? null,
         name_ar: line.name_ar,
         name_en: line.name_en,
         sku: line.sku,

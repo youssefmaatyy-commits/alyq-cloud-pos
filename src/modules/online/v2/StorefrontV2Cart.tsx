@@ -53,7 +53,7 @@ export function StorefrontV2Cart() {
             const name = pick(entry.product.name_ar, entry.product.name_en);
             return <article className="v2-cart-line" key={key} data-testid="v2-cart-line" data-variant-id={variantId ?? ""}>
               <Link to={path} className="v2-cart-photo" aria-label={name}>
-                <V2Image src={entry.variant?.image_url || entry.product.image_url || entry.product.images[0]}
+                <V2Image src={(entry.variant?.images ?? [])[0] || entry.variant?.image_url || entry.product.image_url || entry.product.images[0]}
                   alt={name} fit="contain" />
               </Link>
               <div className="v2-cart-line-body"><div className="v2-cart-line-head">

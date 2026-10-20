@@ -37,6 +37,7 @@ interface ReturnItemRow {
   variant_color_en?: string | null;
   variant_size?: number | string | null;
   variant_size_label?: string | null;
+  variant_display_name?: string | null;
   name_ar: string;
   name_en: string;
   sku: string;
@@ -101,6 +102,7 @@ function mapReturn(row: ReturnRow, items: ReturnItemRow[] = []): SalesReturn {
       variant_size:
         i.variant_size === null || i.variant_size === undefined ? null : toNumber(i.variant_size),
       variant_size_label: i.variant_size_label ?? null,
+      variant_display_name: i.variant_display_name ?? null,
       name_ar: i.name_ar,
       name_en: i.name_en,
       sku: i.sku,

@@ -4,11 +4,11 @@ import { Button, Card, Field, SectionTitle, TextInput, useToast } from "@/compon
 import { canAct } from "@/lib/permissions/enforce";
 import { uploadProductImage, validateImageFile } from "../services/imageStorage";
 import {
-  EMPTY_PRODUCT_VARIANT_FORM, reconcileVariantDraft, usesColors, usesSizes,
+  createModelDraftRow, EMPTY_PRODUCT_VARIANT_FORM, reconcileVariantDraft, usesColors, usesModels, usesSizes,
   validateVariantDraft, variantDraftTotal,
   type ProductVariantDraft, type ProductVariantFormValue, type ProductVariantMode, type VariantColorRow,
 } from "../services/variantDraft";
-import { naturalSizeCompare, parseSizes, suggestVariantSku, variantLabel } from "../variants";
+import { naturalSizeCompare, parseSizes, suggestModelSku, suggestVariantSku, variantLabel } from "../variants";
 import { deriveBarcodeFromSku, nextBarcodeOnSkuChange } from "../services/barcode";
 
 export { EMPTY_PRODUCT_VARIANT_FORM };
@@ -57,10 +57,39 @@ export function ProductVariantsForm({
   const hasSaved = editing && value.rows.some((row) => row.persistedId);
   const requiresColors = usesColors(value.mode);
   const requiresSizes = usesSizes(value.mode);
+  const requiresModels = usesModels(value.mode);
   const displayed = value.mode === "none" ? [] : value.rows;
   const error = validateVariantDraft(value, productSku, productBarcode);
 
   const change = (next: ProductVariantFormValue) => onChange(reconcileVariantDraft(next, productSku));
+  const selectMode = (mode: ProductVariantMode) => {
+    if (mode === "models") {
+      const reconciled = reconcileVariantDraft({ ...value, mode }, productSku);
+      if (reconciled.rows.length === 0) {
+        onChange({
+          ...reconciled,
+          rows: [createModelDraftRow(productSku, 1)],
+        });
+        return;
+      }
+      onChange(reconciled);
+      return;
+    }
+    change({ ...value, mode });
+  };
+  const addModelRow = () => {
+    const taken = value.rows.map((row) => row.sku).filter(Boolean);
+    const nextRow = createModelDraftRow(productSku, value.rows.length + 1, taken);
+    onChange(reconcileVariantDraft({ ...value, rows: [...value.rows, nextRow] }, productSku));
+  };
+  const removeModelRow = (id: string) => {
+    const target = value.rows.find((row) => row.id === id);
+    if (target?.persistedId) {
+      toast.error(t("products.simple.archiveOption"));
+      return;
+    }
+    onChange({ ...value, rows: value.rows.filter((row) => row.id !== id) });
+  };
   const updateColor = (id: string, patch: Partial<VariantColorRow>) => change({
     ...value, colors: value.colors.map((color) => color.id === id ? { ...color, ...patch } : color),
   });
@@ -78,7 +107,10 @@ export function ProductVariantsForm({
    * that already diverged (hand-typed, a manufacturer code) is left alone.
    */
   const updateSku = (row: ProductVariantDraft, nextSku: string) =>
-    updateRow(row.id, { sku: nextSku, barcode: nextBarcodeOnSkuChange(row.sku, nextSku, row.barcode) });
+    updateRow(row.id, {
+      sku: nextSku,
+      barcode: requiresModels ? row.barcode : nextBarcodeOnSkuChange(row.sku, nextSku, row.barcode),
+    });
 
   const removeColor = (id: string) => {
     if (value.rows.some((row) => row.color_id === id && row.persistedId)) {
@@ -174,15 +206,19 @@ export function ProductVariantsForm({
    * leaves this screen without both identifiers once this has run. */
   const generateMissingSku = () => {
     const taken = value.rows.map((row) => row.sku).filter(Boolean);
-    onChange({ ...value, rows: value.rows.map((row) => {
+    onChange({ ...value, rows: value.rows.map((row, index) => {
       let sku = row.sku;
       if (!sku.trim()) {
-        const color = value.colors.find((entry) => entry.id === row.color_id);
-        sku = suggestVariantSku(productSku, color ? { color_ar: color.color_ar, color_en: color.color_en } : null,
-          row.size || null, row.size || null, taken);
+        if (requiresModels) {
+          sku = suggestModelSku(productSku, index + 1, taken);
+        } else {
+          const color = value.colors.find((entry) => entry.id === row.color_id);
+          sku = suggestVariantSku(productSku, color ? { color_ar: color.color_ar, color_en: color.color_en } : null,
+            row.size || null, row.size || null, taken);
+        }
         taken.push(sku);
       }
-      const barcode = row.barcode.trim() || deriveBarcodeFromSku(sku);
+      const barcode = requiresModels ? row.barcode.trim() : row.barcode.trim() || deriveBarcodeFromSku(sku);
       return sku === row.sku && barcode === row.barcode ? row : { ...row, sku, barcode };
     }) });
   };
@@ -192,11 +228,11 @@ export function ProductVariantsForm({
       <SectionTitle>{t("products.variants.title")}</SectionTitle>
       <p className="mb-4 text-xs font-medium text-slate-600">{t("products.simple.intro")}</p>
 
-      <div role="group" aria-label={t("products.variants.mode.label")} data-testid="variant-mode" className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-        {(["none", "colors", "sizes", "colors_sizes"] as const).map((mode) => (
+      <div role="group" aria-label={t("products.variants.mode.label")} data-testid="variant-mode" className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+        {(["none", "colors", "sizes", "colors_sizes", "models"] as const).map((mode) => (
           <button key={mode} type="button" data-testid={`variant-mode-${mode}`}
             aria-pressed={value.mode === mode} disabled={(hasSaved || structureLocked) && mode !== value.mode}
-            onClick={() => change({ ...value, mode })}
+            onClick={() => selectMode(mode)}
             className={`min-h-14 rounded-xl border px-3 py-2 text-start text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-50 ${
               mode === value.mode ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-700 hover:border-slate-500"
             }`}
@@ -207,6 +243,74 @@ export function ProductVariantsForm({
 
       {value.mode !== "none" ? (
         <div className="mt-5 space-y-5">
+          {requiresModels && (
+            <section data-testid="variant-model-list" className="space-y-3">
+              <div className="rounded-xl border border-amber-200 bg-amber-50/70 px-3.5 py-2.5 text-xs font-semibold text-amber-900" data-testid="variant-shared-barcode-banner">
+                {t("products.simple.sharedBarcodeBanner", { barcode: productBarcode.trim() || productSku.trim() || "—" })}
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2.5">
+                  <h3 className="text-sm font-bold text-slate-900">{t("products.simple.models")}</h3>
+                  <span
+                    data-testid="variant-models-total-stock"
+                    className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-xs font-extrabold text-emerald-900"
+                  >
+                    {t("products.stockQuantity")}: {variantDraftTotal(value.rows)}
+                  </span>
+                </div>
+                <Button size="sm" variant="secondary" type="button" data-testid="variant-add-model" disabled={structureLocked} onClick={addModelRow}>
+                  + {t("products.simple.addModel")}
+                </Button>
+              </div>
+              {value.rows.map((row, index) => (
+                <div key={row.id} data-testid={`variant-model-${index}`} className="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      {row.image_url ? (
+                        <img src={row.image_url} alt={row.display_name_ar || row.display_name_en || ""} className="h-10 w-10 rounded-lg border border-slate-200 object-cover" />
+                      ) : (
+                        <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-dashed border-slate-300 bg-white text-[11px] font-bold text-slate-400">
+                          #{index + 1}
+                        </div>
+                      )}
+                      <div>
+                        <p className="text-xs font-bold text-slate-800">{t("products.simple.modelNumber", { count: index + 1 })}</p>
+                        <p className="font-mono text-[11px] text-slate-500">{row.sku || "—"}</p>
+                      </div>
+                    </div>
+                    {!row.persistedId && (
+                      <button type="button" disabled={structureLocked} onClick={() => removeModelRow(row.id)} className="text-xs font-bold text-rose-700 hover:underline" data-testid={`variant-remove-model-${index}`}>
+                        {t("products.simple.removeModel")}
+                      </button>
+                    )}
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+                    <Field label={t("products.simple.modelNameAr")}>
+                      <TextInput dir="rtl" disabled={structureLocked} value={row.display_name_ar ?? ""} onChange={(event) => updateRow(row.id, { display_name_ar: event.target.value })} placeholder={`شكل ${index + 1}`} data-testid={`variant-model-ar-${index}`} />
+                    </Field>
+                    <Field label={t("products.simple.modelNameEn")}>
+                      <TextInput dir="ltr" disabled={structureLocked} value={row.display_name_en ?? ""} onChange={(event) => updateRow(row.id, { display_name_en: event.target.value })} placeholder={`Model ${index + 1}`} data-testid={`variant-model-en-${index}`} />
+                    </Field>
+                    <Field label={t("products.sku")}>
+                      <TextInput dir="ltr" className="font-mono" disabled={structureLocked} value={row.sku} onChange={(event) => updateSku(row, event.target.value)} placeholder={`${productSku || "BR101"}-M0${index + 1}`} data-testid={`variant-model-sku-${index}`} />
+                    </Field>
+                    <Field label={t("products.variants.colStock")}>
+                      <TextInput dir="ltr" inputMode="numeric" value={row.stock_quantity} readOnly={!stockEditable || Boolean(row.persistedId)} onChange={(event) => updateRow(row.id, { stock_quantity: event.target.value })} data-testid={`variant-model-stock-${index}`} />
+                    </Field>
+                    <Field label={t("products.simple.variantImage")}>
+                      <div className="flex items-center gap-1.5">
+                        <TextInput dir="ltr" type="url" className="flex-1 text-xs" placeholder={t("products.imageUrl")} value={row.image_url} onChange={(event) => updateRow(row.id, { image_url: event.target.value })} data-testid={`variant-model-image-${index}`} />
+                        <label className="shrink-0 cursor-pointer rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs font-semibold hover:bg-slate-100">
+                          {uploading === row.id ? "…" : "↑"}
+                          <input type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/avif,image/bmp" className="sr-only" disabled={structureLocked || uploading !== null} onChange={(event) => { void upload(event.target.files?.[0], row.id); event.target.value = ""; }} />
+                        </label>
+                      </div>
+                    </Field>
+                  </div>
+                </div>
+              ))}
+            </section>
+          )}
           {requiresColors && (
             <section data-testid="variant-color-list" className="space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -314,12 +418,12 @@ export function ProductVariantsForm({
                   const color = value.colors.find((entry) => entry.id === row.color_id);
                   const archived = row.persistedId && !row.active;
                   return <tr key={row.id} data-testid={`product-variant-${row.id}`} className={`border-b border-slate-100 last:border-0 ${archived ? "bg-slate-50 text-slate-500" : ""}`}>
-                    <td className="min-w-32 p-2 font-bold">{variantLabel({ color_ar: row.color_ar, color_en: row.color_en, size: null, size_label: row.size, size_value: row.size }, lang) || "—"}</td>
+                    <td className="min-w-32 p-2 font-bold">{variantLabel({ color_ar: row.color_ar, color_en: row.color_en, size: null, size_label: row.size, size_value: row.size, display_name_ar: row.display_name_ar, display_name_en: row.display_name_en }, lang) || "—"}</td>
                     <td className="p-2"><TextInput className="w-32 font-mono text-xs" value={row.sku} onChange={(event) => updateSku(row, event.target.value)} aria-label={`${t("products.sku")} ${row.id}`} data-testid={`variant-field-sku-${row.id}`} /></td>
-                    <td className="p-2"><TextInput className="w-32 font-mono text-xs" value={row.barcode} onChange={(event) => updateRow(row.id, { barcode: event.target.value })} aria-label={`${t("products.barcode")} ${row.id}`} data-testid={`variant-field-barcode-${row.id}`} /></td>
+                    <td className="p-2"><TextInput className="w-32 font-mono text-xs" placeholder={requiresModels ? (productBarcode.trim() || productSku.trim() || undefined) : undefined} value={row.barcode} onChange={(event) => updateRow(row.id, { barcode: event.target.value })} aria-label={`${t("products.barcode")} ${row.id}`} data-testid={`variant-field-barcode-${row.id}`} /></td>
                     <td className="p-2"><TextInput dir="ltr" inputMode="numeric" className="w-16 text-xs" value={row.stock_quantity} readOnly={!stockEditable || Boolean(row.persistedId)} onChange={(event) => updateRow(row.id, { stock_quantity: event.target.value })} aria-label={`${t("products.variants.colStock")} ${row.id}`} data-testid={`variant-field-stock-${row.id}`} /></td>
                     <td className="p-2"><TextInput dir="ltr" inputMode="numeric" className="w-16 text-xs" value={row.low_stock_level} onChange={(event) => updateRow(row.id, { low_stock_level: event.target.value })} aria-label={`${t("products.variants.lowStock")} ${row.id}`} data-testid={`variant-field-low-${row.id}`} /></td>
-                    <td className="p-2"><TextInput dir="ltr" inputMode="decimal" className="w-20 text-xs" placeholder={productSellingPrice} value={row.price_override} onChange={(event) => updateRow(row.id, { price_override: event.target.value })} aria-label={`${t("products.variants.colPrice")} ${row.id}`} data-testid={`variant-field-price-${row.id}`} /></td>
+                    <td className="p-2"><TextInput dir="ltr" inputMode="decimal" className="w-20 text-xs" placeholder={productSellingPrice} readOnly={requiresModels} value={row.price_override} onChange={(event) => updateRow(row.id, { price_override: event.target.value })} aria-label={`${t("products.variants.colPrice")} ${row.id}`} data-testid={`variant-field-price-${row.id}`} /></td>
                     {canAct("view_cost") && <td className="p-2"><TextInput dir="ltr" inputMode="decimal" className="w-20 text-xs" readOnly={!canAct("change_cost")} placeholder={productCostPrice} value={row.cost_override} onChange={(event) => updateRow(row.id, { cost_override: event.target.value })} aria-label={`${t("products.variants.colCost")} ${row.id}`} data-testid={`variant-field-cost-${row.id}`} /></td>}
                     <td className="p-2"><div className="flex items-center gap-1"><TextInput dir="ltr" type="url" className="w-28 text-xs" placeholder={color?.image_url ? t("products.simple.inheritsColor") : t("products.imageUrl")} value={row.image_url} onChange={(event) => updateRow(row.id, { image_url: event.target.value })} aria-label={`${t("products.simple.variantImage")} ${row.id}`} data-testid={`variant-field-image-${row.id}`} />
                       <label className="cursor-pointer rounded border border-slate-200 px-1.5 py-2 text-xs" title={t("products.simple.uploadImage")}>↑<input type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/avif,image/bmp" className="sr-only" disabled={uploading !== null} onChange={(event) => { void upload(event.target.files?.[0], row.id); event.target.value = ""; }} /></label>
