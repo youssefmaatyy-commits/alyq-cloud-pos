@@ -45,6 +45,10 @@ const TABLE_ALIASES = {
   storefaq: "store_faqs",
   storereview: "store_reviews",
   storecustomer: "store_customers",
+  deliveryzone: "delivery_zones",
+  promocodeusage: "promo_code_usages",
+  promotiontarget: "promotion_targets",
+  variant: "product_variants",
   // Identity (Phase 10): `custom_roles` is read by the settings repository next
   // to `profiles`, so the file no longer touches exactly one table and the
   // interface name has to be mapped explicitly to stay under the same guard.
