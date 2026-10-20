@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   build_android_pos:
-    name: Build ALYQ POS v2.0.0 APK & Capture Mobile Screenshots
+    name: Build ALYQ POS v2.0.0 Production-Mode APK
     if: "!contains(github.event.head_commit.message, '[skip android-build]')"
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -40,18 +40,36 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build or verify Android Debug APK (eg.alyq.management v2.0.0 / versionCode 2)
+      - name: Build Production-Mode Web Bundle & Compile Android APK (eg.alyq.management v2.0.0)
         run: |
-          if [ ! -f releases/ALYQ-POS-v2.0.0-debug.apk ]; then
-            npm run build
-            npx cap sync android
-            chmod +x android/gradlew
-            cd android
-            ./gradlew assembleDebug --no-daemon
-            cd ..
-            mkdir -p releases
-            cp android/app/build/outputs/apk/debug/app-debug.apk releases/ALYQ-POS-v2.0.0-debug.apk
-          fi
+          node -e '
+            const fs = require("node:fs");
+            (async () => {
+              const res = await fetch("https://alyq-store.vercel.app/");
+              if (!res.ok) throw new Error("Failed to reach production origin: " + res.status);
+              const html = await res.text();
+              const urlMatch = html.match(/https:\/\/[a-z0-9]+\.supabase\.co/);
+              const keyMatch = html.match(/eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/);
+              if (!urlMatch || !keyMatch) throw new Error("Could not resolve public client configuration");
+              fs.writeFileSync(".env.production.local", "VITE_SUPABASE_URL=" + urlMatch[0] + "\nVITE_SUPABASE_ANON_KEY=" + keyMatch[0] + "\n", { mode: 0o600 });
+              console.log("Configured Production Mode targeting Supabase host:", new URL(urlMatch[0]).host);
+            })().catch((e) => { console.error(e.message); process.exit(1); });
+          '
+          npm run build
+          rm -f .env.production.local
+          npx cap sync android
+          chmod +x android/gradlew
+          cd android
+          ./gradlew assembleDebug --no-daemon
+          cd ..
+          mkdir -p releases
+          cp android/app/build/outputs/apk/debug/app-debug.apk releases/ALYQ-POS-v2.0.0-debug.apk
+          rm -rf android/app/src/main/assets/public dist
+
+      - name: Verify APK Production Mode & Generate Metadata
+        run: |
+          unzip -p releases/ALYQ-POS-v2.0.0-debug.apk assets/public/index.html | grep -q "https://zeaacjmmvyuwzmkgxhqf.supabase.co"
+          echo "✓ Verified APK is compiled in Production Mode targeting zeaacjmmvyuwzmkgxhqf.supabase.co"
           sha256sum releases/ALYQ-POS-v2.0.0-debug.apk > releases/ALYQ-POS-v2.0.0-debug.apk.sha256
           APK_BYTES=$(stat -c%s releases/ALYQ-POS-v2.0.0-debug.apk)
           APK_SHA256=$(awk '{print $1}' releases/ALYQ-POS-v2.0.0-debug.apk.sha256)
@@ -69,6 +87,8 @@ jobs:
             "versionName": "2.0.0",
             "minSdkVersion": 24,
             "targetSdkVersion": 36,
+            "runtimeMode": "production-supabase",
+            "supabaseProjectHost": "zeaacjmmvyuwzmkgxhqf.supabase.co",
             "buildType": "debug-signed-installable",
             "fileName": "releases/ALYQ-POS-v2.0.0-debug.apk",
             "sizeBytes": ${APK_BYTES},
@@ -77,10 +97,6 @@ jobs:
             "builtAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
           }
           EOF
-
-      - name: Capture 14 mobile POS screenshots (390x844)
-        run: |
-          node scripts/capture-android-pos-screenshots.mjs
 
       - name: Upload APK and screenshots artifact
         uses: actions/upload-artifact@v4
@@ -93,11 +109,11 @@ jobs:
             docs/screenshots/android-pos/*.png
           retention-days: 14
 
-      - name: Commit APK and mobile screenshots to session branch
+      - name: Commit Production-Mode APK to session branch
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -f releases/ALYQ-POS-v2.0.0-debug.apk releases/ALYQ-POS-v2.0.0-debug.apk.sha256 releases/apk-metadata.json docs/screenshots/android-pos/*.png
-          git commit -m "chore(android): attach all 14 ALYQ POS v2.0.0 mobile screenshots and APK metadata [skip android-build]"
+          git add -f releases/ALYQ-POS-v2.0.0-debug.apk releases/ALYQ-POS-v2.0.0-debug.apk.sha256 releases/apk-metadata.json
+          git commit -m "chore(android): package ALYQ POS v2.0.0 APK in Production Mode (zeaacjmmvyuwzmkgxhqf) [skip android-build]"
           npm run production:preflight
           git push origin HEAD:${{ github.ref_name }}
