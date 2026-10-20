@@ -421,8 +421,8 @@ begin
 
   perform pg_temp.become(v_admin, 'authenticated');
   v_health := public.system_health_probe();
-  if v_health->>'migration' <> '0095_web_push_digest_repair.sql'
-     or (v_health->>'migration_count')::integer <> 95
+  if v_health->>'migration' <> '0096_qualify_legacy_crypto_functions.sql'
+     or (v_health->>'migration_count')::integer <> 96
      or (v_health->>'authenticated')::boolean is not true
      or (v_health->>'branch_context_valid')::boolean is not true then
     raise exception '0091 health contract mismatch: %',v_health;

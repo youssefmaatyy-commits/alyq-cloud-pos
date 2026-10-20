@@ -117,8 +117,8 @@ begin
   perform pg_temp.become(v_admin,'authenticated');
   perform public.switch_active_branch_with_audit(v_main);
   v_health:=public.system_health_probe();
-  if v_health->>'migration'<>'0095_web_push_digest_repair.sql'
-     or (v_health->>'migration_count')::integer<>95
+  if v_health->>'migration'<>'0096_qualify_legacy_crypto_functions.sql'
+     or (v_health->>'migration_count')::integer<>96
      or coalesce((v_health->>'authenticated')::boolean,false) is false
      or coalesce((v_health->>'branch_context_valid')::boolean,false) is false then
     raise exception 'system health contract did not verify migration/auth/branch: %',v_health;

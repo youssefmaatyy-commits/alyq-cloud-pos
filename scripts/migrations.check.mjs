@@ -73,6 +73,7 @@ const FACTORY_RESET_0093_MIGRATION_FILE = path.join(ROOT, "supabase", "migration
 const PUSH_0092_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "push_0092_scenarios.sql");
 const WEB_PUSH_0094_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "web_push_0094_scenarios.sql");
 const WEB_PUSH_0095_DIGEST_REPAIR_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "web_push_0095_digest_repair_scenarios.sql");
+const CRYPTO_0096_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "crypto_0096_scenarios.sql");
 const SEED_FILE = path.join(ROOT, "supabase", "seed.sql");
 const SRC_DIR = path.join(ROOT, "src");
 
@@ -520,6 +521,20 @@ if (!VERIFY_ONLY) {
       console.log(`  ${c.red("✗")} a focused Migration 0095 digest repair scenario failed`);
       if (error?.stack) console.log(c.dim(error.stack));
       failures.push({ name: "Migration 0095 digest repair scenarios", phase: "scenario", error: String(error.message) });
+    }
+  }
+
+  if (failures.length === 0 && runScenarios) {
+    console.log(c.bold("\nMigration 0096 focused scenarios (legacy pgcrypto qualification across all 7 functions)"));
+    try {
+      const sql = fs.readFileSync(CRYPTO_0096_SCENARIOS_FILE, "utf8");
+      await driver.exec(sql, "crypto_0096_scenarios.sql");
+      console.log(`  ${c.green("✓")} every focused Migration 0096 crypto qualification scenario passed`);
+      for (const notice of sql.matchAll(/raise notice '([^']+)'/gi)) console.log(c.dim(`      ${notice[1]}`));
+    } catch (error) {
+      console.log(`  ${c.red("✗")} a focused Migration 0096 crypto qualification scenario failed`);
+      if (error?.stack) console.log(c.dim(error.stack));
+      failures.push({ name: "Migration 0096 crypto qualification scenarios", phase: "scenario", error: String(error.message) });
     }
   }
 

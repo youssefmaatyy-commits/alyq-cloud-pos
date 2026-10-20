@@ -157,8 +157,8 @@ begin
     raise exception 'Notification Center stopped resolving after Web Push lifecycle: %',v_result;
   end if;
   v_health:=public.system_health_probe();
-  if v_health->>'migration'<>'0095_web_push_digest_repair.sql'
-     or (v_health->>'migration_count')::integer<>95 then
+  if v_health->>'migration'<>'0096_qualify_legacy_crypto_functions.sql'
+     or (v_health->>'migration_count')::integer<>96 then
     raise exception 'current health contract mismatch after Web Push lifecycle: %',v_health;
   end if;
 
