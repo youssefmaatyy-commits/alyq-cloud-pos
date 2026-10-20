@@ -40,11 +40,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Install Playwright Chromium & capture 14 mobile POS screenshots
-        run: |
-          npx playwright install chromium
-          node scripts/capture-android-pos-screenshots.mjs
-
       - name: Build production web bundle & sync Capacitor Android
         run: |
           npm run build
@@ -81,6 +76,10 @@ jobs:
           }
           EOF
 
+      - name: Capture 14 mobile POS screenshots (390x844)
+        run: |
+          node scripts/capture-android-pos-screenshots.mjs 2>&1 | tee releases/screenshot-capture.log
+
       - name: Upload APK and screenshots artifact
         uses: actions/upload-artifact@v4
         with:
@@ -89,11 +88,13 @@ jobs:
             releases/ALYQ-POS-v2.0.0-debug.apk
             releases/ALYQ-POS-v2.0.0-debug.apk.sha256
             releases/apk-metadata.json
+            releases/screenshot-capture.log
             docs/screenshots/android-pos/*.png
           retention-days: 14
 
       - name: Commit APK and mobile screenshots to session branch
         run: |
+          rm -f releases/screenshot-capture.log
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -f releases/ALYQ-POS-v2.0.0-debug.apk releases/ALYQ-POS-v2.0.0-debug.apk.sha256 releases/apk-metadata.json docs/screenshots/android-pos/*.png
