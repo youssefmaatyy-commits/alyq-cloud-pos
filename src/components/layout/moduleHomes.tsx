@@ -9,10 +9,13 @@
  * pages already ARE the hub (list with details; tabbed reports), so the
  * sidebar points straight at them.
  */
-import { Navigate, useLocation } from "react-router-dom";
+import { Link, Navigate, useLocation } from "react-router-dom";
 import { PageHeader } from "@/components/layout/AppShell";
 import { ModuleHomePage } from "@/components/layout/ModuleHomePage";
 import { useI18n } from "@/lib/i18n/I18nProvider";
+import { MobileBadge, MobileCard } from "@/modules/mobile/components/MobilePrimitives";
+import { useWebNotifications } from "@/modules/notifications";
+import "@/modules/mobile/mobile.css";
 import {
   ClipboardIcon,
   GlobeIcon,
@@ -306,10 +309,67 @@ export function OnlineHome() {
 
 /** One operational workspace; the old module URLs remain valid bookmarks. */
 export function StoreManagementHome() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
+  const webNotifications = useWebNotifications();
+  const ar = lang === "ar";
   return <div data-testid="module-management">
     <PageHeader title={t("home.management.title")} subtitle={t("home.management.subtitle")}
       crumbs={[{ label: t("nav.dashboard"), to: "/dashboard" }, { label: t("home.management.title") }]} />
+    <div className="mb-8 grid gap-3 lg:grid-cols-[2fr_1fr]" data-testid="module-more-parity">
+      <MobileCard className="mobile-more-list">
+        <div className="mobile-row pb-1">
+          <strong>{ar ? "أدوات الإدارة السريعة (More)" : "Quick Management Tools (More)"}</strong>
+          <MobileBadge tone="info">{ar ? "متزامن مع الموبايل" : "Mobile Parity"}</MobileBadge>
+        </div>
+        <Link to="/dashboard/pos/sales">
+          <span>{ar ? "الفواتير والمرتجعات" : "Invoices & returns"}</span>
+          <span>›</span>
+        </Link>
+        <Link to="/dashboard/approvals">
+          <span>{ar ? "مركز الموافقات" : "Approval Center"}</span>
+          <span>›</span>
+        </Link>
+        <Link to="/dashboard/inventory/stock">
+          <span>{ar ? "المنتجات ورفوف المخزون" : "Products & exact shelves"}</span>
+          <span>›</span>
+        </Link>
+        <Link to="/dashboard/notifications">
+          <span>
+            {ar
+              ? `مركز الإشعارات (${webNotifications.notificationUnreadCount} غير مقروء)`
+              : `Notification Center (${webNotifications.notificationUnreadCount} unread)`}
+          </span>
+          <span>›</span>
+        </Link>
+        <Link to="/dashboard/system-health">
+          <span>{ar ? "صحة النظام والتشخيص" : "System Health"}</span>
+          <span>›</span>
+        </Link>
+      </MobileCard>
+      <MobileCard>
+        <strong>{ar ? "معلومات تطبيق ALYQ" : "ALYQ Management Runtime"}</strong>
+        <p className="text-sm font-semibold text-[#172033]">
+          Version {webNotifications.runtime?.appVersion ?? "—"}
+        </p>
+        <p className="mobile-muted">
+          Build {webNotifications.runtime?.build ?? "—"} · {webNotifications.runtime?.platform ?? "web"}
+        </p>
+        <div className="mobile-row mt-2 pt-2 border-t border-slate-100">
+          <span className="mobile-muted">{ar ? "حالة الإشعارات الفورية" : "Web Push State"}</span>
+          <MobileBadge
+            tone={
+              webNotifications.pushState === "registered"
+                ? "success"
+                : webNotifications.pushState === "error" || webNotifications.pushState === "denied"
+                  ? "warning"
+                  : "neutral"
+            }
+          >
+            {webNotifications.pushState}
+          </MobileBadge>
+        </div>
+      </MobileCard>
+    </div>
     <div className="space-y-9">
       <CatalogHome embedded />
       <InventoryHome embedded />

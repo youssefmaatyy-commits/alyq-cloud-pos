@@ -16,6 +16,8 @@ import {
   useToast,
 } from "@/components/ui";
 import { Link } from "react-router-dom";
+import { MobileCard } from "@/modules/mobile/components/MobilePrimitives";
+import "@/modules/mobile/mobile.css";
 import { usePos } from "../hooks/PosProvider";
 import { canConfirmPayment } from "../permissions";
 import type { Sale } from "../types";
@@ -239,6 +241,64 @@ export function SaleDetailPage() {
         }
       />
 
+      {/* Mobile Invoice Detail Parity Summary Card */}
+      <MobileCard className="mb-4" data-testid="sale-mobile-summary">
+        <dl className="mobile-detail-grid sm:grid-cols-3 lg:grid-cols-6">
+          <div>
+            <dt>{isRTL ? "الفرع" : "Branch"}</dt>
+            <dd className="font-semibold text-[#172033]">
+              {sale.branch_name ??
+                (() => {
+                  const found = branches.find((entry) => entry.id === sale.branch_id);
+                  return found ? (isRTL ? found.name_ar : found.name_en) : sale.branch_id ?? "—";
+                })()}
+            </dd>
+          </div>
+          <div>
+            <dt>{t("pos.cols.date")}</dt>
+            <dd dir="ltr">{date(sale.created_at)}</dd>
+          </div>
+          <div>
+            <dt>{t("pos.cols.user")}</dt>
+            <dd className="font-semibold">{sale.user_name}</dd>
+          </div>
+          <div>
+            <dt>{isRTL ? "السجل (Register)" : "Register"}</dt>
+            <dd>{sale.register_name ?? "—"}</dd>
+          </div>
+          <div>
+            <dt>{t("shifts.shiftNumber")}</dt>
+            <dd dir="ltr" className="font-mono text-xs">{sale.shift_id ?? "—"}</dd>
+          </div>
+          <div>
+            <dt>{t("customers.customerLabel")}</dt>
+            <dd className="font-semibold">{sale.customer_name ?? t("customers.guestCustomer")}</dd>
+          </div>
+          <div>
+            <dt>{t("pos.paymentsBreakdown")}</dt>
+            <dd>
+              {sale.payments
+                .map((payment) => `${t(`pos.payment.${payment.method}`)} ${num(payment.amount, 2)}`)
+                .join(" · ")}
+            </dd>
+          </div>
+          <div>
+            <dt>{t("returns.title")}</dt>
+            <dd className="font-bold tabular-nums">{saleReturns.length}</dd>
+          </div>
+          <div>
+            <dt>{t("refunds.title")}</dt>
+            <dd>
+              {saleRefunds.length > 0
+                ? saleRefunds.map((refund) => `${refund.refund_number}: ${refund.status}`).join(" · ")
+                : isRTL
+                  ? "لا يوجد"
+                  : "None"}
+            </dd>
+          </div>
+        </dl>
+      </MobileCard>
+
       {canViewCustomers && (sale.customer_id || sale.customer_name) ? (
         <Link
           to={sale.customer_id ? `/customers/${sale.customer_id}` : "/customers"}
@@ -290,7 +350,10 @@ export function SaleDetailPage() {
                     <p className="text-xs font-semibold text-slate-900">
                       {isRTL ? item.name_ar || item.name_en : item.name_en || item.name_ar}
                     </p>
-                    <p className="font-mono text-[10px] text-slate-500">{item.sku}</p>
+                    <p className="font-mono text-[10px] text-slate-500" dir="ltr">
+                      {item.sku}
+                      {item.barcode ? ` · ${item.barcode}` : ""}
+                    </p>
                     {item.variant_id ? (
                       <p className="text-[10px] font-semibold text-slate-600" data-testid="sale-item-variant">
                         {[isRTL ? item.variant_color_ar || item.variant_color_en : item.variant_color_en || item.variant_color_ar, item.variant_size_label || item.variant_size].filter(Boolean).join(" / ")}

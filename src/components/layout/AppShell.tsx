@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { useCatalog } from "@/modules/products/hooks/CatalogProvider";
@@ -17,6 +17,15 @@ import { useOnlineNotificationState } from "@/modules/online/hooks/OnlineNotific
 import { useOptionalApprovals } from "@/modules/approvals";
 import { normalizeText } from "@/modules/products/services/productQuery";
 import { brandDisplayName, useBrand } from "@/lib/branding/brand";
+import {
+  createPushController,
+  deactivateCurrentPushRegistration,
+  type PushController,
+  type PushRegistrationState,
+} from "@/modules/mobile/services/mobilePush";
+import { mobileNotificationUnreadCount } from "@/modules/mobile/services/notificationCenter";
+import { getMobileRuntime, type MobileRuntimeContext } from "@/modules/mobile/services/mobileRuntime";
+import { WebNotificationsContext } from "@/modules/notifications";
 import { RouteGuard } from "./RouteGuard";
 import { cn } from "@/utils/cn";
 import {
@@ -54,7 +63,7 @@ import {
 /** localStorage key for the desktop collapse preference (visual only). */
 const COLLAPSE_KEY = "alyq.admin.sidebar.collapsed.v1";
 
-const SIDEBAR_BG = "bg-[#161311]";
+const SIDEBAR_BG = "bg-[#172033]";
 
 /**
  * A sidebar entry.
@@ -74,6 +83,7 @@ function NavItem({
   badgeLabel,
   collapsed = false,
   active,
+  onSelect,
 }: {
   to: string;
   icon: React.ReactNode;
@@ -85,12 +95,13 @@ function NavItem({
   collapsed?: boolean;
   testId?: string;
   active?: boolean;
+  onSelect?: () => void;
 }) {
   if (!visible) return null;
 
   const rowClass = ({ isActive }: { isActive: boolean }) =>
     cn(
-      "group relative flex items-center gap-3 rounded-xl text-sm font-medium transition-colors",
+      "group relative flex w-full items-center gap-3 rounded-xl text-start text-sm font-medium transition-colors",
       collapsed ? "justify-center px-0 py-2.5" : "px-3 py-2.5",
       (active ?? isActive)
         ? "bg-white/10 text-[#f3ede1]"
@@ -136,6 +147,23 @@ function NavItem({
   ) : (
     <span className="truncate">{label}</span>
   );
+  if (onSelect) {
+    const isActive = Boolean(active);
+    return (
+      <button
+        type="button"
+        aria-current={isActive ? "page" : undefined}
+        title={collapsed ? label : badgeLabel ?? label}
+        onClick={onSelect}
+        className={rowClass({ isActive })}
+      >
+        {marker({ isActive })}
+        {iconEl}
+        {labelEl}
+        {badgeEl}
+      </button>
+    );
+  }
   return (
     <NavLink aria-current={active ? "page" : undefined} to={to} end={end} title={collapsed ? label : badgeLabel} className={rowClass}>
       {({ isActive }) => (
@@ -313,7 +341,105 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     );
   };
 
-  const notificationTotal = pendingApprovals + online.counts.pending;
+  // ── Shared Mobile/Web Notification Center & Push controller ───────────────
+  const [runtime, setRuntime] = useState<MobileRuntimeContext | null>(null);
+  const [pushState, setPushState] = useState<PushRegistrationState>("unsupported");
+  const [notificationUnreadCount, setNotificationUnreadCount] = useState(0);
+  const [notificationRevision, setNotificationRevision] = useState(0);
+  const pushControllerRef = useRef<PushController | null>(null);
+
+  useEffect(() => {
+    void getMobileRuntime().then(setRuntime).catch(() => setRuntime(null));
+  }, []);
+
+  const refreshNotifications = useCallback(async () => {
+    try {
+      setNotificationUnreadCount(await mobileNotificationUnreadCount());
+      setNotificationRevision((value) => value + 1);
+    } catch {
+      // Non-fatal in demo/offline mode; retried on reconnect or branch change.
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!sessionUser || !branch.current || pos.connectivityState === "offline") return;
+    void refreshNotifications();
+  }, [sessionUser?.id, branch.current?.id, pos.connectivityState, refreshNotifications]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    let active = true;
+    if (!sessionUser || !branch.current) return;
+    void createPushController(
+      sessionUser,
+      navigate,
+      (state) => {
+        if (active) setPushState(state);
+      },
+      () => {
+        if (active) void refreshNotifications();
+      },
+    )
+      .then((controller) => {
+        if (!active) void controller.dispose();
+        else {
+          pushControllerRef.current = controller;
+          setPushState(controller.state);
+        }
+      })
+      .catch(() => {
+        if (active) setPushState("error");
+      });
+    return () => {
+      active = false;
+      const current = pushControllerRef.current;
+      pushControllerRef.current = null;
+      if (current) void current.dispose();
+    };
+  }, [sessionUser?.id, branch.current?.id, navigate, refreshNotifications]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const enablePush = useCallback(async () => {
+    if (pushControllerRef.current) {
+      setPushState(await pushControllerRef.current.enable());
+    }
+  }, []);
+
+  const deactivatePush = useCallback(async () => {
+    if (pushControllerRef.current) await pushControllerRef.current.deactivate();
+    else await deactivateCurrentPushRegistration();
+  }, []);
+
+  const handleSignOut = async () => {
+    await deactivatePush();
+    await signOut();
+  };
+
+  const handleSignOutEverywhere = async () => {
+    await deactivatePush();
+    await signOutEverywhere();
+  };
+
+  const webNotificationsValue = useMemo(
+    () => ({
+      runtime,
+      pushState,
+      notificationUnreadCount,
+      notificationRevision,
+      enablePush,
+      refreshNotifications,
+      deactivatePush,
+    }),
+    [
+      runtime,
+      pushState,
+      notificationUnreadCount,
+      notificationRevision,
+      enablePush,
+      refreshNotifications,
+      deactivatePush,
+    ],
+  );
+
+  const notificationTotal = pendingApprovals + online.counts.pending + notificationUnreadCount;
 
   const brandName = brand ? brandDisplayName(brand, lang) : t("app.name");
   const brandMark = brand?.markUrl ?? null;
@@ -384,6 +510,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <NavItem to="/dashboard" icon={<GridIcon />} label={t("nav.dashboard")} end collapsed={navCollapsed} />
         <NavItem
           to="/mobile/notifications"
+          onSelect={() => navigate("/dashboard/notifications")}
+          active={location.pathname === "/dashboard/notifications" || location.pathname === "/notifications"}
+          badge={notificationUnreadCount}
           icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.7 21a2 2 0 0 1-3.4 0" /></svg>}
           label={t("admin.shell.notifications")}
           collapsed={navCollapsed}
@@ -494,7 +623,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </p>
         <button
           type="button"
-          onClick={() => void signOut()}
+          onClick={() => void handleSignOut()}
           className="mt-2 w-full rounded-xl border border-white/15 bg-white/5 px-3 py-1.5 text-xs font-semibold text-stone-200 hover:bg-white/10"
         >
           {t("auth.signOut")}
@@ -502,7 +631,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {mode === "supabase" ? (
           <button
             type="button"
-            onClick={() => void signOutEverywhere()}
+            onClick={() => void handleSignOutEverywhere()}
             title={t("auth.signOutEverywhereHint")}
             className="mt-1.5 w-full rounded-xl border border-white/15 bg-white/5 px-3 py-1.5 text-xs font-semibold text-stone-200 hover:bg-rose-500/15 hover:text-rose-300"
           >
@@ -531,7 +660,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <div className="min-h-screen bg-[#f7f5f2] text-stone-900">
+    <WebNotificationsContext.Provider value={webNotificationsValue}>
+    <div className="min-h-screen overflow-x-clip bg-[#f4f6f8] text-[#172033]">
       {/* Desktop sidebar */}
       <aside
         className={cn(
@@ -566,7 +696,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       ) : null}
 
       <div className={cn("transition-[padding] duration-200", collapsed ? "lg:ps-[4.75rem]" : "lg:ps-64")}>
-        <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b border-stone-200/80 bg-[#f7f5f2]/90 px-3 backdrop-blur sm:px-5">
+        <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b border-[#dde3ea] bg-white/95 px-3 shadow-[0_3px_12px_#0f172a0d] backdrop-blur sm:px-5">
           <button
             type="button"
             onClick={() => setOpen(true)}
@@ -738,6 +868,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </button>
               {notificationsOpen ? (
                 <div className="absolute end-0 top-11 z-40 w-64 overflow-hidden rounded-xl border border-stone-200 bg-white shadow-xl">
+                  <Link
+                    to={{ pathname: "/dashboard/notifications" }}
+                    onClick={() => setNotificationsOpen(false)}
+                    className="flex items-center justify-between gap-2 border-b border-stone-100 px-3 py-2.5 text-xs font-semibold text-stone-700 hover:bg-stone-100"
+                  >
+                    {t("admin.shell.notifications")}
+                    <span className="rounded-full bg-stone-100 px-1.5 py-0.5 text-[10px] font-black tabular-nums text-stone-800">
+                      {notificationUnreadCount}
+                    </span>
+                  </Link>
                   {pendingApprovals > 0 ? (
                     <Link
                       to="/dashboard/approvals"
@@ -797,6 +937,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </main>
       </div>
     </div>
+    </WebNotificationsContext.Provider>
   );
 }
 

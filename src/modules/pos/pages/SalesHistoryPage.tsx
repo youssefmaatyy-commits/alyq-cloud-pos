@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { PageHeader } from "@/components/layout/AppShell";
+import { MobileBadge } from "@/modules/mobile/components/MobilePrimitives";
+import "@/modules/mobile/mobile.css";
 import {
   Badge,
   Button,
@@ -126,7 +128,7 @@ export function SalesHistoryPage() {
             {(result?.rows.length ?? 0) > 0 ? (
               <ExportButton name="invoice-center-page" count={result?.rows.length ?? 0} build={() => buildTransactionCenterSheets({ rows: result?.rows ?? [], t })} />
             ) : null}
-            <Button variant="secondary" onClick={() => setRefreshToken((value) => value + 1)}>⟳</Button>
+            <Button variant="secondary" onClick={() => setRefreshToken((value) => value + 1)}>{t("common.refresh")}</Button>
             <Link to="/pos" className="alyq-btn-primary alyq-cta h-10 gap-2 rounded-xl px-4 text-sm">
               {t("nav.register")}
             </Link>
@@ -140,6 +142,57 @@ export function SalesHistoryPage() {
       </div>
 
       <Card className="mb-4 space-y-3">
+        <div className="flex flex-wrap items-center gap-1.5" data-testid="sales-quick-dates">
+          {[
+            {
+              key: "all",
+              label: pick("كل التواريخ", "All dates"),
+              from: "",
+              to: "",
+            },
+            {
+              key: "today",
+              label: pick("اليوم", "Today"),
+              from: localDateInput(new Date()),
+              to: localDateInput(new Date()),
+            },
+            {
+              key: "7d",
+              label: pick("آخر 7 أيام", "Last 7 days"),
+              from: localDateInput(new Date(Date.now() - 6 * 86_400_000)),
+              to: localDateInput(new Date()),
+            },
+            {
+              key: "30d",
+              label: pick("آخر 30 يوماً", "Last 30 days"),
+              from: localDateInput(new Date(Date.now() - 29 * 86_400_000)),
+              to: localDateInput(new Date()),
+            },
+          ].map((preset) => {
+            const active = filters.dateFrom === preset.from && filters.dateTo === preset.to;
+            return (
+              <button
+                key={preset.key}
+                type="button"
+                onClick={() =>
+                  setFilters((current) => ({
+                    ...current,
+                    dateFrom: preset.from,
+                    dateTo: preset.to,
+                    page: 1,
+                  }))
+                }
+                className={`rounded-xl px-3 py-1.5 text-xs font-bold transition ${
+                  active
+                    ? "bg-[#172033] text-white"
+                    : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                }`}
+              >
+                {preset.label}
+              </button>
+            );
+          })}
+        </div>
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <TextInput
             value={filters.query}
@@ -223,30 +276,41 @@ export function SalesHistoryPage() {
 }
 
 function TransactionCard({ row, busy, onConfirm }: { row: TransactionCenterRow; busy: boolean; onConfirm: () => void }) {
-  const { t, num, date } = useI18n();
+  const { t, num, date, isRTL } = useI18n();
   const awaitingPayment = row.status !== "voided" && row.payment_status === "pending";
   return (
-    <article className="alyq-card p-4" data-testid={`transaction-${row.id}`}>
+    <article className="mobile-card alyq-card p-4" data-testid={`transaction-${row.id}`}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <Link to={`/pos/sales/${row.id}`} className="font-mono text-sm font-black text-indigo-700 hover:underline">{row.sale_number}</Link>
+            <Link to={`/pos/sales/${row.id}`} className="font-mono text-sm font-black text-[#172033] hover:text-indigo-700 hover:underline">{row.sale_number}</Link>
             <SaleBadge status={row.status} />
-            {row.source !== "pos" ? <Badge tone="info">{row.source}</Badge> : null}
+            {row.source !== "pos" ? <MobileBadge tone="info">{row.source}</MobileBadge> : null}
           </div>
           <p className="mt-1 text-xs text-slate-500" dir="ltr">{date(row.created_at)}</p>
-          <p className="mt-1 text-xs font-semibold text-slate-700">
+          <p className="mt-1 text-xs font-semibold text-[#172033]">
             {row.customer_name || t("customers.guestCustomer")}
-            {row.customer_phone ? <span className="ms-2 font-mono" dir="ltr">{row.customer_phone}</span> : null}
+            {row.customer_phone ? <span className="ms-2 font-mono text-slate-500" dir="ltr">{row.customer_phone}</span> : null}
           </p>
-          <p className="mt-0.5 text-[11px] text-slate-500">{row.cashier_name}{row.branch_code ? ` · ${row.branch_code}` : ""}{row.shift_id ? ` · ${t("shifts.shiftNumber")} ${row.shift_id.slice(0, 8)}` : ""}</p>
+          <p className="mt-0.5 text-[11px] text-slate-500">
+            {row.branch_code ? `${row.branch_code} · ` : ""}
+            {row.cashier_name}
+            {row.shift_id ? ` · ${t("shifts.shiftNumber")} ${row.shift_id.slice(0, 8)}` : ""}
+          </p>
         </div>
         <div className="text-end">
-          <p className="text-lg font-black tabular-nums text-slate-900" dir="ltr">{num(row.total, 2)}</p>
-          <p className="text-[11px] font-semibold text-slate-500">{row.item_count} · {row.payment_methods.map((method) => t(`pos.payment.${method}` as never)).join(" + ")}</p>
+          <p className="text-lg font-black tabular-nums text-[#172033]" dir="ltr">{num(row.total, 2)}</p>
+          <p className="text-[11px] font-semibold text-slate-500">
+            {row.item_count} · {row.payment_methods.map((method) => t(`pos.payment.${method}` as never)).join(" + ")}
+          </p>
+          <p className="text-[11px] text-slate-500">
+            {isRTL
+              ? `${row.returns.length} مرتجعات · ${row.refunds.length} استردادات`
+              : `${row.returns.length} returns · ${row.refunds.length} refunds`}
+          </p>
           <div className="mt-2 flex justify-end gap-2">
             {awaitingPayment && canConfirmPayment() ? <Button size="sm" variant="subtle" loading={busy} onClick={onConfirm}>✓ {t("pos.confirmPaymentShort")}</Button> : null}
-            <Link to={`/pos/sales/${row.id}`} className="inline-flex h-8 items-center rounded-lg bg-slate-900 px-3 text-xs font-bold text-white">{t("common.view")}</Link>
+            <Link to={`/pos/sales/${row.id}`} className="inline-flex h-8 items-center rounded-lg bg-[#172033] px-3 text-xs font-bold text-white">{t("common.view")}</Link>
           </div>
         </div>
       </div>

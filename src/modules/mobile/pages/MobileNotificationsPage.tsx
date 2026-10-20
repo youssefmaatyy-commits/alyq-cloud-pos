@@ -12,7 +12,7 @@ import {
   type MobileNotification,
 } from "../services/notificationCenter";
 
-function pushStateCopy(state: ReturnType<typeof useMobile>["pushState"], lang: "en" | "ar") {
+export function pushStateCopy(state: ReturnType<typeof useMobile>["pushState"], lang: "en" | "ar") {
   const ar = lang === "ar";
   if (state === "install_required") return {
     title: ar ? "ثبّت ALYQ على الشاشة الرئيسية لتفعيل الإشعارات" : "Install ALYQ on your Home Screen to enable notifications",
@@ -56,7 +56,7 @@ function pushStateCopy(state: ReturnType<typeof useMobile>["pushState"], lang: "
   };
 }
 
-function noticeCopy(notice: string | null, lang: "en" | "ar"): string | null {
+export function noticeCopy(notice: string | null, lang: "en" | "ar"): string | null {
   if (!notice) return null;
   if (notice === "entity_unavailable") {
     return lang === "ar" ? "لم يعد السجل المرتبط متاحًا في هذا الفرع." : "The linked record is no longer available in this branch.";

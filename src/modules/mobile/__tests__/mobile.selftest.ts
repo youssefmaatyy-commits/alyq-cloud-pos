@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { parseMobileDeepLink, authorizeMobileDeepLink, safePushDeepLink } from "../services/deepLinks";
-import { safeNotificationId } from "../services/notificationCenter";
+import { safeNotificationId, webRouteFor } from "../services/notificationCenter";
 import { decodeVapidPublicKey, webPushCapability, webPushStateFor } from "../services/webPush";
 import { buildOperationalNotifications, type NotificationSnapshot } from "@/modules/operations/services/notifications";
 import { compareVariants, type ProductVariant } from "@/modules/products/variants";
@@ -342,6 +342,48 @@ test("phone shell is purpose-built, RTL-aware and width hardened", () => {
   assert.match(css, /overflow-x:clip/);
   assert.match(app, /data-mobile-width-safe="360-430"/);
   assert.doesNotMatch(app, /AppShell|RegisterProvider|PosProvider/);
+});
+
+test("Web /dashboard/* achieves Phase 1 & Phase 2 parity with ALYQ Mobile Management", () => {
+  const sampleId = "123e4567-e89b-42d3-a456-426614174000";
+  assert.equal(webRouteFor("order", sampleId), `/dashboard/online/orders/${sampleId}`);
+  assert.equal(webRouteFor("product", sampleId), `/dashboard/inventory/stock/${sampleId}`);
+  assert.equal(webRouteFor("approval", sampleId), `/dashboard/approvals/${sampleId}`);
+  assert.equal(webRouteFor("invoice", sampleId), `/dashboard/pos/sales/${sampleId}`);
+  assert.equal(webRouteFor("health", ""), "/dashboard/system-health");
+  assert.equal(webRouteFor("order", "not-a-uuid"), null);
+
+  const dash = fs.readFileSync("src/modules/dashboard/DashboardPage.tsx", "utf8");
+  const health = fs.readFileSync("src/modules/system/pages/HealthCenterPage.tsx", "utf8");
+  const orders = fs.readFileSync("src/modules/online/pages/OnlineOrdersPage.tsx", "utf8");
+  const orderDetail = fs.readFileSync("src/modules/online/components/OrderDetailModal.tsx", "utf8");
+  const inventory = fs.readFileSync("src/modules/inventory/pages/InventoryPage.tsx", "utf8");
+  const approvals = fs.readFileSync("src/modules/approvals/pages/ApprovalsPage.tsx", "utf8");
+  const sales = fs.readFileSync("src/modules/pos/pages/SalesHistoryPage.tsx", "utf8");
+  const saleDetail = fs.readFileSync("src/modules/pos/pages/SaleDetailPage.tsx", "utf8");
+
+  assert.match(dash, /data-testid="dash-mobile-parity"/);
+  assert.match(health, /data-testid="health-notifications"/);
+  assert.match(orders, /data-testid="orders-view-toggle"/);
+  assert.match(orderDetail, /deliveryStatusOf/);
+  assert.match(orderDetail, /mobile-timeline/);
+  assert.match(inventory, /listColorImages/);
+  assert.match(inventory, /data-testid="inventory-exact-shelves"/);
+  assert.match(inventory, /data-testid="inventory-product-detail-modal"/);
+  assert.match(approvals, /data-testid="approval-detail-modal"/);
+  assert.match(approvals, /mobile-safe-evidence/);
+  assert.match(sales, /data-testid="sales-quick-dates"/);
+  assert.match(saleDetail, /data-testid="sale-mobile-summary"/);
+
+  const moduleHomes = fs.readFileSync("src/components/layout/moduleHomes.tsx", "utf8");
+  const webNotifCtx = fs.readFileSync("src/modules/notifications/WebNotificationsContext.tsx", "utf8");
+  const shell = fs.readFileSync("src/components/layout/AppShell.tsx", "utf8");
+  const mobileCss = fs.readFileSync("src/modules/mobile/mobile.css", "utf8");
+
+  assert.match(moduleHomes, /data-testid="module-more-parity"/);
+  assert.match(webNotifCtx, /runtime:\s*MobileRuntimeContext\s*\|\s*null/);
+  assert.match(shell, /overflow-x-clip/);
+  assert.match(mobileCss, /white-space:nowrap/);
 });
 
 let failed = 0;

@@ -69,18 +69,18 @@ export function ModuleHomePage({
             key={card.key}
             to={card.to}
             data-testid={`module-card-${card.key}`}
-            className="group relative flex flex-col rounded-2xl border border-stone-200/80 bg-white p-4 shadow-sm transition hover:-translate-y-px hover:border-stone-300 hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-900"
+            className="group relative flex flex-col rounded-[15px] border border-[#e1e7ee] bg-white p-4 shadow-[0_2px_7px_#0f172a08] transition hover:-translate-y-px hover:border-slate-300 hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#172033]"
           >
             <div className="flex items-start gap-3">
               <span
                 aria-hidden
-                className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-stone-100 text-base text-stone-700"
+                className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[#f1f5f9] text-base text-[#172033]"
               >
                 {card.icon}
               </span>
               <span className="min-w-0">
                 <span className="flex items-center gap-2">
-                  <span className="truncate text-sm font-black text-stone-900">{card.title}</span>
+                  <span className="truncate text-sm font-black text-[#172033]">{card.title}</span>
                   {card.badge ? (
                     <span
                       aria-label={card.badgeLabel}
@@ -90,14 +90,14 @@ export function ModuleHomePage({
                     </span>
                   ) : null}
                 </span>
-                <span className="mt-0.5 block text-xs font-medium leading-relaxed text-stone-500">
+                <span className="mt-0.5 block text-xs font-medium leading-relaxed text-[#5c6878]">
                   {card.description}
                 </span>
               </span>
             </div>
             <span
               aria-hidden
-              className="mt-3 inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-widest text-stone-400 transition group-hover:text-stone-700"
+              className="mt-3 inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-widest text-slate-400 transition group-hover:text-[#172033]"
             >
               {t("common.open")}
               <ChevronIcon className="h-3 w-3 rtl:rotate-180" />

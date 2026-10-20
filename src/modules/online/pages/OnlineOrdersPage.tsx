@@ -12,9 +12,11 @@
  * number on the badge and the number of rows here cannot disagree.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { PageHeader } from "@/components/layout/AppShell";
+import { MobileBadge, MobileCard } from "@/modules/mobile/components/MobilePrimitives";
+import "@/modules/mobile/mobile.css";
 import {
   Badge,
   Button,
@@ -97,7 +99,10 @@ export function OnlineOrdersPage() {
   // `?search=WEB-…`). The params hydrate the filter once, then leave the URL so
   // a manual reload is a clean screen rather than a silently re-filtered one.
   // Unknown values are ignored — a hand-typed URL must not invent a state.
+  const routeParams = useParams<{ id?: string }>();
+  const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
+  const [viewMode, setViewMode] = useState<"table" | "cards">("table");
   const hydrated = useRef(false);
   useEffect(() => {
     if (hydrated.current) return;
@@ -105,6 +110,7 @@ export function OnlineOrdersPage() {
     const status = params.get("status");
     const payment = params.get("payment");
     const search = params.get("search");
+    const orderId = params.get("orderId") ?? routeParams.id;
     const patch: Partial<OnlineOrderFilter> = {};
     if (status && (ONLINE_ORDER_STATUSES as readonly string[]).includes(status)) {
       patch.status = status as OnlineOrderStatus;
@@ -118,13 +124,22 @@ export function OnlineOrdersPage() {
       patch.search = search;
       setSearchDraft(search);
     }
-    if (Object.keys(patch).length > 0) {
-      setFilter(patch);
+    if (orderId) {
+      void select(orderId);
+    }
+    if (Object.keys(patch).length > 0 || params.get("orderId")) {
+      if (Object.keys(patch).length > 0) setFilter(patch);
       setParams({}, { replace: true });
     }
     // Once, on mount: the provider's own filter state is the source afterwards.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (routeParams.id) {
+      void select(routeParams.id);
+    }
+  }, [routeParams.id, select]);
 
   const activeFilters = useMemo(
     () =>
@@ -161,13 +176,36 @@ export function OnlineOrdersPage() {
         subtitle={t("online.orders.subtitle")}
         actions={
           <>
+            <div
+              className="hidden items-center rounded-xl border border-slate-200 bg-white p-1 md:inline-flex"
+              data-testid="orders-view-toggle"
+            >
+              <button
+                type="button"
+                onClick={() => setViewMode("table")}
+                className={`rounded-lg px-2.5 py-1 text-xs font-bold transition ${
+                  viewMode === "table" ? "bg-[#172033] text-white" : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                {lang === "ar" ? "جدول" : "Table"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode("cards")}
+                className={`rounded-lg px-2.5 py-1 text-xs font-bold transition ${
+                  viewMode === "cards" ? "bg-[#172033] text-white" : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                {lang === "ar" ? "بطاقات الموبايل" : "Mobile cards"}
+              </button>
+            </div>
             <ExportButton
               name="online-orders"
               count={orders.length}
               build={() => buildOnlineOrderSheets({ orders, t, pick })}
             />
             <Button variant="secondary" onClick={() => void refresh()} title={t("common.retry")}>
-              ⟳
+              {t("common.refresh")}
             </Button>
             <Link to="/online/reservations">
               <Button variant="secondary">{t("nav.stockHolds")}</Button>
@@ -475,8 +513,8 @@ export function OnlineOrdersPage() {
         </Card>
       ) : (
         <>
-          {/* desktop */}
-          <div className="alyq-card hidden overflow-x-auto md:block">
+          {/* desktop table */}
+          <div className={`alyq-card overflow-x-auto ${viewMode === "cards" ? "hidden" : "hidden md:block"}`}>
             <table className="w-full border-collapse text-sm">
               <thead>
                 <tr className="border-b border-stone-200 bg-stone-50 text-[11px] font-bold uppercase tracking-wider text-stone-600">
@@ -593,52 +631,52 @@ export function OnlineOrdersPage() {
             </table>
           </div>
 
-          {/* mobile */}
-          <div className="space-y-3 md:hidden">
+          {/* Mobile Management reference cards (always on mobile; selectable on desktop) */}
+          <div className={`mobile-list ${viewMode === "cards" ? "grid gap-3 md:grid-cols-2 xl:grid-cols-3" : "space-y-3 md:hidden"}`}>
             {orders.map((order) => (
               <button
                 key={order.id}
                 type="button"
                 onClick={() => void select(order.id)}
-                className="alyq-card w-full space-y-2 p-4 text-start"
+                className="mobile-list-link w-full text-start"
               >
-                <div className="flex items-start justify-between gap-2">
-                  <span className="break-words font-mono text-xs font-bold text-[#9a7a49]" dir="ltr">
-                    {order.order_number}
-                  </span>
-                  <Badge tone={STATUS_TONE[order.status]}>
-                    {t(operationalStageLabelKey(operationalStageOf(order)))}
-                  </Badge>
-                </div>
-                <p className="break-words text-sm font-semibold text-stone-900">{order.customer_name}</p>
-                <p className="break-words text-xs text-stone-500" dir="ltr">
-                  {order.customer_phone} · {date(order.created_at)}
-                  {(() => {
-                    const age = queueAgeOf(order.created_at);
-                    return age ? ` · ${t(`online.orders.age${age.unit[0].toUpperCase()}${age.unit.slice(1)}` as Parameters<typeof t>[0], { count: age.value })}` : "";
-                  })()}
-                </p>
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs text-stone-600">
-                    {num(order.items.reduce((sum, item) => sum + item.quantity, 0), 0)}{" "}
-                    {t("export.col.itemsCount")}
-                  </span>
-                  <span className="text-sm font-black tabular-nums text-stone-900">{money(order.total)}</span>
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  <Badge tone={PAYMENT_TONE[order.payment_status]}>
-                    {t(`online.paymentStatus.${order.payment_status}`)}
-                  </Badge>
-                  <Badge tone="neutral">{t(`online.paymentMethod.${order.payment_method}`)}</Badge>
-                  <Badge tone="neutral">{t(`online.deliveryType.${order.delivery_type}`)}</Badge>
-                </div>
+                <MobileCard>
+                  <div className="mobile-row">
+                    <strong className="font-mono text-sm text-[#172033]" dir="ltr">
+                      {order.order_number}
+                    </strong>
+                    <MobileBadge tone={STATUS_TONE[order.status]}>
+                      {t(operationalStageLabelKey(operationalStageOf(order)))}
+                    </MobileBadge>
+                  </div>
+                  <p className="font-semibold text-[#172033]">{order.customer_name}</p>
+                  <div className="mobile-row mobile-muted">
+                    <span>
+                      {t(`online.deliveryType.${order.delivery_type}`)} · {t(`online.paymentMethod.${order.payment_method}`)} / {t(`online.paymentStatus.${order.payment_status}`)}
+                    </span>
+                    <strong className="text-sm text-[#172033]">{money(order.total)}</strong>
+                  </div>
+                  <div className="mobile-row mobile-muted">
+                    <span dir="ltr">{order.customer_phone} · {date(order.created_at)}</span>
+                    <span>
+                      {num(order.items.reduce((sum, item) => sum + item.quantity, 0), 0)}{" "}
+                      {t("export.col.itemsCount")}
+                    </span>
+                  </div>
+                </MobileCard>
               </button>
             ))}
           </div>
         </>
       )}
 
-      <OrderDetailModal order={selected} onClose={() => void select(null)} />
+      <OrderDetailModal
+        order={selected}
+        onClose={() => {
+          void select(null);
+          if (routeParams.id) navigate("/dashboard/online/orders", { replace: true });
+        }}
+      />
     </div>
   );
 }
