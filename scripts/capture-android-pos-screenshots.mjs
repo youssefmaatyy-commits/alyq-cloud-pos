@@ -67,7 +67,7 @@ try {
 
   // Sign in as admin
   await page.fill('input[autocomplete="username"]', "admin");
-  await page.fill('input[autocomplete="current-password"]', "alyq123");
+  await page.fill('input[autocomplete="current-password"]', "alyq1234");
   await page.click('button[type="submit"]');
   await page.waitForSelector('[data-testid="mobile-pos-bottom-nav"]', { timeout: 15000 });
   await page.waitForTimeout(800);
