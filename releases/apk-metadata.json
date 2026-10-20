@@ -1,0 +1,14 @@
+{
+  "appName": "ALYQ POS",
+  "applicationId": "eg.alyq.management",
+  "versionCode": 2,
+  "versionName": "2.0.0",
+  "minSdkVersion": 24,
+  "targetSdkVersion": 36,
+  "buildType": "debug-signed-installable",
+  "fileName": "releases/ALYQ-POS-v2.0.0-debug.apk",
+  "sizeBytes": 10414095,
+  "sha256": "55a6058a358be3db99d2195352d8d61e2e14e314e7a75e57253c16c0cf0441bd",
+  "signingSummary": "Not a signed jar file ",
+  "builtAt": "2026-10-20T15:42:40Z"
+}
