@@ -64,7 +64,9 @@ jobs:
           cd ..
           mkdir -p releases
           cp android/app/build/outputs/apk/debug/app-debug.apk releases/ALYQ-POS-v2.0.0-debug.apk
-          rm -rf android/app/src/main/assets/public dist
+          rm -rf android/app/src/main/assets/public android/app/build android/.gradle dist
+          git checkout -- android/ || true
+          git clean -fd android/ || true
 
       - name: Verify APK Production Mode & Generate Metadata
         run: |
