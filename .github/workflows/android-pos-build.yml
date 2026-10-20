@@ -1,0 +1,102 @@
+name: Android POS APK & Mobile Screenshots
+
+on:
+  push:
+    branches: ["arena/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-pos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build_android_pos:
+    name: Build ALYQ POS v2.0.0 APK & Capture Mobile Screenshots
+    if: "!contains(github.event.head_commit.message, '[skip android-build]')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium & capture 14 mobile POS screenshots
+        run: |
+          npx playwright install chromium
+          node scripts/capture-android-pos-screenshots.mjs
+
+      - name: Build production web bundle & sync Capacitor Android
+        run: |
+          npm run build
+          npx cap sync android
+
+      - name: Compile Android Debug APK (eg.alyq.management v2.0.0 / versionCode 2)
+        run: |
+          chmod +x android/gradlew
+          cd android
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Package APK & generate verification metadata
+        run: |
+          mkdir -p releases
+          cp android/app/build/outputs/apk/debug/app-debug.apk releases/ALYQ-POS-v2.0.0-debug.apk
+          sha256sum releases/ALYQ-POS-v2.0.0-debug.apk > releases/ALYQ-POS-v2.0.0-debug.apk.sha256
+          APK_BYTES=$(stat -c%s releases/ALYQ-POS-v2.0.0-debug.apk)
+          APK_SHA256=$(awk '{print $1}' releases/ALYQ-POS-v2.0.0-debug.apk.sha256)
+          CERT_INFO=$(keytool -printcert -jarfile releases/ALYQ-POS-v2.0.0-debug.apk | head -n 12 | tr '\n' ' ' | sed 's/"/\\"/g')
+          cat > releases/apk-metadata.json <<EOF
+          {
+            "appName": "ALYQ POS",
+            "applicationId": "eg.alyq.management",
+            "versionCode": 2,
+            "versionName": "2.0.0",
+            "minSdkVersion": 24,
+            "targetSdkVersion": 36,
+            "buildType": "debug-signed-installable",
+            "fileName": "releases/ALYQ-POS-v2.0.0-debug.apk",
+            "sizeBytes": ${APK_BYTES},
+            "sha256": "${APK_SHA256}",
+            "signingSummary": "${CERT_INFO}",
+            "builtAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          }
+          EOF
+
+      - name: Upload APK and screenshots artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: alyq-pos-v2.0.0-android-deliverables
+          path: |
+            releases/ALYQ-POS-v2.0.0-debug.apk
+            releases/ALYQ-POS-v2.0.0-debug.apk.sha256
+            releases/apk-metadata.json
+            docs/screenshots/android-pos/*.png
+          retention-days: 14
+
+      - name: Commit APK and mobile screenshots to session branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f releases/ALYQ-POS-v2.0.0-debug.apk releases/ALYQ-POS-v2.0.0-debug.apk.sha256 releases/apk-metadata.json docs/screenshots/android-pos/*.png
+          git commit -m "chore(android): attach built ALYQ POS v2.0.0 APK and mobile screenshots [skip android-build]"
+          npm run production:preflight
+          git push origin HEAD:${{ github.ref_name }}

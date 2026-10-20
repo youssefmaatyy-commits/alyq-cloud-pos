@@ -563,17 +563,53 @@ export function writeAndPrint(
   setTimeout(doPrint, 450);
 }
 
-export type PrintOutcome = "popup" | "iframe" | "embedded-blocked" | "failed";
+export type PrintOutcome = "popup" | "iframe" | "android-spooler" | "embedded-blocked" | "failed";
+
+interface ALYQAndroidPrintBridge {
+  isSupported?: () => boolean;
+  printHtml?: (html: string, reference: string) => boolean;
+}
+
+/**
+ * True when the native Android PrintManager bridge (`window.ALYQAndroidPrint`)
+ * is exposed by `MainActivity.java` inside the Capacitor Android APK.
+ */
+export function isAndroidPrintSpoolerAvailable(): boolean {
+  if (typeof window === "undefined") return false;
+  const bridge = (window as Window & { ALYQAndroidPrint?: ALYQAndroidPrintBridge }).ALYQAndroidPrint;
+  if (!bridge || typeof bridge.printHtml !== "function") return false;
+  try {
+    return typeof bridge.isSupported === "function" ? bridge.isSupported() : true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Open the receipt in a print popup, falling back to a hidden same-document
- * iframe when the popup is blocked. Returns what happened so callers can show
- * the right message (never fails silently).
+ * iframe when the popup is blocked. On Android Capacitor WebView (where
+ * `window.print()` is a no-op unless bridged to `android.print.PrintManager`),
+ * delegates directly to `window.ALYQAndroidPrint.printHtml` when available.
+ * Returns what happened so callers can show the right message (never fails silently).
  *
  * NOTE: a browser will not open a native print dialog inside a sandboxed /
  * embedded iframe; that case is reported as "embedded-blocked".
  */
 export function printHtmlDocument(html: string, reference: string): PrintOutcome {
+  if (isAndroidPrintSpoolerAvailable()) {
+    try {
+      const bridge = (window as Window & { ALYQAndroidPrint?: ALYQAndroidPrintBridge }).ALYQAndroidPrint;
+      if (bridge?.printHtml?.(html, reference)) {
+        return "android-spooler";
+      }
+    } catch (err) {
+      console.error("[receipt-print] Android PrintManager bridge failed, falling back", {
+        reference,
+        error: err instanceof Error ? err.message : err,
+      });
+    }
+  }
+
   const isEmbedded = typeof window !== "undefined" && window.self !== window.top;
 
   // Primary path: a top-level print popup (works in a normal browser tab).

@@ -134,7 +134,7 @@ export function SaleDetailPage() {
     }
 
     const outcome = await printReceiptDocument(html, sale.sale_number);
-    if (outcome === "submitted") toast.success(t("pos.printSubmitted"));
+    if (outcome === "submitted" || outcome === "android-spooler") toast.success(t("pos.printSubmitted"));
     else if (outcome === "native-failed") toast.error(t("pos.printFailed"));
     else if (outcome === "embedded-blocked") toast.error(t("pos.printEmbedded"));
     else if (outcome === "failed") toast.error(t("barcode.printBlocked"));

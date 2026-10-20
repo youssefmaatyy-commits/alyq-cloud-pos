@@ -3,6 +3,11 @@ import { createRoot } from "react-dom/client";
 import "./index.css";
 import App from "./App";
 import { registerALYQServiceWorker } from "@/modules/mobile/services/pwaBridge";
+import { normalizeNativeEntryUrl } from "@/modules/mobile/services/mobileRuntime";
+
+// When launched inside the installed Capacitor Android/iOS app at `#/`, open
+// the full ALYQ POS application (`#/dashboard`) rather than the public shop.
+normalizeNativeEntryUrl();
 
 // PWA registration is transport-only and best effort. It never blocks React,
 // session restoration, login, or ordinary browser use.

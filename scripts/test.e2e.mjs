@@ -172,6 +172,11 @@ const SUITES = [
     file: "scripts/export.flow.mjs",
     title: "Universal Data Export Center (multi-domain, multi-sheet full business export, formula defense)",
   },
+  {
+    id: "android-pos",
+    file: "scripts/android-pos.flow.mjs",
+    title: "Android Full POS Mobile UX (native /dashboard entry, 24 modules sheet, camera barcode scanner, mobile cart checkout, ALYQAndroidPrint)",
+  },
 ];
 
 const c = {

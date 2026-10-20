@@ -386,6 +386,31 @@ test("Web /dashboard/* achieves Phase 1 & Phase 2 parity with ALYQ Mobile Manage
   assert.match(mobileCss, /white-space:nowrap/);
 });
 
+test("Android Full POS APK retains eg.alyq.management, bumps versionCode to 2, and wires camera & print bridge", () => {
+  const capConfig = fs.readFileSync("capacitor.config.ts", "utf8");
+  const stringsXml = fs.readFileSync("android/app/src/main/res/values/strings.xml", "utf8");
+  const buildGradle = fs.readFileSync("android/app/build.gradle", "utf8");
+  const manifest = fs.readFileSync("android/app/src/main/AndroidManifest.xml", "utf8");
+  const mainActivity = fs.readFileSync("android/app/src/main/java/eg/alyq/management/MainActivity.java", "utf8");
+  const bottomNav = fs.readFileSync("src/components/layout/MobilePosBottomNav.tsx", "utf8");
+  const cameraModal = fs.readFileSync("src/modules/pos/components/CameraBarcodeScannerModal.tsx", "utf8");
+
+  assert.match(capConfig, /appId:\s*"eg\.alyq\.management"/);
+  assert.match(capConfig, /appName:\s*"ALYQ POS"/);
+  assert.match(stringsXml, /<string name="app_name">ALYQ POS<\/string>/);
+  assert.match(stringsXml, /<string name="package_name">eg\.alyq\.management<\/string>/);
+  assert.match(buildGradle, /applicationId\s+"eg\.alyq\.management"/);
+  assert.match(buildGradle, /versionCode\s+2\b/);
+  assert.match(buildGradle, /versionName\s+"2\.0\.0"/);
+  assert.match(buildGradle, /System\.getenv\("ALYQ_KEYSTORE_PATH"\)/);
+  assert.match(manifest, /android\.permission\.CAMERA/);
+  assert.match(mainActivity, /ALYQAndroidPrint/);
+  assert.match(mainActivity, /createPrintDocumentAdapter/);
+  assert.match(bottomNav, /data-testid="mobile-pos-bottom-nav"/);
+  assert.match(bottomNav, /data-testid="mobile-pos-modules-sheet"/);
+  assert.match(cameraModal, /data-testid="pos-camera-scanner-modal"/);
+});
+
 let failed = 0;
 for (const [name, fn] of tests) {
   try { await fn(); console.log(`  ✓ ${name}`); }

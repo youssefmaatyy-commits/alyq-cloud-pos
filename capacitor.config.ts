@@ -2,7 +2,7 @@ import type { CapacitorConfig } from "@capacitor/cli";
 
 const config: CapacitorConfig = {
   appId: "eg.alyq.management",
-  appName: "ALYQ Mobile",
+  appName: "ALYQ POS",
   webDir: "dist",
   bundledWebRuntime: false,
   server: {

@@ -29,6 +29,37 @@ export function mobilePlatform(): MobilePlatform {
   return platform === "android" || platform === "ios" ? platform : "web";
 }
 
+const NATIVE_POS_OVERRIDE_KEY = "alyq.mobile.native_pos.v1";
+
+/**
+ * True when running inside the installed Capacitor Android/iOS APK (or when
+ * explicitly enabled for mobile POS runtime testing).
+ */
+export function isNativeMobileRuntime(): boolean {
+  if (Capacitor.isNativePlatform()) return true;
+  try {
+    return typeof window !== "undefined" && window.localStorage?.getItem(NATIVE_POS_OVERRIDE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * When the installed Capacitor APK launches at the bare root (`https://localhost/`
+ * with an empty or `#/` hash), route directly into the full ALYQ POS system
+ * (`#/dashboard`) instead of the public customer storefront. Public web
+ * deployments (`https://alyq-store.vercel.app`) are unaffected.
+ */
+export function normalizeNativeEntryUrl(win: Pick<Window, "location"> | undefined = typeof window !== "undefined" ? window : undefined): boolean {
+  if (!win || !isNativeMobileRuntime()) return false;
+  const hash = win.location.hash ?? "";
+  if (hash === "" || hash === "#" || hash === "#/") {
+    win.location.hash = "#/dashboard";
+    return true;
+  }
+  return false;
+}
+
 /** Stable management-device identity. It is never a cashier register. */
 export async function getMobileInstallationId(): Promise<string> {
   const stored = await Preferences.get({ key: INSTALLATION_KEY });

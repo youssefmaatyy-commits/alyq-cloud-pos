@@ -345,6 +345,10 @@ export function StoreManagementHome() {
           <span>{ar ? "صحة النظام والتشخيص" : "System Health"}</span>
           <span>›</span>
         </Link>
+        <Link to="/mobile">
+          <span>{ar ? "واجهة الإدارة السريعة للهاتف (Mobile View)" : "Mobile Management Quick View (/mobile)"}</span>
+          <span>›</span>
+        </Link>
       </MobileCard>
       <MobileCard>
         <strong>{ar ? "معلومات تطبيق ALYQ" : "ALYQ Management Runtime"}</strong>

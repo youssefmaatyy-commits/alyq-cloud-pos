@@ -302,7 +302,7 @@ function MobileCartSheet() {
 
   if (isEmpty) {
     return (
-      <div className="sticky bottom-0 z-30 -mx-3 mt-3 border-t border-stone-200 bg-white/95 px-3 py-2.5 backdrop-blur lg:hidden">
+      <div className="sticky bottom-16 z-30 -mx-3 mt-3 border-t border-stone-200 bg-white/95 px-3 py-2.5 backdrop-blur lg:hidden">
         <CustomerSearchSelect
           selectedCustomerId={selectedCustomer?.id ?? null}
           onSelect={(customer) => setSelectedCustomer(customer)}
@@ -313,7 +313,7 @@ function MobileCartSheet() {
 
   return (
     <>
-      <div className="sticky bottom-0 z-30 -mx-3 mt-3 border-t border-stone-200 bg-white/95 px-3 py-2.5 backdrop-blur sm:-mx-4 sm:px-4 lg:hidden">
+      <div className="sticky bottom-16 z-30 -mx-3 mt-3 border-t border-stone-200 bg-white/95 px-3 py-2.5 backdrop-blur sm:-mx-4 sm:px-4 lg:hidden">
         <button
           type="button"
           onClick={() => setOpen(true)}
@@ -337,7 +337,7 @@ function MobileCartSheet() {
             role="dialog"
             aria-label={t("pos.cart")}
             data-testid="pos-mobile-cart-drawer"
-            className="pos-grip-scrollbar absolute inset-x-0 bottom-0 flex max-h-[88vh] flex-col gap-3 overflow-y-auto rounded-t-3xl bg-[#f7f5f2] p-3 pb-6 shadow-2xl"
+            className="pos-grip-scrollbar absolute inset-x-0 bottom-0 flex max-h-[88vh] flex-col gap-3 overflow-y-auto rounded-t-3xl bg-[#f7f5f2] p-3 pb-20 shadow-2xl"
           >
             <div className="mx-auto h-1.5 w-12 rounded-full bg-stone-300" aria-hidden />
             <div className="flex items-center justify-between px-1">

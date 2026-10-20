@@ -16,13 +16,21 @@
  * count and account link, and `<Outlet/>` renders the single public page tree.
  * The former `StoreLayout` and pages remain in source for route-level rollback.
  */
-import { Outlet } from "react-router-dom";
+import { Navigate, Outlet, useLocation } from "react-router-dom";
+import { isNativeMobileRuntime } from "@/modules/mobile/services/mobileRuntime";
 import { StorefrontProvider } from "./hooks/StorefrontProvider";
 import { StoreAccountProvider } from "./hooks/StoreAccountProvider";
 import { StoreCartProvider } from "./hooks/StoreCartProvider";
 import { StorefrontV2Shell } from "./v2/StorefrontV2Shell";
 
 export function StorefrontApp() {
+  const location = useLocation();
+  // Inside the installed Capacitor Android/iOS application, `/` always opens
+  // the full ALYQ POS workspace (`/dashboard`), while `/store` remains open
+  // when staff explicitly preview the storefront from the POS shell.
+  if (isNativeMobileRuntime() && location.pathname === "/") {
+    return <Navigate to="/dashboard" replace />;
+  }
   return (
     <StorefrontProvider>
       <StoreAccountProvider>

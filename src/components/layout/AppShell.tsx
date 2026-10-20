@@ -27,6 +27,7 @@ import { mobileNotificationUnreadCount } from "@/modules/mobile/services/notific
 import { getMobileRuntime, type MobileRuntimeContext } from "@/modules/mobile/services/mobileRuntime";
 import { WebNotificationsContext } from "@/modules/notifications";
 import { RouteGuard } from "./RouteGuard";
+import { MobilePosBottomNav } from "./MobilePosBottomNav";
 import { cn } from "@/utils/cn";
 import {
   ArchiveIcon,
@@ -369,9 +370,26 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let active = true;
     if (!sessionUser || !branch.current) return;
+    const navigateFromPush = (route: string) => {
+      if (route.startsWith("/mobile/orders/")) {
+        navigate(`/dashboard/online/orders/${route.slice("/mobile/orders/".length)}`);
+      } else if (route.startsWith("/mobile/invoices/")) {
+        navigate(`/dashboard/pos/sales/${route.slice("/mobile/invoices/".length)}`);
+      } else if (route.startsWith("/mobile/approvals/")) {
+        navigate(`/dashboard/approvals/${route.slice("/mobile/approvals/".length)}`);
+      } else if (route.startsWith("/mobile/inventory/")) {
+        navigate(`/dashboard/inventory/stock/${route.slice("/mobile/inventory/".length)}`);
+      } else if (route.startsWith("/mobile/health")) {
+        navigate("/dashboard/system-health");
+      } else if (route.startsWith("/mobile/notifications")) {
+        navigate(`/dashboard/notifications${route.slice("/mobile/notifications".length)}`);
+      } else {
+        navigate(route);
+      }
+    };
     void createPushController(
       sessionUser,
-      navigate,
+      navigateFromPush,
       (state) => {
         if (active) setPushState(state);
       },
@@ -932,9 +950,20 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </Link>
         ) : null}
 
-        <main className="mx-auto w-full max-w-7xl px-3 py-4 sm:px-6 sm:py-6 lg:px-8">
+        <main className="mx-auto w-full max-w-7xl px-3 py-4 pb-24 sm:px-6 sm:py-6 sm:pb-24 lg:px-8 lg:pb-6">
           <RouteGuard>{children}</RouteGuard>
         </main>
+        <MobilePosBottomNav
+          pendingOrders={online.counts.pending}
+          pendingApprovals={pendingApprovals}
+          unreadNotifications={notificationUnreadCount}
+          syncAttentionCount={
+            pos.syncPendingCount +
+            pos.syncErrorCount +
+            pos.syncDeferredCount +
+            pos.syncConflictCount
+          }
+        />
       </div>
     </div>
     </WebNotificationsContext.Provider>

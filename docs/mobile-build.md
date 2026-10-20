@@ -31,13 +31,21 @@ npm run mobile:android
 # or: cd android && ./gradlew assembleDebug
 ```
 
-Before production:
+### Package & Upgrade Identity
+- **Package ID (`applicationId`):** `eg.alyq.management`
+- **App Name:** `ALYQ POS`
+- **Version:** `versionCode 2` / `versionName "2.0.0"` (upgrades cleanly over `versionCode 1` when signed with the same certificate).
+- **External Release Signing:** `android/app/build.gradle` reads `ALYQ_KEYSTORE_PATH`, `ALYQ_KEYSTORE_PASSWORD`, `ALYQ_KEY_ALIAS`, and `ALYQ_KEY_PASSWORD` from environment variables at build time. No keystore or secret is ever stored in the repository or inside the web bundle.
 
-1. Set approved application/version codes.
-2. Configure Firebase for package `eg.alyq.management`; supply `google-services.json` through protected CI, never Git.
-3. Configure `mobile.alyq.eg` Digital Asset Links for verified links.
-4. Store the upload/signing keystore outside the repository and use Play App Signing.
-5. Build/test a signed AAB, notification channels, denied-permission behavior, token rotation, logout, and branch-revoked deep links on supported Android versions.
+### Hardware & Native Capabilities on Android
+1. **Camera Barcode Scanning (`android.permission.CAMERA`):**
+   - Declared in `android/app/src/main/AndroidManifest.xml` with optional camera hardware features (`android:required="false"`).
+   - Capacitor's `BridgeWebChromeClient.onPermissionRequest` bridges WebView `getUserMedia` video requests to Android's native runtime permission prompt.
+   - `src/modules/pos/services/cameraBarcodeScanner.ts` uses hardware-accelerated `window.BarcodeDetector` when supported by the device's Android System WebView and automatically falls back to a built-in pure-TypeScript 1D Canvas Scanline Decoder (`Code 128` Subset B/C + `EAN-13`/`UPC-A`).
+2. **Receipt Printing (`window.ALYQAndroidPrint`):**
+   - Because `window.print()` is a no-op inside an embedded Android `WebView`, `MainActivity.java` registers a narrow receipt-only `@JavascriptInterface` (`ALYQAndroidPrint`) that loads static receipt HTML (with JavaScript disabled) into an offscreen `WebView` and invokes Android's native `PrintManager` (`com.android.printspooler`) via `createPrintDocumentAdapter`.
+   - Supports Wi-Fi/Network printers, Mopria printers, PDF export, and Bluetooth thermal printers that provide an Android Print Service plugin (e.g., RawBT, Star, Epson, Sunmi).
+   - **Direct Raw Bluetooth ESC/POS socket printing** (without an Android Print Service) and **hardware RJ11 cash drawer kick** require a dedicated Native Bluetooth/Serial ESC/POS Capacitor plugin and Android 12+ `BLUETOOTH_CONNECT`/`BLUETOOTH_SCAN` permissions.
 
 ## iOS
 
