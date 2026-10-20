@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   publish_release_v2_0_0:
-    name: Publish Official GitHub Release ALYQ POS v2.0.0
+    name: Upload Assets to Official GitHub Release ALYQ POS v2.0.0
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -36,61 +36,11 @@ jobs:
           unzip -p releases/ALYQ-POS-v2.0.0-debug.apk assets/public/index.html | grep -q "https://zeaacjmmvyuwzmkgxhqf.supabase.co"
           echo "✓ APK integrity, SHA-256, and Production Mode verified on a04f07265879fdd2fd514fc7b5d930e5fa2d56b5"
 
-      - name: Create or update GitHub Release ALYQ POS v2.0.0
+      - name: Upload APK assets to GitHub Release v2.0.0
         run: |
-          cat > /tmp/release-notes-v2.0.0.md << 'EOF'
-          # ALYQ POS v2.0.0 — Official Stable Release (Android Only)
-
-          > **Platform Notice:** This release is **Android Only (`eg.alyq.management`)**. The iPhone / iOS version is **not** included and is **not** considered ready or published.
-
-          ---
-
-          ## 📦 Package & Build Metadata
-
-          | Field | Value |
-          |---|---|
-          | **App Name** | `ALYQ POS` |
-          | **Package ID (`applicationId`)** | `eg.alyq.management` |
-          | **Version** | `v2.0.0` (`versionCode: 2`, `minSdkVersion: 24`, `targetSdkVersion: 36`) |
-          | **Runtime Mode** | **Production Mode (`production-supabase`)** — Connected to `zeaacjmmvyuwzmkgxhqf.supabase.co` |
-          | **Release Tag & Commit SHA** | `v2.0.0` (`a04f07265879fdd2fd514fc7b5d930e5fa2d56b5`) |
-          | **Base Web Production SHA** | `ca18c27f34391eaaa07974b3cd73897a9aec02e3` |
-          | **APK File** | `ALYQ-POS-v2.0.0-debug.apk` (`10,414,263 bytes` / `10.4 MB`) |
-          | **SHA-256 Checksum** | `a3ed8537c64f123d78da21fafb6a6ddb82095d9d34ec32519db49ed5f5ff02bb` |
-          | **Signing Scheme** | Android APK Signature Scheme v2/v3 (`CN=Android Debug, O=Android, C=US`, Cert SHA-256: `822022e0ee8117d22f7b25ce22f1686995931e57b9e61099d3283ba883c96563`) |
-
-          ---
-
-          ## ✨ What's Included in ALYQ POS v2.0.0 (Android)
-
-          1. **Full ALYQ Cloud POS System on Android (`/dashboard/*`):**
-             - Boots directly into the full **ALYQ POS** workspace (`#/dashboard`) with a dedicated touch-first 5-tab mobile bottom navigation bar (`Home`, `POS`, `Orders`, `Stock`, `Modules`) and a 24-module quick-access bottom sheet.
-             - Includes all 24 POS & Management services: **POS Register (Cashier)**, **Sales & Invoices**, **Returns**, **Refunds**, **Offline Sync Center**, **Products**, **New Product**, **Categories**, **Barcodes**, **Inventory & Exact Variant Shelves**, **Stock Movements**, **Stock Counts**, **Branch Transfers**, **Purchase Orders**, **Suppliers**, **Online Orders**, **Shipping**, **Customers (CRM)**, **Shifts & EOD**, **Expenses**, **Reports & Analytics**, **Approvals**, **Users/Roles/Audit/Settings**, and **Notifications & System Health**.
-          2. **Retained Legacy Quick Mobile Management (`/mobile/*`):**
-             - Preserves the lightweight `/mobile/*` interface with 1-tap switching between the Full POS Workspace (`/dashboard`, `/dashboard/pos`) and Quick Mobile Management (`/mobile`).
-          3. **Phone Camera Barcode Scanner (`CameraBarcodeScannerModal`):**
-             - Integrated `📷 Scan` button in the POS search bar with Android camera permission handling (`android.permission.CAMERA` + `BridgeWebChromeClient`).
-             - Dual-engine 1D barcode decoding: native `BarcodeDetector` when supported, plus a built-in pure-TypeScript 1D scanline decoder for **Code 128** (ALYQ SKUs & invoices) and **EAN-13 / UPC-A / EAN-8** with 2-frame confirmation.
-          4. **Android System Receipt Printing (`window.ALYQAndroidPrint`):**
-             - Native Java bridge (`MainActivity.java`) connecting 58mm/80mm thermal receipt HTML + Code 128 SVG barcodes to `android.print.PrintManager` (supports Save as PDF, Wi-Fi/IPP Mopria printers, and vendor Android Print Service plugins).
-             - *Hardware Note:* Direct raw ESC/POS byte streaming over Bluetooth Classic (`SPP`) / BLE requires a dedicated native Bluetooth ESC/POS plugin.
-          5. **Offline POS & Idempotent Sync:**
-             - Supports offline cash sales against cached branch catalog (`alyq.pos.offline_catalog.v1`), persistent offline outbox (`alyq.pos.offline_outbox.v1`), automatic `@capacitor/network` reconnect detection, duplicate invoice prevention via `client_ref`, and conflict preservation (`VARIANT_STOCK_INSUFFICIENT`).
-          EOF
-
-          if gh release view v2.0.0 >/dev/null 2>&1; then
-            gh release upload v2.0.0 \
-              releases/ALYQ-POS-v2.0.0-debug.apk \
-              releases/ALYQ-POS-v2.0.0-debug.apk.sha256 \
-              releases/apk-metadata.json \
-              --clobber
-          else
-            gh release create v2.0.0 \
-              releases/ALYQ-POS-v2.0.0-debug.apk \
-              releases/ALYQ-POS-v2.0.0-debug.apk.sha256 \
-              releases/apk-metadata.json \
-              --title "ALYQ POS v2.0.0" \
-              --notes-file /tmp/release-notes-v2.0.0.md \
-              --target a04f07265879fdd2fd514fc7b5d930e5fa2d56b5 \
-              --latest
-          fi
+          gh release upload v2.0.0 \
+            releases/ALYQ-POS-v2.0.0-debug.apk \
+            releases/ALYQ-POS-v2.0.0-debug.apk.sha256 \
+            releases/apk-metadata.json \
+            --repo youssefmaatyy-commits/alyq-cloud-pos \
+            --clobber
