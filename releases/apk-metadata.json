@@ -9,6 +9,6 @@
   "fileName": "releases/ALYQ-POS-v2.0.0-debug.apk",
   "sizeBytes": 10414095,
   "sha256": "55a6058a358be3db99d2195352d8d61e2e14e314e7a75e57253c16c0cf0441bd",
-  "signingSummary": "Not a signed jar file ",
-  "builtAt": "2026-10-20T15:42:40Z"
+  "signingSummary": "V2 Signer: certificate DN: C=US, O=Android, CN=Android Debug V2 Signer: certificate SHA-256 digest: 62b26d7a37d85454f0dd54554ea39fd1df97c9306e45c958e437c810612fb879 V2 Signer: certificate SHA-1 digest: 63a978cb9d9193c4d684e11930dc6fdb11dd18b9 V2 Signer: certificate MD5 digest: 5ceb3930d67bfb762eb39a0b94f864f5 ",
+  "builtAt": "2026-10-20T15:44:49Z"
 }
