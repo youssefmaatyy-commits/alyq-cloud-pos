@@ -256,6 +256,163 @@ alter table public.registers
   add constraint registers_created_by_fkey foreign key (created_by)
   references public.profiles(id) on delete no action deferrable initially deferred;
 
+create or replace function public.canonicalize_jsonb_numbers(p_val jsonb)
+returns jsonb
+language sql
+immutable
+parallel safe
+set search_path = public
+as $function$
+  select case jsonb_typeof(p_val)
+    when 'number' then to_jsonb(trim_scale((p_val#>>'{}')::numeric))
+    when 'array' then coalesce(
+      (select jsonb_agg(public.canonicalize_jsonb_numbers(elem))
+         from jsonb_array_elements(p_val) as elem),
+      '[]'::jsonb
+    )
+    when 'object' then coalesce(
+      (select jsonb_object_agg(k, public.canonicalize_jsonb_numbers(v))
+         from jsonb_each(p_val) as e(k, v)),
+      '{}'::jsonb
+    )
+    else p_val
+  end;
+$function$;
+
+create or replace function public.build_snapshot_document(
+  p_kind text default 'manual',
+  p_note text default null
+)
+returns jsonb
+language plpgsql
+volatile
+security definer
+set search_path = public
+as $function$
+declare
+  v_payload  jsonb := '{}'::jsonb;
+  v_counts   jsonb := '{}'::jsonb;
+  v_full     jsonb;
+  v_rows     jsonb;
+  v_table    text;
+  v_kind     text;
+  v_note     text;
+  v_actor    uuid := auth.uid();
+  v_name     text := '';
+  v_revision text;
+  v_row_total bigint := 0;
+  v_len      bigint;
+begin
+  v_kind := case when p_kind in ('manual', 'automatic', 'pre_restore') then p_kind else 'manual' end;
+  v_note := case when p_note is null or btrim(p_note) = '' then null else left(btrim(p_note), 500) end;
+
+  foreach v_table in array public.backup_table_order() loop
+    execute format(
+      'select coalesce(jsonb_agg(x), ''[]''::jsonb) from (select * from public.%I) x',
+      v_table
+    ) into v_rows;
+
+    v_len := jsonb_array_length(v_rows);
+    v_payload := v_payload || jsonb_build_object(v_table, v_rows);
+    v_counts  := v_counts  || jsonb_build_object(v_table, v_len);
+    v_row_total := v_row_total + v_len;
+  end loop;
+
+  -- Canonicalize numeric scales (e.g. 220.00 -> 220, 12.50 -> 12.5) so that
+  -- md5((payload)::text) is 100% invariant across JavaScript JSON.parse /
+  -- JSON.stringify when a backup is downloaded to an external .json file and
+  -- later uploaded via admin_restore_document().
+  v_full := public.canonicalize_jsonb_numbers(jsonb_build_object('tables', v_payload));
+
+  if v_actor is not null then
+    select p.name into v_name from public.profiles p where p.id = v_actor;
+  end if;
+  v_name := coalesce(v_name, '');
+
+  if to_regclass('supabase_migrations.schema_migrations') is not null then
+    begin
+      execute 'select max(version) from supabase_migrations.schema_migrations' into v_revision;
+    exception when others then
+      v_revision := null;
+    end;
+  end if;
+
+  return jsonb_build_object(
+    'format',          'alyq-backup',
+    'schema_version',  1,
+    'mode',            'supabase',
+    'kind',            v_kind,
+    'note',            v_note,
+    'created_at',      to_char(now() at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+    'created_by',      jsonb_build_object('id', coalesce(v_actor::text, ''), 'name', v_name),
+    'source_revision', v_revision,
+    'counts',          v_counts,
+    'row_count',       v_row_total,
+    'size_bytes',      octet_length(v_full::text),
+    'checksum',        md5(v_full::text),
+    'payload',         v_full
+  );
+end;
+$function$;
+
+revoke all on function public.build_snapshot_document(text, text) from public, anon, authenticated;
+
+create or replace function public.normalize_backup_document_for_restore(p_document jsonb)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = public
+as $function$
+declare
+  v_held       jsonb;
+  v_normalized jsonb := '{}'::jsonb;
+  v_table      text;
+  v_rows       jsonb;
+  v_norm_rows  jsonb;
+  v_expected   text;
+begin
+  if p_document is null or jsonb_typeof(p_document) <> 'object' then
+    return p_document;
+  end if;
+  v_expected := coalesce(p_document->>'checksum', '');
+  v_held := p_document->'payload'->'tables';
+  if v_expected = '' or v_held is null or jsonb_typeof(v_held) <> 'object' then
+    return p_document;
+  end if;
+  -- Fast path: in-DB backups (admin_restore_backup) already match md5((payload)::text).
+  if md5((p_document->'payload')::text) = v_expected then
+    return p_document;
+  end if;
+  -- External JSON files downloaded via browser/CLI pass through JavaScript
+  -- JSON.parse/JSON.stringify, which strips trailing decimal zeros (.00) on
+  -- numeric(p,s) columns (e.g. 220.00 -> 220). Re-populating each known table
+  -- through jsonb_populate_record restores the exact PostgreSQL column scales
+  -- before admin_restore_document_branch_legacy verifies md5((payload)::text).
+  foreach v_table in array public.backup_table_order() loop
+    if not (v_held ? v_table) then
+      return p_document;
+    end if;
+    v_rows := v_held->v_table;
+    if v_rows is null or jsonb_typeof(v_rows) <> 'array' or jsonb_array_length(v_rows) = 0 then
+      v_normalized := v_normalized || jsonb_build_object(v_table, '[]'::jsonb);
+    else
+      execute format(
+        'select coalesce(jsonb_agg(to_jsonb(jsonb_populate_record(null::public.%I, e.value))), ''[]''::jsonb)
+           from jsonb_array_elements($1) as e(value)',
+        v_table
+      ) into v_norm_rows using v_rows;
+      v_normalized := v_normalized || jsonb_build_object(v_table, v_norm_rows);
+    end if;
+  end loop;
+  return jsonb_set(p_document, '{payload,tables}', v_normalized, false);
+exception when others then
+  return p_document;
+end
+$function$;
+
+revoke all on function public.normalize_backup_document_for_restore(jsonb) from public, anon, authenticated;
+
 create or replace function public.admin_restore_document(p_document jsonb)
 returns jsonb
 language plpgsql
@@ -268,7 +425,9 @@ declare
   v_result jsonb;
 begin
   perform set_config('alyq.backup_restore', 'on', true);
-  v_result := public.admin_restore_document_branch_legacy(p_document);
+  v_result := public.admin_restore_document_branch_legacy(
+    public.normalize_backup_document_for_restore(p_document)
+  );
   delete from public.registers r
    where not exists (select 1 from public.branches b where b.id = r.branch_id)
       or not exists (select 1 from public.profiles p where p.id = r.created_by);
