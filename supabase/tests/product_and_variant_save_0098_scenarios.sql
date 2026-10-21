@@ -50,6 +50,10 @@ declare
   v_cat_is_active boolean;
   v_count integer;
   v_blocked boolean := false;
+  v_backup_manifest jsonb;
+  v_backup_id uuid;
+  v_restore_outcome jsonb;
+  v_name_ar text;
 begin
   select id into v_admin from public.profiles where role = 'admin' and active limit 1;
   if v_admin is null then
@@ -59,7 +63,9 @@ begin
   perform set_config('request.jwt.claim.sub', v_admin::text, true);
   perform set_config('request.jwt.claims', json_build_object('sub', v_admin::text, 'role', 'authenticated')::text, true);
 
-  -- Setup categories: v_cat_archived (starts active to shelve BR104 & BR101, then intentionally archived)
+  -- Setup categories: v_cat_archived starts active to shelve BR104 & BR101
+  -- (matching Production history where BR104 & BR101 existed before archiving),
+  -- then is intentionally archived.
   insert into public.categories (id, name_ar, name_en, active, sort_order)
   values
     (v_cat_archived, 'اساور مؤرشفة عمدا', 'Intentionally Archived Bracelets', true, 1),
@@ -75,7 +81,7 @@ begin
     220, 85, true, false, 3, 5, true, null, '{}'::text[]
   );
 
-  -- Setup BR101 (Shared Barcode + Models 0097) inside the same category before archiving
+  -- Existing BR101 created while the category was still active (before archiving)
   insert into public.products (
     id, sku, barcode, name_ar, name_en, category_id,
     selling_price, cost_price, stock_tracking_enabled, variants_enabled,
@@ -83,20 +89,6 @@ begin
   ) values (
     v_br101, 'TEST-BR101', 'TEST-BR101', 'إسورة موديلات', 'Models Bracelet', v_cat_archived,
     250, 100, true, false, 5, 5, true
-  );
-
-  insert into public.product_variants (
-    id, product_id, sku, barcode, color_key, display_name_ar, display_name_en,
-    images, stock_quantity, low_stock_level, active, sort_order
-  ) values
-    (v_m01, v_br101, 'TEST-BR101-M01', null, 'model-1', 'موديل فراشة', 'Butterfly Model', '["https://example.com/m1.jpg"]'::jsonb, 0, 2, true, 1),
-    (v_m02, v_br101, 'TEST-BR101-M02', null, 'model-2', 'موديل قلب', 'Heart Model', '["https://example.com/m2.jpg"]'::jsonb, 0, 2, true, 2);
-
-  perform public.enable_product_variants(
-    v_br101,
-    jsonb_build_object(v_m01::text, 3, v_m02::text, 2),
-    v_admin::text,
-    'Test 0098 Admin'
   );
 
   -- Intentionally archive the category (matching the owner's production state)
@@ -139,6 +131,25 @@ begin
   end;
   if not v_blocked then
     raise exception 'Scenario 1d failed: pure forged category_id assignment to archived category was not blocked';
+  end if;
+
+  -- 1e. Creating a NEW product inside an already-archived category is strictly refused (23514)
+  v_blocked := false;
+  begin
+    insert into public.products (
+      id, sku, barcode, name_ar, name_en, category_id,
+      selling_price, cost_price, stock_tracking_enabled, variants_enabled,
+      stock_quantity, low_stock_level, active
+    ) values (
+      gen_random_uuid(), 'TEST-ILLEGAL-NEW', 'TEST-ILLEGAL-NEW',
+      'منتج جديد مرفوض', 'Illegal New Product', v_cat_archived,
+      100, 50, true, false, 1, 1, true
+    );
+  exception when check_violation then
+    v_blocked := true;
+  end;
+  if not v_blocked then
+    raise exception 'Scenario 1e failed: creating a new product inside an archived category was not blocked';
   end if;
 
   -- ── Scenario 2: Save Combinations on legacy ROSE ('r') + new RED ('red') ──
@@ -257,7 +268,24 @@ begin
     raise exception 'Scenario 8b failed: active category missing from storefront_categories_v2()';
   end if;
 
-  -- ── Scenario 9: Shared Barcode + Multi-Model (0097) compatibility inside archived category ──
+  -- ── Scenario 9: Shared Barcode + Multi-Model (0097) on an existing product inside an archived category ──
+  -- Prove that adding 0097 shared-barcode models (color_key = '', barcode = NULL)
+  -- and enabling variants on an ALREADY-EXISTING product (v_br101) inside an
+  -- archived category succeeds, while v_cat_archived remains active = false.
+  insert into public.product_variants (
+    id, product_id, sku, barcode, color_key, display_name_ar, display_name_en,
+    images, stock_quantity, low_stock_level, active, sort_order
+  ) values
+    (v_m01, v_br101, 'TEST-BR101-M01', null, '', 'موديل فراشة', 'Butterfly Model', '["https://example.com/m1.jpg"]'::jsonb, 0, 2, true, 1),
+    (v_m02, v_br101, 'TEST-BR101-M02', null, '', 'موديل قلب', 'Heart Model', '["https://example.com/m2.jpg"]'::jsonb, 0, 2, true, 2);
+
+  perform public.enable_product_variants(
+    v_br101,
+    jsonb_build_object(v_m01::text, 3, v_m02::text, 2),
+    v_admin::text,
+    'Test 0098 Admin'
+  );
+
   update public.products
      set name_ar = 'إسورة موديلات محدثة',
          selling_price = 265,
@@ -277,6 +305,11 @@ begin
   select count(*) into v_count from public.product_variants where product_id = v_br101 and barcode is null;
   if v_count <> 2 then
     raise exception 'Scenario 9b failed: expected 2 shared-barcode models with NULL variant barcode, got %', v_count;
+  end if;
+
+  select active into v_cat_is_active from public.categories where id = v_cat_archived;
+  if v_cat_is_active is not false then
+    raise exception 'Scenario 9c failed: archived category was reactivated during 0097 model save';
   end if;
 
   -- ── Scenario 10: RLS & permission enforcement for unauthorized user (viewer) ──
@@ -307,9 +340,45 @@ begin
     raise exception 'Scenario 10c failed: viewer was not refused by set_variant_active';
   end if;
 
-  -- Restore admin context before block ends
+  -- Restore admin context
   perform set_config('request.jwt.claim.sub', v_admin::text, true);
   perform set_config('request.jwt.claims', json_build_object('sub', v_admin::text, 'role', 'authenticated')::text, true);
+
+  -- ── Scenario 11: Real Backup & Restore Verification with archived categories & 0097/0098 data ──
+  update public.profiles
+     set extra_capabilities = array_append(coalesce(extra_capabilities, '{}'), 'restore_backup')
+   where id = v_admin
+     and not ('restore_backup' = any(coalesce(extra_capabilities, '{}')));
+
+  v_backup_manifest := public.create_backup('manual', '0098 archived-categories + models restore test');
+  v_backup_id := (v_backup_manifest->>'id')::uuid;
+
+  -- Mutate state after snapshot
+  update public.products set name_ar = 'اسم مؤقت سيتم التراجع عنه بالاستعادة', selling_price = 999 where id = v_br104;
+  update public.product_variants set display_name_ar = 'اسم موديل مؤقت' where id = v_m01;
+
+  -- Execute full system restore from backup
+  v_restore_outcome := public.admin_restore_backup(v_backup_id);
+  if not coalesce((v_restore_outcome->>'ok')::boolean, false) then
+    raise exception 'Scenario 11a failed: admin_restore_backup did not return ok=true: %', v_restore_outcome;
+  end if;
+
+  -- Verify archived categories remained active = false after restore
+  select active into v_cat_is_active from public.categories where id = v_cat_archived;
+  if v_cat_is_active is not false then
+    raise exception 'Scenario 11b failed: restored archived category became active';
+  end if;
+
+  -- Verify BR104 and BR101 and their variants/models restored to exact snapshot state
+  select name_ar, stock_quantity into v_name_ar, v_stock from public.products where id = v_br104;
+  if v_name_ar <> 'إسورة BR-104 معدلة 2' or v_stock <> 3 then
+    raise exception 'Scenario 11c failed: restored BR104 mismatch (name_ar=%, stock=%)', v_name_ar, v_stock;
+  end if;
+
+  select display_name_ar into v_name_ar from public.product_variants where id = v_m01;
+  if v_name_ar <> 'موديل فراشة ذهبي' then
+    raise exception 'Scenario 11d failed: restored BR101-M01 display_name_ar mismatch (%)', v_name_ar;
+  end if;
 end;
 $$;
 
