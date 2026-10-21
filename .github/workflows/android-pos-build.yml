@@ -145,8 +145,8 @@ jobs:
           | **FileProvider Authority** | `eg.alyq.management.staging.fileprovider` |
           | **Version** | `2.0.0-models-staging` (`versionCode: 2`, `minSdkVersion: 24`, `targetSdkVersion: 36`) |
           | **Connected Database** | **Supabase Staging (`bubvtxctwqsfohrkenej.supabase.co`)** — 97 migrations (`0001`–`0097`) |
-          | **Staging Login Accounts** | `admin` / `admin123` · `cashier` / `cashier123` · `manager` / `manager123` |
-          | **Seeded Multi-Model Products** | `BR101` (`شكل 1` qty 4, `شكل 2` qty 3, `شكل 3` qty 5) · `NK202` (`موديل كلاسيك` qty 6, `موديل ملكي` qty 5) |
+          | **Public Signup (`disable_signup`)** | Disabled (`true`) — Protected against unauthorized external signups |
+          | **Seeded Synthetic Staging Products** | `BR101` (3 models: `4 + 3 + 5 = 12`) · `NK202` (2 models: `6 + 5 = 11`) · `STG-SZ-301` · `STG-CL-302` |
           EOF
 
           if gh release view v2.0.0-models-staging --repo youssefmaatyy-commits/alyq-cloud-pos >/dev/null 2>&1; then

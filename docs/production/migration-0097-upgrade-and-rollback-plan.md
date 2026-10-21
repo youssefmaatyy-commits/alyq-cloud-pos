@@ -1,4 +1,4 @@
-# خطة الترقية الآمنة إلى الإنتاج وخطة التراجع واستعادة البيانات (Migration 0097)
+# خطة الترقية الآمنة إلى الإنتاج، مقارنة توقيع Android (`apksigner`)، وخطة التراجع (Migration 0097)
 
 > **حالة الإنتاج الحالية (محمية بالكامل ولم يتم لمسها):**
 > - **Supabase Production (`zeaacjmmvyuwzmkgxhqf`)**: عند الهجرة `0096` (`96` هجرة) — يحتوي حالياً على `4` أقسام، `43` منتجاً (بما فيها `BR101`)، `8` متغيرات، `48` رصيد مخزون فرعي، ووردية واحدة مفتوحة.
@@ -8,75 +8,74 @@
 
 ---
 
-## ١. فحوصات ما قبل الترقية والنسخ الاحتياطي الإلزامي (Pre-Upgrade Checklist)
+## ١. المقارنة الرقمية لشهادة توقيع Android (`apksigner` / APK Signature Scheme v2) وحقيقة الترقية على الهاتف
 
-قبل تنفيذ أي خطوة على بيئة الإنتاج (`zeaacjmmvyuwzmkgxhqf`) بعد اعتمادك النهائي:
+تم استخراج ومقارنة شهادة التوقيع الرقمية (`X.509 Certificate` داخل كتلة `APK Signature Scheme v2 / 0x7109871a`) عبر `apksigner verify --print-certs` و`node:crypto.X509Certificate` بين ملف `v2.0.0` الرسمي المثبت على هاتفك وأي بناء جديد (`v2.0.0-models-staging` / `v2.1.0`):
 
-1. **تأكيد مزامنة جميع أجهزة الكاشير والهواتف (`Offline Sync Drain`)**:
-   - فتح شاشة **مركز المزامنة (Offline Sync Center)** أو شريط حالة الكاشير في تطبيق `ALYQ POS v2.0.0` على الهاتف والتأكد من أن:
-     - `Sync Pending = 0` (لا توجد مبيعات أو مرتجعات معلقة في صندوق الصادر المحلي `alyq.pos.offline_outbox.v1`).
-     - لا توجد سلات معلقة غير محفوظة أثناء لحظة الترقية.
-   - **تحذير صارم:** يمنع منعاً باتاً حذف أو إلغاء تثبيت تطبيق `ALYQ POS` الرسمي (`eg.alyq.management`) من الهاتف قبل التحقق من أن `Sync Pending = 0`.
-2. **أخذ نسخة احتياطية مزدوجة لبيئة الإنتاج (`zeaacjmmvyuwzmkgxhqf`)**:
-   - **النسخة الأولى (من داخل النظام):** الدخول إلى **الإعدادات ← النسخ الاحتياطي والاستعادة (Backup & Recovery)** وتشغيل `Create Snapshot` (`public.create_system_backup`) وتنزيل ملف النسخة الاحتياطية JSON الموقع.
-   - **النسخة الثانية (على مستوى قاعدة البيانات):** التحقق من لقطة Supabase اليومية أو تصدير لقطة كاملة لبيانات الجداول الأساسية (`categories`, `products`, `product_variants`, `branch_stock_balances`, `sales`, `sale_items`, `online_orders`, `shifts`).
+| حقل الشهادة (`apksigner`) | الإصدار الرسمي الحالي `v2.0.0` (`ALYQ-POS-v2.0.0-debug.apk`) | الإصدار الجديد (`ALYQ-POS-v2.0.0-models-staging-debug.apk` / `v2.1.0`) |
+|---|---|---|
+| **معرف الحزمة (`applicationId`)** | `eg.alyq.management` | `eg.alyq.management.staging` (أو `eg.alyq.management` في `v2.1.0`) |
+| **بصمة ملف الـ APK (`SHA-256`)** | `a3ed8537c64f123d78da21fafb6a6ddb82095d9d34ec32519db49ed5f5ff02bb` | `fa58d806180b7ba879c34e6493cfb152e0cb9db9126510777962e023a7f4f174` |
+| **الاسم المميز للموقّع (`Signer DN`)** | `CN=Android Debug, O=Android, C=US` | `CN=Android Debug, O=Android, C=US` |
+| **تاريخ إنشاء الشهادة (`validFrom`)** | `Oct 20 18:21:29 2026 GMT` | `Oct 21 02:17:21 2026 GMT` |
+| **بصمة شهادة التوقيع (`Cert SHA-256`)** | **`822022e0ee8117d22f7b25ce22f1686995931e57b9e61099d3283ba883c96563`** | **`63ceb95e8c45e042d5ee80c493fbe4d775124f0b4cb636dc2b4fcd97e4fa4122`** |
+| **بصمة شهادة التوقيع (`Cert SHA-1`)** | `030dc27ad89e4f30052ad988b3b2cd7d94b87caa` | `e49967abfa63d19a735b56a51995ddc3a5fce048` |
+| **بصمة شهادة التوقيع (`Cert MD5`)** | `0ee5df42faeea64bc76d1324ec738d96` | `835cb700d4ad025730205575d424ecd7` |
 
----
+### النتيجة الحتمية (بكل أمانة وشفافية):
+1. **الشهادتان مختلفتان (`822022e0...` مقابل `63ceb95e...`)**:
+   - السبب التقني: ملف `ALYQ-POS-v2.0.0-debug.apk` تم بناؤه في `20 أكتوبر 2026` داخل بيئة GitHub Actions مؤقتة (`ubuntu-latest`) قامت بتوليد ملف `~/.android/debug.keystore` عشوائي خاص بتلك الجلسة فقط، وتم تدمير المفتاح الخاص (`Private Key`) تلقائياً بانتهاء حاوية البناء.
+2. **التحديث المباشر فوق `v2.0.0` (`In-Place Overwrite` لنفس المعرف `eg.alyq.management`) غير ممكن برمجياً**:
+   - نظام Android يرفض استبدال حزمة مثبتة (`eg.alyq.management`) بملف APK يحمل بصمة شهادة `SHA-256` مختلفة ويُظهر الخطأ `INSTALL_FAILED_UPDATE_INCOMPATIBLE (Package signatures do not match)`.
+   - لذلك **لا نعد أبداً بتحديث مباشر فوق `v2.0.0`**، بل نطبق **خطة الانتقال الآمنة بدون فقدان أي بيان واحد** الموضحة أدناه.
 
-## ٢. الترتيب الدقيق لتنفيذ الترقية بدون توقف (Zero-Downtime Upgrade Sequence)
-
-تتم الترقية بهذا الترتيب الحتمي حصراً لضمان عدم انقطاع الخدمة ثانية واحدة:
-
-### الخطوة ١: تطبيق الهجرة `0097_shared_barcode_variant_models.sql` على قاعدة بيانات الإنتاج (`zeaacjmmvyuwzmkgxhqf`) أولاً
-- **لماذا قاعدة البيانات أولاً؟**
-  - الهجرة `0097` **إضافية بالكامل ومتوافقة رجعياً (Backward-Compatible)** مع كل من إصدار الويب الحالي (`v-web-prod-ca18c27`) وتطبيق الأندرويد الحالي (`v2.0.0`):
-    - جميع الأعمدة الجديدة (`display_name_ar`, `display_name_en`, `images`, `variant_display_name`) تقبل `NULL` أو تملك قيمة افتراضية آمنة (`'[]'::jsonb`).
-    - الدالة القديمة `public.storefront_branch_product_variants()` تظل تعمل جنباً إلى جنب مع الدالة الجديدة `public.storefront_branch_product_variants_v2()`.
-    - جميع المنتجات الـ `43` الحالية والـ `8` متغيرات في `zeaacjmmvyuwzmkgxhqf` تظل تعمل دون أي تعديل على أرصدتها أو أسعارها.
-- **التحقق الفوري بعد تطبيق `0097`:**
-  - تشغيل فحص الصحة `select public.system_health_probe();` والتأكد من إرجاع:
-    - `"migration": "0097_shared_barcode_variant_models.sql"`
-    - `"migration_count": 97`
-    - `"branch_context_valid": true`
-
-### الخطوة ٢: نشر تحديث الويب والمتجر الإلكتروني (`https://alyq-store.vercel.app`)
-- بعد التأكد من نجاح الخطوة ١، يتم دمج الفرع المعتمد في `main` ليرتفع تلقائياً إلى `https://alyq-store.vercel.app`.
-- التحقق الفوري من:
-  - فتح المتجر العام (`https://alyq-store.vercel.app/#/store`) والتأكد من ظهور المنتجات واختيار الموديلات (`شكل 1`, `شكل 2`, ...) بتصميم Storefront V2 (البيج والذهبي `#F6F1E9` / `#C5A059`).
-  - فتح شاشة الكاشير (`#/dashboard/pos`) وفحص حالة النظام (`System Health`: `97 / 97`).
-
-### الخطوة ٣: ترقية تطبيق الأندرويد الرسمي (`eg.alyq.management` → `v2.1.0`)
-- بناء إصدار الأندرويد الرسمي `v2.1.0` (`versionCode: 3`, `applicationId: "eg.alyq.management"`) المتصل بقاعدة الإنتاج `zeaacjmmvyuwzmkgxhqf.supabase.co`.
-- **تثبيت التحديث فوق التطبيق الحالي (`In-Place Upgrade`)**:
-  - لأن الحزمة تحمل نفس المعرف الرسمي `eg.alyq.management` ونفس شهادة التوقيع، يقوم نظام Android بترقية تطبيق `ALYQ POS v2.0.0` في مكانه **دون حذف التطبيق القديم ودون مسح أي بيانات محلية أو إعدادات فرع/كاشير**.
-- بعد التأكد من عمل `v2.1.0` الرسمي، يمكنك حذف تطبيق الاختبار المنفصل `ALYQ POS Staging` (`eg.alyq.management.staging`) بأمان تام.
+### خطة الانتقال الآمنة ١٠٠٪ من `v2.0.0` إلى `v2.1.0` على هاتفك (Zero-Data-Loss Transition Plan):
+1. **أين تعيش البيانات في `v2.0.0`؟**
+   - لأن تطبيق `v2.0.0` يعمل في **Production Mode** متصلاً بقاعدة `zeaacjmmvyuwzmkgxhqf.supabase.co`، فإن جميع المنتجات (`43`)، الأقسام (`4`)، المتغيرات (`8`)، أرصدة المخزون (`48`)، المبيعات، المرتجعات، الورديات، والعملاء محفوظة في سحابة Supabase، وليست داخل ذاكرة الهاتف.
+   - الشيء الوحيد المخزن محلياً داخل مساحة التطبيق على الهاتف (`IndexedDB / Preferences`) هو:
+     1. طابور العمليات التي تمت بدون إنترنت ولم تُرفع بعد (`alyq.pos.offline_outbox.v1`).
+     2. السلات المعلقة مؤقتاً (`alyq.pos.held_carts.v1`).
+     3. جلسة تسجيل الدخول واختيار الفرع/الكاشير.
+2. **خطوات الانتقال الآمن إلى `v2.1.0` عند الإطلاق الرسمي:**
+   - **الخطوة (أ) — تفريغ وتأكيد المزامنة على `v2.0.0` قبل لمسه**:
+     - فتح تطبيق `ALYQ POS v2.0.0` الحالي أثناء الاتصال بالإنترنت، والتأكد من شريط حالة الكاشير وشاشة **مركز المزامنة (`#/dashboard/pos/sync`)** أن:
+       - `Sync Pending = 0` و`Sync Errors = 0` و`Conflicts = 0`.
+       - لا توجد سلات معلقة (`Held Carts = 0`).
+   - **الخطوة (ب) — تأسيس مفتاح توقيع دائم وثابت (`Permanent Release Keystore`) بدءاً من `v2.1.0`**:
+     - قبل بناء `v2.1.0`، يتم توليد ملف مفتاح توقيع دائم (`alyq-release-key.jks`) وحفظه كنسخة مشفرة (`Base64`) في **GitHub Actions Secrets** (`ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`) مع نسخة احتياطية لديك، بحيث تحمل جميع الإصدارات المستقبلية (`v2.1.0` ← `v2.2.0` ← `v2.3.0`...) **نفس بصمة `Cert SHA-256` مدى الحياة** وتقبل التحديث المباشر (`In-Place Upgrade`) دون الحاجة لإلغاء التثبيت مرة أخرى أبداً.
+   - **الخطوة (ج) — التثبيت المزدوج أو الاستبدال الآمن بعد التحقق**:
+     - بعد التحقق في الخطوة (أ) من أن `Sync Pending = 0`، يمكن إما:
+       1. تثبيت `v2.1.0` بمعرف مستقل بجانب `v2.0.0` أولاً وتجربة الدخول والتأكد من ظهور كل البيانات، ثم حذف `v2.0.0`؛ **أو**
+       2. حذف `v2.0.0` (بعد التأكد من أن `Sync Pending = 0`) وتثبيت `v2.1.0` على المعرف الرسمي `eg.alyq.management` الموقّع بالمفتاح الدائم الجديد.
 
 ---
 
-## ٣. خطة التراجع الآمن والتعامل مع البيانات الجديدة بعد الترقية (Rollback & Post-Upgrade Data Preservation)
+## ٢. الترتيب الدقيق لتنفيذ الترقية على الإنتاج (بعد موافقتك النهائية)
 
-### الحالة (أ): ظهور ملاحظة في واجهة الويب أو الأندرويد بعد الترقية (وقاعدة البيانات سليمة)
-- **الإجراء:**
-  - إعادة توجيه Vercel Production فوراً إلى الوسم المستقر `v-web-prod-ca18c27` (`ca18c27f34391eaaa07974b3cd73897a9aec02e3`)، والعودة على الهاتف إلى `v2.0.0` (`a04f07265879fdd2fd514fc7b5d930e5fa2d56b5`).
-- **مصير البيانات التي دخلت بعد الترقية:**
-  - **لا تُفقد أي عملية بيع أو مرتجع أو طلب أونلاين أو حركة مخزون** لأن `v-web-prod-ca18c27` و`v2.0.0` متوافقان بالكامل مع مخطط `0097`.
+1. **النسخ الاحتياطي المزدوج لقاعدة بيانات الإنتاج (`zeaacjmmvyuwzmkgxhqf`)**:
+   - أخذ نسخة احتياطية كاملة عبر `public.create_system_backup` ولقطة الجداول الأساسية (`categories`, `products`, `product_variants`, `branch_stock_balances`, `sales`, `sale_items`, `online_orders`, `shifts`).
+2. **تطبيق الهجرة `0097_shared_barcode_variant_models.sql` على `zeaacjmmvyuwzmkgxhqf` أولاً**:
+   - الهجرة `0097` متوافقة رجعياً ١٠٠٪ مع `v-web-prod-ca18c27` و`v2.0.0`.
+   - التحقق فوراً عبر `select public.system_health_probe();` من أن `migration_count = 97`.
+3. **نشر تحديث الويب والمتجر الإلكتروني (`https://alyq-store.vercel.app`)**.
+4. **إصدار تطبيق الأندرويد الرسمي `v2.1.0` الموقّع بالمفتاح الدائم**.
 
-### الحالة (ب): الحاجة إلى التراجع عن قواعد الهجرة `0097` في قاعدة البيانات بعد إدخال مبيعات أو موديلات جديدة
-- **القاعدة الذهبية:** **يُمنع منعاً باتاً استعادة نسخة احتياطية قديمة تمسح المبيعات أو الطلبات أو حركات المخزون التي تمت بعد الترقية!**
-- بدلاً من ذلك، يتم تطبيق **سكربت التراجع غير المدمّر (Non-Destructive Rollback SQL)** التالي الذي يحافظ على **١٠٠٪ من الفواتير والطلبات والموديلات والأرصدة المضافة بعد الترقية**:
+---
+
+## ٣. خطة التراجع الآمن والحفاظ على البيانات المضافة بعد الترقية (`Non-Destructive Rollback`)
+
+في حال ظهور أي مشكلة بعد إدخال مبيعات أو موديلات جديدة بعد الترقية، **يُمنع منعاً باتاً استعادة نسخة قديمة تمسح المبيعات أو الطلبات الجديدة**؛ بل يتم:
+1. إعادة الويب إلى `v-web-prod-ca18c27` والأندرويد إلى `v2.0.0` (كلاهما يعملان مع قاعدة `0097` دون فقدان أي فاتورة).
+2. أو تشغيل سكربت التوافق الرجعي غير المدمّر التالي الذي يحافظ على ١٠٠٪ من الفواتير والموديلات والأرصدة:
 
 ```sql
 begin;
 
--- 1. لأي موديل أُنشئ بعد 0097 بدون باركود فرعي (لأنه يستخدم الباركود المشترك للأب)،
--- نملأ barcode بقيمة SKU الخاصة بالموديل حتى يتوافق مع قيود 0086 دون حذف الموديل أو رصيده:
 update public.product_variants
    set barcode = upper(btrim(sku))
  where barcode is null
    and btrim(coalesce(sku, '')) <> '';
 
--- 2. لأي موديل يعتمد على display_name_ar / display_name_en فقط بدون لون أو مقاس،
--- ننسخ اسم الموديل إلى size_label / size_value حتى يظهر الاسم في واجهات 0079/v2.0.0 القديمة:
 update public.product_variants
    set size_label = coalesce(nullif(btrim(display_name_ar), ''), nullif(btrim(display_name_en), '')),
        size_value = coalesce(nullif(btrim(display_name_ar), ''), nullif(btrim(display_name_en), ''))
@@ -86,9 +85,6 @@ update public.product_variants
      nullif(btrim(coalesce(display_name_ar, '')), '') is not null
      or nullif(btrim(coalesce(display_name_en, '')), '') is not null
    );
-
--- 3. الإبقاء على الأعمدة الإضافية (display_name_ar, display_name_en, images, variant_display_name)
--- حتى لا تضيع أي بيانات تاريخية في الفواتير أو الموديلات، مع إرجاع عداد system_health_probe إلى 96 إذا لزم.
 
 commit;
 ```

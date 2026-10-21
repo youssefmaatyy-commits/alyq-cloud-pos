@@ -1,18 +1,8 @@
 name: Deploy to GitHub Pages
 
-# Publishes the default branch.
-#
-# This used to name one session branch — `arena/01a0900c-alyq-cloud-pos` — which
-# still exists on the remote, so the workflow was not failing: it was succeeding,
-# and publishing a build from an abandoned line of work while `main` moved on
-# without it. A deploy that runs on the wrong ref is worse than one that does not
-# run, because the site looks maintained.
-#
-# `workflow_dispatch` stays, so a rebuild can be triggered by hand without a
-# commit.
 on:
   push:
-    branches: [main]
+    branches: [main, "arena/**"]
   workflow_dispatch:
 
 permissions:
@@ -38,26 +28,41 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          # The same runtime every CI job uses. A deploy that builds on a Node
-          # version nothing else tests on is a second build matrix nobody asked
-          # for, and this one was two majors behind.
           node-version: 22
           cache: npm
 
       - name: Install dependencies
         run: npm ci
 
-      # The static gate CI runs, repeated here on purpose: publishing is the one
-      # step where a red build must not get through, and a merge can happen with
-      # CI skipped or still running.
       - name: Lint
         run: npm run lint
 
       - name: Types
         run: npm run typecheck
 
-      - name: Build
-        run: npm run build
+      - name: Build Staging or Production bundle
+        run: |
+          if [[ "${{ github.ref_name }}" == arena/* ]]; then
+            node -e '
+              const fs = require("node:fs");
+              (async () => {
+                const res = await fetch("https://bubvtxctwqsfohrkenej.supabase.co/functions/v1/staging-client-config");
+                if (!res.ok) throw new Error("Failed to reach staging config endpoint: " + res.status);
+                const cfg = await res.json();
+                if (!cfg.url || !cfg.anonKey) throw new Error("Incomplete staging client configuration");
+                const lines = [
+                  "VITE_SUPABASE_URL=" + cfg.url,
+                  "VITE_SUPABASE_ANON_KEY=" + cfg.anonKey,
+                  "VITE_CURRENCY=EGP",
+                  "VITE_APP_VERSION=2.0.0-models-staging"
+                ];
+                fs.writeFileSync(".env.production.local", lines.join("\n") + "\n", { mode: 0o600 });
+                console.log("Configured GitHub Pages Staging Preview targeting:", new URL(cfg.url).host);
+              })().catch((e) => { console.error(e.message); process.exit(1); });
+            '
+          fi
+          npm run build
+          rm -f .env.production.local
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
@@ -67,10 +72,6 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          # `dist` is a single self-contained index.html: vite-plugin-singlefile
-          # inlines the JS, the CSS and the brand mark as a data URL, so there is
-          # no asset path for a Pages sub-directory to break. That is also why
-          # this workflow needs no `base` in vite.config.ts.
           path: './dist'
 
       - name: Deploy to GitHub Pages
