@@ -126,6 +126,7 @@ as $$
 declare
   v_normalized text;
   v_parent_barcode text;
+  v_parent_sku text;
   v_is_named_model boolean;
 begin
   v_is_named_model :=
@@ -137,12 +138,18 @@ begin
       new.barcode := null;
       return new;
     end if;
-    select barcode into v_parent_barcode
+    select barcode, sku into v_parent_barcode, v_parent_sku
       from public.products
      where id = new.product_id;
-    if v_parent_barcode is not null
-       and btrim(v_parent_barcode) <> ''
-       and lower(btrim(new.barcode)) = lower(btrim(v_parent_barcode)) then
+    if (
+      v_parent_barcode is not null
+      and btrim(v_parent_barcode) <> ''
+      and lower(regexp_replace(btrim(new.barcode), '-', '', 'g')) = lower(regexp_replace(btrim(v_parent_barcode), '-', '', 'g'))
+    ) or (
+      v_parent_sku is not null
+      and btrim(v_parent_sku) <> ''
+      and lower(regexp_replace(btrim(new.barcode), '-', '', 'g')) = lower(regexp_replace(btrim(v_parent_sku), '-', '', 'g'))
+    ) then
       new.barcode := null;
       return new;
     end if;

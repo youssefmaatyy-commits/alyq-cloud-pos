@@ -628,13 +628,22 @@ export function PosProvider({ children }: { children: ReactNode }) {
       if (variant) {
         if (!variant.active) return false;
         const owner = products.find((p) => p.id === variant.product_id);
-        if (!owner) return false;
+        if (!owner || !owner.variants_enabled) return false;
         return addLine(owner, variant);
       }
 
-      const product = products.find(
-        (p) => p.sku.toUpperCase() === code || (p.barcode ?? "").toUpperCase() === code,
-      );
+      const compact = code.replace(/-/g, "");
+      const product =
+        products.find(
+          (p) => p.sku.toUpperCase() === code || (p.barcode ?? "").toUpperCase() === code,
+        ) ??
+        (compact
+          ? products.find(
+              (p) =>
+                p.sku.toUpperCase().replace(/-/g, "") === compact ||
+                (p.barcode ?? "").toUpperCase().replace(/-/g, "") === compact,
+            )
+          : undefined);
       if (!product) return false;
       if (product.variants_enabled) return false;
       return addLine(product);

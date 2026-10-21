@@ -40,6 +40,17 @@ export function resolveScannedVariantProduct(
       (p.sku.toUpperCase() === code || (p.barcode ?? "").toUpperCase() === code),
   );
   if (direct) return direct;
+  const compact = code.replace(/-/g, "");
+  if (compact) {
+    const compactMatches = products.filter(
+      (p) =>
+        p.active &&
+        p.variants_enabled &&
+        (p.sku.toUpperCase().replace(/-/g, "") === compact ||
+          (p.barcode ?? "").toUpperCase().replace(/-/g, "") === compact),
+    );
+    if (compactMatches.length === 1) return compactMatches[0];
+  }
   const variantMatches = variants.filter(
     (v) => v.active && (v.sku.toUpperCase() === code || (v.barcode ?? "").toUpperCase() === code),
   );

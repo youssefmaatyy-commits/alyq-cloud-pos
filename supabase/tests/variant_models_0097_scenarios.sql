@@ -399,6 +399,7 @@ begin
 
   -- Clean up test records so subsequent seed/parity checks see a clean state.
   perform pg_temp.become(null, 'postgres');
+  perform set_config('storage.allow_delete_query', 'true', true);
   delete from storage.objects where name = 'public/0097-br101-m01.webp';
   delete from public.stocktake_lines where stocktake_id = v_st_id;
   delete from public.stocktakes where id = v_st_id;

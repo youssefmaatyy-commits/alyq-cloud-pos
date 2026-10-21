@@ -22,6 +22,9 @@ export default defineConfig(({ mode }) => {
     server: {
       allowedHosts: true,
     },
+    preview: {
+      allowedHosts: true,
+    },
     resolve: {
       alias: {
         "@": path.resolve(__dirname, "src"),
