@@ -1,0 +1,18 @@
+{
+  "appName": "ALYQ POS Staging",
+  "applicationId": "eg.alyq.management.staging",
+  "coexistsWithOfficialApp": "eg.alyq.management (v2.0.0)",
+  "fileProviderAuthority": "eg.alyq.management.staging.fileprovider",
+  "versionCode": 2,
+  "versionName": "2.0.0-models-staging",
+  "minSdkVersion": 24,
+  "targetSdkVersion": 36,
+  "runtimeMode": "staging-supabase-0097",
+  "supabaseProjectHost": "bubvtxctwqsfohrkenej.supabase.co",
+  "buildType": "debug-signed-side-by-side-staging",
+  "fileName": "releases/ALYQ-POS-v2.0.0-models-staging-debug.apk",
+  "sizeBytes": 10420575,
+  "sha256": "fa58d806180b7ba879c34e6493cfb152e0cb9db9126510777962e023a7f4f174",
+  "signingSummary": "V2 Signer: certificate DN: C=US, O=Android, CN=Android Debug V2 Signer: certificate SHA-256 digest: 63ceb95e8c45e042d5ee80c493fbe4d775124f0b4cb636dc2b4fcd97e4fa4122 V2 Signer: certificate SHA-1 digest: e49967abfa63d19a735b56a51995ddc3a5fce048 V2 Signer: certificate MD5 digest: 835cb700d4ad025730205575d424ecd7 ",
+  "builtAt": "2026-10-21T02:17:31Z"
+}
