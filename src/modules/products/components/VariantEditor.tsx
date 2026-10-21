@@ -16,7 +16,7 @@
  * The shelf itself is not edited here: stock moves through the inventory
  * screen (`adjust_stock`), which is the same authority a physical recount has.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { canAct } from "@/lib/permissions/enforce";
 import {
@@ -29,7 +29,8 @@ import {
   ToggleSwitch,
   useToast,
 } from "@/components/ui";
-import { AppError, type VariantOpening } from "../data/repository";
+import { type VariantOpening } from "../data/repository";
+import { describeError } from "../services/catalogService";
 import {
   deleteVariant,
   disableVariants,
@@ -257,7 +258,8 @@ function VariantFormModal({
       onSaved();
       onClose();
     } catch (err) {
-      toast.error(err instanceof AppError ? err.message : String(err));
+      const described = describeError(err);
+      toast.error(t(described.key as never));
     } finally {
       setSaving(false);
     }
@@ -342,7 +344,7 @@ function VariantFormModal({
                 : null,
               values.size.trim() || null,
               values.size.trim() || null,
-              siblings.map((v) => v.sku),
+              [product.sku, ...siblings.map((v) => v.sku)],
             )}
             disabled={!allowed}
           />
@@ -482,7 +484,7 @@ function VariantGeneratorModal({
   const sizes = useMemo(() => parseSizes(sizesText), [sizesText]);
 
   const rows: GenerateVariantRow[] = useMemo(() => {
-    const taken = siblings.map((v) => v.sku);
+    const taken = [product.sku, ...siblings.map((v) => v.sku)];
     return generateCombinations(colors, sizes).map((combination) => {
       const sku = suggestVariantSku(product.sku, combination.color, combination.size, combination.size_label, taken);
       return {
@@ -514,7 +516,8 @@ function VariantGeneratorModal({
       onDone();
       onClose();
     } catch (err) {
-      toast.error(err instanceof AppError ? err.message : String(err));
+      const described = describeError(err);
+      toast.error(t(described.key as never));
     } finally {
       setSaving(false);
     }
@@ -619,17 +622,28 @@ function VariantGeneratorModal({
 
 // ── the section itself ──────────────────────────────────────────────────────
 
-export function VariantEditor({
+export interface VariantEditorHandle {
+  hasUnsavedChanges: () => boolean;
+  saveIfDirty: () => Promise<boolean>;
+}
+
+export const VariantEditor = forwardRef<
+  VariantEditorHandle,
+  {
+    product: Product;
+    /** Every variant of THIS product, display order. */
+    variants: readonly ProductVariant[];
+    /** Re-read after any mutation (the parent refreshes catalog + variants). */
+    onChanged: () => Promise<void> | void;
+    /** Optional notification when unsaved draft combinations exist. */
+    onDirtyChange?: (dirty: boolean) => void;
+  }
+>(function VariantEditor({
   product,
   variants,
   onChanged,
-}: {
-  product: Product;
-  /** Every variant of THIS product, display order. */
-  variants: readonly ProductVariant[];
-  /** Re-read after any mutation (the parent refreshes catalog + variants). */
-  onChanged: () => Promise<void> | void;
-}) {
+  onDirtyChange,
+}, ref) {
   const { t, num, pick, isRTL } = useI18n();
   const toast = useToast();
   const lang = isRTL ? "ar" : "en";
@@ -714,6 +728,9 @@ export function VariantEditor({
   const canCreate = canAct("add_product");
   const simpleError = validateVariantDraft(simple, product.sku, product.barcode ?? "");
   const simpleDirty = JSON.stringify(simple) !== JSON.stringify(variantDraftFromSaved(variants,colorImages));
+  useEffect(() => {
+    onDirtyChange?.(simpleDirty);
+  }, [simpleDirty, onDirtyChange]);
 
   // ── enable flow ──
   const [enabling, setEnabling] = useState(false);
@@ -759,7 +776,8 @@ export function VariantEditor({
         if (successKey) toast.success(t(successKey));
         await onChanged();
       } catch (err) {
-        toast.error(err instanceof AppError ? err.message : String(err));
+        const described = describeError(err);
+        toast.error(t(described.key as never));
       } finally {
         setBusy(false);
       }
@@ -767,39 +785,77 @@ export function VariantEditor({
     [busy, onChanged, t, toast],
   );
 
-  const saveSimple = async () => {
-    if (busy || !canEdit || !simpleDirty) return;
-    if (simpleError) { toast.error(t(`products.simple.${simpleError}` as never)); return; }
+  const saveSimple = async (): Promise<boolean> => {
+    if (!simpleDirty) return true;
+    if (busy || !canEdit) return false;
+    if (simpleError) { toast.error(t(`products.simple.${simpleError}` as never)); return false; }
     const pending = simple.rows.filter((row) => !row.persistedId);
-    if (pending.length && !canCreate) { toast.error(t("products.variants.noPermission")); return; }
+    if (pending.length && !canCreate) { toast.error(t("products.variants.noPermission")); return false; }
     if (pending.some((row) => Number(row.stock_quantity) > 0) && (!canStock || !product.variants_enabled)) {
       toast.error(t(!canStock ? "products.simple.stockRights" : "products.simple.enableFirst"));
-      return;
+      return false;
     }
     setBusy(true);
     try {
       const siblings = (await listVariants()).filter((row) => row.product_id === product.id);
+      const claimedIds = new Set<string>(
+        simple.rows.map((r) => r.persistedId).filter((id): id is string => Boolean(id)),
+      );
       for (const row of simple.rows) {
-        const before = siblings.find((entry) => entry.id === row.persistedId);
+        const before = row.persistedId ? siblings.find((entry) => entry.id === row.persistedId) : undefined;
         const color = simple.colors.find((entry) => entry.id === row.color_id);
-        // A retry after a partial network failure must not create a duplicate.
+        const derivedRowKey = colorKeyOf({
+          color_ar: row.color_ar || color?.color_ar || "",
+          color_en: row.color_en || color?.color_en || "",
+        });
+        const rowColorKey = row.color_key || derivedRowKey;
+        // A retry after a partial network failure must not create a duplicate,
+        // and must NEVER match a sibling already claimed by another row.
         const twin = before ?? (!row.persistedId ? siblings.find((entry) =>
-          entry.color_key === (row.color_key || (color ? colorKeyOf(color) : "")) &&
-          variantSizeValue(entry).toLocaleLowerCase() === row.size.trim().toLocaleLowerCase() &&
+          !claimedIds.has(entry.id) &&
+          (entry.color_key === rowColorKey ||
+            (entry.color_key.length === 1 &&
+              derivedRowKey.length > 1 &&
+              derivedRowKey.startsWith(entry.color_key) &&
+              colorKeyOf(entry) === derivedRowKey)) &&
+          (variantSizeValue(entry).toLocaleLowerCase() === row.size.trim().toLocaleLowerCase() ||
+            variantSizeValue(entry).trim() === "") &&
           modelKeyOf(entry) === modelKeyOf(row),
         ) : null);
         const previous = before ?? twin ?? null;
+        if (previous) claimedIds.add(previous.id);
+
+        const healedColorKey =
+          previous &&
+          previous.color_key.length === 1 &&
+          derivedRowKey.length > 1 &&
+          derivedRowKey.startsWith(previous.color_key)
+            ? derivedRowKey
+            : previous?.color_key || rowColorKey || undefined;
+
+        const rowSizeTrimmed = row.size.trim();
+        const effectiveSizeValue =
+          previous && variantSizeValue(previous).trim() !== ""
+            ? variantSizeValue(previous)
+            : rowSizeTrimmed || null;
+        const effectiveNumericSize =
+          previous && previous.size !== null
+            ? previous.size
+            : effectiveSizeValue && /^[0-9]+(?:\.[0-9]{1,2})?$/.test(effectiveSizeValue)
+              ? Number(effectiveSizeValue)
+              : null;
+
         const desired = {
           sku: row.sku.trim(), barcode: row.barcode.trim() || null,
-          color_key: (previous?.color_key ?? row.color_key) || undefined,
+          color_key: healedColorKey,
           color_ar: row.color_ar.trim() || null, color_en: row.color_en.trim() || null,
           color_hex: row.color_hex.trim() || null,
           display_name_ar: (row.display_name_ar ?? "").trim() || null,
           display_name_en: (row.display_name_en ?? "").trim() || null,
           images: (row.images ?? []).map((url) => url.trim()).filter(Boolean),
-          size: previous?.size ?? (/^[0-9]+(?:\.[0-9]{1,2})?$/.test(row.size.trim()) ? Number(row.size.trim()) : null),
-          size_label: previous?.size_label ?? (row.size.trim() || null),
-          size_value: previous ? variantSizeValue(previous) : (row.size.trim() || null),
+          size: effectiveNumericSize,
+          size_label: effectiveSizeValue,
+          size_value: effectiveSizeValue,
           size_sort_order: row.size_sort_order,
           image_url: row.image_url.trim() || null,
           price_override: row.price_override.trim() ? Number(row.price_override) : null,
@@ -811,28 +867,45 @@ export function VariantEditor({
           active: previous?.active ?? row.active,
           sort_order: previous?.sort_order ?? siblings.length + 1,
         };
+        const metadataUnchanged = Boolean(
+          previous && row.persistedId &&
+          previous.sku === desired.sku && previous.barcode === desired.barcode &&
+          previous.color_key === (desired.color_key ?? previous.color_key) &&
+          previous.color_ar === desired.color_ar && previous.color_en === desired.color_en &&
+          previous.color_hex === desired.color_hex && previous.image_url === desired.image_url &&
+          (previous.display_name_ar ?? null) === desired.display_name_ar &&
+          (previous.display_name_en ?? null) === desired.display_name_en &&
+          JSON.stringify(previous.images ?? []) === JSON.stringify(desired.images) &&
+          variantSizeValue(previous) === (desired.size_value ?? "") &&
+          (previous.size_sort_order ?? 0) === desired.size_sort_order &&
+          previous.price_override === desired.price_override && previous.cost_override === desired.cost_override &&
+          previous.low_stock_level === desired.low_stock_level,
+        );
+        const activeChanged = Boolean(previous && previous.active !== row.active);
         // No write for an untouched saved shelf: preserves history and avoids
         // incidental metadata changes when adding just one new size.
-        if (previous && row.persistedId &&
-            previous.sku === desired.sku && previous.barcode === desired.barcode &&
-            previous.color_ar === desired.color_ar && previous.color_en === desired.color_en &&
-            previous.color_hex === desired.color_hex && previous.image_url === desired.image_url &&
-            (previous.display_name_ar ?? null) === desired.display_name_ar &&
-            (previous.display_name_en ?? null) === desired.display_name_en &&
-            JSON.stringify(previous.images ?? []) === JSON.stringify(desired.images) &&
-            (previous.size_sort_order ?? 0) === desired.size_sort_order &&
-            previous.price_override === desired.price_override && previous.cost_override === desired.cost_override &&
-            previous.low_stock_level === desired.low_stock_level) continue;
+        if (metadataUnchanged && !activeChanged) continue;
 
-        const saved = await saveVariant({ product, siblings, currentId: previous?.id, values: desired });
-        if (!previous) siblings.push(saved.variant);
-        if (!row.persistedId && Number(row.stock_quantity) > saved.variant.stock_quantity) {
+        let targetVariant = previous;
+        if (!metadataUnchanged) {
+          const saved = await saveVariant({ product, siblings, currentId: previous?.id, values: desired });
+          targetVariant = saved.variant;
+          if (!previous) siblings.push(saved.variant);
+          else {
+            const idx = siblings.findIndex((s) => s.id === previous.id);
+            if (idx >= 0) siblings[idx] = saved.variant;
+          }
+        }
+        if (activeChanged && targetVariant) {
+          targetVariant = await setVariantActive(targetVariant.id, row.active);
+        }
+        if (!row.persistedId && targetVariant && Number(row.stock_quantity) > targetVariant.stock_quantity) {
           // Inventory service writes a movement and updates only this shelf;
           // changing a product/variant stock field directly is forbidden.
-          await adjustStock({ productId: product.id, variantId: saved.variant.id,
+          await adjustStock({ productId: product.id, variantId: targetVariant.id,
             type: "adjustment_in", reason: "other",
-            quantity: Number(row.stock_quantity) - saved.variant.stock_quantity,
-            notes: `Opening stock for new combination ${saved.variant.sku}` });
+            quantity: Number(row.stock_quantity) - targetVariant.stock_quantity,
+            notes: `Opening stock for new combination ${targetVariant.sku}` });
         }
       }
       await replaceColorImages(product.id,simple.colors.flatMap((color)=>{
@@ -849,15 +922,28 @@ export function VariantEditor({
       ]);
       setColorImages(freshImages);
       setSimple(variantDraftFromSaved(fresh,freshImages));
-      previousSource.current = JSON.stringify(fresh);
+      previousSource.current = JSON.stringify([fresh,freshImages]);
       await onChanged();
+      return true;
     } catch (err) {
-      toast.error(err instanceof AppError ? err.message : String(err));
+      const described = describeError(err);
+      toast.error(t(described.key as never));
       await onChanged(); // show any rows written before a transient failure
+      return false;
     } finally {
       setBusy(false);
     }
   };
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      hasUnsavedChanges: () => simpleDirty,
+      saveIfDirty: () => saveSimple(),
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [simpleDirty, simpleError, simple, busy, canEdit, canCreate, canStock, product, variants, colorImages],
+  );
 
   const toggleVariants = () => {
     if (!canEdit || busy) return;
@@ -892,7 +978,7 @@ export function VariantEditor({
   const activeCount = variants.length - archivedCount;
   const unitsTotal = shelfTotal;
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-4" data-testid="variant-editor">
+    <section className="min-w-0 rounded-2xl border border-slate-200 bg-white p-3 sm:p-4" data-testid="variant-editor">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-sm font-bold text-slate-900">{t("products.variants.title")}</h2>
@@ -919,15 +1005,27 @@ export function VariantEditor({
         </div>
       </div>
 
-      <div className="mt-4" data-testid="variant-simple-editor">
+      {!product.variants_enabled && variants.length > 0 ? (
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50/70 px-3 py-2 text-xs font-semibold text-amber-900" data-testid="variant-legacy-mode-banner">
+          <span>{t("products.simple.legacyModeBanner")}</span>
+          {canEdit ? (
+            <Button size="sm" variant="secondary" type="button" onClick={toggleVariants} disabled={busy}>
+              {t("products.variants.enable")}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+
+      <div className="mt-4 min-w-0" data-testid="variant-simple-editor">
         <ProductVariantsForm
           value={simple} productSku={product.sku} productBarcode={product.barcode ?? ""}
           productSellingPrice={String(product.selling_price)} productCostPrice={String(product.cost_price)}
           editing stockEditable={canStock && product.variants_enabled} onChange={changeSimple}
         />
         {canEdit && (
-          <div className="mt-2 flex justify-end">
+          <div className="mt-3 flex justify-end">
             <Button type="button" onClick={() => void saveSimple()} loading={busy}
+              className="max-sm:w-full"
               disabled={!simpleDirty || Boolean(simpleError)} data-testid="variant-simple-save">
               {t("products.simple.saveCombinations")}
             </Button>
@@ -1051,9 +1149,9 @@ export function VariantEditor({
               {t("products.variants.printSelected", { count: selected.size })}
             </Button>
           </div>
-          <div className="overflow-x-auto rounded-xl border border-slate-200">
-          <table className="w-full text-xs" data-testid="variant-table">
-            <thead>
+          <div className="overflow-x-auto rounded-xl border border-slate-200 max-md:border-0 max-md:overflow-visible">
+          <table className="w-full text-xs max-md:block md:table" data-testid="variant-table">
+            <thead className="max-md:hidden">
               <tr className="border-b border-slate-100 bg-slate-50 text-start text-[10px] font-bold uppercase tracking-wider text-slate-500">
                 <th className="px-2 py-2 text-center">
                   <input
@@ -1077,23 +1175,31 @@ export function VariantEditor({
                 <th className="px-3 py-2 text-end">{t("products.variants.colActions")}</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="max-md:block max-md:space-y-2.5">
               {variants.map((variant) => {
                 const referenced = (references[variant.id] ?? 0) > 0;
                 const lastSellable = product.variants_enabled && (variants.length <= 1 || (variant.active && activeCount <= 1));
                 const barcodeAuto = isDerivedFromSku(variant.sku, variant.barcode);
                 return (
-                  <tr key={variant.id} className="border-b border-slate-50 last:border-0" data-testid={`variant-row-${variant.sku}`}>
-                    <td className="px-2 py-2 text-center">
-                      <input
-                        type="checkbox"
-                        aria-label={`${t("products.variants.selectAll")} ${variant.sku}`}
-                        checked={selected.has(variant.id)}
-                        onChange={() => toggleSelected(variant.id)}
-                        data-testid={`variant-select-${variant.sku}`}
-                      />
+                  <tr key={variant.id} className="border-b border-slate-50 last:border-0 max-md:grid max-md:grid-cols-2 max-md:gap-2 max-md:rounded-xl max-md:border max-md:border-slate-200 max-md:bg-slate-50/40 max-md:p-3" data-testid={`variant-row-${variant.sku}`}>
+                    <td className="px-2 py-2 text-center max-md:col-span-2 max-md:flex max-md:items-center max-md:justify-between max-md:border-b max-md:border-slate-200/80 max-md:p-0 max-md:pb-2">
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          aria-label={`${t("products.variants.selectAll")} ${variant.sku}`}
+                          checked={selected.has(variant.id)}
+                          onChange={() => toggleSelected(variant.id)}
+                          data-testid={`variant-select-${variant.sku}`}
+                        />
+                        <span className="font-bold text-slate-900 md:hidden">
+                          {labelOf(variant, lang)}
+                        </span>
+                      </label>
+                      <span className="md:hidden">
+                        <VariantStatusBadge variant={variant} />
+                      </span>
                     </td>
-                    <td className="px-3 py-2">
+                    <td className="px-3 py-2 max-md:hidden">
                       <span className="flex items-center gap-1.5 font-bold text-slate-900">
                         <Swatch hex={variant.color_hex} />
                         {pick(variant.color_ar, variant.color_en) || t("store.variants.defaultColor")}
@@ -1101,46 +1207,54 @@ export function VariantEditor({
                         <span className="tabular-nums">{variantSizeValue(variant)}</span>
                       </span>
                     </td>
-                    <td className="px-3 py-2 font-mono text-[11px] text-slate-600">{variant.sku}</td>
-                    <td className="px-3 py-2">
-                      <span className="flex items-center gap-1.5 font-mono text-[11px] text-slate-600" data-testid={`variant-barcode-${variant.sku}`}>
+                    <td className="px-3 py-2 font-mono text-[11px] text-slate-600 max-md:col-span-1 max-md:p-0">
+                      <span className="block text-[10px] font-sans font-bold text-slate-500 md:hidden">{t("products.sku")}</span>
+                      <span dir="ltr" className="inline-block break-all font-mono">{variant.sku}</span>
+                    </td>
+                    <td className="px-3 py-2 max-md:col-span-1 max-md:p-0">
+                      <span className="block text-[10px] font-bold text-slate-500 md:hidden">{t("products.variants.colBarcode")}</span>
+                      <span dir="ltr" className="flex flex-wrap items-center gap-1.5 font-mono text-[11px] text-slate-600" data-testid={`variant-barcode-${variant.sku}`}>
                         {variant.barcode?.trim() || <span className="italic text-slate-400">{t("barcode.needsValue")}</span>}
                         <Badge tone={variant.barcode?.trim() ? (barcodeAuto ? "info" : "neutral") : "warning"}>
                           {variant.barcode?.trim() ? (barcodeAuto ? t("barcode.auto") : t("barcode.manual")) : "—"}
                         </Badge>
                       </span>
                     </td>
-                    <td className="px-3 py-2 text-end tabular-nums">
+                    <td className="px-3 py-2 text-end tabular-nums max-md:col-span-1 max-md:p-0 max-md:text-start">
+                      <span className="block text-[10px] font-bold text-slate-500 md:hidden">{t("products.variants.colPrice")}</span>
                       {variant.price_override !== null ? num(variant.price_override, 2) : "—"}
                     </td>
                     {canAct("view_cost") ? (
-                      <td className="px-3 py-2 text-end tabular-nums">
+                      <td className="px-3 py-2 text-end tabular-nums max-md:col-span-1 max-md:p-0 max-md:text-start">
+                        <span className="block text-[10px] font-bold text-slate-500 md:hidden">{t("products.variants.colCost")}</span>
                         {variant.cost_override !== null ? num(variant.cost_override, 2) : "—"}
                       </td>
                     ) : null}
-                    <td className="px-3 py-2 text-end font-bold tabular-nums text-slate-900">
+                    <td className="px-3 py-2 text-end font-bold tabular-nums text-slate-900 max-md:col-span-1 max-md:p-0 max-md:text-start">
+                      <span className="block text-[10px] font-bold text-slate-500 md:hidden">{t("products.variants.colStock")}</span>
                       {product.variants_enabled ? num(variant.stock_quantity, 0) : "—"}
                     </td>
-                    <td className="px-3 py-2">
+                    <td className="px-3 py-2 max-md:hidden">
                       <VariantStatusBadge variant={variant} />
                     </td>
-                    <td className="px-3 py-2 text-center">
+                    <td className="px-3 py-2 text-center max-md:col-span-1 max-md:p-0 max-md:text-start">
+                      <span className="block text-[10px] font-bold text-slate-500 md:hidden">{t("products.variants.colCopies")}</span>
                       <TextInput
                         dir="ltr"
                         inputMode="numeric"
                         value={copies[variant.id] ?? "1"}
                         onChange={(e) => setCopies((prev) => ({ ...prev, [variant.id]: e.target.value }))}
-                        className="mx-auto h-7 w-14 text-center text-xs"
+                        className="h-7 w-14 text-center text-xs md:mx-auto"
                         aria-label={`${t("products.variants.colCopies")} ${variant.sku}`}
                         data-testid={`variant-copies-${variant.sku}`}
                       />
                     </td>
-                    <td className="px-3 py-2">
-                      <div className="flex items-center justify-end gap-1">
+                    <td className="px-3 py-2 max-md:col-span-2 max-md:border-t max-md:border-slate-200/80 max-md:p-0 max-md:pt-2">
+                      <div className="flex flex-wrap items-center justify-end gap-1.5">
                         <button
                           type="button"
                           onClick={() => printVariant(variant)}
-                          className="rounded-md px-1.5 py-1 font-bold text-slate-600 hover:bg-slate-100"
+                          className="rounded-md px-2 py-1.5 font-bold text-slate-600 hover:bg-slate-100"
                           title={t("barcode.print")}
                         >
                           {t("barcode.print")}
@@ -1153,7 +1267,7 @@ export function VariantEditor({
                                 setEditing(variant);
                                 setFormOpen(true);
                               }}
-                              className="rounded-md px-1.5 py-1 font-bold text-indigo-600 hover:bg-indigo-50"
+                              className="rounded-md px-2 py-1.5 font-bold text-indigo-600 hover:bg-indigo-50"
                             >
                               {t("common.edit")}
                             </button>
@@ -1163,7 +1277,7 @@ export function VariantEditor({
                               onClick={() =>
                                 void run(() => setVariantActive(variant.id, !variant.active))
                               }
-                              className="rounded-md px-1.5 py-1 font-bold text-slate-600 hover:bg-slate-100"
+                              className="rounded-md px-2 py-1.5 font-bold text-slate-600 hover:bg-slate-100"
                             >
                               {variant.active ? t("products.variants.archive") : t("products.variants.reactivate")}
                             </button>
@@ -1179,7 +1293,7 @@ export function VariantEditor({
                                 : lastSellable ? t("products.variants.lastActive") : undefined
                             }
                             onClick={() => void run(() => deleteVariant(variant.id), "products.variants.deleted")}
-                            className="rounded-md px-1.5 py-1 font-bold text-rose-600 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40"
+                            className="rounded-md px-2 py-1.5 font-bold text-rose-600 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40"
                           >
                             {t("common.delete")}
                           </button>
@@ -1224,4 +1338,4 @@ export function VariantEditor({
       />
     </section>
   );
-}
+});

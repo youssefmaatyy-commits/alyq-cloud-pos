@@ -445,6 +445,62 @@ export function colorKeyOf(color: {
   return (en || ar).replace(/\s+/g, " ").toLowerCase();
 }
 
+const ARABIC_COLOR_TOKENS: Readonly<Record<string, string>> = {
+  "روز": "ROSE",
+  "روز جولد": "ROSEG",
+  "أحمر": "RED",
+  "احمر": "RED",
+  "أبيض": "WHITE",
+  "ابيض": "WHITE",
+  "أسود": "BLACK",
+  "اسود": "BLACK",
+  "ذهبي": "GOLD",
+  "دهبي": "GOLD",
+  "فضي": "SILVER",
+  "أزرق": "BLUE",
+  "ازرق": "BLUE",
+  "أخضر": "GREEN",
+  "اخضر": "GREEN",
+  "وردي": "PINK",
+  "بينك": "PINK",
+  "بني": "BROWN",
+  "بيج": "BEIGE",
+  "رمادي": "GRAY",
+  "رصاصي": "GRAY",
+  "موف": "PURPLE",
+  "بنفسجي": "PURPLE",
+  "أصفر": "YELLOW",
+  "اصفر": "YELLOW",
+  "برتقالي": "ORANGE",
+  "كحلي": "NAVY",
+  "تركواز": "TURQ",
+  "زيتي": "OLIVE",
+  "نبيتي": "MAROON",
+  "سماوي": "CYAN",
+};
+
+const ARABIC_CHAR_MAP: Readonly<Record<string, string>> = {
+  "ا": "A", "أ": "A", "إ": "E", "آ": "A", "ب": "B", "ت": "T", "ث": "TH",
+  "ج": "G", "ح": "H", "خ": "KH", "د": "D", "ذ": "Z", "ر": "R", "ز": "Z",
+  "س": "S", "ش": "SH", "ص": "S", "ض": "D", "ط": "T", "ظ": "Z", "ع": "A",
+  "غ": "GH", "ف": "F", "ق": "Q", "ك": "K", "ل": "L", "م": "M", "ن": "N",
+  "ه": "H", "ة": "A", "و": "W", "ي": "Y", "ى": "A", "ئ": "Y", "ؤ": "W",
+};
+
+function toAsciiColorPart(en: string, ar: string): string {
+  const englishAscii = en.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
+  if (englishAscii) return englishAscii;
+  const normalizedAr = ar.replace(/\s+/g, " ").trim();
+  if (!normalizedAr) return "";
+  if (ARABIC_COLOR_TOKENS[normalizedAr]) return ARABIC_COLOR_TOKENS[normalizedAr];
+  let out = "";
+  for (const ch of normalizedAr.toUpperCase()) {
+    if (/[A-Z0-9]/.test(ch)) out += ch;
+    else if (ARABIC_CHAR_MAP[ch]) out += ARABIC_CHAR_MAP[ch];
+  }
+  return out.slice(0, 6);
+}
+
 /**
  * A suggested SKU for a combination: `ALYQ-R001-G17`.
  *
@@ -462,10 +518,7 @@ export function suggestVariantSku(
   const base = (baseSku || "VAR").toUpperCase().replace(/[^A-Z0-9-]/g, "").slice(0, 24) || "VAR";
   const en = (color?.color_en ?? "").trim();
   const ar = (color?.color_ar ?? "").trim();
-  const colorPart = (en || ar)
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, "")
-    .slice(0, 6);
+  const colorPart = toAsciiColorPart(en, ar);
   const rawSize = size === null ? (sizeLabel ?? "") : String(size);
   const sizePart = rawSize.toUpperCase().replace(/[^A-Z0-9]/g, "").replace(".", "D").slice(0, 8);
   const stem = [base, colorPart, sizePart].filter(Boolean).join("-").slice(0, 36);
@@ -473,6 +526,8 @@ export function suggestVariantSku(
   let candidate = stem;
   let n = 1;
   const used = new Set(taken.map((sku) => sku.trim().toUpperCase()));
+  // A variant SKU may never equal the parent product's own SKU.
+  used.add(base);
   while (used.has(candidate)) {
     n += 1;
     candidate = `${stem.slice(0, 36)}-${n}`;

@@ -934,7 +934,18 @@ export const en = {
   // ── Errors ───────────────────────────────────────────────────────────────
   "error.23505": "A record with this unique value already exists",
   "error.23503": "Related record is missing or still in use",
-  "error.network": "Network error — check your connection",
+  "error.network": "Network error — check your connection and try again",
+  "error.sessionExpired": "Your session expired — please sign in again",
+  "error.variantLegacyConflict": "Conflict with an existing combination on this product — verify color and size",
+  "error.variantIncomplete": "Variant details are incomplete — add a color, size, or shape name",
+  "error.variantStockReadonly": "Total stock is derived from combinations — adjust the specific combination shelf",
+  "error.variantsStockMismatch": "Distributed combination quantities must match the product's current stock",
+  "error.variantInUse": "This combination has sales or stock history — archive it instead of deleting",
+  "error.variantUnavailable": "This combination is archived or unavailable",
+  "error.variantStockInsufficient": "Insufficient stock on this combination",
+  "products.simple.copied": "Copied",
+  "products.simple.copyCode": "Copy",
+  "products.simple.legacyModeBanner": "Saved combinations exist while variant mode is off. Saving combinations will activate variant mode and preserve existing stock.",
 
   // ── Phase 7 · Customers ─────────────────────────────────────────────────
   "nav.salesOps": "Sales",
@@ -5602,7 +5613,18 @@ export const ar: Record<TranslationKey, string> = {
   // ── Errors ───────────────────────────────────────────────────────────────
   "error.23505": "يوجد سجل بنفس القيمة الفريدة",
   "error.23503": "السجل المرتبط غير موجود أو ما زال مستخدمًا",
-  "error.network": "خطأ في الشبكة — تحقق من الاتصال",
+  "error.network": "تعذّر الاتصال بالخادم — تحقق من الإنترنت وأعد المحاولة",
+  "error.sessionExpired": "انتهت صلاحية الجلسة — يرجى تسجيل الدخول مرة أخرى",
+  "error.variantLegacyConflict": "تعارض مع تركيبة سابقة لنفس المنتج — تحقق من اللون والمقاس",
+  "error.variantIncomplete": "بيانات التركيبة غير مكتملة — أضف لونًا أو مقاسًا أو اسم شكل",
+  "error.variantStockReadonly": "المخزون الإجمالي محسوب من التركيبات — عدّل مخزون التركيبة المحددة",
+  "error.variantsStockMismatch": "يجب أن يطابق مجموع كميات التركيبات مخزون المنتج الحالي",
+  "error.variantInUse": "لهذه التركيبة سجل مبيعات أو مخزون — أرشفها بدلًا من الحذف",
+  "error.variantUnavailable": "هذه التركيبة مؤرشفة أو غير متاحة",
+  "error.variantStockInsufficient": "المخزون غير كافٍ في هذه التركيبة",
+  "products.simple.copied": "تم النسخ",
+  "products.simple.copyCode": "نسخ",
+  "products.simple.legacyModeBanner": "توجد تركيبات محفوظة بينما وضع المتغيرات متوقف. عند حفظ التركيبات سيتم تفعيل المتغيرات تلقائيًا مع الحفاظ على المخزون الحالي.",
 
   // ── Phase 7 · Customers ─────────────────────────────────────────────────
   "nav.salesOps": "قسم المبيعات",

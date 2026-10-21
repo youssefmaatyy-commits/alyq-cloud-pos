@@ -97,5 +97,5 @@ export const RETENTION_PHRASE = "APPLY RETENTION";
 export const DEFAULT_RETENTION_DAYS = 30;
 
 /** Shipped with this build. Not a claim about what a remote database has applied. */
-export const SHIPPED_MIGRATION_COUNT = 97;
-export const SHIPPED_LATEST_MIGRATION = "0097_shared_barcode_variant_models.sql";
+export const SHIPPED_MIGRATION_COUNT = 98;
+export const SHIPPED_LATEST_MIGRATION = "0098_product_and_variant_save_hardening.sql";

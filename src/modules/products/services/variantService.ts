@@ -199,14 +199,29 @@ export async function saveVariant({
     throw new AppError("DUPLICATE_BARCODE", `${barcode} already belongs to another variant`, "barcode", "23505");
   }
 
-  const colorKey = values.color_key?.trim() || colorKeyOf(values);
+  const rawKey = values.color_key?.trim().toLowerCase() || "";
+  const derivedKey = colorKeyOf(values);
+  const sizeKey = (values.size_value ?? values.size_label ?? (values.size == null ? "" : String(values.size)))
+    .trim()
+    .toLocaleLowerCase();
   const modelKey = modelKeyOf(values);
+  const canHealSingleCharKey =
+    rawKey.length === 1 &&
+    derivedKey.length > 1 &&
+    derivedKey.startsWith(rawKey) &&
+    !others.some(
+      (v) =>
+        v.color_key === derivedKey &&
+        variantSizeValue(v).toLocaleLowerCase() === sizeKey &&
+        modelKeyOf(v) === modelKey,
+    );
+  const colorKey = canHealSingleCharKey ? derivedKey : rawKey || derivedKey;
+
   if (!currentId || isNamedModel) {
     const twin = others.find(
       (v) =>
         v.color_key === colorKey &&
-        variantSizeValue(v).toLocaleLowerCase() ===
-          (values.size_value ?? values.size_label ?? (values.size == null ? "" : String(values.size))).trim().toLocaleLowerCase() &&
+        variantSizeValue(v).toLocaleLowerCase() === sizeKey &&
         modelKeyOf(v) === modelKey,
     );
     if (twin) {
@@ -230,11 +245,12 @@ export async function saveVariant({
   }
   const normalizedValues = {
     ...values,
+    color_key: colorKey,
     display_name_ar: values.display_name_ar?.trim() || null,
     display_name_en: values.display_name_en?.trim() || null,
     images: gallery,
   };
-  const editPatch: ProductVariantPatch = { ...normalizedValues, sku, barcode };
+  const editPatch: ProductVariantPatch = { ...normalizedValues, sku, barcode, color_key: colorKey };
   delete editPatch.stock_quantity;
   delete editPatch.active;
   const variant = currentId

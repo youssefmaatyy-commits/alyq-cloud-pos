@@ -75,6 +75,7 @@ const WEB_PUSH_0094_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "web_p
 const WEB_PUSH_0095_DIGEST_REPAIR_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "web_push_0095_digest_repair_scenarios.sql");
 const CRYPTO_0096_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "crypto_0096_scenarios.sql");
 const VARIANT_MODELS_0097_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "variant_models_0097_scenarios.sql");
+const PRODUCT_AND_VARIANT_SAVE_0098_SCENARIOS_FILE = path.join(ROOT, "supabase", "tests", "product_and_variant_save_0098_scenarios.sql");
 const SEED_FILE = path.join(ROOT, "supabase", "seed.sql");
 const SRC_DIR = path.join(ROOT, "src");
 
@@ -550,6 +551,20 @@ if (!VERIFY_ONLY) {
       console.log(`  ${c.red("✗")} a focused Migration 0097 scenario failed`);
       if (error?.stack) console.log(c.dim(error.stack));
       failures.push({ name: "Migration 0097 scenarios", phase: "scenario", error: String(error.message) });
+    }
+  }
+
+  if (failures.length === 0 && runScenarios) {
+    console.log(c.bold("\nMigration 0098 focused scenarios (Product & Variant Save Hardening)"));
+    try {
+      const sql = fs.readFileSync(PRODUCT_AND_VARIANT_SAVE_0098_SCENARIOS_FILE, "utf8");
+      await driver.exec(sql, "product_and_variant_save_0098_scenarios.sql");
+      console.log(`  ${c.green("✓")} every focused Migration 0098 product & variant save scenario passed`);
+      for (const notice of sql.matchAll(/raise notice '([^']+)'/gi)) console.log(c.dim(`      ${notice[1]}`));
+    } catch (error) {
+      console.log(`  ${c.red("✗")} a focused Migration 0098 scenario failed`);
+      if (error?.stack) console.log(c.dim(error.stack));
+      failures.push({ name: "Migration 0098 scenarios", phase: "scenario", error: String(error.message) });
     }
   }
 

@@ -950,7 +950,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </Link>
         ) : null}
 
-        <main className="mx-auto w-full max-w-7xl px-3 py-4 pb-24 sm:px-6 sm:py-6 sm:pb-24 lg:px-8 lg:pb-6">
+        <main className="mx-auto w-full max-w-7xl min-w-0 px-3 py-4 pb-24 sm:px-6 sm:py-6 sm:pb-24 lg:px-8 lg:pb-6">
           <RouteGuard>{children}</RouteGuard>
         </main>
         <MobilePosBottomNav

@@ -78,7 +78,7 @@ export function ProductVariantsForm({
     change({ ...value, mode });
   };
   const addModelRow = () => {
-    const taken = value.rows.map((row) => row.sku).filter(Boolean);
+    const taken = [productSku, ...value.rows.map((row) => row.sku)].filter(Boolean);
     const nextRow = createModelDraftRow(productSku, value.rows.length + 1, taken);
     onChange(reconcileVariantDraft({ ...value, rows: [...value.rows, nextRow] }, productSku));
   };
@@ -205,7 +205,7 @@ export function ProductVariantsForm({
   /** Fills any blank SKU, then any blank barcode left behind — a row never
    * leaves this screen without both identifiers once this has run. */
   const generateMissingSku = () => {
-    const taken = value.rows.map((row) => row.sku).filter(Boolean);
+    const taken = [productSku, ...value.rows.map((row) => row.sku)].filter(Boolean);
     onChange({ ...value, rows: value.rows.map((row, index) => {
       let sku = row.sku;
       if (!sku.trim()) {
@@ -221,6 +221,27 @@ export function ProductVariantsForm({
       const barcode = requiresModels ? row.barcode.trim() : row.barcode.trim() || deriveBarcodeFromSku(sku);
       return sku === row.sku && barcode === row.barcode ? row : { ...row, sku, barcode };
     }) });
+  };
+
+  const copyCode = (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+      void navigator.clipboard.writeText(trimmed).then(
+        () => toast.success(t("products.simple.copied")),
+        () => {},
+      );
+    }
+  };
+
+  const stepQuantity = (
+    row: ProductVariantDraft,
+    field: "stock_quantity" | "low_stock_level",
+    delta: number,
+  ) => {
+    const current = Math.max(0, Math.trunc(Number(row[field]) || 0));
+    const next = Math.max(0, current + delta);
+    updateRow(row.id, { [field]: String(next) });
   };
 
   return (
@@ -401,9 +422,9 @@ export function ProductVariantsForm({
                 <Button size="sm" variant="ghost" type="button" disabled={!targets.length} onClick={() => onChange({ ...value, rows: value.rows.map((row) => row.persistedId ? row : { ...row, active: true }) })}>{t("products.simple.activateNew")}</Button>
               </div>
             )}
-            <div className="max-w-full overflow-x-auto rounded-xl border border-slate-200" data-testid="variant-table-scroll">
-              <table className="w-full min-w-[1000px] text-xs" data-testid="product-variant-table">
-                <thead className="bg-slate-50 text-start text-[11px] font-bold text-slate-600"><tr className="border-b border-slate-200">
+            <div className="max-w-full overflow-x-auto rounded-xl border border-slate-200 max-md:border-0 max-md:overflow-visible" data-testid="variant-table-scroll">
+              <table className="w-full text-xs max-md:block md:table md:min-w-[880px]" data-testid="product-variant-table">
+                <thead className="bg-slate-50 text-start text-[11px] font-bold text-slate-600 max-md:hidden"><tr className="border-b border-slate-200">
                   <th className="p-2 text-start">{t("products.variants.colCombination")}</th>
                   <th className="p-2 text-start">{t("products.sku")}</th>
                   <th className="p-2 text-start">{t("products.barcode")}</th>
@@ -414,21 +435,80 @@ export function ProductVariantsForm({
                   <th className="p-2 text-start">{t("products.simple.variantImage")}</th>
                   <th className="p-2 text-center">{t("common.active")}</th>
                 </tr></thead>
-                <tbody>{displayed.map((row) => {
+                <tbody className="max-md:block max-md:space-y-3">{displayed.map((row) => {
                   const color = value.colors.find((entry) => entry.id === row.color_id);
                   const archived = row.persistedId && !row.active;
-                  return <tr key={row.id} data-testid={`product-variant-${row.id}`} className={`border-b border-slate-100 last:border-0 ${archived ? "bg-slate-50 text-slate-500" : ""}`}>
-                    <td className="min-w-32 p-2 font-bold">{variantLabel({ color_ar: row.color_ar, color_en: row.color_en, size: null, size_label: row.size, size_value: row.size, display_name_ar: row.display_name_ar, display_name_en: row.display_name_en }, lang) || "—"}</td>
-                    <td className="p-2"><TextInput className="w-32 font-mono text-xs" value={row.sku} onChange={(event) => updateSku(row, event.target.value)} aria-label={`${t("products.sku")} ${row.id}`} data-testid={`variant-field-sku-${row.id}`} /></td>
-                    <td className="p-2"><TextInput className="w-32 font-mono text-xs" placeholder={requiresModels ? (productBarcode.trim() || productSku.trim() || undefined) : undefined} value={row.barcode} onChange={(event) => updateRow(row.id, { barcode: event.target.value })} aria-label={`${t("products.barcode")} ${row.id}`} data-testid={`variant-field-barcode-${row.id}`} /></td>
-                    <td className="p-2"><TextInput dir="ltr" inputMode="numeric" className="w-16 text-xs" value={row.stock_quantity} readOnly={!stockEditable || Boolean(row.persistedId)} onChange={(event) => updateRow(row.id, { stock_quantity: event.target.value })} aria-label={`${t("products.variants.colStock")} ${row.id}`} data-testid={`variant-field-stock-${row.id}`} /></td>
-                    <td className="p-2"><TextInput dir="ltr" inputMode="numeric" className="w-16 text-xs" value={row.low_stock_level} onChange={(event) => updateRow(row.id, { low_stock_level: event.target.value })} aria-label={`${t("products.variants.lowStock")} ${row.id}`} data-testid={`variant-field-low-${row.id}`} /></td>
-                    <td className="p-2"><TextInput dir="ltr" inputMode="decimal" className="w-20 text-xs" placeholder={productSellingPrice} readOnly={requiresModels} value={row.price_override} onChange={(event) => updateRow(row.id, { price_override: event.target.value })} aria-label={`${t("products.variants.colPrice")} ${row.id}`} data-testid={`variant-field-price-${row.id}`} /></td>
-                    {canAct("view_cost") && <td className="p-2"><TextInput dir="ltr" inputMode="decimal" className="w-20 text-xs" readOnly={!canAct("change_cost")} placeholder={productCostPrice} value={row.cost_override} onChange={(event) => updateRow(row.id, { cost_override: event.target.value })} aria-label={`${t("products.variants.colCost")} ${row.id}`} data-testid={`variant-field-cost-${row.id}`} /></td>}
-                    <td className="p-2"><div className="flex items-center gap-1"><TextInput dir="ltr" type="url" className="w-28 text-xs" placeholder={color?.image_url ? t("products.simple.inheritsColor") : t("products.imageUrl")} value={row.image_url} onChange={(event) => updateRow(row.id, { image_url: event.target.value })} aria-label={`${t("products.simple.variantImage")} ${row.id}`} data-testid={`variant-field-image-${row.id}`} />
-                      <label className="cursor-pointer rounded border border-slate-200 px-1.5 py-2 text-xs" title={t("products.simple.uploadImage")}>↑<input type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/avif,image/bmp" className="sr-only" disabled={uploading !== null} onChange={(event) => { void upload(event.target.files?.[0], row.id); event.target.value = ""; }} /></label>
-                    </div></td>
-                    <td className="p-2 text-center"><input type="checkbox" aria-label={`${t("common.active")} ${row.id}`} checked={row.active} disabled={Boolean(row.persistedId)} onChange={(event) => updateRow(row.id, { active: event.target.checked })} title={row.persistedId ? t("products.simple.archiveOption") : undefined} /></td>
+                  const stockReadOnly = !stockEditable || Boolean(row.persistedId);
+                  return <tr key={row.id} data-testid={`product-variant-${row.id}`} className={`border-b border-slate-100 last:border-0 max-md:grid max-md:grid-cols-2 max-md:gap-2.5 max-md:rounded-xl max-md:border max-md:border-slate-200 max-md:bg-slate-50/40 max-md:p-3 ${archived ? "bg-slate-50 text-slate-500" : ""}`}>
+                    <td className="p-2 font-bold md:min-w-28 max-md:col-span-2 max-md:flex max-md:items-center max-md:justify-between max-md:border-b max-md:border-slate-200/80 max-md:p-0 max-md:pb-2">
+                      <span className="flex items-center gap-1.5 text-sm md:text-xs text-slate-900">
+                        {row.color_hex ? <span aria-hidden className="inline-block h-3.5 w-3.5 shrink-0 rounded-full border border-slate-300" style={{ backgroundColor: row.color_hex }} /> : null}
+                        {variantLabel({ color_ar: row.color_ar, color_en: row.color_en, size: null, size_label: row.size, size_value: row.size, display_name_ar: row.display_name_ar, display_name_en: row.display_name_en }, lang) || "—"}
+                      </span>
+                      <span className="rounded-md bg-white px-2 py-0.5 font-mono text-[11px] font-semibold text-slate-600 ring-1 ring-slate-200 md:hidden">
+                        {row.sku || "—"}
+                      </span>
+                    </td>
+                    <td className="p-2 max-md:col-span-2 max-md:p-0">
+                      <span className="mb-1 block text-[11px] font-bold text-slate-600 md:hidden">{t("products.sku")}</span>
+                      <div className="flex items-center gap-1.5">
+                        <TextInput dir="ltr" className="w-full font-mono text-xs md:w-32" value={row.sku} onChange={(event) => updateSku(row, event.target.value)} aria-label={`${t("products.sku")} ${row.id}`} data-testid={`variant-field-sku-${row.id}`} />
+                        {row.sku.trim() ? (
+                          <button type="button" onClick={() => copyCode(row.sku)} className="shrink-0 rounded-lg border border-slate-200 bg-white px-2 py-2 text-[11px] font-bold text-slate-700 hover:bg-slate-100 md:px-1.5 md:py-1" title={t("products.simple.copyCode")} data-testid={`variant-copy-sku-${row.id}`}>
+                            {t("products.simple.copyCode")}
+                          </button>
+                        ) : null}
+                      </div>
+                    </td>
+                    <td className="p-2 max-md:col-span-2 max-md:p-0">
+                      <span className="mb-1 block text-[11px] font-bold text-slate-600 md:hidden">{t("products.barcode")}</span>
+                      <div className="flex items-center gap-1.5">
+                        <TextInput dir="ltr" className="w-full font-mono text-xs md:w-32" placeholder={requiresModels ? (productBarcode.trim() || productSku.trim() || undefined) : undefined} value={row.barcode} onChange={(event) => updateRow(row.id, { barcode: event.target.value })} aria-label={`${t("products.barcode")} ${row.id}`} data-testid={`variant-field-barcode-${row.id}`} />
+                        {(row.barcode.trim() || (requiresModels && (productBarcode.trim() || productSku.trim()))) ? (
+                          <button type="button" onClick={() => copyCode(row.barcode.trim() || productBarcode.trim() || productSku.trim())} className="shrink-0 rounded-lg border border-slate-200 bg-white px-2 py-2 text-[11px] font-bold text-slate-700 hover:bg-slate-100 md:px-1.5 md:py-1" title={t("products.simple.copyCode")} data-testid={`variant-copy-barcode-${row.id}`}>
+                            {t("products.simple.copyCode")}
+                          </button>
+                        ) : null}
+                      </div>
+                    </td>
+                    <td className="p-2 max-md:col-span-1 max-md:p-0">
+                      <span className="mb-1 block text-[11px] font-bold text-slate-600 md:hidden">{t("products.variants.colStock")}</span>
+                      <div className="flex items-center gap-1">
+                        {!stockReadOnly ? (
+                          <button type="button" onClick={() => stepQuantity(row, "stock_quantity", -1)} className="flex h-9 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-sm font-bold text-slate-700 active:bg-slate-100 md:hidden" aria-label={`Decrease stock ${row.id}`}>−</button>
+                        ) : null}
+                        <TextInput dir="ltr" inputMode="numeric" className="w-full text-center text-xs md:w-16" value={row.stock_quantity} readOnly={stockReadOnly} onChange={(event) => updateRow(row.id, { stock_quantity: event.target.value })} aria-label={`${t("products.variants.colStock")} ${row.id}`} data-testid={`variant-field-stock-${row.id}`} />
+                        {!stockReadOnly ? (
+                          <button type="button" onClick={() => stepQuantity(row, "stock_quantity", 1)} className="flex h-9 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-sm font-bold text-slate-700 active:bg-slate-100 md:hidden" aria-label={`Increase stock ${row.id}`}>+</button>
+                        ) : null}
+                      </div>
+                    </td>
+                    <td className="p-2 max-md:col-span-1 max-md:p-0">
+                      <span className="mb-1 block text-[11px] font-bold text-slate-600 md:hidden">{t("products.variants.lowStock")}</span>
+                      <div className="flex items-center gap-1">
+                        <button type="button" onClick={() => stepQuantity(row, "low_stock_level", -1)} className="flex h-9 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-sm font-bold text-slate-700 active:bg-slate-100 md:hidden" aria-label={`Decrease low stock ${row.id}`}>−</button>
+                        <TextInput dir="ltr" inputMode="numeric" className="w-full text-center text-xs md:w-16" value={row.low_stock_level} onChange={(event) => updateRow(row.id, { low_stock_level: event.target.value })} aria-label={`${t("products.variants.lowStock")} ${row.id}`} data-testid={`variant-field-low-${row.id}`} />
+                        <button type="button" onClick={() => stepQuantity(row, "low_stock_level", 1)} className="flex h-9 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-sm font-bold text-slate-700 active:bg-slate-100 md:hidden" aria-label={`Increase low stock ${row.id}`}>+</button>
+                      </div>
+                    </td>
+                    <td className="p-2 max-md:col-span-1 max-md:p-0">
+                      <span className="mb-1 block text-[11px] font-bold text-slate-600 md:hidden">{t("products.variants.colPrice")}</span>
+                      <TextInput dir="ltr" inputMode="decimal" className="w-full text-xs md:w-20" placeholder={productSellingPrice} readOnly={requiresModels} value={row.price_override} onChange={(event) => updateRow(row.id, { price_override: event.target.value })} aria-label={`${t("products.variants.colPrice")} ${row.id}`} data-testid={`variant-field-price-${row.id}`} />
+                    </td>
+                    {canAct("view_cost") && <td className="p-2 max-md:col-span-1 max-md:p-0">
+                      <span className="mb-1 block text-[11px] font-bold text-slate-600 md:hidden">{t("products.variants.colCost")}</span>
+                      <TextInput dir="ltr" inputMode="decimal" className="w-full text-xs md:w-20" readOnly={!canAct("change_cost")} placeholder={productCostPrice} value={row.cost_override} onChange={(event) => updateRow(row.id, { cost_override: event.target.value })} aria-label={`${t("products.variants.colCost")} ${row.id}`} data-testid={`variant-field-cost-${row.id}`} />
+                    </td>}
+                    <td className="p-2 max-md:col-span-2 max-md:p-0">
+                      <span className="mb-1 block text-[11px] font-bold text-slate-600 md:hidden">{t("products.simple.variantImage")}</span>
+                      <div className="flex items-center gap-1.5"><TextInput dir="ltr" type="url" className="w-full text-xs md:w-28" placeholder={color?.image_url ? t("products.simple.inheritsColor") : t("products.imageUrl")} value={row.image_url} onChange={(event) => updateRow(row.id, { image_url: event.target.value })} aria-label={`${t("products.simple.variantImage")} ${row.id}`} data-testid={`variant-field-image-${row.id}`} />
+                        <label className="shrink-0 cursor-pointer rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs font-semibold hover:bg-slate-100" title={t("products.simple.uploadImage")}>↑<input type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/avif,image/bmp" className="sr-only" disabled={uploading !== null} onChange={(event) => { void upload(event.target.files?.[0], row.id); event.target.value = ""; }} /></label>
+                      </div>
+                    </td>
+                    <td className="p-2 text-center max-md:col-span-2 max-md:flex max-md:items-center max-md:justify-between max-md:border-t max-md:border-slate-200/80 max-md:p-0 max-md:pt-2">
+                      <span className="text-xs font-bold text-slate-700 md:hidden">{t("common.active")}</span>
+                      <input type="checkbox" className="h-4 w-4" aria-label={`${t("common.active")} ${row.id}`} checked={row.active} disabled={Boolean(row.persistedId)} onChange={(event) => updateRow(row.id, { active: event.target.checked })} title={row.persistedId ? t("products.simple.archiveOption") : undefined} />
+                    </td>
                   </tr>;
                 })}
                 {!displayed.length && <tr><td colSpan={9} className="p-6 text-center text-xs text-slate-600">{t("products.simple.waiting")}</td></tr>}

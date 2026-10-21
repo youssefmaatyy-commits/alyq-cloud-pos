@@ -180,7 +180,9 @@ export class DemoRepository implements CatalogRepository {
     if (patch.barcode) {
       this.assertUniqueBarcode(patch.barcode, id);
     }
-    this.assertCategoryAssignable(next.category_id, "update");
+    if (patch.category_id !== undefined) {
+      this.assertCategoryAssignable(next.category_id, "update");
+    }
     next.updated_at = nowIso();
     const updated = [...this.state.products];
     updated[index] = next;
@@ -351,8 +353,16 @@ export class DemoRepository implements CatalogRepository {
         definedPatch.images !== undefined
           ? (definedPatch.images ?? []).map((url) => url.trim()).filter(Boolean)
           : current.images ?? [],
-      // The identity is captured once and never rewritten by a rename.
-      color_key: current.color_key,
+      // The identity is captured once and never rewritten by a rename, except
+      // when healing a legacy 1-char color_key ('r' -> 'rose') or adding a
+      // colour to a previously colourless shelf.
+      color_key:
+        current.color_key.length === 1 &&
+        definedPatch.color_key &&
+        definedPatch.color_key.length > 1 &&
+        definedPatch.color_key.startsWith(current.color_key)
+          ? definedPatch.color_key
+          : current.color_key || definedPatch.color_key || "",
       updated_at: nowIso(),
     };
     const isNamedModel = modelNameOf(next) !== null;
@@ -389,9 +399,15 @@ export class DemoRepository implements CatalogRepository {
         "stock_quantity",
       );
     }
+    const healedColorKey =
+      current.color_key.length === 1 &&
+      next.color_key.length > 1 &&
+      next.color_key.startsWith(current.color_key);
+    const adoptedSize =
+      variantSizeValue(current).trim() === "" && variantSizeValue(next).trim() !== "";
     const identityChanged =
-      next.color_key !== current.color_key ||
-      variantSizeValue(next).toLocaleLowerCase() !== variantSizeValue(current).toLocaleLowerCase();
+      (!healedColorKey && Boolean(current.color_key) && next.color_key !== current.color_key) ||
+      (!adoptedSize && variantSizeValue(next).toLocaleLowerCase() !== variantSizeValue(current).toLocaleLowerCase());
     if (identityChanged) {
       // A combination IS its colour and size; editing those would move the row
       // onto another shelf. Archive it and create the right one.

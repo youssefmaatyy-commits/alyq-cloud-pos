@@ -7,42 +7,12 @@ import {
   requirementForPriceChange,
 } from "@/modules/approvals/services/approvalService";
 import { getCatalogRepository } from "../data";
-import { AppError, type ProductReferenceCounts } from "../data/repository";
-import type { Category, NewCategory, Product } from "../types";
+import { AppError, appErrorKey, describeError, type ProductReferenceCounts } from "../data/repository";
+import type { Category, NewCategory, Product, ProductPatch } from "../types";
 import { categoryUsage, isDescendant, validateCategoryDraft, validateProductDraft, type CategoryFormValues, type ProductFormValues } from "../validation";
 import { resolveProductImages } from "./imageStorage";
 
-/** i18n keys for every AppError the service can raise. */
-const APP_ERROR_KEY: Record<string, string> = {
-  NOT_CONFIGURED: "mode.demoHint",
-  NOT_FOUND: "common.notFound",
-  DUPLICATE_SKU: "validation.skuTaken",
-  DUPLICATE_BARCODE: "validation.barcodeTaken",
-  CATEGORY_IN_USE: "categories.deleteBlockedTitle",
-  CATEGORY_NOT_EMPTY: "categories.deleteBlockedTitle",
-  CATEGORY_HAS_CHILDREN: "categories.childrenBlockDelete",
-  CATEGORY_ARCHIVED: "categories.archivedTarget",
-  CATEGORY_CYCLE: "categories.moveUnderSelf",
-  PRODUCT_HAS_HISTORY: "products.errorHasHistory",
-  FORBIDDEN: "common.forbidden",
-  VALIDATION: "validation.fixErrors",
-  NETWORK: "error.network",
-  DB: "validation.serverError",
-};
-
-export function appErrorKey(error: AppError): string {
-  if (error.pgCode && APP_ERROR_KEY[`error.${error.pgCode}`]) {
-    return `error.${error.pgCode}`;
-  }
-  return APP_ERROR_KEY[error.code] ?? "common.error";
-}
-
-/** Translate any thrown value into a user-facing message key + field. */
-export function describeError(error: unknown): { key: string; field?: string; error: AppError } {
-  const appError =
-    error instanceof AppError ? error : new AppError("DB", error instanceof Error ? error.message : String(error));
-  return { key: appErrorKey(appError), field: appError.field, error: appError };
-}
+export { appErrorKey, describeError };
 
 // ── capability guards ───────────────────────────────────────────────────────
 // Every one of these is an entry in `src/lib/permissions/actions.ts`, which is
@@ -205,7 +175,18 @@ export async function saveProduct({
       }
     }
 
-    const product = await repository.updateProduct(currentId, data);
+    const patch: ProductPatch = { ...data };
+    if (patch.category_id === existing.category_id) {
+      delete patch.category_id;
+    }
+    if (existing.variants_enabled) {
+      delete patch.stock_quantity;
+      delete patch.low_stock_level;
+    } else if (Number(patch.stock_quantity) === Number(existing.stock_quantity)) {
+      delete patch.stock_quantity;
+    }
+
+    const product = await repository.updateProduct(currentId, patch);
     if ((changed.selling || changed.cost) && approval) {
       await markRequestApplied(approval.requestId, product.id);
     }
