@@ -11,8 +11,8 @@
   "supabaseProjectHost": "bubvtxctwqsfohrkenej.supabase.co",
   "buildType": "debug-signed-side-by-side-staging",
   "fileName": "releases/ALYQ-POS-v2.0.0-models-staging-debug.apk",
-  "sizeBytes": 10420575,
-  "sha256": "fa58d806180b7ba879c34e6493cfb152e0cb9db9126510777962e023a7f4f174",
-  "signingSummary": "V2 Signer: certificate DN: C=US, O=Android, CN=Android Debug V2 Signer: certificate SHA-256 digest: 63ceb95e8c45e042d5ee80c493fbe4d775124f0b4cb636dc2b4fcd97e4fa4122 V2 Signer: certificate SHA-1 digest: e49967abfa63d19a735b56a51995ddc3a5fce048 V2 Signer: certificate MD5 digest: 835cb700d4ad025730205575d424ecd7 ",
-  "builtAt": "2026-10-21T02:17:31Z"
+  "sizeBytes": 10425727,
+  "sha256": "1d22641f70fd7ad2535f6fb0a1cd36508a4ae91302d43e3aa33ba68b784aabfc",
+  "signingSummary": "V2 Signer: certificate DN: C=US, O=Android, CN=Android Debug V2 Signer: certificate SHA-256 digest: c0b338916c239ad79dcb69467b7e7dd27f03955a44e308d313c9c2b32e611372 V2 Signer: certificate SHA-1 digest: 31f4881a3db7d8da264fa547e66cf78ef78ffafc V2 Signer: certificate MD5 digest: 54daa0a622d7c590be90cc6f60fab2a6 ",
+  "builtAt": "2026-10-21T13:47:17Z"
 }
