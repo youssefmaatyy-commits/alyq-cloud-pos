@@ -318,7 +318,40 @@ try {
   await page.waitForSelector('[data-testid="pos-scan-search"]', { timeout: 15000 });
   await page.waitForTimeout(600);
 
-  // Scan shared barcode `BR101` in POS search/barcode box and press Enter
+  // (3A) Test Android/Web Camera Barcode Scanner modal scanning shared barcode `BR101`
+  await page.click('[data-testid="pos-camera-scan-btn"]');
+  await page.waitForSelector('[data-testid="pos-camera-scanner-modal"]', { timeout: 8000 });
+  await page.fill('[data-testid="pos-camera-manual-input"]', "BR101");
+  await page.click('[data-testid="pos-camera-manual-submit"]');
+  await page.waitForSelector('[data-testid="pos-model-picker"]', { timeout: 8000 });
+  assert.equal(
+    await page.locator('[data-testid^="cart-line-"]').count(),
+    0,
+    "Camera scan of BR101 must open Model Picker without auto-selecting Model 1",
+  );
+  // Close modal to test External USB/Bluetooth HID scanner next
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(300);
+
+  // (3B) Test External Hardware Barcode Scanner (rapid HID keystroke burst on non-input target)
+  await page.evaluate(() => {
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+    for (const key of ["B", "R", "1", "0", "1", "Enter"]) {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+    }
+  });
+  await page.waitForSelector('[data-testid="pos-model-picker"]', { timeout: 8000 });
+  assert.equal(
+    await page.locator('[data-testid^="cart-line-"]').count(),
+    0,
+    "External HID barcode scanner burst of BR101 must open Model Picker without auto-selecting Model 1",
+  );
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(300);
+
+  // (3C) Scan shared barcode `BR101` in POS search/barcode box and press Enter
   const posScanInput = page.locator('[data-testid="pos-scan-search"]');
   await posScanInput.fill("BR101");
   await posScanInput.press("Enter");

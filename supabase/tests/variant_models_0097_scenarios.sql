@@ -23,6 +23,8 @@ do $variant_models_0097$
 declare
   v_main       uuid := '00000000-0000-4000-8000-0000000000b1';
   v_admin      uuid := '00000000-0000-4000-8000-0000000000a1';
+  v_cashier    uuid := '00000000-0000-4000-8000-0000000000c1';
+  v_viewer     uuid := '00000000-0000-4000-8000-0000000000e1';
   v_category   uuid := '00000000-0000-4000-8000-000000009701';
   v_br101      uuid := '00000000-0000-4000-8000-000000009702';
   v_legacy     uuid := '00000000-0000-4000-8000-000000009703';
@@ -318,8 +320,86 @@ begin
     raise exception 'storefront payload for BR101 models is inaccurate: %', v_storefront;
   end if;
 
+  -- 9b. Offline Sync idempotency (replay of identical client_ref must NOT double-deduct stock)
+  perform pg_temp.become(v_admin, 'authenticated');
+  perform pg_temp.ensure_open_shift(v_admin::text);
+  perform public.pos_complete_sale(jsonb_build_object(
+    'client_ref', '0097-pos-sale-br101-m02',
+    'user_id',    v_admin::text,
+    'user_name',  'Amina Admin',
+    'payments',   jsonb_build_array(jsonb_build_object('method', 'cash', 'amount', 480.00, 'tendered', 480.00)),
+    'lines',      jsonb_build_array(jsonb_build_object(
+      'product_id', v_br101::text,
+      'variant_id', v_m02::text,
+      'qty',        2
+    ))
+  ));
+  if (select stock_quantity from public.product_variants where id = v_m02) <> 2 then
+    raise exception 'Replayed offline sale client_ref double-deducted stock on BR101-M02!';
+  end if;
+
+  -- 9c. Storage RLS & Variant Column/Capability Protection:
+  --     - Even Admin cannot directly UPDATE product_variants.active (column grant protection; must use set_variant_active).
+  --     - Cashier (who has edit_product but NOT adjust_stock) cannot directly UPDATE product_variants.stock_quantity.
+  --     - Viewer (who has neither edit_product nor adjust_stock) cannot upload/overwrite/delete model photos in storage.objects
+  --       and cannot update product_variants.
+  perform pg_temp.become(v_admin, 'authenticated');
+  begin
+    execute format('update public.product_variants set active = false where id = %L', v_m01);
+    raise exception 'Direct UPDATE of product_variants.active succeeded; expected column privilege denial';
+  exception when insufficient_privilege then null;
+  end;
+
+  perform pg_temp.become(null, 'postgres');
+  update public.profiles set active = true, role = 'cashier', custom_role_id = null, denied_capabilities = '{}', active_branch_id = v_main where id = v_cashier;
+  update public.branch_memberships set active = true, role = 'cashier' where user_id = v_cashier and branch_id = v_main;
+  update public.profiles set active = true, role = 'viewer', custom_role_id = null, denied_capabilities = '{}', active_branch_id = v_main where id = v_viewer;
+  update public.branch_memberships set active = true, role = 'viewer' where user_id = v_viewer and branch_id = v_main;
+
+  -- Cashier (has edit_product, lacks adjust_stock) cannot directly modify stock_quantity on product_variants!
+  perform pg_temp.become(v_cashier, 'authenticated');
+  begin
+    update public.product_variants set stock_quantity = 999 where id = v_m01;
+    raise exception 'Cashier without adjust_stock directly modified product_variants.stock_quantity!';
+  exception when insufficient_privilege then null;
+  end;
+
+  perform pg_temp.become(v_admin, 'authenticated');
+  insert into storage.objects (bucket_id, name) values ('product-images', 'public/0097-br101-m01.webp');
+
+  -- Viewer (lacks add_product, edit_product, delete_product, manage_website) cannot upload/update/delete model images
+  perform pg_temp.become(v_viewer, 'authenticated');
+  begin
+    insert into storage.objects (bucket_id, name) values ('product-images', 'public/0097-unauthorized-viewer.webp');
+    raise exception 'Viewer without product capabilities uploaded a model image to public/*';
+  exception when insufficient_privilege then null;
+  end;
+
+  update storage.objects set name = 'public/0097-hijacked.webp' where name = 'public/0097-br101-m01.webp';
+  if exists (select 1 from storage.objects where name = 'public/0097-hijacked.webp') then
+    raise exception 'Viewer without product capabilities updated an existing model image in storage.objects';
+  end if;
+
+  delete from storage.objects where name = 'public/0097-br101-m01.webp';
+  if not exists (select 1 from storage.objects where name = 'public/0097-br101-m01.webp') then
+    raise exception 'Viewer without product capabilities deleted an existing model image in storage.objects';
+  end if;
+
+  -- Viewer also cannot update product_variants (stock_quantity, display_name_ar, images)
+  update public.product_variants set display_name_ar = 'تعديل غير مصرح' where id = v_m01;
+  if (select display_name_ar from public.product_variants where id = v_m01) = 'تعديل غير مصرح' then
+    raise exception 'Viewer without edit_product updated product_variants';
+  end if;
+
+  -- 9d. Backward compatibility with v2.0.0 / v-web-prod-ca18c27 legacy RPCs & queries:
+  perform pg_temp.become(null, 'anon');
+  if (select count(*) from public.storefront_branch_product_variants() s where s.product_id = v_br101) <> 2 then
+    raise exception 'Legacy storefront_branch_product_variants() RPC broken after 0097';
+  end if;
+
   -- Clean up test records so subsequent seed/parity checks see a clean state.
   perform pg_temp.become(null, 'postgres');
+  delete from storage.objects where name = 'public/0097-br101-m01.webp';
   delete from public.stocktake_lines where stocktake_id = v_st_id;
   delete from public.stocktakes where id = v_st_id;
   delete from public.stock_reservations where online_order_id = v_order_id;

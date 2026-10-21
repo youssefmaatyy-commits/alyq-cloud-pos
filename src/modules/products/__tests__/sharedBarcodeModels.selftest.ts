@@ -23,6 +23,9 @@ import {
   resolveExactScannedVariant,
   resolveScannedVariantProduct,
 } from "@/modules/pos/services/scanner";
+import { BarcodeBurstDecoder } from "@/modules/pos/hooks/useBarcodeScanner";
+import { decode1DBarcodeFromRgbaFrame } from "@/modules/pos/services/cameraBarcodeScanner";
+import { encodeCode128 } from "@/modules/pos/services/barcodeHelpers";
 import { getDemoSalesRepository } from "@/modules/pos/data/demoRepository";
 import { getDemoReturnRepository } from "@/modules/returns/data/demoRepository";
 import { getDemoOnlineRepository } from "@/modules/online/data/demoRepository";
@@ -216,6 +219,59 @@ export async function runSharedBarcodeModelsSelftest(): Promise<void> {
   const directModel2 = resolveExactScannedVariant("BR101-M02", allVariants);
   assert.equal(directModel2?.id, savedModels[1].id);
 
+  // ── 3b. Android Camera Barcode Scanner + External HID Barcode Reader ─────
+  // (A) Camera 1D Code128 frame decoder scanning shared barcode "BR101":
+  {
+    const encoded = encodeCode128("BR101", 10);
+    assert.ok(encoded, "BR101 encodes as Code 128");
+    const scale = 3;
+    const width = encoded.width * scale;
+    const height = 24;
+    const rgba = new Uint8ClampedArray(width * height * 4);
+    rgba.fill(255);
+    for (const bar of encoded.bars) {
+      const startX = bar.x * scale;
+      const endX = (bar.x + bar.width) * scale;
+      for (let y = 0; y < height; y += 1) {
+        for (let x = startX; x < endX; x += 1) {
+          const idx = (y * width + x) * 4;
+          rgba[idx] = 0;
+          rgba[idx + 1] = 0;
+          rgba[idx + 2] = 0;
+          rgba[idx + 3] = 255;
+        }
+      }
+    }
+    const cameraDecoded = decode1DBarcodeFromRgbaFrame(rgba, width, height);
+    assert.equal(cameraDecoded?.rawValue, "BR101");
+    assert.equal(resolveExactScannedVariant(cameraDecoded!.rawValue, allVariants), null);
+    const cameraPickerTarget = resolveScannedVariantProduct(
+      cameraDecoded!.rawValue,
+      await catalog.listProducts(),
+      allVariants,
+    );
+    assert.equal(cameraPickerTarget?.id, product.id, "Camera scan of BR101 opens visual Model Picker");
+  }
+
+  // (B) External USB/Bluetooth HID Barcode Reader rapid keystroke burst for "BR101":
+  {
+    const hidDecoder = new BarcodeBurstDecoder();
+    let tMs = 100;
+    for (const ch of "BR101") {
+      assert.equal(hidDecoder.feed(ch, tMs), null);
+      tMs += 8;
+    }
+    const hidScanned = hidDecoder.feed("Enter", tMs);
+    assert.equal(hidScanned, "BR101");
+    assert.equal(resolveExactScannedVariant(hidScanned!, allVariants), null);
+    const hidPickerTarget = resolveScannedVariantProduct(
+      hidScanned!,
+      await catalog.listProducts(),
+      allVariants,
+    );
+    assert.equal(hidPickerTarget?.id, product.id, "External HID scan of BR101 opens visual Model Picker");
+  }
+
   // Open a shift if none is open and sell 2 units of Model 2 (BR101-M02)
   const shiftRepo = getDemoShiftRepository();
   const currentOpen = await shiftRepo.getOpenShift();
@@ -230,8 +286,9 @@ export async function runSharedBarcodeModelsSelftest(): Promise<void> {
   }
 
   const salesRepo = getDemoSalesRepository();
+  const saleClientRef = `pos-br101-test-${Date.now()}`;
   const sale = await salesRepo.completeSale({
-    client_ref: `pos-br101-test-${Date.now()}`,
+    client_ref: saleClientRef,
     lines: [
       {
         product_id: product.id,
@@ -245,6 +302,25 @@ export async function runSharedBarcodeModelsSelftest(): Promise<void> {
     user_id: "u-admin",
     user_name: "Admin",
   });
+
+  // Offline Sync replay idempotency: re-submitting the same client_ref must return
+  // the same sale and must NOT deduct stock a second time!
+  const replayedSale = await salesRepo.completeSale({
+    client_ref: saleClientRef,
+    lines: [
+      {
+        product_id: product.id,
+        variant_id: savedModels[1].id,
+        qty: 2,
+      },
+    ],
+    discount_type: "none",
+    discount_value: 0,
+    payments: [{ method: "cash", amount: 480, status: "paid" }],
+    user_id: "u-admin",
+    user_name: "Admin",
+  });
+  assert.equal(replayedSale.id, sale.id, "Offline sync replay returns original sale without duplicate deduction");
 
   assert.equal(sale.total, 480);
   assert.equal(sale.items.length, 1);

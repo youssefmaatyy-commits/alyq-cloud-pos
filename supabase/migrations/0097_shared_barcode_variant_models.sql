@@ -449,6 +449,109 @@ $function$;
 revoke all on function public.storefront_branch_product_variants_v2() from public;
 grant execute on function public.storefront_branch_product_variants_v2() to anon, authenticated, service_role;
 
+-- ── 7b. Harden variant column-capability separation & storage.objects RLS ───
+-- In 0043, `product_variants_update` RLS allows `public.can('adjust_stock') or public.can('edit_product')`.
+-- Enforce strict separation on direct `authenticated` PostgREST updates so:
+--   - A user with `edit_product` but WITHOUT `adjust_stock` (e.g. default cashier)
+--     cannot directly modify `product_variants.stock_quantity`.
+--   - A user with `adjust_stock` but WITHOUT `edit_product` cannot modify
+--     model names, SKUs, barcodes, or model images.
+create or replace function public.product_variants_enforce_update_capabilities()
+returns trigger
+language plpgsql
+set search_path = pg_catalog, public
+as $$
+begin
+  if current_user = 'authenticated'
+     and coalesce(current_setting('alyq.branch_stock_rollup', true), '') <> new.id::text then
+    if new.stock_quantity is distinct from old.stock_quantity
+       and not public.can('adjust_stock') then
+      raise exception 'Adjusting variant stock requires adjust_stock permission'
+        using errcode = '42501';
+    end if;
+
+    if (
+      new.sku is distinct from old.sku
+      or new.barcode is distinct from old.barcode
+      or new.color_key is distinct from old.color_key
+      or new.color_ar is distinct from old.color_ar
+      or new.color_en is distinct from old.color_en
+      or new.color_hex is distinct from old.color_hex
+      or new.size is distinct from old.size
+      or new.size_label is distinct from old.size_label
+      or new.size_value is distinct from old.size_value
+      or new.size_sort_order is distinct from old.size_sort_order
+      or new.display_name_ar is distinct from old.display_name_ar
+      or new.display_name_en is distinct from old.display_name_en
+      or new.image_url is distinct from old.image_url
+      or new.images is distinct from old.images
+      or new.low_stock_level is distinct from old.low_stock_level
+      or new.sort_order is distinct from old.sort_order
+    ) and not public.can('edit_product') then
+      raise exception 'Editing variant metadata or model images requires edit_product permission'
+        using errcode = '42501';
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+revoke all on function public.product_variants_enforce_update_capabilities() from public, anon, authenticated;
+
+drop trigger if exists product_variants_enforce_update_capabilities on public.product_variants;
+create trigger product_variants_enforce_update_capabilities
+  before update on public.product_variants
+  for each row execute function public.product_variants_enforce_update_capabilities();
+
+-- Signed-in staff without product/website management capabilities
+-- (`add_product`, `edit_product`, `delete_product`, `manage_website`)
+-- may only upload payment proofs under `proofs/*` and may never upload,
+-- overwrite, or delete product/model/website images.
+drop policy if exists "product_images_insert" on storage.objects;
+create policy "product_images_insert"
+  on storage.objects for insert to authenticated
+  with check (
+    bucket_id = 'product-images'
+    and (
+      (storage.foldername(name))[1] = 'proofs'
+      or public.can('add_product')
+      or public.can('edit_product')
+      or public.can('manage_website')
+    )
+  );
+
+drop policy if exists "product_images_update" on storage.objects;
+create policy "product_images_update"
+  on storage.objects for update to authenticated
+  using (
+    bucket_id = 'product-images'
+    and (
+      public.can('add_product')
+      or public.can('edit_product')
+      or public.can('manage_website')
+    )
+  )
+  with check (
+    bucket_id = 'product-images'
+    and (
+      public.can('add_product')
+      or public.can('edit_product')
+      or public.can('manage_website')
+    )
+  );
+
+drop policy if exists "product_images_delete" on storage.objects;
+create policy "product_images_delete"
+  on storage.objects for delete to authenticated
+  using (
+    bucket_id = 'product-images'
+    and (
+      public.can('edit_product')
+      or public.can('delete_product')
+      or public.can('manage_website')
+    )
+  );
+
 -- ── 8. Keep application/database health contract aligned with 0097 ────────
 create or replace function public.system_health_probe()
 returns jsonb
