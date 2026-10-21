@@ -28,7 +28,12 @@
 
 begin;
 
--- ── 1. Keep products_enforce_category_active() enforcing explicit category_id writes ──
+-- ── 1. Allow in-place product field edits when category_id is unchanged ────
+-- Preserves intentional category archiving (`active = false` on bracelets,
+-- necklaces, earrings) without ever reactivating the category, while allowing
+-- authorized staff to edit a product's name, price, cost, images, SKU/barcode,
+-- or thresholds in place. Moving a product to an archived category or issuing
+-- a pure `SET category_id = <archived>` assignment remains strictly refused.
 create or replace function public.products_enforce_category_active()
 returns trigger
 language plpgsql
@@ -38,6 +43,31 @@ declare
   v_active boolean;
 begin
   if new.category_id is null then
+    return new;
+  end if;
+
+  if tg_op = 'UPDATE'
+     and new.category_id is not distinct from old.category_id
+     and (
+       new.name_ar is distinct from old.name_ar or
+       new.name_en is distinct from old.name_en or
+       new.description_ar is distinct from old.description_ar or
+       new.description_en is distinct from old.description_en or
+       new.sku is distinct from old.sku or
+       new.barcode is distinct from old.barcode or
+       new.selling_price is distinct from old.selling_price or
+       new.cost_price is distinct from old.cost_price or
+       new.tax_rate is distinct from old.tax_rate or
+       new.image_url is distinct from old.image_url or
+       new.images is distinct from old.images or
+       new.low_stock_level is distinct from old.low_stock_level or
+       new.stock_quantity is distinct from old.stock_quantity or
+       new.stock_tracking_enabled is distinct from old.stock_tracking_enabled or
+       new.variants_enabled is distinct from old.variants_enabled or
+       new.show_on_website is distinct from old.show_on_website or
+       new.is_featured is distinct from old.is_featured or
+       new.active is distinct from old.active
+     ) then
     return new;
   end if;
 

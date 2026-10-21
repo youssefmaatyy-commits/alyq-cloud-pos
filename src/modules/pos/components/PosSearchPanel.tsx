@@ -73,7 +73,7 @@ export function PosSearchPanel() {
   const trimmed = query.trim();
   const listVisible = open && trimmed.length > 0;
   const visibleCategories = useMemo(
-    () => categories.filter((category) => products.some((product) => product.category_id === category.id)),
+    () => categories.filter((category) => category.active && products.some((product) => product.category_id === category.id)),
     [categories, products],
   );
   const browseProducts = useMemo(

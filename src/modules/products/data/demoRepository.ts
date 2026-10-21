@@ -180,7 +180,13 @@ export class DemoRepository implements CatalogRepository {
     if (patch.barcode) {
       this.assertUniqueBarcode(patch.barcode, id);
     }
-    if (patch.category_id !== undefined) {
+    const nonCategoryChanged = (Object.keys(patch) as Array<keyof ProductPatch>).some(
+      (k) => k !== "category_id" && patch[k] !== current[k],
+    );
+    if (
+      patch.category_id !== undefined &&
+      (patch.category_id !== current.category_id || !nonCategoryChanged)
+    ) {
       this.assertCategoryAssignable(next.category_id, "update");
     }
     next.updated_at = nowIso();

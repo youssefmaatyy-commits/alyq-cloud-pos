@@ -552,4 +552,87 @@ await test("describeError maps database, auth, permission, and constraint errors
   assert.equal(describeError(new Error("TypeError: Failed to fetch")).key, "error.network");
 });
 
+await test("intentionally archived category preserves active=false while allowing in-place product & variant edits and blocking moves", async () => {
+  signIn("admin");
+  const { sellableCategoryFilterIds } = await import("../services/categoryTree");
+
+  const archCat = await repo.createCategory({
+    name_ar: "أساور مؤرشفة عمدا",
+    name_en: "Intentionally Archived Bracelets",
+    parent_id: null,
+    active: true,
+    sort_order: 50,
+  });
+  const otherArchCat = await repo.createCategory({
+    name_ar: "سلاسل مؤرشفة عمدا",
+    name_en: "Intentionally Archived Necklaces",
+    parent_id: null,
+    active: false,
+    sort_order: 51,
+  });
+  const activeCat = await repo.createCategory({
+    name_ar: "خواتم نشطة",
+    name_en: "Active Rings",
+    parent_id: null,
+    active: true,
+    sort_order: 52,
+  });
+
+  const prod = await repo.createProduct({
+    sku: "ARCH-BR104",
+    barcode: "ARCH-BR104",
+    name_ar: "إسورة ARCH-104",
+    name_en: "Bracelet ARCH-104",
+    description_ar: null,
+    description_en: null,
+    category_id: archCat.id,
+    product_type: "physical",
+    selling_price: 220,
+    cost_price: 85,
+    tax_rate: 0,
+    stock_tracking_enabled: true,
+    variants_enabled: false,
+    stock_quantity: 3,
+    low_stock_level: 5,
+    show_on_website: true,
+    is_featured: false,
+    active: true,
+    image_url: null,
+    images: [],
+  });
+
+  // Owner intentionally archives the category
+  const archivedCat = await repo.setCategoryActive(archCat.id, false);
+  assert.equal(archivedCat.active, false);
+
+  // Archived category is excluded from POS sellable category filter set
+  const posSellableIds = sellableCategoryFilterIds(await repo.listCategories());
+  assert.equal(posSellableIds.has(archCat.id), false);
+  assert.equal(posSellableIds.has(activeCat.id), true);
+
+  // Editing name, price, and images (both minimal patch and patch with unchanged category_id) succeeds without reactivating the category or altering stock
+  const updated1 = await repo.updateProduct(prod.id, {
+    name_ar: "إسورة ARCH-104 محدثة",
+    name_en: "Bracelet ARCH-104 Updated",
+    selling_price: 245,
+    image_url: "https://example.com/arch-br104.jpg",
+    images: ["https://example.com/arch-br104.jpg", "https://example.com/arch-br104-2.jpg"],
+    category_id: archCat.id,
+  });
+  assert.equal(updated1.name_ar, "إسورة ARCH-104 محدثة");
+  assert.equal(updated1.selling_price, 245);
+  assert.equal(updated1.stock_quantity, 3);
+  assert.equal(updated1.category_id, archCat.id);
+
+  // Category remains archived (active = false)
+  const catsAfter = await repo.listCategories();
+  assert.equal(catsAfter.find((c) => c.id === archCat.id)?.active, false);
+
+  // Moving the product to a different archived category is refused with CATEGORY_ARCHIVED
+  await assert.rejects(
+    () => repo.updateProduct(prod.id, { category_id: otherArchCat.id }),
+    (err: unknown) => err instanceof AppError && err.code === "CATEGORY_ARCHIVED",
+  );
+});
+
 console.log(`\n${count}/${count} variant-draft tests passed`);
