@@ -161,7 +161,7 @@ try {
   await page.goto(`${BASE_URL}/#/products/new`, { waitUntil: "domcontentloaded" });
   await page.waitForSelector("#sku", { timeout: 15000 });
 
-  await page.fill("#name_ar", "سوار أَلِيق الذهبي الملكي");
+  await page.fill("#name_ar", "سوار أَلِــيْـــق الذهبي الملكي");
   await page.fill("#name_en", "ALYQ Royal Gold Bracelet");
   await page.fill("#sku", "BR101");
   if (await page.locator("#barcode").count()) {
@@ -427,7 +427,7 @@ try {
   await page.waitForSelector('[data-testid="v2-model-picker"]', { timeout: 15000 });
   await page.waitForTimeout(600);
 
-  // Verify ALYQ Storefront V2 beige & gold design tokens are active
+  // Verify ALYQ V2 storefront beige & gold design tokens are active
   const v2Styles = await page.evaluate(() => {
     const rootEl = document.querySelector(".store-v2") || document.documentElement;
     const cs = window.getComputedStyle(rootEl);
