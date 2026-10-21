@@ -55,6 +55,38 @@
 | **استعادة بيانات ورصيد `BR104` (`ROSE` + `RED`)** | **`stock_quantity = 3`** وعودة الاسم والسعر للقيمة المحفوظة في النسخة |
 | **استعادة بيانات ورصيد `BR101` (موديلات الباركود المشترك `M01` + `M02`)** | **`stock_quantity = 5`** وعودة `display_name_ar = 'موديل فراشة ذهبي'` |
 
+### تفسير الفرق الحسابي الدقيق بين `54 جدولاً / 473 صفاً` في النسخة الاحتياطية و`49 جدولاً / 73 صفاً` في نتيجة الاستعادة:
+يرجع الفرق المقصود هندسياً (`54 - 49 = 5 جداول`، و`473 - 73 = 400 صف` في الفحص الأول / `560 - 93 = 467 صفاً` في الفحص التشغيلي الشامل) إلى التصميم الموثق في `public.backup_table_order()` مقابل `public.backup_restore_order()` (`LIVE_RESTORE_EXCLUDED` في `src/modules/backup/schema.ts`):
+
+1. **الجداول الخمسة المستثناة عمداً من الحذف وإعادة الإدراج المباشر أثناء `admin_restore_document` (`54 - 49 = 5`):**
+
+| الجدول المستثنى من الإحلال المباشر | عدد صفوفه في فحص `473 / 73` | عدد صفوفه في الفحص التشغيلي الشامل `560 / 93` | سبب الاستثناء الهندسي والأمني (ولماذا لا يُفقد أي بيان) |
+|---|---|---|---|
+| **`role_capabilities`** | `171` | `171` | جدول قاموس صلاحيات النظام المملوك للهجرات (`0028`–`0092`). استبداله بنسخة أقدم قد يحذف صلاحيات نظام أضيفت في هجرة أحدث. يظل محفوظاً بالكامل (`171 = 171`). |
+| **`audit_actions`** | `111` | `111` | جدول قاموس أنواع أحداث التدقيق المملوك للهجرات (`0013`–`0093`). يظل محفوظاً بالكامل (`111 = 111`). |
+| **`role_aliases`** | `11` | `11` | جدول مسميات الأدوار القياسية المملوك للهجرات (`0021`/`0084`). يظل محفوظاً بالكامل (`11 = 11`). |
+| **`audit_log`** | `102` | `135` | سجل التدقيق الأمني غير القابل للمسح (`Append-Only` عبر `prevent_audit_log_mutation`). لا يُمسح أثناء الاستعادة حتى لا تُمحى سجلات المراجعة التاريخية ولا سجل من قام بالاستعادة؛ بل يظل كاملاً وتُضاف إليه سجلات عملية الاستعادة. |
+| **`catalogue_codes`** | `5` | `39` | جدول فهرس الأكواد والباركودات المدار تلقائياً بالتريجرات (`0043`: `catalogue_codes_sync_product` و`catalogue_codes_sync_variant`). عند استعادة `products` و`product_variants`، تعيد التريجرات بناء `100%` من صفوف `catalogue_codes` تلقائياً (`39 قبل = 39 بعد`). |
+| **مجموع الصفوف الخمسة المستثناة** | **`400` صف** | **`467` صفاً** | **المعادلة الحسابية التامة:** `73 + 400 = 473` صفاً، وفي الفحص الشامل: `93 + 467 = 560` صفاً (`math_check_rows_equal = true`). |
+
+2. **مقارنة قبل وبعد (`Before vs. After`) لكل جدول تشغيلي مهم في الفحص التشغيلي الشامل على Staging (`bubvtxctwqsfohrkenej`):**
+
+| الجدول التشغيلي / المؤشر المحاسبي | قبل الاستعادة (وقت أخذ النسخة) | بعد التعديلات الخاطئة ثم تنفيذ `admin_restore_backup` | التطابق (`Loss = 0`) |
+|---|---|---|---|
+| **الأقسام (`categories` — الإجمالي / المؤرشفة عمداً `active = false`)** | `8` إجمالي (`1` مؤرشف عمداً) | `8` إجمالي (`1` مؤرشف عمداً) | ✅ متطابق ١٠٠٪ |
+| **المنتجات (`products` — العدد / مجموع المخزون `stock_quantity`)** | `10` منتجات / `49` قطعة | `10` منتجات / `49` قطعة | ✅ متطابق ١٠٠٪ |
+| **المتغيرات والموديلات (`product_variants` — العدد / مجموع المخزون)** | `13` متغيراً وموديلاً / `45` قطعة | `13` متغيراً وموديلاً / `45` قطعة | ✅ متطابق ١٠٠٪ |
+| **فهرس الأكواد والباركود (`catalogue_codes` — يُعاد بناؤه بالتريجر)** | `39` كوداً وباركوداً | `39` كوداً وباركوداً | ✅ متطابق ١٠٠٪ |
+| **أرصدة مخزون الفروع (`branch_stock_balances` — الصفوف / مجموع الكميات)** | `16` رصيداً / `49` قطعة | `16` رصيداً / `49` قطعة | ✅ متطابق ١٠٠٪ |
+| **حركات المخزون (`stock_movements`)** | `3` حركات | `3` حركات | ✅ متطابق ١٠٠٪ |
+| **فواتير المبيعات (`sales` — العدد / إجمالي المبالغ)** | `1` فاتورة / `470.00` ج.م | `1` فاتورة / `470.00` ج.م | ✅ متطابق ١٠٠٪ |
+| **سطور ومدفوعات المبيعات (`sale_items` / `sale_payments`)** | `2` سطرين / `1` دفعة | `2` سطرين / `1` دفعة | ✅ متطابق ١٠٠٪ |
+| **المرتجعات وسطورها (`sales_returns` / `return_items`)** | `1` مرتجع / `1` سطر | `1` مرتجع / `1` سطر | ✅ متطابق ١٠٠٪ |
+| **سجلات الاسترداد النقدي (`refund_records` — العدد / المبلغ)** | `1` سجل / `220.00` ج.م | `1` سجل / `220.00` ج.م | ✅ متطابق ١٠٠٪ |
+| **طلبات المتجر والحجوزات (`online_orders` / `online_order_items` / `stock_reservations`)** | `1` طلب / `1` سطر / `1` حجز | `1` طلب / `1` سطر / `1` حجز | ✅ متطابق ١٠٠٪ |
+| **الورديات والمصروفات (`shifts` / `expenses`)** | `1` وردية / `1` مصروف (`50` ج.م) | `1` وردية / `1` مصروف (`50` ج.م بعد استرجاعه من الحذف) | ✅ متطابق ١٠٠٪ |
+| **العملاء والموظفون والأدوار المخصصة وعضويات الفروع (`customers` / `profiles` / `custom_roles` / `branch_memberships`)** | `1` عميل / `5` حسابات / `1` دور مخصص (`edit_product, sell`) / `5` عضويات | `1` عميل / `5` حسابات / `1` دور مخصص (`edit_product, sell`) / `5` عضويات | ✅ متطابق ١٠٠٪ |
+
 ---
 
 ## ٣. قائمة الفحص المختصرة للقبول على هاتف iPhone فعلي (`Physical iPhone Safari UAT Checklist`)
@@ -84,31 +116,50 @@
 | **المبيعات والمرتجعات والطلبات (`pos_complete_sale`, `pos_process_return`, `place_online_order`)** | الدوال المحدثة في `0097` تقبل كلاً من المتغيرات التقليدية والموديلات الجديدة وتتحقق من `variant_id` والرصيد الفرعي بدقة. | تعمل ١٠٠٪ لأن توقيع الدوال (`Function Signatures`) لم يتغير. |
 | **الموديلات الجديدة ذات الباركود المشترك (`display_name_ar/en` بدون لون وبدون مقاس و`barcode = NULL`)** | تعمل بكامل مزاياها في النسخة الجديدة (البطاقات والصور والباركود المشترك). | **ملاحظة توافق رجعي مهمة تم التحقق منها في الكود (`v2.0.0`):** في إصدار `v2.0.0` القديم، مكون `VariantPicker.tsx` يعتمد على تجميع المتغيرات حسب اللون (`color_key`) أو المقاس (`size_value`)، كما أن الماسح القديم يبحث عن باركود نصي غير فارغ. لذلك إذا تم إنشاء موديلات جديدة **باسم وصورة فقط بدون لون وبدون مقاس** ثم تم التراجع بالتطبيق إلى `v2.0.0`، فلن تظهر أزرار اختيار لتلك الموديلات الخالية من اللون والمقاس في نافذة `VariantPicker` القديمة ما لم يتم تشغيل **سكربت التوافق الرجعي غير المدمّر (`Non-Destructive Compatibility Shim`)** أدناه. |
 
-### ب) سكربت التوافق الرجعي غير المدمّر (`Non-Destructive Compatibility Shim` عند التراجع إلى `v2.0.0`):
-في حال الرغبة في التراجع بالتطبيق إلى `v-web-prod-ca18c27` أو استخدام `v2.0.0` بعد إنشاء موديلات جديدة بدون لون/مقاس، يتم تشغيل السكربت التالي (بدون حذف أي صف أو فاتورة أو رصيد):
+### ب) سكربت التوافق الرجعي غير المدمّر (`Non-Destructive Compatibility Shim` عند التراجع إلى `v2.0.0`) ونتائج اختباره الفعلي:
+في حال الرغبة في التراجع بالتطبيق إلى `v-web-prod-ca18c27` أو استخدام `v2.0.0` بعد إنشاء موديلات جديدة بدون لون/مقاس، يتم تشغيل السكربت التالي المحمي ضد أي تعارض في `catalogue_codes` أو المقاسات أو المخزون (بدون حذف أي صف أو فاتورة أو رصيد):
 ```sql
 begin;
 
 -- 1) تعبئة باركود داخلي من الـ SKU للموديلات التي تُرك باركودها NULL ليعمل المسح في v2.0.0
-update public.product_variants
-   set barcode = upper(btrim(sku))
- where barcode is null
-   and btrim(coalesce(sku, '')) <> '';
+--    مع شرط عدم وجود أي كود باركود مطابق في catalogue_codes لمنع أي تعارض:
+update public.product_variants pv
+   set barcode = upper(btrim(pv.sku))
+ where pv.barcode is null
+   and btrim(coalesce(pv.sku, '')) <> ''
+   and not exists (
+     select 1
+       from public.catalogue_codes cc
+      where cc.kind = 'barcode'
+        and cc.code_key = lower(btrim(pv.sku))
+        and cc.variant_id is distinct from pv.id
+   );
 
--- 2) نسخ اسم الموديل إلى حقل المقاس (size_label / size_value) للموديلات الخالية من اللون والمقاس
--- حتى يعرضها مكون VariantPicker القديم في v2.0.0 كأزرار اختيار واضحة:
-update public.product_variants
-   set size_label = coalesce(nullif(btrim(display_name_ar), ''), nullif(btrim(display_name_en), '')),
-       size_value = coalesce(nullif(btrim(display_name_ar), ''), nullif(btrim(display_name_en), ''))
- where nullif(btrim(coalesce(color_key, '')), '') is null
-   and nullif(btrim(coalesce(size_value, '')), '') is null
+-- 2) نسخ اسم الموديل إلى حقل المقاس (size_label / size_value) للموديلات الخالية من اللون والمقاس فقط
+--    حتى يعرضها مكون VariantPicker القديم في v2.0.0 ومكون V2VariantChooser كأزرار اختيار واضحة:
+update public.product_variants pv
+   set size_label = coalesce(nullif(btrim(pv.display_name_ar), ''), nullif(btrim(pv.display_name_en), ''), pv.sku),
+       size_value = coalesce(nullif(btrim(pv.display_name_ar), ''), nullif(btrim(pv.display_name_en), ''), pv.sku)
+ where nullif(btrim(coalesce(pv.color_key, '')), '') is null
+   and nullif(btrim(coalesce(pv.size_value, '')), '') is null
    and (
-     nullif(btrim(coalesce(display_name_ar, '')), '') is not null
-     or nullif(btrim(coalesce(display_name_en, '')), '') is not null
+     nullif(btrim(coalesce(pv.display_name_ar, '')), '') is not null
+     or nullif(btrim(coalesce(pv.display_name_en, '')), '') is not null
    );
 
 commit;
 ```
+
+#### نتائج الاختبار الفعلي لسكربت التوافق الرجعي على Staging (`bubvtxctwqsfohrkenej`) و`pglite` (`Scenario 12`) وكود `v2.0.0`:
+- **١. عدم حدوث أي تعارض في `SKU` أو `Barcode`**:
+  - يحتفظ المنتج الأب (`SHIM-BR101`) بالباركود المشترك `SHIM-BR101` في `catalogue_codes`.
+  - تحصل الموديلات (`SHIM-BR101-M01`, `SHIM-BR101-M02`, `SHIM-BR101-M03`) على باركود مطابق للـ `SKU` الفريد لكل منها دون أي تعارض مع `products_barcode_unique` أو `product_variants_barcode_unique` أو `catalogue_codes`، حتى عند تشغيل السكربت مرتين متتاليتين (`Idempotent`).
+  - عند مسح `BR101-M01` في ماسح `v2.0.0` (`resolveExactScannedVariant`)، يختار الموديل `M01` بدقة؛ وعند مسح الباركود المشترك `BR101` لا يختار أي موديل عشوائياً بل يفتح نافذة `VariantPicker`.
+- **٢. عدم حدوث أي تعارض في المقاسات (`size_value` / `size_label`)**:
+  - الموديلات الخالية من اللون والمقاس فقط هي التي تأخذ `size_value = size_label = display_name_ar` (`'موديل فراشة'`, `'موديل قلب'`, `'موديل نجمة'`)، فتظهر في `VariantPicker.tsx` القديم (`hasColors = false`, `colorsOnly = false`, `sizes.length = 3`) كأزرار اختيار مستقلة لكل موديل مع رصيده المتاح.
+  - المتغيرات التقليدية ذات الألوان والمقاسات (`SHIM-BR104-ROSE-S` و`SHIM-BR104-RED-M`) لم تتغير إطلاقاً (`color_key = 'rose'/'red'`, `size_value = 'S'/'M'`).
+- **٣. عدم المساس بالمخزون (`Stock = Unchanged`)**:
+  - بقي رصيد المنتج الأب `SHIM-BR101` (`9` قطع = `4 + 3 + 2`) ورصيد `SHIM-BR104` (`3` قطع = `2 + 1`) وأرصدة الفروع `branch_stock_balances` متطابقة ١٠٠٪ قبل وبعد تشغيل السكربت (`stock_unchanged = true`).
 
 ### ج) مقارنة شهادة توقيع Android (`apksigner`) وخطة ترقية الهاتف الآمنة:
 - **حقيقة التوقيع الرقمي**: الإصدار الرسمي `v2.0.0` (`ALYQ-POS-v2.0.0-debug.apk`) وُقّع بمفتاح مؤقت (`Cert SHA-256: 822022e0ee8117d22f7b25ce22f1686995931e57b9e61099d3283ba883c96563`) داخل حاوية GitHub Actions مؤقتة انتهت بانتهاء البناء، ولذلك لا يقبل نظام Android التحديث المباشر (`In-Place Overwrite`) لنفس المعرف `eg.alyq.management` بشهادة مختلفة (`INSTALL_FAILED_UPDATE_INCOMPATIBLE`).

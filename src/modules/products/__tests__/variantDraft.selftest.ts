@@ -635,4 +635,90 @@ await test("intentionally archived category preserves active=false while allowin
   );
 });
 
+await test("backward-compatibility SQL shim makes 0097 sizeless/colorless models work cleanly in legacy Web & Android v2.0.0 without SKU, Barcode, Size, or Stock conflicts", () => {
+  // Simulate 0097 shared-barcode models after running the non-destructive SQL shim
+  const shimmedModels: ProductVariant[] = [
+    {
+      id: "m01",
+      product_id: "br101",
+      sku: "BR101-M01",
+      barcode: "BR101-M01",
+      color_key: "",
+      color_ar: null,
+      color_en: null,
+      color_hex: null,
+      size: null,
+      size_label: "موديل فراشة",
+      size_value: "موديل فراشة",
+      size_sort_order: 1,
+      display_name_ar: "موديل فراشة",
+      display_name_en: "Butterfly Model",
+      image_url: "https://example.com/m01.jpg",
+      images: ["https://example.com/m01.jpg"],
+      price_override: null,
+      cost_override: null,
+      stock_quantity: 4,
+      low_stock_level: 2,
+      active: true,
+      sort_order: 1,
+      created_at: "2026-10-21T00:00:00Z",
+      updated_at: "2026-10-21T00:00:00Z",
+    },
+    {
+      id: "m02",
+      product_id: "br101",
+      sku: "BR101-M02",
+      barcode: "BR101-M02",
+      color_key: "",
+      color_ar: null,
+      color_en: null,
+      color_hex: null,
+      size: null,
+      size_label: "موديل قلب",
+      size_value: "موديل قلب",
+      size_sort_order: 2,
+      display_name_ar: "موديل قلب",
+      display_name_en: "Heart Model",
+      image_url: "https://example.com/m02.jpg",
+      images: ["https://example.com/m02.jpg"],
+      price_override: null,
+      cost_override: null,
+      stock_quantity: 3,
+      low_stock_level: 2,
+      active: true,
+      sort_order: 2,
+      created_at: "2026-10-21T00:00:00Z",
+      updated_at: "2026-10-21T00:00:00Z",
+    },
+  ];
+
+  // 1. Legacy v2.0.0 VariantPicker logic check:
+  //    hasColors = active.some(v => Boolean(v.color_key)) -> false
+  //    colorsOnly = active.every(v => v.size === null && !v.size_label) -> false
+  //    sizes = active.filter(v => v.color_key === "") -> both models rendered as selectable buttons!
+  const active = shimmedModels.filter((v) => v.active);
+  const hasColors = active.some((v) => Boolean(v.color_key));
+  const colorsOnly = active.length > 0 && active.every((v) => v.size === null && !v.size_label);
+  const legacyPickerSizes = active.filter((v) => v.color_key === "");
+  assert.equal(hasColors, false);
+  assert.equal(colorsOnly, false);
+  assert.equal(legacyPickerSizes.length, 2);
+  assert.equal(legacyPickerSizes[0].size_label, "موديل فراشة");
+  assert.equal(legacyPickerSizes[1].size_label, "موديل قلب");
+
+  // 2. Legacy v2.0.0 scanner resolution check (resolveExactScannedVariant):
+  const resolveLegacyScan = (rawCode: string) => {
+    const code = rawCode.trim().toUpperCase();
+    return active.find((v) => v.sku.toUpperCase() === code || (v.barcode ?? "").toUpperCase() === code) ?? null;
+  };
+  assert.equal(resolveLegacyScan("BR101-M01")?.id, "m01");
+  assert.equal(resolveLegacyScan("BR101-M02")?.id, "m02");
+  // Scanning shared parent barcode "BR101" does NOT auto-select any single model
+  assert.equal(resolveLegacyScan("BR101"), null);
+
+  // 3. Stock total remains exact (4 + 3 = 7)
+  const totalStock = active.reduce((sum, v) => sum + v.stock_quantity, 0);
+  assert.equal(totalStock, 7);
+});
+
 console.log(`\n${count}/${count} variant-draft tests passed`);

@@ -379,6 +379,55 @@ begin
   if v_name_ar <> 'موديل فراشة ذهبي' then
     raise exception 'Scenario 11d failed: restored BR101-M01 display_name_ar mismatch (%)', v_name_ar;
   end if;
+
+  -- ── Scenario 12: Backward-Compatibility SQL Shim for legacy Web & Android v2.0.0 ──
+  -- Run the non-destructive backward-compatibility shim twice (proving idempotency)
+  -- and verify zero conflicts in SKU, Barcode, Sizes, or Stock.
+  for i in 1..2 loop
+    update public.product_variants pv
+       set barcode = upper(btrim(pv.sku))
+     where pv.barcode is null
+       and btrim(coalesce(pv.sku, '')) <> ''
+       and not exists (
+         select 1
+           from public.catalogue_codes cc
+          where cc.kind = 'barcode'
+            and cc.code_key = lower(btrim(pv.sku))
+            and cc.variant_id is distinct from pv.id
+       );
+
+    update public.product_variants pv
+       set size_label = coalesce(nullif(btrim(pv.display_name_ar), ''), nullif(btrim(pv.display_name_en), ''), pv.sku),
+           size_value = coalesce(nullif(btrim(pv.display_name_ar), ''), nullif(btrim(pv.display_name_en), ''), pv.sku)
+     where nullif(btrim(coalesce(pv.color_key, '')), '') is null
+       and nullif(btrim(coalesce(pv.size_value, '')), '') is null
+       and (
+         nullif(btrim(coalesce(pv.display_name_ar, '')), '') is not null
+         or nullif(btrim(coalesce(pv.display_name_en, '')), '') is not null
+       );
+  end loop;
+
+  -- Verify shimmed models now have non-null barcode and size_label/size_value for v2.0.0 VariantPicker
+  select count(*) into v_count
+    from public.product_variants
+   where product_id = v_br101
+     and barcode in ('TEST-BR101-M01', 'TEST-BR101-M02')
+     and size_value in ('موديل فراشة ذهبي', 'موديل قلب')
+     and size_label in ('موديل فراشة ذهبي', 'موديل قلب');
+  if v_count <> 2 then
+    raise exception 'Scenario 12a failed: expected 2 shimmed models with populated barcode and size_value, got %', v_count;
+  end if;
+
+  -- Verify stock quantities on parent products and variants did not change at all
+  select stock_quantity into v_stock from public.products where id = v_br101;
+  if v_stock <> 5 then
+    raise exception 'Scenario 12b failed: expected BR101 stock 5 after shim, got %', v_stock;
+  end if;
+
+  select stock_quantity into v_stock from public.products where id = v_br104;
+  if v_stock <> 3 then
+    raise exception 'Scenario 12c failed: expected BR104 stock 3 after shim, got %', v_stock;
+  end if;
 end;
 $$;
 
