@@ -20,13 +20,18 @@ if (process.env.VERCEL_ENV !== "preview") {
 }
 
 const endpoint = "https://bubvtxctwqsfohrkenej.supabase.co/functions/v1/staging-client-config";
-const response = await fetch(endpoint);
-if (!response.ok) {
-  throw new Error(`Failed to fetch staging preview config (${response.status})`);
+try {
+  const response = await fetch(endpoint);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch staging preview config (${response.status})`);
+  }
+  const cfg = await response.json();
+  if (!cfg?.url || !cfg?.anonKey) {
+    throw new Error("Incomplete staging preview config payload");
+  }
+  fs.writeFileSync(target, JSON.stringify({ url: cfg.url, anonKey: cfg.anonKey }), { mode: 0o600 });
+  console.log(`Configured Vercel Preview build for Staging host: ${new URL(cfg.url).host}`);
+} catch (err) {
+  console.warn(`Staging preview config fetch failed (${err instanceof Error ? err.message : String(err)}); isolating preview from Production.`);
+  fs.writeFileSync(target, JSON.stringify({ url: "", anonKey: "" }), { mode: 0o600 });
 }
-const cfg = await response.json();
-if (!cfg?.url || !cfg?.anonKey) {
-  throw new Error("Incomplete staging preview config payload");
-}
-fs.writeFileSync(target, JSON.stringify({ url: cfg.url, anonKey: cfg.anonKey }), { mode: 0o600 });
-console.log(`Configured Vercel Preview build for Staging host: ${new URL(cfg.url).host}`);
