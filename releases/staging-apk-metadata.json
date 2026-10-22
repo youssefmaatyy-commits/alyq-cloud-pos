@@ -12,7 +12,7 @@
   "buildType": "debug-signed-side-by-side-staging",
   "fileName": "releases/ALYQ-POS-v2.0.0-models-staging-debug.apk",
   "sizeBytes": 10425727,
-  "sha256": "1d22641f70fd7ad2535f6fb0a1cd36508a4ae91302d43e3aa33ba68b784aabfc",
-  "signingSummary": "V2 Signer: certificate DN: C=US, O=Android, CN=Android Debug V2 Signer: certificate SHA-256 digest: c0b338916c239ad79dcb69467b7e7dd27f03955a44e308d313c9c2b32e611372 V2 Signer: certificate SHA-1 digest: 31f4881a3db7d8da264fa547e66cf78ef78ffafc V2 Signer: certificate MD5 digest: 54daa0a622d7c590be90cc6f60fab2a6 ",
-  "builtAt": "2026-10-21T13:47:17Z"
+  "sha256": "69634558875fdd03289d78456725d7bcbfdf734e0f8584c9be1090697466dc63",
+  "signingSummary": "V2 Signer: certificate DN: C=US, O=Android, CN=Android Debug V2 Signer: certificate SHA-256 digest: 63caa3da36e1db31d6a00e04fc837ed0f01010389aaa6bc1aaef88cbb54f70b4 V2 Signer: certificate SHA-1 digest: 42b7150f1d53e842f9bd78f48c6c2d34e71bcfb9 V2 Signer: certificate MD5 digest: 33ca6844cd12ecde93eb29b9a8bd93a0 ",
+  "builtAt": "2026-10-22T02:29:22Z"
 }
