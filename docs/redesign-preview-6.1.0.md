@@ -2,7 +2,7 @@
 
 ## Branch / deployment boundary
 
-- Current work starts from `621be2bd` on `arena/f498e340-alyq-cloud-pos`; the final logo-fix commit is recorded in the delivery summary after it is created.
+- Final logo-fix commit: `3f6abe1` on `arena/f498e340-alyq-cloud-pos`, pushed to that development branch from base `621be2bd`.
 - No merge to `main`, official-site deployment, production migration, Production data/order/stock/settings change, or Staging write was made.
 - Local storefront previews use the read-only Staging snapshot and demo-only cart/checkout; they cannot submit an order to Staging or Production.
 
@@ -22,9 +22,9 @@
 
 ## Checks and pre-existing E2E failures
 
-- Current change: `npm run typecheck` passed; `npm run build` passed; three targeted logic suites passed (brand dictionary, online appearance 105/105, V2 bootstrap 7/7); the real-Chromium logo matrix passed 4/4.
-- The full 33-suite browser DOM/E2E runner has six already-existing failures: **store/POS navigation; product lifecycle save; old storefront flow; promotions return detail; final integrated flow; storepolish save**. They were present on `main` and on the prior development commit `621be2b`; they are not suppressed, skipped, or claimed green here. CI run [39835400673](https://github.com/youssefmaatyy-commits/alyq-cloud-pos/actions/runs/39835400673) had Types & build, Migrations & schema, and Logic suites succeed, while E2E (jsdom) failed. The six broad failures were not rerun during this logo-only change to avoid repeating known unrelated flows.
-- A previous V2 DOM matrix and the broader release checks are documented by the prior run; they are not a substitute for the six failing end-to-end flows.
+- Local verification: `npm run typecheck`, `npm run build`, targeted brand/online/V2 logic suites (4/4 suites; online 105/105, V2 logic 14/14, bootstrap 7/7), ESLint on changed code, `git diff --check`, and the real-Chromium logo matrix all passed. CI [39843321944](https://github.com/youssefmaatyy-commits/alyq-cloud-pos/actions/runs/39843321944) also passed Types & build, Logic suites (all suites), and Migrations & schema.
+- The full 33-suite browser DOM/E2E runner has six already-existing failures: **store/POS navigation; product lifecycle save; old storefront flow; promotions return detail; final integrated flow; storepolish save**. They were present on `main` and on the prior development commit `621be2b`; they are not suppressed, skipped, or claimed green here. The latest CI run `39843321944` failed only its E2E (jsdom) job, consistent with the six known failures. No new failure was reported by Types & build, Logic, or Migrations & schema.
+- These broader failures remain visible and documented; the passing focused logo/browser checks do not make the entire E2E suite green.
 
 ## Windows artifact
 
@@ -39,5 +39,5 @@
 
 ## Vercel Preview / UAT
 
-- Last known preview URL: https://alyq-store-3dkf5ke24-youssef-maaty.vercel.app . It was not verifiably reachable in this continuation: the prior deployment lookup returned 404, and the connected Vercel account currently lists no project or preview deployments. No hosted page is claimed as tested and no official deployment was made.
-- After the development branch Preview is available, UAT should open the URL on desktop and a 390px mobile viewport; inspect `/` and `/#/store`, switch language EN↔AR, confirm the transparent bilingual header logo, navigation/control spacing, catalogue, product gallery, cart, and checkout validation. Do not place a real order; verify checkout remains demo-only.
+- The development branch deployment completed successfully as a Vercel **Preview** at https://alyq-store-65val2ezw-youssef-maaty.vercel.app (GitHub deployment `7262033927`, commit `3f6abe1`). The page itself redirects to Vercel login as a protected deployment, so its storefront pages could not be inspected anonymously; this is not a failed deployment and is not the official site.
+- UAT with an account authorized for this protected Preview: open the URL on desktop and a 390px mobile viewport; inspect `/` and `/#/store`, switch language EN↔AR, confirm the transparent bilingual header logo, navigation/control spacing, catalogue, product gallery, cart, and checkout validation. Do not place a real order; verify checkout remains demo-only.
