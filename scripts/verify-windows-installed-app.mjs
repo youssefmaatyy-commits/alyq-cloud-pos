@@ -29,10 +29,16 @@ while (!browser && Date.now() < deadline) {
 }
 assert.ok(browser, `could not connect to the installed desktop app on loopback port ${port}: ${lastError}`);
 try {
-  const contexts = browser.contexts();
-  const pages = contexts.flatMap((context) => context.pages());
-  let page = pages.find((candidate) => candidate.url().startsWith("file:"));
-  assert.ok(page, "the installed app did not open its packaged file:// renderer");
+  let page;
+  let observedUrls = [];
+  const pageDeadline = Date.now() + 30_000;
+  while (!page && Date.now() < pageDeadline) {
+    const pages = browser.contexts().flatMap((context) => context.pages());
+    observedUrls = pages.map((candidate) => candidate.url());
+    page = pages.find((candidate) => candidate.url().startsWith("file:"));
+    if (!page) await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+  assert.ok(page, `the installed app did not open a packaged file:// renderer; observed pages: ${observedUrls.join(", ") || "none"}`);
   await page.waitForFunction(() => Boolean(window.alyqDesktop?.getContext && window.alyqDesktop?.getConfig), null, { timeout: 20_000 });
   const url = new URL(page.url());
   assert.equal(url.hash, "#/login", "installed app must start on the employee login route");
