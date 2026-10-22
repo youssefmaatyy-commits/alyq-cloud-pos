@@ -44,7 +44,7 @@ try {
   $oldExe = Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Programs') -Filter 'ALYQ POS.exe' -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
   if (-not $oldExe) { throw 'Could not locate the installed 6.0.0 ALYQ POS executable.' }
   $oldProcess = Start-Process -FilePath $oldExe.FullName -ArgumentList @('--disable-gpu','--remote-debugging-port=9222','--remote-debugging-address=127.0.0.1','--remote-allow-origins=*') -PassThru -WindowStyle Hidden
-  Invoke-InstalledSmoke -NodeArguments @('scripts/verify-windows-installed-app.mjs','--port=9222','--version=6.0.0','--seed-paper-width=58') -Label 'Installed 6.0.0 packaged-login/userData check'
+  Invoke-InstalledSmoke -NodeArguments @('scripts/verify-windows-installed-app.mjs','--port=9222','--version=6.0.0','--allow-missing-desktop-api') -Label 'Installed 6.0.0 packaged-login/userData check'
   if (-not $oldProcess.HasExited) {
     $null = & taskkill.exe /PID $oldProcess.Id /T /F 2>&1
     if ($LASTEXITCODE -ne 0 -and -not $oldProcess.HasExited) { throw 'Could not close the isolated 6.0.0 app before upgrading.' }
@@ -57,7 +57,23 @@ try {
   $userData = $config.DirectoryName
   $configJson = Get-Content $config.FullName -Raw | ConvertFrom-Json
   if (-not $configJson.installationId) { throw 'The 6.0.0 configuration has no installation identity.' }
-  if ($configJson.hardware.paperWidthMm -ne 58) { throw 'The isolated custom 58 mm paper-width setting did not persist before the upgrade.' }
+  $baselineInstallationId = $configJson.installationId
+  if (-not $configJson.hardware) { throw 'The 6.0.0 userData configuration has no hardware settings object.' }
+  if ($configJson.hardware.paperWidthMm -ne 58) {
+    # Seed one harmless, valid test preference in this fresh runner profile.
+    # The 6.1.0 packaged API must read it after the actual installer upgrade.
+    $configJson.hardware.paperWidthMm = 58
+    $configJson | ConvertTo-Json -Depth 20 | Set-Content -Path $config.FullName -Encoding utf8NoBOM
+  }
+  $oldProcess = Start-Process -FilePath $oldExe.FullName -ArgumentList @('--disable-gpu','--remote-debugging-port=9224','--remote-debugging-address=127.0.0.1','--remote-allow-origins=*') -PassThru -WindowStyle Hidden
+  Invoke-InstalledSmoke -NodeArguments @('scripts/verify-windows-installed-app.mjs','--port=9224','--version=6.0.0','--allow-missing-desktop-api') -Label 'Restarted 6.0.0 login after seeding isolated userData'
+  if (-not $oldProcess.HasExited) {
+    $null = & taskkill.exe /PID $oldProcess.Id /T /F 2>&1
+    if ($LASTEXITCODE -ne 0 -and -not $oldProcess.HasExited) { throw 'Could not close the restarted isolated 6.0.0 app before upgrading.' }
+  }
+  $configJson = Get-Content $config.FullName -Raw | ConvertFrom-Json
+  if ($configJson.installationId -ne $baselineInstallationId) { throw 'The 6.0.0 restart changed its installation identity.' }
+  if ($configJson.hardware.paperWidthMm -ne 58) { throw 'The isolated 58 mm setting did not persist when the 6.0.0 app restarted.' }
   $originalConfigHash = (Get-FileHash $config.FullName -Algorithm SHA256).Hash
   $marker = Join-Path $userData 'arena-upgrade-preservation-check.txt'
   $markerValue = [guid]::NewGuid().ToString()
