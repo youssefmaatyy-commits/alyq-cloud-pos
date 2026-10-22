@@ -11,6 +11,8 @@ import { V2ActionLink, V2Icon as Icon } from "./Primitives";
 import { resolvedV2SocialChannels, V2SocialIcons } from "./SocialChannels";
 import { SocialIcon } from "../components/storefront/SocialIcon";
 import { useV2ScrollRestoration } from "./scrollRestoration";
+import { V2StaffEntry } from "./StaffEntryOption";
+import { isStaffEntryQuery, STAFF_ENTRY_ROUTE } from "./staffEntry";
 import { StorefrontV2BootstrapShield, StorefrontV2ErrorShield } from "./BootstrapShield";
 import "./storefront-v2.css";
 
@@ -168,10 +170,17 @@ export function StorefrontV2Shell({ children }: { children: ReactNode }) {
   }, [location.pathname]);
 
   const closeAndNavigate = (path: string) => { setMenuOpen(false); navigate(path); };
+  // The hidden staff entrance: armed only while the whole query is the exact
+  // word (see ./staffEntry.ts). Nothing is rendered for any other query, so a
+  // shopper never meets a back-office control, and product search is untouched.
+  const staffEntryArmed = isStaffEntryQuery(search);
   const submitSearch = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const q = search.trim();
     setSearchOpen(false);
+    // Enter on the keyword opens the staff sign-in instead of searching the
+    // catalogue — the same destination the revealed option goes to.
+    if (staffEntryArmed) { navigate(STAFF_ENTRY_ROUTE); return; }
     navigate(`/store/products${q ? `?q=${encodeURIComponent(q)}` : ""}`);
   };
   const message = messages[(reducedMotion ? 0 : messageIndex) % (messages.length || 1)];
@@ -289,9 +298,14 @@ export function StorefrontV2Shell({ children }: { children: ReactNode }) {
         </nav>
         {appearance.showSearch && searchOpen ? <form className="v2-search-row" onSubmit={submitSearch} role="search">
           <input ref={searchRef} type="search" value={search} onChange={(event) => setSearch(event.target.value)}
-            placeholder={t("store.search.placeholder")} aria-label={t("store.search.label")} />
+            placeholder={t("store.search.placeholder")} aria-label={t("store.search.label")}
+            autoCapitalize="none" autoCorrect="off" spellCheck={false} autoComplete="off" />
           <button type="submit" className="v2-search-submit" aria-label={t("store.v2.searchGo")}><Icon name="arrow" /></button>
         </form> : null}
+        {/* Only the exact keyword renders this, and only while it is typed: no
+            permanent control, no customer-facing link to the back office. */}
+        {appearance.showSearch && searchOpen && staffEntryArmed
+          ? <V2StaffEntry onNavigate={() => setSearchOpen(false)} /> : null}
       </header>
 
       <div className="v2-drawer-layer" data-open={menuOpen} inert={!menuOpen} aria-hidden={!menuOpen}>
