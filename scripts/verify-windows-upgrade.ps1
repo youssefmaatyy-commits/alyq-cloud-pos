@@ -10,6 +10,17 @@ $newProcess = $null
 $stage = 'initialize'
 Start-Transcript -Path $logPath -Append | Out-Null
 
+function Invoke-InstalledSmoke([string[]]$NodeArguments, [string]$Label) {
+  $output = @(& node @NodeArguments 2>&1 | ForEach-Object { $_.ToString() })
+  $exitCode = $LASTEXITCODE
+  foreach ($line in $output) { Write-Host "SMOKE: $line" }
+  if ($exitCode -ne 0) {
+    $detail = ($output -join ' | ') -replace '[\r\n]+', ' '
+    if ($detail.Length -gt 1400) { $detail = $detail.Substring($detail.Length - 1400) }
+    throw "$Label returned Node exit code $exitCode. $detail"
+  }
+}
+
 try {
   $baseline = Join-Path $env:RUNNER_TEMP 'ALYQ-POS-Setup-6.0.0-x64.exe'
   $checksumFile = "$baseline.sha256"
@@ -33,8 +44,7 @@ try {
   $oldExe = Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Programs') -Filter 'ALYQ POS.exe' -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
   if (-not $oldExe) { throw 'Could not locate the installed 6.0.0 ALYQ POS executable.' }
   $oldProcess = Start-Process -FilePath $oldExe.FullName -ArgumentList @('--disable-gpu','--remote-debugging-port=9222','--remote-debugging-address=127.0.0.1','--remote-allow-origins=*') -PassThru -WindowStyle Hidden
-  node scripts/verify-windows-installed-app.mjs --port=9222 --version=6.0.0 --seed-paper-width=58
-  if ($LASTEXITCODE -ne 0) { throw "Installed 6.0.0 packaged-login/userData check returned Node exit code $LASTEXITCODE." }
+  Invoke-InstalledSmoke -NodeArguments @('scripts/verify-windows-installed-app.mjs','--port=9222','--version=6.0.0','--seed-paper-width=58') -Label 'Installed 6.0.0 packaged-login/userData check'
   if (-not $oldProcess.HasExited) {
     $null = & taskkill.exe /PID $oldProcess.Id /T /F 2>&1
     if ($LASTEXITCODE -ne 0 -and -not $oldProcess.HasExited) { throw 'Could not close the isolated 6.0.0 app before upgrading.' }
@@ -63,8 +73,7 @@ try {
   $stage = 'smoke-test the upgraded app and verify user settings/data preservation'
   Write-Host "UPGRADE_STAGE: $stage"
   $newProcess = Start-Process -FilePath $newExe.FullName -ArgumentList @('--disable-gpu','--remote-debugging-port=9223','--remote-debugging-address=127.0.0.1','--remote-allow-origins=*') -PassThru -WindowStyle Hidden
-  node scripts/verify-windows-installed-app.mjs --port=9223 --version=6.1.0-preview.1 --expect-paper-width=58
-  if ($LASTEXITCODE -ne 0) { throw "Installed 6.1.0-preview.1 packaged-login/userData check returned Node exit code $LASTEXITCODE." }
+  Invoke-InstalledSmoke -NodeArguments @('scripts/verify-windows-installed-app.mjs','--port=9223','--version=6.1.0-preview.1','--expect-paper-width=58') -Label 'Installed 6.1.0-preview.1 packaged-login/userData check'
   if (-not $newProcess.HasExited) {
     $null = & taskkill.exe /PID $newProcess.Id /T /F 2>&1
     if ($LASTEXITCODE -ne 0 -and -not $newProcess.HasExited) { throw 'Could not close the isolated preview app after verification.' }
