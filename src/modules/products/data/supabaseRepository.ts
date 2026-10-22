@@ -132,6 +132,9 @@ interface VariantRow {
   size_value: string | null;
   size_sort_order: number | string | null;
   image_url: string | null;
+  display_name_ar: string | null;
+  display_name_en: string | null;
+  images: string[] | null;
   price_override: number | string | null;
   cost_override: number | string | null;
   stock_quantity: number | string | null;
@@ -163,6 +166,11 @@ function mapVariant(row: VariantRow): ProductVariant {
     size_value: row.size_value ?? row.size_label ?? (row.size == null ? null : String(row.size)),
     size_sort_order: toNumber(row.size_sort_order),
     image_url: row.image_url ?? null,
+    display_name_ar: row.display_name_ar ?? null,
+    display_name_en: row.display_name_en ?? null,
+    images: Array.isArray(row.images)
+      ? row.images.filter((url): url is string => typeof url === "string" && url.length > 0)
+      : [],
     price_override: toNullableNumber(row.price_override),
     cost_override: toNullableNumber(row.cost_override),
     stock_quantity: toNumber(row.stock_quantity),
@@ -204,15 +212,43 @@ export class SupabaseRepository implements CatalogRepository {
   }
 
   private rethrow(error: unknown, field?: string): never {
-    const err = error as { code?: string; message?: string; details?: string } | null;
+    if (error instanceof AppError) throw error;
+    const err = error as { code?: string; message?: string; details?: string; status?: number } | null;
     const pgCode = err?.code;
     const message = err?.message ?? "Unknown database error";
 
+    if (
+      pgCode === "PGRST301" ||
+      err?.status === 401 ||
+      /jwt expired|invalid jwt|authsessionmissing|session_not_found|not authenticated/i.test(message)
+    ) {
+      throw new AppError("SESSION_EXPIRED", message, field, pgCode ?? "PGRST301");
+    }
+    if (pgCode === "42501" || err?.status === 403) {
+      if (/selling price|change_price/i.test(message)) {
+        throw new AppError("FORBIDDEN", message, "selling_price", pgCode);
+      }
+      if (/cost price|change_cost/i.test(message)) {
+        throw new AppError("FORBIDDEN", message, "cost_price", pgCode);
+      }
+      throw new AppError("FORBIDDEN", message, field, pgCode);
+    }
     if (pgCode === "23505") {
       // Decide which constraint fired so the form can highlight the field.
       const details = `${err?.details ?? ""} ${message}`.toLowerCase();
       if (details.includes("barcode")) throw new AppError("DUPLICATE_BARCODE", message, "barcode", pgCode);
       throw new AppError("DUPLICATE_SKU", message, "sku", pgCode);
+    }
+    if (pgCode === "23514") {
+      if (/category .* is archived/i.test(message)) {
+        throw new AppError("CATEGORY_ARCHIVED", message, "category_id", pgCode);
+      }
+      if (/sells by variant/i.test(message)) {
+        throw new AppError("VARIANT_STOCK_READONLY", message, "stock_quantity", pgCode);
+      }
+      if (/negative/i.test(message)) {
+        throw new AppError("VALIDATION", message, "stock_quantity", pgCode);
+      }
     }
     if (pgCode === "23503") throw new AppError("CATEGORY_IN_USE", message, field, pgCode);
     throw toAppError(error);
@@ -375,17 +411,40 @@ export class SupabaseRepository implements CatalogRepository {
    *      · anything else about stock/units                → VARIANT_STOCK_INSUFFICIENT
    */
   private rethrowVariant(error: unknown): never {
-    const err = error as { code?: string; message?: string } | null;
+    if (error instanceof AppError) throw error;
+    const err = error as { code?: string; message?: string; details?: string; status?: number } | null;
     const pgCode = err?.code;
     const message = err?.message ?? "Unknown database error";
 
-    if (pgCode === "42501") throw new AppError("FORBIDDEN", message, undefined, pgCode);
+    if (
+      pgCode === "PGRST301" ||
+      err?.status === 401 ||
+      /jwt expired|invalid jwt|authsessionmissing|session_not_found|not authenticated/i.test(message)
+    ) {
+      throw new AppError("SESSION_EXPIRED", message, undefined, pgCode ?? "PGRST301");
+    }
+    if (pgCode === "42501" || err?.status === 403) {
+      if (/selling price|change_price/i.test(message)) {
+        throw new AppError("FORBIDDEN", message, "selling_price", pgCode);
+      }
+      if (/cost price|change_cost/i.test(message)) {
+        throw new AppError("FORBIDDEN", message, "cost_price", pgCode);
+      }
+      throw new AppError("FORBIDDEN", message, undefined, pgCode);
+    }
     if (pgCode === "23001") throw new AppError("VARIANT_IN_USE", message, undefined, pgCode);
     if (pgCode === "23505") {
-      if (/barcode/i.test(message)) throw new AppError("DUPLICATE_BARCODE", message, "barcode", pgCode);
+      const details = `${err?.details ?? ""} ${message}`.toLowerCase();
+      if (details.includes("barcode")) throw new AppError("DUPLICATE_BARCODE", message, "barcode", pgCode);
+      if (details.includes("combination_unique") || details.includes("combination_uidx")) {
+        throw new AppError("VARIANT_LEGACY_CONFLICT", message, undefined, pgCode);
+      }
       throw new AppError("DUPLICATE_SKU", message, "sku", pgCode);
     }
     if (pgCode === "23514" || pgCode === "P0001") {
+      if (/dimension_present|colour|color|size/i.test(message)) {
+        throw new AppError("VARIANT_INCOMPLETE", message, undefined, pgCode);
+      }
       if (/must neither create nor destroy/i.test(message)) {
         throw new AppError("VARIANTS_STOCK_MISMATCH", message, undefined, pgCode);
       }
@@ -430,10 +489,13 @@ export class SupabaseRepository implements CatalogRepository {
     try {
       // `color_key` is sent when the caller derived it; the database fills it
       // from the label when it is absent, and never rewrites it afterwards.
-      const payload = {
+      const payload: Record<string, unknown> = {
         ...input,
         color_key: input.color_key?.trim() || colorKeyOf(input),
       };
+      if (!payload.display_name_ar) delete payload.display_name_ar;
+      if (!payload.display_name_en) delete payload.display_name_en;
+      if (!Array.isArray(payload.images) || payload.images.length === 0) delete payload.images;
       const { data, error } = await this.require()
         .from("product_variants")
         .insert(payload)
@@ -463,9 +525,13 @@ export class SupabaseRepository implements CatalogRepository {
         // RPC, not an unguarded PostgREST metadata UPDATE.
         throw new AppError("VALIDATION", "Use setVariantActive to archive or reactivate a combination", "active");
       }
+      const payload: Record<string, unknown> = { ...patch };
+      if (payload.display_name_ar === undefined) delete payload.display_name_ar;
+      if (payload.display_name_en === undefined) delete payload.display_name_en;
+      if (payload.images === undefined) delete payload.images;
       const { data, error } = await this.require()
         .from("product_variants")
-        .update(patch)
+        .update(payload)
         .eq("id", id)
         .select(VARIANTS_SELECT)
         .single();

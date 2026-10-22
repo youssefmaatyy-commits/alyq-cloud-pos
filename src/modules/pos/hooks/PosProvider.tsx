@@ -11,6 +11,8 @@ import {
 import type { Category, Product } from "@/modules/products/types";
 import {
   compareVariants,
+  modelNameOf,
+  variantGalleryOf,
   variantPrice,
   type ProductVariant,
 } from "@/modules/products/variants";
@@ -586,6 +588,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
         color_en: variant?.color_en ?? null,
         size: variant?.size ?? null,
         size_label: variant?.size_label ?? null,
+        display_name_ar: variant?.display_name_ar ?? null,
+        display_name_en: variant?.display_name_en ?? null,
         sku: variant?.sku ?? current.sku,
         name_ar: current.name_ar,
         name_en: current.name_en,
@@ -597,7 +601,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
         automatic_discount_amount: 0,
         max_qty: maxQty,
         qty: 1,
-        image_url: variant?.image_url ?? current.image_url,
+        image_url: (variant ? variantGalleryOf(variant)[0] ?? variant.image_url : null) ?? current.image_url,
         item_discount: { ...EMPTY_DISCOUNT },
       };
 
@@ -624,13 +628,22 @@ export function PosProvider({ children }: { children: ReactNode }) {
       if (variant) {
         if (!variant.active) return false;
         const owner = products.find((p) => p.id === variant.product_id);
-        if (!owner) return false;
+        if (!owner || !owner.variants_enabled) return false;
         return addLine(owner, variant);
       }
 
-      const product = products.find(
-        (p) => p.sku.toUpperCase() === code || (p.barcode ?? "").toUpperCase() === code,
-      );
+      const compact = code.replace(/-/g, "");
+      const product =
+        products.find(
+          (p) => p.sku.toUpperCase() === code || (p.barcode ?? "").toUpperCase() === code,
+        ) ??
+        (compact
+          ? products.find(
+              (p) =>
+                p.sku.toUpperCase().replace(/-/g, "") === compact ||
+                (p.barcode ?? "").toUpperCase().replace(/-/g, "") === compact,
+            )
+          : undefined);
       if (!product) return false;
       if (product.variants_enabled) return false;
       return addLine(product);
@@ -963,6 +976,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
             color_ar: line.color_ar,
             color_en: line.color_en,
             size_value: line.size_label ?? (line.size == null ? null : String(line.size)),
+            variant_display_name: modelNameOf(line),
             unit_price: line.unit_price,
           })),
           {

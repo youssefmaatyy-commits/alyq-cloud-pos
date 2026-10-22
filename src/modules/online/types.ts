@@ -162,6 +162,7 @@ export interface OnlineOrderItem {
   variant_color_en: string | null;
   variant_size: number | null;
   variant_size_label: string | null;
+  variant_display_name?: string | null;
   /** Snapshot of the product at order time, exactly like `SaleItem`. */
   name_ar: string;
   name_en: string;

@@ -13,7 +13,7 @@ import {
   STOCK_DEFAULT_BY_TYPE,
 } from "../constants";
 import { PRODUCT_TYPES, marginPct, stockStatus, suggestSku, type Product, type ProductType } from "../types";
-import { colorKeyOf, variantSizeValue, type ProductVariant } from "../variants";
+import { colorKeyOf, modelKeyOf, variantSizeValue, type ProductVariant } from "../variants";
 import {
   EMPTY_PRODUCT_FORM,
   fieldErrorKey,
@@ -36,7 +36,15 @@ import { ProductVariantsForm, EMPTY_PRODUCT_VARIANT_FORM, type ProductVariantFor
 import { validateVariantDraft, variantDraftTotal } from "../services/variantDraft";
 import { enableVariants, listVariants, replaceColorImages, saveVariant } from "../services/variantService";
 
-export function ProductForm({ productId }: { productId?: string }) {
+export function ProductForm({
+  productId,
+  variantsDirty = false,
+  onSavePendingVariants,
+}: {
+  productId?: string;
+  variantsDirty?: boolean;
+  onSavePendingVariants?: () => Promise<boolean>;
+}) {
   const { t, pick, money, num, isRTL } = useI18n();
   const toast = useToast();
   const navigate = useNavigate();
@@ -222,10 +230,11 @@ export function ProductForm({ productId }: { productId?: string }) {
     low_stock_level: Number(values.low_stock_level.replace(/,/g, ".")) || 0,
   });
   const variantError = hasNewVariants ? validateVariantDraft(variantConfig, values.sku, values.barcode) : null;
-  const dirty = useMemo(() => {
+  const formDirty = useMemo(() => {
     const baseline = existing ? productToForm(existing) : EMPTY_PRODUCT_FORM;
     return JSON.stringify(baseline) !== JSON.stringify(values);
   }, [existing, values]);
+  const dirty = formDirty || Boolean(variantsDirty);
 
   const handleTypeChange = (type: ProductType) => {
     setValues((prev) => ({
@@ -249,6 +258,15 @@ export function ProductForm({ productId }: { productId?: string }) {
   const saveDraftAndVariants = async () => {
     if (variantError) {
       throw new Error(t(`products.simple.${variantError}` as never));
+    }
+    if (isEdit && onSavePendingVariants) {
+      const variantsOk = await onSavePendingVariants();
+      if (!variantsOk) {
+        throw new Error("__VARIANTS_SAVE_ABORTED__");
+      }
+      if (!formDirty && existing) {
+        return { product: existing, isNew: false };
+      }
     }
     const productValues = hasNewVariants
       ? { ...values, stock_quantity: String(variantTotal), stock_tracking_enabled: true }
@@ -282,9 +300,11 @@ export function ProductForm({ productId }: { productId?: string }) {
       const numericSize = sizeValue && /^[0-9]+(?:\.[0-9]{1,2})?$/.test(sizeValue)
         ? Number(sizeValue) : null;
       const colorKey = row.color_key || colorKeyOf(row);
+      const modelKey = modelKeyOf(row);
       const previous = created.find((variant) => variant.id === resume.ids.get(row.id)) ?? created.find(
         (variant) => variant.color_key === colorKey &&
-          variantSizeValue(variant).toLocaleLowerCase() === (sizeValue ?? "").toLocaleLowerCase(),
+          variantSizeValue(variant).toLocaleLowerCase() === (sizeValue ?? "").toLocaleLowerCase() &&
+          modelKeyOf(variant) === modelKey,
       );
       const rowValues = {
         sku: row.sku, barcode: row.barcode.trim() || null,
@@ -292,6 +312,9 @@ export function ProductForm({ productId }: { productId?: string }) {
         color_ar: row.color_ar.trim() || null,
         color_en: row.color_en.trim() || null,
         color_hex: row.color_hex.trim() || null,
+        display_name_ar: (row.display_name_ar ?? "").trim() || null,
+        display_name_en: (row.display_name_en ?? "").trim() || null,
+        images: (row.images ?? []).map((url) => url.trim()).filter(Boolean),
         size: numericSize, size_label: sizeValue, size_value: sizeValue,
         size_sort_order: row.size_sort_order,
         image_url: row.image_url.trim() || null,
@@ -306,6 +329,9 @@ export function ProductForm({ productId }: { productId?: string }) {
         previous.sku !== rowValues.sku || previous.barcode !== rowValues.barcode ||
         previous.color_ar !== rowValues.color_ar || previous.color_en !== rowValues.color_en ||
         previous.color_hex !== rowValues.color_hex || previous.image_url !== rowValues.image_url ||
+        (previous.display_name_ar ?? null) !== rowValues.display_name_ar ||
+        (previous.display_name_en ?? null) !== rowValues.display_name_en ||
+        JSON.stringify(previous.images ?? []) !== JSON.stringify(rowValues.images) ||
         variantSizeValue(previous) !== (rowValues.size_value ?? "") ||
         (previous.size_sort_order ?? 0) !== rowValues.size_sort_order ||
         previous.price_override !== rowValues.price_override || previous.cost_override !== rowValues.cost_override ||
@@ -372,6 +398,9 @@ export function ProductForm({ productId }: { productId?: string }) {
         navigate(`/dashboard/products/${productId}`);
       }
     } catch (error) {
+      if (error instanceof Error && error.message === "__VARIANTS_SAVE_ABORTED__") {
+        return;
+      }
       if (isApprovalRequired(error)) {
         setApprovalAsk(error.approvalRequired);
         return;
@@ -408,6 +437,9 @@ export function ProductForm({ productId }: { productId?: string }) {
       toast.success(t(isNew ? "products.createdToast" : "products.updatedToast"));
       navigate(isNew ? "/dashboard/products" : `/dashboard/products/${productId}`);
     } catch (error) {
+      if (error instanceof Error && error.message === "__VARIANTS_SAVE_ABORTED__") {
+        return;
+      }
       // Phase 12: the shop requires a second signature on price moves. Nothing
       // was written — offer to file the change, carrying the draft verbatim so
       // an approval applies exactly what was asked for.
@@ -451,9 +483,9 @@ export function ProductForm({ productId }: { productId?: string }) {
 
   return (
     <>
-    <form onSubmit={handleSubmit} className="space-y-4" noValidate>
-      <div className="grid gap-4 lg:grid-cols-3">
-        <div className="space-y-4 lg:col-span-2">
+    <form onSubmit={handleSubmit} className="min-w-0 space-y-4" noValidate>
+      <div className="grid min-w-0 gap-4 lg:grid-cols-3">
+        <div className="min-w-0 space-y-4 lg:col-span-2">
           {/* Names */}
           <Card>
             <SectionTitle>{t("products.cols.product")}</SectionTitle>
@@ -832,7 +864,7 @@ export function ProductForm({ productId }: { productId?: string }) {
         </div>
 
         {/* Side column */}
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
           <Card>
             <SectionTitle>{t("common.status")}</SectionTitle>
             <div className="space-y-3">
@@ -923,7 +955,7 @@ export function ProductForm({ productId }: { productId?: string }) {
       </div>
 
       {/* Sticky action bar */}
-      <div className="alyq-actionbar sticky bottom-0 z-20 -mx-3 flex flex-col-reverse items-stretch gap-2 px-3 py-3 sm:-mx-6 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+      <div className="alyq-actionbar sticky bottom-0 max-lg:bottom-[calc(4rem+env(safe-area-inset-bottom,0px))] z-30 -mx-3 flex flex-col-reverse items-stretch gap-2 px-3 py-3 sm:-mx-6 sm:flex-row sm:items-center sm:justify-between sm:px-6">
         <p className="text-xs font-semibold text-slate-600 sm:text-sm">
           {bootstrapPending ? t("products.simple.retryShort") : dirty ? t("common.unsavedTitle") : isEdit ? t("common.updated") : t("common.readOnly")}
         </p>
@@ -949,7 +981,7 @@ export function ProductForm({ productId }: { productId?: string }) {
               </Button>
             </>
           ) : (
-            <Button type="submit" size="lg" loading={saving} className="max-sm:w-full">
+            <Button type="submit" size="lg" loading={saving} className="max-sm:w-full" data-testid="product-form-save">
               {saving ? t("common.saving") : t("common.save")}
             </Button>
           )}

@@ -1,0 +1,16 @@
+{
+  "appName": "ALYQ POS",
+  "applicationId": "eg.alyq.management",
+  "versionCode": 2,
+  "versionName": "2.0.0",
+  "minSdkVersion": 24,
+  "targetSdkVersion": 36,
+  "runtimeMode": "production-supabase",
+  "supabaseProjectHost": "zeaacjmmvyuwzmkgxhqf.supabase.co",
+  "buildType": "debug-signed-installable",
+  "fileName": "releases/ALYQ-POS-v2.0.0-debug.apk",
+  "sizeBytes": 10414263,
+  "sha256": "a3ed8537c64f123d78da21fafb6a6ddb82095d9d34ec32519db49ed5f5ff02bb",
+  "signingSummary": "V2 Signer: certificate DN: C=US, O=Android, CN=Android Debug V2 Signer: certificate SHA-256 digest: 822022e0ee8117d22f7b25ce22f1686995931e57b9e61099d3283ba883c96563 V2 Signer: certificate SHA-1 digest: 030dc27ad89e4f30052ad988b3b2cd7d94b87caa V2 Signer: certificate MD5 digest: 0ee5df42faeea64bc76d1324ec738d96 ",
+  "builtAt": "2026-10-20T18:21:39Z"
+}

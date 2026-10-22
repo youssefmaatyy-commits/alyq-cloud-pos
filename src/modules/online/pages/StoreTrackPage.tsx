@@ -219,7 +219,7 @@ export function StoreTrackPage() {
                     </span>
                     {item.variant_id ? (
                       <span className="block text-xs font-bold text-[var(--store-text-primary)]">
-                        {pick(item.variant_color_ar, item.variant_color_en)}
+                        {pick(item.variant_color_ar, item.variant_color_en) || item.variant_display_name || ""}
                         {item.variant_size !== null
                           ? ` / ${Math.round(item.variant_size * 100) / 100}`
                           : item.variant_size_label

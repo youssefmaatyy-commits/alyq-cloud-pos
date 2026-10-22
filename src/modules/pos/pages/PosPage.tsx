@@ -8,6 +8,7 @@ import {
 } from "@/lib/storefront/storefrontLink";
 import { usePos } from "../hooks/PosProvider";
 import { useBarcodeScanner } from "../hooks/useBarcodeScanner";
+import { resolveScannedVariantProduct } from "../services/scanner";
 import { PosSearchPanel } from "../components/PosSearchPanel";
 import { CartPanel } from "../components/CartPanel";
 import { SaleCompletedModal } from "../components/SaleCompletedModal";
@@ -34,6 +35,8 @@ export function PosPage() {
   const { t, pick, date } = useI18n();
   const {
     addBySku,
+    products,
+    variants,
     loading,
     error,
     reloadCatalog,
@@ -61,20 +64,29 @@ export function PosPage() {
     void reloadCatalog();
   }, [reloadCatalog]);
 
-  // Scan → add to cart. No-op UI is needed on success (the cart updates);
-  // a miss shows a transient toast plus a pulse on the scan/search box.
+  // Scan → add to cart. When scanning a shared parent barcode of a variant/model
+  // product (e.g. BR101), open the visual Model/Variant Picker instead of
+  // auto-picking or rejecting the scan.
   const onScan = (code: string) => {
     const added = addBySku(code);
-    if (!added) {
-      toast.error(t("pos.codeUnavailable"));
-      // small non-blocking visual cue: pulse the scan/search box via a class
-      const input = document.querySelector<HTMLInputElement>(
-        'input[data-testid="pos-scan-search"]',
+    if (added) return;
+    const variantProduct = resolveScannedVariantProduct(code, products, variants);
+    if (variantProduct) {
+      window.dispatchEvent(
+        new CustomEvent("alyq:pos-open-variant-picker", {
+          detail: { productId: variantProduct.id },
+        }),
       );
-      if (input) {
-        input.classList.add("animate-pulse");
-        window.setTimeout(() => input.classList.remove("animate-pulse"), 600);
-      }
+      return;
+    }
+    toast.error(t("pos.codeUnavailable"));
+    // small non-blocking visual cue: pulse the scan/search box via a class
+    const input = document.querySelector<HTMLInputElement>(
+      'input[data-testid="pos-scan-search"]',
+    );
+    if (input) {
+      input.classList.add("animate-pulse");
+      window.setTimeout(() => input.classList.remove("animate-pulse"), 600);
     }
   };
   useBarcodeScanner(onScan);
@@ -302,7 +314,7 @@ function MobileCartSheet() {
 
   if (isEmpty) {
     return (
-      <div className="sticky bottom-0 z-30 -mx-3 mt-3 border-t border-stone-200 bg-white/95 px-3 py-2.5 backdrop-blur lg:hidden">
+      <div className="sticky bottom-16 z-30 -mx-3 mt-3 border-t border-stone-200 bg-white/95 px-3 py-2.5 backdrop-blur lg:hidden">
         <CustomerSearchSelect
           selectedCustomerId={selectedCustomer?.id ?? null}
           onSelect={(customer) => setSelectedCustomer(customer)}
@@ -313,7 +325,7 @@ function MobileCartSheet() {
 
   return (
     <>
-      <div className="sticky bottom-0 z-30 -mx-3 mt-3 border-t border-stone-200 bg-white/95 px-3 py-2.5 backdrop-blur sm:-mx-4 sm:px-4 lg:hidden">
+      <div className="sticky bottom-16 z-30 -mx-3 mt-3 border-t border-stone-200 bg-white/95 px-3 py-2.5 backdrop-blur sm:-mx-4 sm:px-4 lg:hidden">
         <button
           type="button"
           onClick={() => setOpen(true)}
@@ -337,7 +349,7 @@ function MobileCartSheet() {
             role="dialog"
             aria-label={t("pos.cart")}
             data-testid="pos-mobile-cart-drawer"
-            className="pos-grip-scrollbar absolute inset-x-0 bottom-0 flex max-h-[88vh] flex-col gap-3 overflow-y-auto rounded-t-3xl bg-[#f7f5f2] p-3 pb-6 shadow-2xl"
+            className="pos-grip-scrollbar absolute inset-x-0 bottom-0 flex max-h-[88vh] flex-col gap-3 overflow-y-auto rounded-t-3xl bg-[#f7f5f2] p-3 pb-20 shadow-2xl"
           >
             <div className="mx-auto h-1.5 w-12 rounded-full bg-stone-300" aria-hidden />
             <div className="flex items-center justify-between px-1">

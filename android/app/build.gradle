@@ -7,8 +7,19 @@ android {
         applicationId "eg.alyq.management"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode project.hasProperty("prodV21") ? 3 : 2
+        versionName project.hasProperty("prodV21") ? "2.1.0" : "2.0.0"
+        manifestPlaceholders = [
+            appLabel: project.hasProperty("stagingBuild")
+                ? "ALYQ POS Staging"
+                : (project.hasProperty("coexistBuild") ? "ALYQ POS v2.1" : "@string/app_name")
+        ]
+        if (project.hasProperty("stagingBuild")) {
+            applicationIdSuffix ".staging"
+            versionNameSuffix "-models-staging"
+        } else if (project.hasProperty("coexistBuild")) {
+            applicationIdSuffix ".v21"
+        }
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -16,10 +27,27 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        release {
+            def keystorePath = System.getenv("ALYQ_KEYSTORE_PATH")
+            def keystorePassword = System.getenv("ALYQ_KEYSTORE_PASSWORD")
+            def keyAliasValue = System.getenv("ALYQ_KEY_ALIAS")
+            def keyPasswordValue = System.getenv("ALYQ_KEY_PASSWORD")
+            if (keystorePath && file(keystorePath).exists() && keystorePassword && keyAliasValue && keyPasswordValue) {
+                storeFile file(keystorePath)
+                storePassword keystorePassword
+                keyAlias keyAliasValue
+                keyPassword keyPasswordValue
+            }
+        }
+    }
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            if (signingConfigs.release.storeFile != null) {
+                signingConfig signingConfigs.release
+            }
         }
     }
 }

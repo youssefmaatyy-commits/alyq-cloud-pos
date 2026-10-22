@@ -1,7 +1,10 @@
 import { Link } from "react-router-dom";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useI18n } from "@/lib/i18n/I18nProvider";
+import { useBranch } from "@/lib/branch";
 import { PageHeader } from "@/components/layout/AppShell";
+import { MobileCard, MobileState } from "@/modules/mobile/components/MobilePrimitives";
+import "@/modules/mobile/mobile.css";
 import {
   Badge,
   BoxIcon,
@@ -94,19 +97,20 @@ import type { ProfitabilitySummaryParts } from "@/modules/reports/services/repor
  */
 export function DashboardPage() {
   const { t, money, num, date, pick, lang } = useI18n();
+  const branch = useBranch();
   const { mode, categories } = useCatalog();
   const brand = useBrand();
   const { sales, salesLoading } = usePos();
-  const { products, loading: inventoryLoading, variantsByProduct } = useInventory();
+  const { products, loading: inventoryLoading, variantsByProduct, refresh: refreshInventory } = useInventory();
   const { customers, loading: customersLoading } = useCustomers();
   const { returnsList, refundsList, loading: returnsLoading } = useReturns();
   const { expenses } = useExpenses();
   const { openShift, currentSummary } = useShifts();
   // Both queues are already scoped to the signed-in user by their providers:
   // approvals returns what this person may decide, online orders only counts
-  // when `canManage` is true. The tiles below add no authority of their own.
+  // when `canManage` is true. The tiles below add no authority of its own.
   const approvals = useOptionalApprovals();
-  const { orders: onlineOrders, counts: onlineCounts, canManage: canManageOnline } = useOnlineOrders();
+  const { orders: onlineOrders, counts: onlineCounts, canManage: canManageOnline, refresh: refreshOnlineOrders } = useOnlineOrders();
   const maySeePerformance = mayViewReports();
   const maySeeCost = can("products.view_cost");
   const canSeeWebsite = canManageOnline || canActWebsite();
@@ -214,26 +218,55 @@ export function DashboardPage() {
   const todayRange = useMemo(() => toExportRange(presetRange("today")), []);
   const [dbToday, setDbToday] = useState<FinancialTotals | null>(null);
   const [dbTodayProfitability, setDbTodayProfitability] = useState<ProfitabilitySummaryParts | null>(null);
+  const [todayFinancialError, setTodayFinancialError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const loadTodayAggregates = useCallback(async () => {
+    if (!maySeePerformance) return;
+    const [financial, profitability] = await Promise.all([
+      fetchFinancialSummary(todayRange),
+      fetchProfitabilitySummary(todayRange),
+    ]);
+    if (financial.ok) {
+      setDbToday(financial.value);
+      setTodayFinancialError(null);
+    } else {
+      setDbToday(null);
+      if (mode === "supabase") setTodayFinancialError(financial.reason);
+    }
+    setDbTodayProfitability(profitability.ok ? profitability.value : null);
+  }, [maySeePerformance, mode, todayRange]);
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const [financial, profitability] = await Promise.all([
-        fetchFinancialSummary(todayRange),
-        fetchProfitabilitySummary(todayRange),
-      ]);
       if (cancelled) return;
-      setDbToday(financial.ok ? financial.value : null);
-      setDbTodayProfitability(profitability.ok ? profitability.value : null);
+      await loadTodayAggregates();
     })();
     return () => {
       cancelled = true;
     };
-  }, [sales, todayRange]);
+  }, [sales, branch.current?.id, loadTodayAggregates]);
+
+  const refreshDashboard = async () => {
+    setRefreshing(true);
+    try {
+      await Promise.all([
+        loadTodayAggregates(),
+        refreshInventory(),
+        refreshOnlineOrders(),
+        approvals ? approvals.refresh() : Promise.resolve(),
+      ]);
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   const todayRevenue = dbToday?.revenue ?? snapshot.sales.todayRevenue;
   const todayInvoices = dbToday?.invoiceCount ?? snapshot.sales.todayCount;
   const todayAov = todayInvoices > 0 ? todayRevenue / todayInvoices : 0;
   const todayRefunded = dbToday?.refundsPaid ?? snapshot.returns.todayTotal;
+  const todayReturnsCount = dbToday?.returnsCount ?? snapshot.returns.todayCount;
   const todayDiscounts = dbTodayProfitability
     ? dbTodayProfitability.automaticDiscounts +
       dbTodayProfitability.manualItemDiscounts +
@@ -242,13 +275,40 @@ export function DashboardPage() {
     : null;
   const todayNetSales = dbTodayProfitability
     ? dbTodayProfitability.netSales - dbTodayProfitability.refundsAmount
-    : null;
+    : todayRevenue - todayRefunded;
   // Cost is shown only if every sold unit has its immutable cost snapshot. A
   // partial COGS number is not a "rough profit" — it is an understatement.
   const todayGrossProfit =
     dbTodayProfitability && dbTodayProfitability.cogsUnknownUnits === 0
-      ? todayNetSales! - dbTodayProfitability.cogs
+      ? todayNetSales - dbTodayProfitability.cogs
       : null;
+
+  const todayPaymentSplit = useMemo(() => {
+    if (dbToday) {
+      return {
+        cash: dbToday.cash,
+        card: dbToday.card,
+        instapay: dbToday.instapay,
+      };
+    }
+    const startOfToday = new Date(new Date().toDateString());
+    let cash = 0;
+    let card = 0;
+    let instapay = 0;
+    for (const sale of sales) {
+      if (sale.status === "voided" || new Date(sale.created_at) < startOfToday) continue;
+      if (sale.payments && sale.payments.length > 0) {
+        for (const p of sale.payments) {
+          if (p.method === "cash") cash += p.amount;
+          else if (p.method === "visa") card += p.amount;
+          else if (p.method === "instapay") instapay += p.amount;
+        }
+      } else if (sale.payment_method === "cash") cash += sale.total;
+      else if (sale.payment_method === "visa") card += sale.total;
+      else if (sale.payment_method === "instapay") instapay += sale.total;
+    }
+    return { cash, card, instapay };
+  }, [dbToday, sales]);
 
   const trend = useMemo(() => salesTrendSeries({ sales }), [sales]);
   const revenueVsExpenses = useMemo(
@@ -288,9 +348,31 @@ export function DashboardPage() {
             : t("app.phase")
         }
         actions={
-          <Badge tone={mode === "supabase" ? "success" : "warning"}>
-            {mode === "supabase" ? t("mode.live") : t("mode.demo")}
-          </Badge>
+          <div className="flex flex-wrap items-center gap-2">
+            {branch.current ? (
+              <span className="rounded-xl border border-stone-200 bg-white px-2.5 py-1 text-xs font-bold text-stone-700">
+                {branch.current.code} · {lang === "ar" ? branch.current.name_ar : branch.current.name_en}
+              </span>
+            ) : null}
+            <button
+              type="button"
+              className="mobile-action"
+              disabled={refreshing}
+              onClick={() => void refreshDashboard()}
+              data-testid="dash-refresh-button"
+            >
+              {refreshing
+                ? lang === "ar"
+                  ? "جارٍ التحديث…"
+                  : "Refreshing…"
+                : lang === "ar"
+                  ? "تحديث"
+                  : "Refresh"}
+            </button>
+            <Badge tone={mode === "supabase" ? "success" : "warning"}>
+              {mode === "supabase" ? t("mode.live") : t("mode.demo")}
+            </Badge>
+          </div>
         }
       />
 
@@ -391,6 +473,110 @@ export function DashboardPage() {
             testId="kpi-open-shift"
           />
         ) : null}
+      </div>
+
+      {/* ── Mobile Management Overview Parity: Authoritative Today Financials, Payment Distribution & Operational Queue ── */}
+      <div className="mt-3 space-y-3" data-testid="dash-mobile-parity">
+        {maySeePerformance && todayFinancialError ? (
+          <MobileState
+            kind="error"
+            title={lang === "ar" ? "تعذر تحميل إجماليات لوحة التحكم" : "Dashboard totals unavailable"}
+            detail={todayFinancialError}
+            retry={() => void loadTodayAggregates()}
+          />
+        ) : null}
+
+        {maySeePerformance && mayOpenSales ? (
+          <div className="grid gap-3 lg:grid-cols-[2fr_1fr]">
+            <div className="mobile-kpi-grid" aria-label={lang === "ar" ? "المؤشرات المالية المعتمدة لليوم" : "Authoritative financial KPIs"}>
+              <MobileCard>
+                <span>{lang === "ar" ? "مبيعات اليوم" : "Today sales"}</span>
+                <strong>{money(todayRevenue)}</strong>
+              </MobileCard>
+              <MobileCard>
+                <span>{lang === "ar" ? "صافي المبيعات" : "Net sales"}</span>
+                <strong>{money(todayNetSales)}</strong>
+              </MobileCard>
+              <MobileCard>
+                <span>{lang === "ar" ? "الفواتير" : "Invoices"}</span>
+                <strong>{num(todayInvoices, 0)}</strong>
+              </MobileCard>
+              <MobileCard>
+                <span>{lang === "ar" ? "متوسط الطلب" : "Average order"}</span>
+                <strong>{money(todayAov)}</strong>
+              </MobileCard>
+              <MobileCard>
+                <span>{lang === "ar" ? "المبالغ المستردة" : "Refunds paid"}</span>
+                <strong>{money(todayRefunded)}</strong>
+              </MobileCard>
+              <MobileCard>
+                <span>{lang === "ar" ? "المرتجعات" : "Returns"}</span>
+                <strong>{num(todayReturnsCount, 0)}</strong>
+              </MobileCard>
+            </div>
+
+            <MobileCard className="mobile-payment-card !mt-0 flex flex-col justify-between">
+              <h2>{lang === "ar" ? "توزيع المدفوعات اليوم" : "Payment distribution"}</h2>
+              <dl>
+                <div>
+                  <dt>{lang === "ar" ? "نقدي (Cash)" : "Cash"}</dt>
+                  <dd>{money(todayPaymentSplit.cash)}</dd>
+                </div>
+                <div>
+                  <dt>{lang === "ar" ? "بطاقة (Card)" : "Card"}</dt>
+                  <dd>{money(todayPaymentSplit.card)}</dd>
+                </div>
+                <div>
+                  <dt>{lang === "ar" ? "إنستاباي (InstaPay)" : "InstaPay"}</dt>
+                  <dd>{money(todayPaymentSplit.instapay)}</dd>
+                </div>
+              </dl>
+              {todayDiscounts !== null || (maySeeCost && todayGrossProfit !== null) ? (
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-2 text-xs text-slate-600">
+                  {todayDiscounts !== null ? (
+                    <span>
+                      {lang === "ar" ? "خصومات اليوم:" : "Discounts today:"}{" "}
+                      <strong className="text-slate-900">{money(todayDiscounts)}</strong>
+                    </span>
+                  ) : null}
+                  {maySeeCost && todayGrossProfit !== null ? (
+                    <span>
+                      {lang === "ar" ? "مجمل الربح:" : "Gross profit:"}{" "}
+                      <strong className="text-emerald-700">{money(todayGrossProfit)}</strong>
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
+            </MobileCard>
+          </div>
+        ) : null}
+
+        <div className="mobile-summary-grid">
+          {mayOpenOrders ? (
+            <Link to="/dashboard/online/orders?status=pending" className="mobile-summary-link">
+              <strong>{onlineCounts.pending}</strong>
+              <span>{lang === "ar" ? "طلبات بانتظار المراجعة" : "Orders awaiting review"}</span>
+            </Link>
+          ) : null}
+          {mayOpenInventory ? (
+            <Link to="/dashboard/inventory/stock?status=low" className="mobile-summary-link">
+              <strong>{inventoryAlerts.lowCount}</strong>
+              <span>{lang === "ar" ? "نواقص المخزون" : "Low stock variants"}</span>
+            </Link>
+          ) : null}
+          {mayOpenInventory ? (
+            <Link to="/dashboard/inventory/stock?status=out" className="mobile-summary-link">
+              <strong>{inventoryAlerts.outCount}</strong>
+              <span>{lang === "ar" ? "نفد من المخزون" : "Out of stock"}</span>
+            </Link>
+          ) : null}
+          {can("approvals.approve") ? (
+            <Link to="/dashboard/approvals" className="mobile-summary-link" data-testid="kpi-pending-approvals">
+              <strong>{approvals?.summary.pending ?? 0}</strong>
+              <span>{lang === "ar" ? "موافقات معلقة" : "Pending approvals"}</span>
+            </Link>
+          ) : null}
+        </div>
       </div>
 
       {/* ── Business KPIs ──────────────────────────────────────────────────── */}

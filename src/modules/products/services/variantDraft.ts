@@ -1,10 +1,18 @@
 import {
-  colorKeyOf, generateCombinations, naturalSizeCompare, suggestVariantSku, variantSizeValue,
-  type ProductColorImage, type ProductVariant, type VariantColorDraft,
+  colorKeyOf,
+  isFreeSizeModel,
+  modelKeyOf,
+  naturalSizeCompare,
+  suggestModelSku,
+  suggestVariantSku,
+  variantGalleryProblem,
+  variantSizeValue,
+  type ProductColorImage,
+  type ProductVariant,
 } from "../variants";
-import { deriveBarcodeFromSku } from "./barcode";
+import { deriveBarcodeFromSku, nextBarcodeOnSkuChange } from "./barcode";
 
-export type ProductVariantMode = "none" | "colors" | "sizes" | "colors_sizes";
+export type ProductVariantMode = "none" | "colors" | "sizes" | "colors_sizes" | "models";
 export interface VariantColorRow {
   /** Stable UI identity. For saved colours this is the original color_key. */
   id: string;
@@ -30,6 +38,11 @@ export interface ProductVariantDraft {
   /** Legacy display compatibility. */
   size_label: string;
   size_sort_order: number;
+  /** Model / shape name (for mode === "models"). */
+  display_name_ar?: string;
+  display_name_en?: string;
+  /** Ordered model gallery (max 5 https URLs). */
+  images?: string[];
   sku: string;
   barcode: string;
   stock_quantity: string;
@@ -53,6 +66,40 @@ export const EMPTY_PRODUCT_VARIANT_FORM: ProductVariantFormValue = {
 
 export const usesColors = (mode: ProductVariantMode) => mode === "colors" || mode === "colors_sizes";
 export const usesSizes = (mode: ProductVariantMode) => mode === "sizes" || mode === "colors_sizes";
+export const usesModels = (mode: ProductVariantMode) => mode === "models";
+
+export function createModelDraftRow(
+  productSku: string,
+  modelNumber: number,
+  takenSkus: readonly string[] = [],
+): ProductVariantDraft {
+  const num = Math.max(1, Math.trunc(modelNumber) || 1);
+  const sku = suggestModelSku(productSku, num, takenSkus);
+  return {
+    id: `draft:model:${num}:${Math.random().toString(36).slice(2, 7)}`,
+    persistedId: null,
+    color_id: "",
+    color_key: "",
+    color_ar: "",
+    color_en: "",
+    color_hex: "",
+    size: "",
+    size_label: "",
+    size_sort_order: num - 1,
+    display_name_ar: `شكل ${num}`,
+    display_name_en: `Model ${num}`,
+    images: [],
+    sku,
+    // Models share the parent product's barcode by default (`barcode = ""` -> `null` in DB).
+    barcode: "",
+    stock_quantity: "0",
+    low_stock_level: "0",
+    price_override: "",
+    cost_override: "",
+    image_url: "",
+    active: true,
+  };
+}
 
 /** A color row is considered valid when at least one non-empty name exists in Arabic or English. */
 export function hasValidColorName(color: {
@@ -110,6 +157,25 @@ const rowKey = (row: ProductVariantDraft) => pairKey(row.color_id, row.size);
 /** New combinations are generated as the employee edits chips/rows — no second "generate" step. */
 export function reconcileVariantDraft(value: ProductVariantFormValue, productSku: string): ProductVariantFormValue {
   if (value.mode === "none") return value; // a mode change never silently erases work
+  if (value.mode === "models") {
+    const modelRows = value.rows.filter(
+      (row) => row.persistedId || row.id.startsWith("draft:model:") || (!row.color_id && !row.size),
+    );
+    const taken: string[] = [];
+    const normalizedRows = modelRows.map((row, index) => {
+      let nextSku = row.sku.trim();
+      if (!row.persistedId && (!nextSku || /^MOD-M\d+$/i.test(nextSku)) && productSku.trim()) {
+        nextSku = suggestModelSku(productSku, index + 1, taken);
+      }
+      if (nextSku) taken.push(nextSku);
+      return {
+        ...row,
+        sku: nextSku,
+        size_sort_order: index,
+      };
+    });
+    return { ...value, rows: normalizedRows };
+  }
   const colors = usesColors(value.mode)
     ? value.colors.filter((row) => hasValidColorName(row))
     : [];
@@ -122,56 +188,178 @@ export function reconcileVariantDraft(value: ProductVariantFormValue, productSku
   }
 
   const byPair = new Map(value.rows.map((row) => [rowKey(row), row]));
-  const taken = value.rows.map((row) => row.sku);
+  // Track SKUs already owned by persisted rows (plus the parent product SKU) first;
+  // unsaved draft rows recompute their SKU live while the colour/size name is typed.
+  const taken = [
+    ...(productSku.trim() ? [productSku.trim()] : []),
+    ...value.rows.filter((row) => row.persistedId && row.sku.trim()).map((row) => row.sku.trim()),
+  ];
 
-  // Cartesian generation: Colors × Sizes
-  const combinations = generateCombinations(
-    colors.map((row): VariantColorDraft => ({
-      color_ar: row.color_ar?.trim() || null,
-      color_en: row.color_en?.trim() || null,
-      color_hex: row.color_hex?.trim() || null,
-    })),
-    sizes,
-  );
+  // Build combinations directly from the explicit colour rows × ordered sizes so
+  // each combination retains its exact `color.id` without ambiguous reverse lookup.
+  const slotList: Array<{
+    color: VariantColorRow | null;
+    sizeValue: string | null;
+    sizeSortOrder: number;
+  }> = [];
 
-  const rows = combinations.map((combination) => {
-    // Match the exact color row from value.colors
-    const color = combination.color
-      ? colors.find((row) => {
-          if (row.id && combination.color_key && row.id === combination.color_key) return true;
-          const rowKey = colorKeyOf(row);
-          if (rowKey && combination.color_key && rowKey === combination.color_key) return true;
-          if (row.color_en?.trim() && combination.color?.color_en?.trim() &&
-              row.color_en.trim().toLowerCase() === combination.color.color_en.trim().toLowerCase()) return true;
-          if (row.color_ar?.trim() && combination.color?.color_ar?.trim() &&
-              row.color_ar.trim().toLowerCase() === combination.color.color_ar.trim().toLowerCase()) return true;
-          return false;
-        }) ?? null
-      : null;
+  if (colors.length === 0) {
+    sizes.forEach((size, index) => {
+      slotList.push({ color: null, sizeValue: size, sizeSortOrder: index });
+    });
+  } else {
+    for (const color of colors) {
+      if (sizes.length === 0) {
+        slotList.push({ color, sizeValue: null, sizeSortOrder: 0 });
+      } else {
+        sizes.forEach((size, index) => {
+          slotList.push({ color, sizeValue: size, sizeSortOrder: index });
+        });
+      }
+    }
+  }
+
+  const parseNumericSize = (raw: string | null): number | null => {
+    if (!raw || !/^[0-9]+(?:\.[0-9]{1,2})?$/.test(raw)) return null;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed > 0 && parsed < 1_000_000 ? parsed : null;
+  };
+
+  const resolveColorKey = (color: VariantColorRow | null): string => {
+    if (!color) return "";
+    const colorId = color.id ?? "";
+    const derived = colorKeyOf(color);
+    if (colorId && !colorId.startsWith("color:")) {
+      // If a legacy saved row has a 1-character truncated color_key (e.g. "r" for "ROSE")
+      // and another colour in the draft needs that 1-char key or the colour was edited,
+      // heal to the full derived key when non-colliding.
+      if (
+        colorId.length === 1 &&
+        derived.length > 1 &&
+        derived.startsWith(colorId) &&
+        colors.some((other) => other.id !== color.id && colorKeyOf(other).startsWith(colorId))
+      ) {
+        return derived;
+      }
+      return colorId;
+    }
+    return derived;
+  };
+
+  const claimedRowIds = new Set<string>();
+
+  const rows = slotList.map(({ color, sizeValue, sizeSortOrder }) => {
     const colorId = color?.id ?? "";
-    const previous = byPair.get(pairKey(colorId, combination.size_value));
-    if (previous) {
+    const numericSize = parseNumericSize(sizeValue);
+    const resolvedKey = resolveColorKey(color);
+    let previous = byPair.get(pairKey(colorId, sizeValue));
+
+    // When switching a colour-only product (e.g. BR104 with ROSE having size="")
+    // to colour+size mode, adopt the unclaimed sizeless row for the first size of
+    // that colour so the existing variant is updated in place rather than orphaned.
+    if (!previous && colorId && sizeValue) {
+      const sizeless = byPair.get(pairKey(colorId, ""));
+      if (sizeless && !claimedRowIds.has(sizeless.id)) {
+        previous = sizeless;
+      }
+    }
+
+    if (previous && !claimedRowIds.has(previous.id)) {
+      claimedRowIds.add(previous.id);
+      const nextColorAr = color?.color_ar?.trim() ?? "";
+      const nextColorEn = color?.color_en?.trim() ?? "";
+      const nextColorHex = color?.color_hex?.trim() ?? "";
+
+      if (previous.persistedId) {
+        return {
+          ...previous,
+          color_key: resolvedKey || previous.color_key,
+          color_ar: nextColorAr,
+          color_en: nextColorEn,
+          color_hex: nextColorHex,
+          size: sizeValue ?? "",
+          size_label: sizeValue ?? "",
+          size_sort_order: sizeSortOrder,
+        };
+      }
+
+      // Unsaved draft row: if the colour name or size changed while the SKU was
+      // still auto-suggested (not manually overridden), update SKU & barcode live
+      // so typing "R" -> "RO" -> "ROSE" never freezes at "BR104-R" / color_key "r".
+      const colorOrSizeChanged =
+        previous.color_en !== nextColorEn ||
+        previous.color_ar !== nextColorAr ||
+        previous.size !== (sizeValue ?? "");
+
+      let nextSku = previous.sku;
+      let nextBarcode = previous.barcode;
+      if (colorOrSizeChanged) {
+        const prevNumeric = parseNumericSize(previous.size || null);
+        const prevAutoStem = suggestVariantSku(
+          productSku,
+          previous.color_ar || previous.color_en
+            ? { color_ar: previous.color_ar || null, color_en: previous.color_en || null }
+            : null,
+          prevNumeric,
+          previous.size || null,
+          [],
+        );
+        const skuWasAuto =
+          !previous.sku.trim() ||
+          previous.sku === prevAutoStem ||
+          new RegExp(`^${prevAutoStem.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-\\d+$`).test(previous.sku);
+
+        if (skuWasAuto) {
+          nextSku = suggestVariantSku(
+            productSku,
+            color ? { color_ar: nextColorAr || null, color_en: nextColorEn || null } : null,
+            numericSize,
+            sizeValue,
+            taken,
+          );
+          nextBarcode = nextBarcodeOnSkuChange(previous.sku, nextSku, previous.barcode);
+        }
+      }
+      if (nextSku.trim()) taken.push(nextSku.trim());
+
       return {
         ...previous,
-        color_ar: color?.color_ar?.trim() ?? "",
-        color_en: color?.color_en?.trim() ?? "",
-        color_hex: color?.color_hex?.trim() ?? "",
-        size_sort_order: combination.size_sort_order,
+        color_key: resolvedKey,
+        color_ar: nextColorAr,
+        color_en: nextColorEn,
+        color_hex: nextColorHex,
+        size: sizeValue ?? "",
+        size_label: sizeValue ?? "",
+        size_sort_order: sizeSortOrder,
+        sku: nextSku,
+        barcode: nextBarcode,
       };
     }
-    const sku = suggestVariantSku(productSku, combination.color, combination.size, combination.size_label, taken);
+
+    const sku = suggestVariantSku(
+      productSku,
+      color
+        ? {
+            color_ar: color.color_ar?.trim() || null,
+            color_en: color.color_en?.trim() || null,
+          }
+        : null,
+      numericSize,
+      sizeValue,
+      taken,
+    );
     taken.push(sku);
     return {
-      id: `draft:${colorId}:${combination.size_value ?? ""}`,
+      id: `draft:${colorId}:${sizeValue ?? ""}`,
       persistedId: null,
       color_id: colorId,
-      color_key: colorId && !colorId.startsWith("color:") ? colorId : (color ? colorKeyOf(color) : ""),
+      color_key: resolvedKey,
       color_ar: color?.color_ar?.trim() ?? "",
       color_en: color?.color_en?.trim() ?? "",
       color_hex: color?.color_hex?.trim() ?? "",
-      size: combination.size_value ?? "",
-      size_label: combination.size_value ?? "",
-      size_sort_order: combination.size_sort_order,
+      size: sizeValue ?? "",
+      size_label: sizeValue ?? "",
+      size_sort_order: sizeSortOrder,
       sku,
       barcode: deriveBarcodeFromSku(sku),
       stock_quantity: "0",
@@ -184,7 +372,7 @@ export function reconcileVariantDraft(value: ProductVariantFormValue, productSku
   });
 
   // Retain any existing persisted combinations not in the generated set
-  rows.push(...value.rows.filter((row) => row.persistedId && !rows.some((next) => next.id === row.id)));
+  rows.push(...value.rows.filter((row) => row.persistedId && !claimedRowIds.has(row.id) && !rows.some((next) => next.id === row.id)));
   return { ...value, rows };
 }
 
@@ -198,7 +386,14 @@ export function variantDraftFromSaved(
   const available = active.length ? active : variants;
   const hasColors = available.some((row) => Boolean(row.color_key));
   const hasSizes = available.some((row) => Boolean(variantSizeValue(row)));
-  const mode: ProductVariantMode = hasColors && hasSizes ? "colors_sizes" : hasColors ? "colors" : "sizes";
+  const hasModels = !hasColors && !hasSizes && available.some((row) => isFreeSizeModel(row));
+  const mode: ProductVariantMode = hasModels
+    ? "models"
+    : hasColors && hasSizes
+      ? "colors_sizes"
+      : hasColors
+        ? "colors"
+        : "sizes";
   const colors: VariantColorRow[] = [];
   const sizes: string[] = [];
   for (const row of available) {
@@ -225,6 +420,9 @@ export function variantDraftFromSaved(
       color_ar: row.color_ar ?? "", color_en: row.color_en ?? "", color_hex: row.color_hex ?? "",
       size: variantSizeValue(row), size_label: variantSizeValue(row),
       size_sort_order: row.size_sort_order ?? row.sort_order,
+      display_name_ar: row.display_name_ar ?? "",
+      display_name_en: row.display_name_en ?? "",
+      images: row.images ?? [],
       sku: row.sku, barcode: row.barcode ?? "", stock_quantity: String(row.stock_quantity),
       low_stock_level: String(row.low_stock_level),
       price_override: row.price_override === null ? "" : String(row.price_override),
@@ -242,6 +440,19 @@ export function variantDraftTotal(rows: readonly ProductVariantDraft[]): number 
 /** Refuse bad drafts *before* creating a product (a partly written product is not a form error). */
 export function validateVariantDraft(value: ProductVariantFormValue, productSku: string, productBarcode = ""): string | null {
   if (value.mode === "none") return null;
+
+  if (usesModels(value.mode)) {
+    if (value.rows.length === 0) return "modelsRequired";
+    const seenModelKeys = new Set<string>();
+    for (const row of value.rows) {
+      const key = modelKeyOf(row);
+      if (!key) return "modelNameRequired";
+      if (seenModelKeys.has(key)) return "duplicateModelName";
+      seenModelKeys.add(key);
+      if (row.price_override.trim()) return "invalidPrice";
+      if (variantGalleryProblem(row.images ?? [])) return "invalidGallery";
+    }
+  }
 
   if (usesColors(value.mode)) {
     if (!value.colors.length || value.colors.some((c) => !hasValidColorName(c))) {
@@ -268,14 +479,16 @@ export function validateVariantDraft(value: ProductVariantFormValue, productSku:
 
   if (value.rows.length === 0) return "nothingToGenerate";
   const codes = new Set([productSku.trim().toUpperCase()]);
-  const barcodes = new Set(productBarcode.trim() ? [productBarcode.trim().toUpperCase()] : []);
+  const parentBarcode = productBarcode.trim().toUpperCase();
+  const barcodes = new Set(parentBarcode ? [parentBarcode] : []);
   for (const row of value.rows) {
     const sku = row.sku.trim().toUpperCase();
     if (!sku || codes.has(sku) || sku.length > 40) return "duplicateSku";
     codes.add(sku);
     const barcode = row.barcode.trim().toUpperCase();
-    if (barcode && (barcodes.has(barcode) || barcode.length > 80)) return "duplicateBarcode";
-    if (barcode) barcodes.add(barcode);
+    const sharesParentBarcode = usesModels(value.mode) && (!barcode || barcode === parentBarcode);
+    if (!sharesParentBarcode && barcode && (barcodes.has(barcode) || barcode.length > 80)) return "duplicateBarcode";
+    if (!sharesParentBarcode && barcode) barcodes.add(barcode);
     if (!/^(0|[1-9]\d*)$/.test(row.stock_quantity) ||
         !/^(0|[1-9]\d*)$/.test(row.low_stock_level)) return "invalidQuantity";
     if (!row.active && Number(row.stock_quantity) > 0 && !row.persistedId) return "inactiveStock";

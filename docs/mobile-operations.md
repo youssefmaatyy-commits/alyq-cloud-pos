@@ -1,12 +1,19 @@
-# ALYQ Mobile operations
+# ALYQ POS Mobile operations
 
 ## Sign-in and branch context
 
 Use an existing ALYQ staff account. The app shows only memberships returned by `get_my_branches`; switching calls the authoritative audited branch RPC, refreshes identity/permissions and remounts branch-sensitive providers. Never use a link or copied branch ID as evidence of access.
 
-The phone is a management installation, not a desktop register. Opening ALYQ Mobile does not create a shift and cannot perform an offline cash sale.
+Launching the **ALYQ POS** Android app (`eg.alyq.management`, `v2.0.0`) opens the full POS system (`#/dashboard`), with a 5-tab mobile bottom navigation bar and **All POS Modules** drawer (`24` modules), plus 1-tap switching to the lightweight **Mobile Management** view (`#/mobile`).
 
-## Management workflows
+## Full POS & Cashier workflows on Android (`#/dashboard/*`)
+
+- **POS Register (`#/dashboard/pos`):** full touch-first cashier with product/variant search, USB/Bluetooth HID scanner support, **Scan Barcode with Camera** modal (`BarcodeDetector` + Code 128 / EAN-13 / UPC-A 1D scanline decoder), sticky mobile cart summary bar, and full-screen Cart & Checkout Drawer.
+- **Offline POS & Sync (`#/dashboard/sync`):** offline cash sales deduct from the cached catalog (`alyq.pos.offline_catalog.v1`), persist in the offline outbox (`alyq.pos.offline_outbox.v1`), and replay idempotently via `client_ref` when connectivity returns (`@capacitor/network` + browser online listeners). Stock shortages (`VARIANT_STOCK_INSUFFICIENT`) are preserved as explicit conflicts in the Sync Center without silent drops.
+- **Android Receipt Printing:** completed sales and return receipts use the native `window.ALYQAndroidPrint` `PrintManager` bridge (`MainActivity.java`) to open the Android system print spooler (Save as PDF, Wi-Fi/IPP Mopria printers, or installed vendor Print Service plugins). Direct Bluetooth Classic (`SPP`) / BLE raw ESC/POS byte streaming requires an optional native plugin.
+- **All POS Modules (`24` services):** Sales, Products, Barcodes, Inventory & Exact Variant Shelves, Stock Movements, Stock Counts, Transfers, Purchase Orders, Suppliers, Online Orders, Shipping, Returns, Customers, Shifts, Expenses, Reports, Approvals, Sync, Audit Log, Users/Roles, Diagnostics, and Settings.
+
+## Quick Mobile Management workflows (`#/mobile/*`)
 
 - **Home:** report-aggregate financial KPIs, order queue, exact branch stock alerts and approval count.
 - **Orders:** bounded server queue and existing legal transitions. Cancellation/payment rejection requires a reason.
@@ -15,8 +22,7 @@ The phone is a management installation, not a desktop register. Opening ALYQ Mob
 - **Approvals:** operation-bound existing requests. Approval/rejection retains expiry, branch, fingerprint/correlation, single-use and audit enforcement.
 - **Notifications:** stable operational identities deduplicate realtime, refresh and push intent.
 - **Health:** existing backend/auth/realtime/schema/branch health plus mobile version, network and notification registration.
-
-All sensitive writes require the authoritative backend online. If disconnected, reconnect and refresh; do not repeat an action whose result is uncertain until its detail is re-read.
+- **Full POS Bridge (`#/mobile/more`):** 1-tap links back to **POS Register (Cashier)** (`#/dashboard/pos`) and **Full ALYQ POS Workspace** (`#/dashboard`).
 
 ## Notification permission
 

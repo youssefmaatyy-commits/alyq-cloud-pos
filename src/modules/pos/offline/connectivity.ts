@@ -110,6 +110,25 @@ function wireBrowserEvents() {
     lastBackendFailureAt = new Date().toISOString();
     setTransport("offline");
   });
+  const cap = (window as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor;
+  if (cap?.isNativePlatform?.()) {
+    void import("@capacitor/network")
+      .then(({ Network }) =>
+        Network.addListener("networkStatusChange", (state) => {
+          if (state.connected) {
+            browserOnline = true;
+            backend = "unknown";
+            setTransport("online");
+          } else {
+            browserOnline = false;
+            backend = "unavailable";
+            lastBackendFailureAt = new Date().toISOString();
+            setTransport("offline");
+          }
+        }),
+      )
+      .catch(() => undefined);
+  }
 }
 
 /** Legacy transport decision used by the POS completion boundary. */

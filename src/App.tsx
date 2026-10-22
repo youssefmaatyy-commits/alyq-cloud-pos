@@ -69,6 +69,7 @@ import { OperationsCenterPage } from "@/modules/operations/pages/OperationsCente
 import { ImportCenterPage } from "@/modules/import/pages/ImportCenterPage";
 import { StoreManagementHome, SalesHome, CatalogHome, InventoryHome, OnlineHome } from "./components/layout/moduleHomes";
 import { MobileApp } from "@/modules/mobile/MobileApp";
+import { WebNotificationsPage } from "@/modules/notifications";
 
 import {
   DeliveryZonesPage,
@@ -295,6 +296,9 @@ export default function App() {
                 <Route path="/expenses/*" element={<LegacyStaffRedirect />} />
                 <Route path="/approvals" element={<LegacyStaffRedirect />} />
                 <Route path="/approvals/*" element={<LegacyStaffRedirect />} />
+                <Route path="/notifications" element={<LegacyStaffRedirect />} />
+                <Route path="/notifications/*" element={<LegacyStaffRedirect />} />
+                <Route path="/health" element={<LegacyStaffRedirect target="/dashboard/system-health" />} />
                 <Route path="/reports" element={<LegacyStaffRedirect />} />
                 <Route path="/reports/*" element={<LegacyStaffRedirect />} />
                 <Route path="/reports/advanced" element={<LegacyStaffRedirect />} />
@@ -360,6 +364,7 @@ function AuthenticatedApp() {
                             <Route path="products/:id/edit" element={<ProductFormPage mode="edit" />} />
                             {/* Phase 49: the Catalog module landing. */}
                             <Route path="management" element={<StoreManagementHome />} />
+                            <Route path="more" element={<StoreManagementHome />} />
                             <Route path="catalog" element={<CatalogHome />} />
                             <Route path="categories" element={<CategoriesPage />} />
                             {/* Phase 49: /inventory is the module landing; the
@@ -367,6 +372,7 @@ function AuthenticatedApp() {
                                 ?status= pre-filters intact. */}
                             <Route path="inventory" element={<InventoryHome />} />
                             <Route path="inventory/stock" element={<InventoryPage />} />
+                            <Route path="inventory/stock/:id" element={<InventoryPage />} />
                             <Route path="inventory/movements" element={<MovementsPage />} />
                             <Route path="inventory/stocktake" element={<StocktakePage />} />
                             {/* The till is the one screen where a blank page stops trade, so it
@@ -380,6 +386,8 @@ function AuthenticatedApp() {
                             } />
                             <Route path="sync" element={<SyncCenterPage />} />
                             <Route path="system-health" element={<HealthCenterPage />} />
+                            <Route path="health" element={<HealthCenterPage />} />
+                            <Route path="notifications" element={<WebNotificationsPage />} />
                             {/* Phase 49: the Sales module landing — invoices,
                                 returns, refunds, shifts, expenses and the
                                 approvals inbox behind one door. */}
@@ -402,6 +410,7 @@ function AuthenticatedApp() {
                                 carries no capability in `routes.ts`; deciding a
                                 request is asserted in the service. */}
                             <Route path="approvals" element={<ApprovalsPage />} />
+                            <Route path="approvals/:id" element={<ApprovalsPage />} />
                             <Route path="reports" element={<ReportsPage />} />
                             {/* Advanced reports (Phase 14). Same providers, same
                                 date window, same read capability as the hub —
@@ -416,6 +425,7 @@ function AuthenticatedApp() {
                             <Route path="orders" element={<Navigate to="/dashboard/online/orders" replace />} />
                             <Route path="online" element={<OnlineHome />} />
                             <Route path="online/orders" element={<OnlineOrdersPage />} />
+                            <Route path="online/orders/:id" element={<OnlineOrdersPage />} />
                             <Route path="online/reservations" element={<StockHoldsPage />} />
                             <Route path="online/website" element={<WebsiteSettingsPage />} />
                             <Route path="online/marketing" element={<MarketingPage />} />

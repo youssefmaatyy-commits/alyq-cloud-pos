@@ -46,6 +46,7 @@ export interface ReturnItem {
   variant_color_en: string | null;
   variant_size: number | null;
   variant_size_label: string | null;
+  variant_display_name?: string | null;
   name_ar: string;
   name_en: string;
   sku: string;

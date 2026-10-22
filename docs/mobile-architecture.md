@@ -1,17 +1,17 @@
-# ALYQ Mobile architecture
+# ALYQ POS Mobile architecture
 
-Status: Prompt 6 management application  
-Targets: Android and iOS
+Status: Full ALYQ Cloud POS Android/iOS Application + Retained Mobile Management Quick View  
+Targets: Android (`eg.alyq.management`, v2.0.0 / `versionCode 2`) and iOS
 
 ## Decision
 
-ALYQ Mobile uses **Capacitor 8 around a dedicated mobile route in the existing React/Vite application**. It is not another backend and it is not a cashier register. The `#/mobile` shell mounts the same authentication, branch, catalog, inventory, online-order, approval, permissions, realtime and health services used by web/Desktop.
+ALYQ POS Mobile uses **Capacitor 8 around the shared React/TypeScript/Vite application**. When launched inside the native Capacitor container (`Capacitor.isNativePlatform()`), the root entry (`#/`) automatically routes into the full **`#/dashboard` (`AuthenticatedApp`)** workspace rather than the public customer storefront (`#/store`), while preserving `#/mobile` as a fast management quick-view shell.
 
-This approach maximizes reuse while allowing native push notifications, app/deep-link lifecycle events, stable installation identity and store packaging. React Native or another rewrite would duplicate business repositories and permission logic. A PWA manifest is provided as a web convenience; Capacitor is the native release architecture.
-
-## Scope and boundaries
-
-The phone provides Home, Orders, Inventory/Product detail, Notifications, Invoices/Returns status, Approvals, branch switching and Health. It intentionally does not mount `PosProvider`, `RegisterProvider`, cash-sale offline outbox, printer or drawer adapters. A management phone is not a register.
+This unified architecture provides every Web/Desktop ALYQ POS capability on mobile touch screens without duplicating business logic, repositories, or permission models:
+- **Full POS Register & Cashier (`#/dashboard/pos`):** Touch-optimized product browse & search, sticky mobile cart drawer (`MobileCartSheet`), split/cash/InstaPay checkout, camera barcode scanning (`CameraBarcodeScannerModal`), HID keyboard-wedge barcode scanning (`useBarcodeScanner`), and Android native receipt printing (`window.ALYQAndroidPrint`).
+- **Offline-First POS & Outbox Sync (`#/dashboard/sync`):** Durable IndexedDB catalog caching, offline cash sale completion, `@capacitor/network` connectivity transitions, idempotent `client_ref` replay, and stock-conflict protection.
+- **Complete Back-Office & Store Operations:** Products, Variants & Barcodes, Categories, Inventory & Exact Shelves, Physical Stocktake, Stock Movements, Sales & Invoices, Returns & Refunds, Customers, Shifts, Expenses & End-of-Day (EOD), Online Orders & Stock Holds, Storefront & Marketing, Reports & Advanced Analytics, Manager Approvals, Notification Center, System Health, and Role/User/System Settings.
+- **Touch Navigation (`MobilePosBottomNav`):** A fixed 5-tab mobile bottom bar (`Home`, `POS`, `Orders`, `Stock`, `Modules`) with a categorized one-tap bottom sheet (`mobile-pos-modules-sheet`) and bidirectional switching with `#/mobile`.
 
 Financial tiles call the existing report aggregate RPC. Orders use the existing workflow/repository. Inventory receives active-branch shelves from the existing inventory repository. Invoice search calls `transaction_center_search` with server paging. Decisions and transitions use existing authoritative services.
 

@@ -78,6 +78,16 @@ function routeFor(routeKey: string, entityId: string): string | null {
   return null;
 }
 
+export function webRouteFor(routeKey: string, entityId: string): string | null {
+  if (routeKey === "health") return "/dashboard/system-health";
+  if (!UUID.test(entityId)) return null;
+  if (routeKey === "order") return `/dashboard/online/orders/${entityId}`;
+  if (routeKey === "invoice") return `/dashboard/pos/sales/${entityId}`;
+  if (routeKey === "approval") return `/dashboard/approvals/${entityId}`;
+  if (routeKey === "product") return `/dashboard/inventory/stock/${entityId}`;
+  return null;
+}
+
 export function safeNotificationId(data: Record<string, unknown>): string | null {
   const id = text(data.notification_id);
   return UUID.test(id) ? id : null;
@@ -139,6 +149,29 @@ export async function resolveMobileNotificationRoute(notificationId: string): Pr
     return { ok: false, route: null, reason };
   }
   const route = routeFor(text(result.route_key), text(result.entity_id));
+  return route
+    ? { ok: true, route, reason: null }
+    : { ok: false, route: null, reason: "invalid_response" };
+}
+
+/** Web shell variant: re-evaluates server authorization and resolves to `/dashboard/*` destinations. */
+export async function resolveWebNotificationRoute(notificationId: string): Promise<ResolvedNotificationRoute> {
+  if (!UUID.test(notificationId)) return { ok: false, route: null, reason: "invalid_response" };
+  const client = getSupabaseClient();
+  if (!client) return { ok: false, route: null, reason: "unavailable" };
+  const { data, error } = await client.rpc("notification_center_resolve_route", { p_notification_id: notificationId });
+  if (error) return { ok: false, route: null, reason: "unavailable" };
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    return { ok: false, route: null, reason: "invalid_response" };
+  }
+  const result = data as Record<string, unknown>;
+  if (result.ok !== true) {
+    const reason = result.reason === "entity_unavailable" || result.reason === "unauthorized_or_stale"
+      ? result.reason
+      : "unavailable";
+    return { ok: false, route: null, reason };
+  }
+  const route = webRouteFor(text(result.route_key), text(result.entity_id));
   return route
     ? { ok: true, route, reason: null }
     : { ok: false, route: null, reason: "invalid_response" };

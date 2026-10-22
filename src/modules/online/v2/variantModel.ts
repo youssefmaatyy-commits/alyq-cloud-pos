@@ -19,6 +19,12 @@ export function variantModel(
   const groups = colorGroupsOf(variants);
   const hasColors = groups.some((group) => Boolean(group.color_key || group.color_ar || group.color_en));
   const hasSizes = variants.some((variant) => sizeKeyOf(variant) !== "");
+  const hasModels =
+    !hasColors &&
+    !hasSizes &&
+    variants.some((variant) =>
+      Boolean((variant.display_name_ar ?? "").trim() || (variant.display_name_en ?? "").trim()),
+    );
   const remaining = (variant: StoreVariant): number => orderable
     ? variantAvailableToPromise(variant, holds.get(variant.id) ?? 0)
     : 0;
@@ -29,6 +35,11 @@ export function variantModel(
     variants,
     hasColors,
     hasSizes,
+    hasModels,
+    models: variants.map((variant) => ({
+      variant,
+      available: remaining(variant),
+    })),
     sellable,
     remaining,
     /** A colour change never silently inherits another colour's size. */

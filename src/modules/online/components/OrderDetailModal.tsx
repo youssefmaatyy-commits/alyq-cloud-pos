@@ -21,6 +21,9 @@ import { WhatsAppUpdatePanel, useWhatsAppUpdates } from "./WhatsAppUpdatePanel";
 import { suggestedTemplateKey } from "../services/whatsapp";
 import type { WhatsAppTemplateKey } from "../types";
 import { operationalStageLabelKey, operationalStageOf } from "../services/orderOperations";
+import { deliveryStatusOf } from "../services/orderWorkflow";
+import { MobileBadge, MobileCard } from "@/modules/mobile/components/MobilePrimitives";
+import "@/modules/mobile/mobile.css";
 
 /** Which actions need a reason typed before they run. */
 const REASON_ACTIONS: OrderAction[] = ["cancel", "payment_reject"];
@@ -132,7 +135,6 @@ export function OrderDetailModal({ order, onClose }: { order: OnlineOrder | null
     : "";
 
   const label = "text-[11px] font-bold uppercase tracking-wide text-stone-500";
-  const value = "text-sm font-semibold text-stone-900";
 
   return (
     <>
@@ -198,40 +200,65 @@ export function OrderDetailModal({ order, onClose }: { order: OnlineOrder | null
             </div>
           ) : null}
 
-          {/* customer + fulfilment */}
-          <section className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <p className={label}>{t("online.orders.customer")}</p>
-              <p className={value}>{order.customer_name}</p>
-              <p className="text-xs text-stone-600" dir="ltr">
-                <a href={`tel:${order.customer_phone}`} className="font-semibold text-[#9a7a49] hover:underline">
-                  {order.customer_phone}
-                </a>
-              </p>
-              {order.customer_email ? <p className="text-xs text-stone-600">{order.customer_email}</p> : null}
-              <p className="text-xs text-stone-500">{date(order.created_at)}</p>
+          {/* Mobile Management Reference Summary Card + Customer & Fulfilment */}
+          <MobileCard>
+            <div className="mobile-row mb-3">
+              <MobileBadge tone={STATUS_TONE[order.status]}>
+                {t(operationalStageLabelKey(operationalStageOf(order)))}
+              </MobileBadge>
+              <strong className="text-base text-[#172033]">{money(order.total)}</strong>
             </div>
-
-            <div className="space-y-1.5">
-              <p className={label}>
-                {order.delivery_type === "pickup"
-                  ? t("online.deliveryType.pickup")
-                  : t("online.deliveryType.delivery")}
-              </p>
-              <p className={value}>{address || t("online.orders.noAddress")}</p>
+            <dl className="mobile-detail-grid sm:grid-cols-3">
+              <div>
+                <dt>{t("online.orders.customer")}</dt>
+                <dd className="font-semibold text-[#172033]">{order.customer_name}</dd>
+              </div>
+              <div>
+                <dt>{t("export.col.phone")}</dt>
+                <dd dir="ltr">
+                  <a href={`tel:${order.customer_phone}`} className="font-semibold text-[#9a7a49] hover:underline">
+                    {order.customer_phone}
+                  </a>
+                </dd>
+              </div>
+              <div>
+                <dt>{t("online.orders.filterFulfilment")}</dt>
+                <dd>
+                  {t(`online.deliveryType.${order.delivery_type}`)} · {deliveryStatusOf(order)}
+                </dd>
+              </div>
+              <div>
+                <dt>{t("online.orders.payment")}</dt>
+                <dd>
+                  {t(`online.paymentMethod.${order.payment_method}`)} · {t(`online.paymentStatus.${order.payment_status}`)}
+                </dd>
+              </div>
               {order.delivery_zone_name_ar || order.delivery_zone_name_en ? (
-                <p className="text-xs font-semibold text-stone-600">
-                  {pick(order.delivery_zone_name_ar ?? "", order.delivery_zone_name_en ?? "")}
-                </p>
+                <div>
+                  <dt>{t("online.zones.title")}</dt>
+                  <dd>{pick(order.delivery_zone_name_ar ?? "", order.delivery_zone_name_en ?? "")}</dd>
+                </div>
               ) : null}
-              {order.address?.notes ? <p className="text-xs text-stone-600">{order.address.notes}</p> : null}
-              {order.notes ? (
-                <p className="rounded-lg bg-amber-50 px-2 py-1.5 text-xs font-semibold text-amber-900">
-                  {t("online.orders.customerNote")}: {order.notes}
-                </p>
-              ) : null}
-            </div>
-          </section>
+              <div>
+                <dt>{t("export.col.discount")}</dt>
+                <dd>{money(order.discount_amount)}</dd>
+              </div>
+              <div className="mobile-detail-wide">
+                <dt>
+                  {order.delivery_type === "pickup"
+                    ? t("online.deliveryType.pickup")
+                    : t("online.deliveryType.delivery")}
+                </dt>
+                <dd>{address || t("online.orders.noAddress")}</dd>
+                {order.address?.notes ? <p className="mt-1 text-xs text-stone-600">{order.address.notes}</p> : null}
+                {order.notes ? (
+                  <p className="mt-1.5 rounded-lg bg-amber-50 px-2 py-1.5 text-xs font-semibold text-amber-900">
+                    {t("online.orders.customerNote")}: {order.notes}
+                  </p>
+                ) : null}
+              </div>
+            </dl>
+          </MobileCard>
 
           <WhatsAppUpdatePanel
             order={order}
@@ -267,7 +294,7 @@ export function OrderDetailModal({ order, onClose }: { order: OnlineOrder | null
                               ordered, still readable after any rename. */}
                           {item.variant_id ? (
                             <p className="text-[11px] font-bold text-stone-700" data-testid="order-line-variant">
-                              {pick(item.variant_color_ar, item.variant_color_en)}
+                              {pick(item.variant_color_ar, item.variant_color_en) || item.variant_display_name || ""}
                               {item.variant_size !== null
                                 ? ` / ${Math.round(item.variant_size * 100) / 100}`
                                 : item.variant_size_label
@@ -286,7 +313,10 @@ export function OrderDetailModal({ order, onClose }: { order: OnlineOrder | null
                             </p>
                           )}
                         </td>
-                        <td className="px-3 py-2 font-mono text-xs text-stone-600">{item.sku}</td>
+                        <td className="px-3 py-2 font-mono text-xs text-stone-600" dir="ltr">
+                          {item.sku}
+                          {item.barcode ? <span className="block text-[10px] text-stone-400">{item.barcode}</span> : null}
+                        </td>
                         <td className="px-3 py-2 text-end font-bold tabular-nums">{num(item.quantity, 0)}</td>
                         <td className="px-3 py-2 text-end tabular-nums">{money(item.unit_price)}</td>
                         <td className="px-3 py-2 text-end font-bold tabular-nums">{money(item.line_total)}</td>
@@ -447,28 +477,31 @@ export function OrderDetailModal({ order, onClose }: { order: OnlineOrder | null
           </section>
 
           {/* timeline */}
-          {order.events.length > 0 ? (
-            <section>
-              <p className={label}>{t("online.orders.timeline")}</p>
-              <ol className="mt-2 space-y-1.5">
-                {order.events
-                  .slice()
-                  .reverse()
-                  .map((event) => (
-                    <li key={event.id} className="flex items-start justify-between gap-3 text-xs">
-                      <span>
-                        <span className="font-bold text-stone-800">
+          <section>
+            <p className={label}>{t("online.orders.timeline")}</p>
+            <MobileCard className="mt-2">
+              {order.events.length > 0 ? (
+                <ol className="mobile-timeline">
+                  {order.events
+                    .slice()
+                    .reverse()
+                    .map((event) => (
+                      <li key={event.id}>
+                        <strong className="text-xs font-bold text-[#172033]">
                           {t(`online.event.${event.kind}`)}
+                        </strong>
+                        <span>
+                          {date(event.created_at)} · {event.user_name ?? "Customer"}
                         </span>
-                        {event.user_name ? <span className="text-stone-500"> · {event.user_name}</span> : null}
-                        {event.note ? <span className="block text-stone-600">{event.note}</span> : null}
-                      </span>
-                      <span className="shrink-0 text-stone-500">{date(event.created_at)}</span>
-                    </li>
-                  ))}
-              </ol>
-            </section>
-          ) : null}
+                        {event.note ? <p className="mt-1 text-xs text-stone-700">{event.note}</p> : null}
+                      </li>
+                    ))}
+                </ol>
+              ) : (
+                <p className="text-xs text-stone-500">No events available.</p>
+              )}
+            </MobileCard>
+          </section>
         </div>
       </Modal>
 

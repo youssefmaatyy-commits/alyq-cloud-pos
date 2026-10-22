@@ -110,7 +110,7 @@ export function SaleCompletedModal() {
     }
 
     const outcome = await printReceiptDocument(html, completedSale.sale_number);
-    if (outcome === "submitted") {
+    if (outcome === "submitted" || outcome === "android-spooler") {
       toast.success(t("pos.printSubmitted"));
     } else if (outcome === "native-failed") {
       toast.error(t("pos.printFailed"));

@@ -60,6 +60,7 @@ export interface OfflineCartLineInput {
   color_ar?: string | null;
   color_en?: string | null;
   size_value?: string | null;
+  variant_display_name?: string | null;
   unit_price: number;
 }
 
@@ -164,6 +165,7 @@ export async function enqueueOfflineSale(
     color_ar: line.color_ar ?? null,
     color_en: line.color_en ?? null,
     size_value: line.size_value ?? null,
+    variant_display_name: line.variant_display_name ?? null,
     unit_price: line.unit_price,
   }));
   const outboxEntry: SyncOutboxEntry = {

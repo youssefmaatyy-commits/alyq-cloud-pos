@@ -16,6 +16,7 @@ import { probeSystemBackend, type BackendHealthProbe } from "../services/healthS
 import { safeDiagnosticsJson } from "../services/diagnostics";
 import { getDesktopConfig, getDesktopContext, listDesktopPrinters } from "@/lib/desktop/bridge";
 import { useRegister } from "@/modules/registers";
+import { useWebNotifications } from "@/modules/notifications";
 
 const tone: Record<OperationalHealthState, "success" | "warning" | "danger" | "neutral"> = {
   healthy: "success", warning: "warning", unavailable: "danger", unknown: "neutral",
@@ -27,6 +28,7 @@ export function HealthCenterPage() {
   const branch = useBranch();
   const register = useRegister();
   const pos = usePos();
+  const webNotifications = useWebNotifications();
   const { refreshSyncState } = pos;
   const activeBranchId = branch.current?.id ?? null;
   const branchError = branch.error;
@@ -191,7 +193,13 @@ export function HealthCenterPage() {
       <div className="mt-3 grid gap-3 sm:grid-cols-3">
         <Card><p className="text-[11px] font-bold uppercase text-stone-500">{copy.desktop}</p>
           <Badge className="mt-2" tone={desktop?.context ? "success" : "neutral"}>{desktop?.context ? `${desktop.context.version} · ${desktop.context.platform}/${desktop.context.arch}` : copy.webRuntime}</Badge>
-          {desktop?.context ? <p dir="ltr" className="mt-2 break-all font-mono text-[11px] text-stone-500">{desktop.context.build}</p> : null}
+          {desktop?.context ? (
+            <p dir="ltr" className="mt-2 break-all font-mono text-[11px] text-stone-500">{desktop.context.build}</p>
+          ) : webNotifications.runtime ? (
+            <p dir="ltr" className="mt-2 font-mono text-xs font-semibold text-stone-700">
+              v{webNotifications.runtime.appVersion} · {webNotifications.runtime.build} · {webNotifications.runtime.platform}
+            </p>
+          ) : null}
         </Card>
         <Card><p className="text-[11px] font-bold uppercase text-stone-500">{copy.register}</p>
           <Badge className="mt-2" tone={register.state.kind === "desktop-ready" ? "success" : register.state.kind === "web" ? "neutral" : "warning"}>{register.state.kind === "desktop-ready" ? copy.ready : register.state.kind === "web" ? copy.webRuntime : copy.setupRequired}</Badge>
@@ -199,9 +207,22 @@ export function HealthCenterPage() {
         </Card>
         <Card><p className="text-[11px] font-bold uppercase text-stone-500">{copy.hardware}</p><Badge className="mt-2" tone="neutral">{copy.unknown}</Badge><p className="mt-2 text-xs text-stone-600">{copy.physicalUnknown}</p>{desktop?.printerConfigured ? <p className="mt-1 text-xs text-stone-500">{desktop.paperWidthMm}mm · driver {desktop.configuredPrinterVisible ? "visible" : "not visible"}</p> : null}</Card>
       </div>
-      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+      <div className="mt-3 grid gap-3 sm:grid-cols-3">
         <Card><p className="text-[11px] font-bold uppercase text-stone-500">{copy.imageStorage}</p><Badge className="mt-2" tone="neutral">{copy.unknown}</Badge><p className="mt-2 text-xs text-stone-600">{copy.imageUnknown}</p></Card>
         <Card><p className="text-[11px] font-bold uppercase text-stone-500">{copy.expected}</p><p dir="ltr" className="mt-2 font-mono text-xs font-bold text-stone-800">{SHIPPED_MIGRATION_COUNT} · {SHIPPED_LATEST_MIGRATION}</p><p className="mt-2 text-xs text-stone-500">{backend ? `${copy.checked}: ${date(backend.checkedAt)}` : copy.unknown}</p></Card>
+        <Card>
+          <div data-testid="health-notifications">
+            <p className="text-[11px] font-bold uppercase text-stone-500">{ar ? "الإشعارات والتنبيهات" : "Notifications"}</p>
+            <Badge className="mt-2" tone={webNotifications.pushState === "registered" ? "success" : webNotifications.pushState === "error" || webNotifications.pushState === "denied" ? "warning" : "neutral"}>
+              {webNotifications.pushState}
+            </Badge>
+            <p className="mt-2 text-xs text-stone-600">
+              <Link to="/dashboard/notifications" className="font-semibold text-stone-800 underline hover:text-stone-950">
+                {ar ? `فتح مركز الإشعارات (${webNotifications.notificationUnreadCount} غير مقروء)` : `Open Notification Center (${webNotifications.notificationUnreadCount} unread)`}
+              </Link>
+            </p>
+          </div>
+        </Card>
       </div>
       <Card className="mt-4">
         <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-sm font-black text-stone-900">Diagnostics</h2><p className="mt-1 text-xs text-stone-500">{copy.noSecrets}</p></div><Button variant="secondary" onClick={() => void copyDiagnostics()}>{copied ? copy.copied : copy.diagnostics}</Button></div>

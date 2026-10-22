@@ -84,7 +84,7 @@ import {
   variantAvailableToPromise,
 } from "../services/availability";
 import { variantLabelOf } from "../services/variantLabel";
-import type { ProductVariant } from "@/modules/products/variants";
+import { modelNameOf, type ProductVariant } from "@/modules/products/variants";
 import { unitsSold } from "../services/badges";
 import { checkAction, initialPaymentStatus, requiresReason } from "../services/orderWorkflow";
 import { sanitizeSettings } from "../services/settingsDefaults";
@@ -1208,6 +1208,7 @@ export class DemoOnlineRepository
           variant_color_en: variant?.color_en ?? null,
           variant_size: variant?.size ?? null,
           variant_size_label: variant?.size_label ?? null,
+          variant_display_name: variant ? modelNameOf(variant) : null,
           name_ar: product.name_ar,
           name_en: product.name_en,
           sku: variant?.sku ?? product.sku,

@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { BarcodeBurstDecoder, isNormalTypingTarget } from "../hooks/useBarcodeScanner";
 import { resolveExactScannedVariant } from "../services/scanner";
+import { encodeCode128 } from "../services/barcodeHelpers";
+import {
+  classifyCameraError,
+  decode1DBarcodeFromRgbaFrame,
+} from "../services/cameraBarcodeScanner";
+import { isAndroidPrintSpoolerAvailable, printHtmlDocument } from "../services/receipt";
 import type { ProductVariant } from "@/modules/products/variants";
 
 class FakeElement {
@@ -47,6 +53,64 @@ const tests: Array<[string, () => void]> = [
   }],
   ["capture is possible only for an explicit opt-in field", () => {
     assert.equal(isNormalTypingTarget(new FakeElement(true, true) as unknown as EventTarget), false);
+  }],
+  ["camera 1D scanline decoder round-trips Code 128 SKU and invoice barcodes from RGBA frames", () => {
+    for (const sample of ["ALYQ-01-BLK-42", "SAL-20261020-001", "6291041500213"]) {
+      const encoded = encodeCode128(sample, 10);
+      assert.ok(encoded, `expected ${sample} to encode as Code 128`);
+      const scale = 3;
+      const width = encoded.width * scale;
+      const height = 24;
+      const rgba = new Uint8ClampedArray(width * height * 4);
+      // Fill white background
+      rgba.fill(255);
+      // Paint black bars
+      for (const bar of encoded.bars) {
+        const startX = bar.x * scale;
+        const endX = (bar.x + bar.width) * scale;
+        for (let y = 0; y < height; y += 1) {
+          for (let x = startX; x < endX; x += 1) {
+            const idx = (y * width + x) * 4;
+            rgba[idx] = 0;
+            rgba[idx + 1] = 0;
+            rgba[idx + 2] = 0;
+            rgba[idx + 3] = 255;
+          }
+        }
+      }
+      const decoded = decode1DBarcodeFromRgbaFrame(rgba, width, height);
+      assert.equal(decoded?.rawValue, sample);
+      assert.equal(decoded?.format, "code_128");
+    }
+  }],
+  ["camera permission classifier distinguishes denied, missing and busy camera hardware", () => {
+    assert.equal(classifyCameraError({ name: "NotAllowedError", message: "Permission denied" }), "denied");
+    assert.equal(classifyCameraError({ name: "NotFoundError", message: "Requested device not found" }), "not_found");
+    assert.equal(classifyCameraError({ name: "NotReadableError", message: "Could not start video source" }), "in_use");
+  }],
+  ["Android PrintManager bridge handles receipt HTML when running inside Capacitor Android WebView", () => {
+    const prevWindow = (globalThis as { window?: unknown }).window;
+    let capturedHtml = "";
+    let capturedRef = "";
+    try {
+      (globalThis as { window?: unknown }).window = {
+        ALYQAndroidPrint: {
+          isSupported: () => true,
+          printHtml: (html: string, ref: string) => {
+            capturedHtml = html;
+            capturedRef = ref;
+            return true;
+          },
+        },
+      };
+      assert.equal(isAndroidPrintSpoolerAvailable(), true);
+      const outcome = printHtmlDocument("<!doctype html><html><body>ALYQ Receipt</body></html>", "SAL-1001");
+      assert.equal(outcome, "android-spooler");
+      assert.match(capturedHtml, /ALYQ Receipt/);
+      assert.equal(capturedRef, "SAL-1001");
+    } finally {
+      (globalThis as { window?: unknown }).window = prevWindow;
+    }
   }],
 ];
 

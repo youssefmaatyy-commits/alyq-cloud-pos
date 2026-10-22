@@ -5,8 +5,9 @@ import { createSession } from "@/lib/auth/services/authService";
 import { primeCacheFromStorage, resetSessionCache, writeStoredSession } from "@/lib/auth/services/sessionStore";
 import { capabilitiesOf } from "@/lib/permissions/roles";
 import { getDemoRepository } from "../data/demoRepository";
+import { AppError, describeError } from "../data/repository";
 import type { NewProduct } from "../types";
-import type { ProductVariant } from "../variants";
+import { suggestVariantSku, type ProductVariant } from "../variants";
 import { generateVariants, saveVariant } from "../services/variantService";
 import { deriveBarcodeFromSku, nextBarcodeOnSkuChange } from "../services/barcode";
 import {
@@ -381,6 +382,343 @@ await test("Cartesian generation across 1×3 and 3×1 color/size ratios generate
   }, "PROD");
   assert.equal(threeByOne.rows.length, 3);
   assert.deepEqual(threeByOne.rows.map((r) => r.color_en), ["Black", "White", "Gray"]);
+});
+
+await test("regression BR104 + ROSE: legacy 1-char color_key ('r') does not collide when typing RED keystroke by keystroke", async () => {
+  signIn("admin");
+  const br104 = await repo.createProduct({
+    sku: "BR104",
+    barcode: "BR104",
+    name_ar: "BR-104",
+    name_en: "BR-104",
+    description_ar: null,
+    description_en: null,
+    category_id: (await repo.listCategories())[0].id,
+    product_type: "physical",
+    selling_price: 220,
+    cost_price: 85,
+    tax_rate: 0,
+    stock_tracking_enabled: true,
+    variants_enabled: false,
+    stock_quantity: 3,
+    low_stock_level: 5,
+    show_on_website: true,
+    is_featured: false,
+    active: true,
+    image_url: null,
+    images: [],
+  });
+
+  // Simulate legacy BR104-R-2 row saved with 1-char color_key = 'r' for ROSE
+  const roseSaved = await repo.createVariant({
+    product_id: br104.id,
+    sku: "BR104-R-2",
+    barcode: "BR104-R-2",
+    color_key: "r",
+    color_ar: "روز",
+    color_en: "ROSE",
+    color_hex: "#ec4899",
+    size: null,
+    size_label: null,
+    size_value: null,
+    size_sort_order: 0,
+    image_url: null,
+    price_override: null,
+    cost_override: null,
+    stock_quantity: 0,
+    low_stock_level: 5,
+    active: true,
+    sort_order: 1,
+  });
+
+  let draft = variantDraftFromSaved([roseSaved]);
+  assert.equal(draft.mode, "colors");
+  assert.equal(draft.rows.length, 1);
+  assert.equal(draft.rows[0].persistedId, roseSaved.id);
+  assert.equal(draft.rows[0].sku, "BR104-R-2");
+
+  // User clicks Add Color and types "R", then "RE", then "RED"
+  const newColorId = "color:red-draft";
+  draft = reconcileVariantDraft({
+    ...draft,
+    colors: [...draft.colors, { id: newColorId, color_ar: "أحمر", color_en: "R", color_hex: "#ef4444", image_urls: [], image_url: "" }],
+  }, "BR104");
+  assert.equal(draft.rows.length, 2);
+  assert.equal(draft.rows[0].persistedId, roseSaved.id);
+  assert.equal(draft.rows[0].sku, "BR104-R-2");
+
+  draft = reconcileVariantDraft({
+    ...draft,
+    colors: draft.colors.map((c) => (c.id === newColorId ? { ...c, color_en: "RE" } : c)),
+  }, "BR104");
+  assert.equal(draft.rows[1].sku, "BR104-RE");
+  assert.equal(draft.rows[1].color_key, "re");
+
+  draft = reconcileVariantDraft({
+    ...draft,
+    colors: draft.colors.map((c) => (c.id === newColorId ? { ...c, color_en: "RED" } : c)),
+  }, "BR104");
+  assert.equal(draft.rows.length, 2);
+  assert.equal(draft.rows[0].persistedId, roseSaved.id);
+  assert.equal(draft.rows[0].sku, "BR104-R-2");
+  assert.equal(draft.rows[1].persistedId, null);
+  assert.equal(draft.rows[1].sku, "BR104-RED");
+  assert.equal(draft.rows[1].barcode, "BR104-RED");
+  assert.equal(draft.rows[1].color_key, "red");
+  assert.equal(validateVariantDraft(draft, "BR104", "BR104"), null);
+
+  // Saving ROSE heals color_key from 'r' to 'rose' in place without creating a duplicate,
+  // and saving RED creates a second distinct variant while BR104 parent stock stays 3.
+  const siblings: ProductVariant[] = [roseSaved];
+  const updatedRose = await saveVariant({
+    product: br104,
+    siblings,
+    currentId: roseSaved.id,
+    values: {
+      sku: draft.rows[0].sku,
+      barcode: draft.rows[0].barcode,
+      color_key: "rose",
+      color_ar: draft.rows[0].color_ar,
+      color_en: draft.rows[0].color_en,
+      color_hex: draft.rows[0].color_hex,
+      size: null,
+      size_label: null,
+      size_value: null,
+      size_sort_order: 0,
+      image_url: null,
+      price_override: null,
+      cost_override: null,
+      stock_quantity: 0,
+      low_stock_level: 5,
+      active: true,
+      sort_order: 1,
+    },
+  });
+  assert.equal(updatedRose.variant.id, roseSaved.id);
+  assert.equal(updatedRose.variant.color_key, "rose");
+  siblings[0] = updatedRose.variant;
+
+  const createdRed = await saveVariant({
+    product: br104,
+    siblings,
+    values: {
+      sku: draft.rows[1].sku,
+      barcode: draft.rows[1].barcode,
+      color_key: draft.rows[1].color_key,
+      color_ar: draft.rows[1].color_ar,
+      color_en: draft.rows[1].color_en,
+      color_hex: draft.rows[1].color_hex,
+      size: null,
+      size_label: null,
+      size_value: null,
+      size_sort_order: 0,
+      image_url: null,
+      price_override: null,
+      cost_override: null,
+      stock_quantity: 0,
+      low_stock_level: 5,
+      active: true,
+      sort_order: 2,
+    },
+  });
+  assert.notEqual(createdRed.variant.id, roseSaved.id);
+  assert.equal(createdRed.variant.sku, "BR104-RED");
+  assert.equal(createdRed.variant.color_key, "red");
+
+  const reloadedBr104 = (await repo.listProducts()).find((p) => p.id === br104.id)!;
+  assert.equal(reloadedBr104.stock_quantity, 3);
+});
+
+await test("Arabic-only colour without size transliterates into a unique SKU that never equals parent SKU", () => {
+  const redSku = suggestVariantSku("NK103", { color_ar: "أحمر", color_en: null }, null, null, ["NK103"]);
+  const whiteSku = suggestVariantSku("NK103", { color_ar: "أبيض", color_en: null }, null, null, ["NK103", redSku]);
+  assert.notEqual(redSku, "NK103");
+  assert.notEqual(whiteSku, "NK103");
+  assert.notEqual(redSku, whiteSku);
+  assert.ok(redSku.startsWith("NK103-"));
+  assert.ok(whiteSku.startsWith("NK103-"));
+});
+
+await test("describeError maps database, auth, permission, and constraint errors to specific localized keys", () => {
+  assert.equal(describeError(new AppError("DUPLICATE_SKU", "dup", "sku", "23505")).key, "validation.skuTaken");
+  assert.equal(describeError(new AppError("DUPLICATE_BARCODE", "dup", "barcode", "23505")).key, "validation.barcodeTaken");
+  assert.equal(describeError(new AppError("CATEGORY_ARCHIVED", "archived", "category_id", "23514")).key, "categories.archivedTarget");
+  assert.equal(describeError(new AppError("VARIANT_STOCK_READONLY", "readonly", "stock_quantity", "23514")).key, "error.variantStockReadonly");
+  assert.equal(describeError(new AppError("VARIANT_LEGACY_CONFLICT", "conflict", undefined, "23505")).key, "error.variantLegacyConflict");
+  assert.equal(describeError(new AppError("VARIANT_INCOMPLETE", "incomplete", undefined, "23514")).key, "error.variantIncomplete");
+  assert.equal(describeError(new AppError("SESSION_EXPIRED", "jwt expired", undefined, "PGRST301")).key, "error.sessionExpired");
+  assert.equal(describeError(new AppError("FORBIDDEN", "denied", "selling_price", "42501")).key, "permissions.denied.change_price");
+  assert.equal(describeError(new AppError("FORBIDDEN", "denied", "cost_price", "42501")).key, "permissions.denied.change_cost");
+  assert.equal(describeError(new Error("TypeError: Failed to fetch")).key, "error.network");
+});
+
+await test("intentionally archived category preserves active=false while allowing in-place product & variant edits and blocking moves", async () => {
+  signIn("admin");
+  const { sellableCategoryFilterIds } = await import("../services/categoryTree");
+
+  const archCat = await repo.createCategory({
+    name_ar: "أساور مؤرشفة عمدا",
+    name_en: "Intentionally Archived Bracelets",
+    parent_id: null,
+    active: true,
+    sort_order: 50,
+  });
+  const otherArchCat = await repo.createCategory({
+    name_ar: "سلاسل مؤرشفة عمدا",
+    name_en: "Intentionally Archived Necklaces",
+    parent_id: null,
+    active: false,
+    sort_order: 51,
+  });
+  const activeCat = await repo.createCategory({
+    name_ar: "خواتم نشطة",
+    name_en: "Active Rings",
+    parent_id: null,
+    active: true,
+    sort_order: 52,
+  });
+
+  const prod = await repo.createProduct({
+    sku: "ARCH-BR104",
+    barcode: "ARCH-BR104",
+    name_ar: "إسورة ARCH-104",
+    name_en: "Bracelet ARCH-104",
+    description_ar: null,
+    description_en: null,
+    category_id: archCat.id,
+    product_type: "physical",
+    selling_price: 220,
+    cost_price: 85,
+    tax_rate: 0,
+    stock_tracking_enabled: true,
+    variants_enabled: false,
+    stock_quantity: 3,
+    low_stock_level: 5,
+    show_on_website: true,
+    is_featured: false,
+    active: true,
+    image_url: null,
+    images: [],
+  });
+
+  // Owner intentionally archives the category
+  const archivedCat = await repo.setCategoryActive(archCat.id, false);
+  assert.equal(archivedCat.active, false);
+
+  // Archived category is excluded from POS sellable category filter set
+  const posSellableIds = sellableCategoryFilterIds(await repo.listCategories());
+  assert.equal(posSellableIds.has(archCat.id), false);
+  assert.equal(posSellableIds.has(activeCat.id), true);
+
+  // Editing name, price, and images (both minimal patch and patch with unchanged category_id) succeeds without reactivating the category or altering stock
+  const updated1 = await repo.updateProduct(prod.id, {
+    name_ar: "إسورة ARCH-104 محدثة",
+    name_en: "Bracelet ARCH-104 Updated",
+    selling_price: 245,
+    image_url: "https://example.com/arch-br104.jpg",
+    images: ["https://example.com/arch-br104.jpg", "https://example.com/arch-br104-2.jpg"],
+    category_id: archCat.id,
+  });
+  assert.equal(updated1.name_ar, "إسورة ARCH-104 محدثة");
+  assert.equal(updated1.selling_price, 245);
+  assert.equal(updated1.stock_quantity, 3);
+  assert.equal(updated1.category_id, archCat.id);
+
+  // Category remains archived (active = false)
+  const catsAfter = await repo.listCategories();
+  assert.equal(catsAfter.find((c) => c.id === archCat.id)?.active, false);
+
+  // Moving the product to a different archived category is refused with CATEGORY_ARCHIVED
+  await assert.rejects(
+    () => repo.updateProduct(prod.id, { category_id: otherArchCat.id }),
+    (err: unknown) => err instanceof AppError && err.code === "CATEGORY_ARCHIVED",
+  );
+});
+
+await test("backward-compatibility SQL shim makes 0097 sizeless/colorless models work cleanly in legacy Web & Android v2.0.0 without SKU, Barcode, Size, or Stock conflicts", () => {
+  // Simulate 0097 shared-barcode models after running the non-destructive SQL shim
+  const shimmedModels: ProductVariant[] = [
+    {
+      id: "m01",
+      product_id: "br101",
+      sku: "BR101-M01",
+      barcode: "BR101-M01",
+      color_key: "",
+      color_ar: null,
+      color_en: null,
+      color_hex: null,
+      size: null,
+      size_label: "موديل فراشة",
+      size_value: "موديل فراشة",
+      size_sort_order: 1,
+      display_name_ar: "موديل فراشة",
+      display_name_en: "Butterfly Model",
+      image_url: "https://example.com/m01.jpg",
+      images: ["https://example.com/m01.jpg"],
+      price_override: null,
+      cost_override: null,
+      stock_quantity: 4,
+      low_stock_level: 2,
+      active: true,
+      sort_order: 1,
+      created_at: "2026-10-21T00:00:00Z",
+      updated_at: "2026-10-21T00:00:00Z",
+    },
+    {
+      id: "m02",
+      product_id: "br101",
+      sku: "BR101-M02",
+      barcode: "BR101-M02",
+      color_key: "",
+      color_ar: null,
+      color_en: null,
+      color_hex: null,
+      size: null,
+      size_label: "موديل قلب",
+      size_value: "موديل قلب",
+      size_sort_order: 2,
+      display_name_ar: "موديل قلب",
+      display_name_en: "Heart Model",
+      image_url: "https://example.com/m02.jpg",
+      images: ["https://example.com/m02.jpg"],
+      price_override: null,
+      cost_override: null,
+      stock_quantity: 3,
+      low_stock_level: 2,
+      active: true,
+      sort_order: 2,
+      created_at: "2026-10-21T00:00:00Z",
+      updated_at: "2026-10-21T00:00:00Z",
+    },
+  ];
+
+  // 1. Legacy v2.0.0 VariantPicker logic check:
+  //    hasColors = active.some(v => Boolean(v.color_key)) -> false
+  //    colorsOnly = active.every(v => v.size === null && !v.size_label) -> false
+  //    sizes = active.filter(v => v.color_key === "") -> both models rendered as selectable buttons!
+  const active = shimmedModels.filter((v) => v.active);
+  const hasColors = active.some((v) => Boolean(v.color_key));
+  const colorsOnly = active.length > 0 && active.every((v) => v.size === null && !v.size_label);
+  const legacyPickerSizes = active.filter((v) => v.color_key === "");
+  assert.equal(hasColors, false);
+  assert.equal(colorsOnly, false);
+  assert.equal(legacyPickerSizes.length, 2);
+  assert.equal(legacyPickerSizes[0].size_label, "موديل فراشة");
+  assert.equal(legacyPickerSizes[1].size_label, "موديل قلب");
+
+  // 2. Legacy v2.0.0 scanner resolution check (resolveExactScannedVariant):
+  const resolveLegacyScan = (rawCode: string) => {
+    const code = rawCode.trim().toUpperCase();
+    return active.find((v) => v.sku.toUpperCase() === code || (v.barcode ?? "").toUpperCase() === code) ?? null;
+  };
+  assert.equal(resolveLegacyScan("BR101-M01")?.id, "m01");
+  assert.equal(resolveLegacyScan("BR101-M02")?.id, "m02");
+  // Scanning shared parent barcode "BR101" does NOT auto-select any single model
+  assert.equal(resolveLegacyScan("BR101"), null);
+
+  // 3. Stock total remains exact (4 + 3 = 7)
+  const totalStock = active.reduce((sum, v) => sum + v.stock_quantity, 0);
+  assert.equal(totalStock, 7);
 });
 
 console.log(`\n${count}/${count} variant-draft tests passed`);

@@ -75,6 +75,9 @@ export type AppErrorCode =
   | "VARIANTS_IN_USE"
   | "VARIANTS_STOCK_MISMATCH"
   | "VARIANT_STOCK_READONLY"
+  | "VARIANT_INCOMPLETE"
+  | "VARIANT_LEGACY_CONFLICT"
+  | "SESSION_EXPIRED"
   /** The shelf moved since the stocktake snapshot. Nothing was adjusted. */
   | "STOCKTAKE_CONFLICT"
   /** A physical count is still missing. */
@@ -124,14 +127,78 @@ export function readableErrorMessage(error: unknown): string {
 /** Map any thrown value into an AppError. */
 export function toAppError(error: unknown): AppError {
   if (error instanceof AppError) return error;
+  const errObj = error as { code?: string; status?: number } | null;
+  const pgCode = typeof errObj?.code === "string" ? errObj.code : undefined;
   const message = readableErrorMessage(error);
   if (message === "SUPABASE_NOT_CONFIGURED") {
     return new AppError("NOT_CONFIGURED", message);
   }
-  if (/fetch|network|Failed to fetch/i.test(message)) {
+  if (
+    pgCode === "PGRST301" ||
+    errObj?.status === 401 ||
+    /jwt expired|invalid jwt|authsessionmissing|session_not_found|not authenticated|refresh_token_not_found/i.test(message)
+  ) {
+    return new AppError("SESSION_EXPIRED", message, undefined, pgCode ?? "PGRST301");
+  }
+  if (pgCode === "42501" || errObj?.status === 403 || /insufficient_privilege|permission denied/i.test(message)) {
+    return new AppError("FORBIDDEN", message, undefined, pgCode ?? "42501");
+  }
+  if (/fetch|network|Failed to fetch|NetworkError|ECONNRESET|ETIMEDOUT/i.test(message)) {
     return new AppError("NETWORK", message);
   }
-  return new AppError("DB", message);
+  return new AppError("DB", message, undefined, pgCode);
+}
+
+/** i18n keys for every AppError the service can raise. */
+const APP_ERROR_KEY: Record<string, string> = {
+  NOT_CONFIGURED: "mode.demoHint",
+  NOT_FOUND: "common.notFound",
+  DUPLICATE_SKU: "validation.skuTaken",
+  DUPLICATE_BARCODE: "validation.barcodeTaken",
+  CATEGORY_IN_USE: "categories.deleteBlockedTitle",
+  CATEGORY_NOT_EMPTY: "categories.deleteBlockedTitle",
+  CATEGORY_HAS_CHILDREN: "categories.childrenBlockDelete",
+  CATEGORY_ARCHIVED: "categories.archivedTarget",
+  CATEGORY_CYCLE: "categories.moveUnderSelf",
+  PRODUCT_HAS_HISTORY: "products.errorHasHistory",
+  VARIANT_NOT_FOUND: "common.notFound",
+  VARIANT_IN_USE: "error.variantInUse",
+  VARIANTS_IN_USE: "error.variantInUse",
+  VARIANT_STOCK_INSUFFICIENT: "error.variantStockInsufficient",
+  VARIANT_UNAVAILABLE: "error.variantUnavailable",
+  VARIANT_REQUIRED: "products.variants.lastActive",
+  VARIANTS_STOCK_MISMATCH: "error.variantsStockMismatch",
+  VARIANT_STOCK_READONLY: "error.variantStockReadonly",
+  VARIANT_INCOMPLETE: "error.variantIncomplete",
+  VARIANT_LEGACY_CONFLICT: "error.variantLegacyConflict",
+  SESSION_EXPIRED: "error.sessionExpired",
+  FORBIDDEN: "common.forbidden",
+  VALIDATION: "validation.fixErrors",
+  NETWORK: "error.network",
+  DB: "validation.serverError",
+};
+
+export function appErrorKey(error: AppError): string {
+  if (error.code === "FORBIDDEN" && error.field === "selling_price") {
+    return "permissions.denied.change_price";
+  }
+  if (error.code === "FORBIDDEN" && error.field === "cost_price") {
+    return "permissions.denied.change_cost";
+  }
+  if (error.pgCode && APP_ERROR_KEY[`error.${error.pgCode}`]) {
+    return `error.${error.pgCode}`;
+  }
+  return APP_ERROR_KEY[error.code] ?? "common.error";
+}
+
+/** Translate any thrown value into a user-facing message key + field. */
+export function describeError(error: unknown): { key: string; field?: string; error: AppError; traceCode?: string } {
+  const appError = toAppError(error);
+  const traceCode = appError.pgCode ? `${appError.code}:${appError.pgCode}` : appError.code;
+  if (typeof console !== "undefined" && (appError.code === "DB" || appError.pgCode)) {
+    console.warn(`[ALYQ Catalog Error ${traceCode}]`, appError.message);
+  }
+  return { key: appErrorKey(appError), field: appError.field, error: appError, traceCode };
 }
 
 /**

@@ -212,6 +212,11 @@ export interface StoreVariant {
   size_value?: string | null;
   size_sort_order?: number;
   image_url: string | null;
+  /** Optional model/shape name (Migration 0097). */
+  display_name_ar?: string | null;
+  display_name_en?: string | null;
+  /** Ordered variant gallery (Migration 0097). */
+  images?: string[];
   /** Null → the product's own selling_price (campaigns may then apply). */
   price_override: number | null;
   stock_quantity: number;

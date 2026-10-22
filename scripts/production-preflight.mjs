@@ -86,7 +86,7 @@ check(
 const requiredEnv = ["VITE_SUPABASE_URL", "VITE_SUPABASE_ANON_KEY", "WEB_PUSH_VAPID_PUBLIC_KEY", "VITE_CURRENCY", "VITE_STOREFRONT_URL", "VITE_DEMO_SEED", "VITE_APP_VERSION", "VITE_BUILD_SHA"];
 check(requiredEnv.every((name) => env.includes(name)), "all client-safe production variable names are documented");
 check(
-  webManifest.name && webManifest.short_name && webManifest.start_url === "/#/mobile"
+  webManifest.name && webManifest.short_name && (webManifest.start_url === "/#/dashboard" || webManifest.start_url === "/#/mobile")
     && webManifest.display === "standalone" && webManifest.scope === "/"
     && Array.isArray(webManifest.icons)
     && ["192x192", "512x512"].every((size) => webManifest.icons.some((icon) => icon.sizes === size)),

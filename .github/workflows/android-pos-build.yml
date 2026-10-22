@@ -1,0 +1,187 @@
+name: Android POS APK & Windows EXE Release Builder
+
+on:
+  push:
+    branches: ["arena/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-builder-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build_production_android_apks:
+    name: Build ALYQ POS v2.1.0 Production APKs (Coexist + Standard)
+    if: "!contains(github.event.head_commit.message, '[skip android-build]')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Configure Production Web Bundle & Build Android APKs (v2.1.0)
+        run: |
+          node -e '
+            const fs = require("node:fs");
+            (async () => {
+              const res = await fetch("https://alyq-store.vercel.app/");
+              if (!res.ok) throw new Error("Failed to reach production origin: " + res.status);
+              const html = await res.text();
+              const urlMatch = html.match(/https:\/\/[a-z0-9]+\.supabase\.co/);
+              const keyMatch = html.match(/eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/);
+              if (!urlMatch || !keyMatch) throw new Error("Could not resolve public client configuration");
+              const lines = [
+                "VITE_SUPABASE_URL=" + urlMatch[0],
+                "VITE_SUPABASE_ANON_KEY=" + keyMatch[0],
+                "VITE_CURRENCY=EGP",
+                "VITE_APP_VERSION=2.1.0"
+              ];
+              fs.writeFileSync(".env.production.local", lines.join("\n") + "\n", { mode: 0o600 });
+              console.log("Configured Production Mode targeting Supabase host:", new URL(urlMatch[0]).host);
+            })().catch((e) => { console.error(e.message); process.exit(1); });
+          '
+          npm run build
+          rm -f .env.production.local
+          npx cap sync android
+          chmod +x android/gradlew
+          mkdir -p releases
+
+          cd android
+          # 1. Coexist APK (eg.alyq.management.v21) — avoids signing certificate conflict & preserves v2.0.0 local data
+          ./gradlew assembleDebug -PprodV21=true -PcoexistBuild=true --no-daemon
+          cp app/build/outputs/apk/debug/app-debug.apk ../releases/ALYQ-POS-v2.1.0-prod-coexist.apk
+
+          # 2. Standard APK (eg.alyq.management) — for clean install or after syncing v2.0.0
+          ./gradlew assembleDebug -PprodV21=true --no-daemon
+          cp app/build/outputs/apk/debug/app-debug.apk ../releases/ALYQ-POS-v2.1.0-prod.apk
+          cd ..
+
+          sha256sum releases/ALYQ-POS-v2.1.0-prod-coexist.apk > releases/ALYQ-POS-v2.1.0-prod-coexist.apk.sha256
+          sha256sum releases/ALYQ-POS-v2.1.0-prod.apk > releases/ALYQ-POS-v2.1.0-prod.apk.sha256
+
+      - name: Verify Production APKs & Upload to Release Tag v2.1.0-rc1
+        run: |
+          AAPT_BIN=$(ls -d "$ANDROID_HOME"/build-tools/* 2>/dev/null | sort -V | tail -n 1)/aapt
+          "$AAPT_BIN" dump badging releases/ALYQ-POS-v2.1.0-prod-coexist.apk | grep -q "name='eg.alyq.management.v21'"
+          "$AAPT_BIN" dump badging releases/ALYQ-POS-v2.1.0-prod.apk | grep -q "name='eg.alyq.management'"
+          unzip -p releases/ALYQ-POS-v2.1.0-prod-coexist.apk assets/public/index.html | grep -q "https://zeaacjmmvyuwzmkgxhqf.supabase.co"
+          unzip -p releases/ALYQ-POS-v2.1.0-prod.apk assets/public/index.html | grep -q "https://zeaacjmmvyuwzmkgxhqf.supabase.co"
+
+          HEAD_SHA=$(git rev-parse HEAD)
+          if gh release view v2.1.0-rc1 --repo youssefmaatyy-commits/alyq-cloud-pos >/dev/null 2>&1; then
+            gh release upload v2.1.0-rc1 \
+              releases/ALYQ-POS-v2.1.0-prod-coexist.apk \
+              releases/ALYQ-POS-v2.1.0-prod-coexist.apk.sha256 \
+              releases/ALYQ-POS-v2.1.0-prod.apk \
+              releases/ALYQ-POS-v2.1.0-prod.apk.sha256 \
+              --repo youssefmaatyy-commits/alyq-cloud-pos \
+              --clobber
+          else
+            gh release create v2.1.0-rc1 \
+              releases/ALYQ-POS-v2.1.0-prod-coexist.apk \
+              releases/ALYQ-POS-v2.1.0-prod-coexist.apk.sha256 \
+              releases/ALYQ-POS-v2.1.0-prod.apk \
+              releases/ALYQ-POS-v2.1.0-prod.apk.sha256 \
+              --repo youssefmaatyy-commits/alyq-cloud-pos \
+              --title "ALYQ POS v2.1.0 Release Candidate (Android APKs & Windows EXE)" \
+              --notes "Production-ready Android APKs (Coexist + Standard) and Windows x64 NSIS Installer connected to Production." \
+              --target "$HEAD_SHA" \
+              --prerelease
+          fi
+
+  build_windows_exe:
+    name: Build ALYQ POS Windows x64 EXE Installer (NSIS)
+    if: "!contains(github.event.head_commit.message, '[skip android-build]')"
+    runs-on: windows-latest
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Configure Production Web Bundle & Build Windows EXE Installer
+        shell: bash
+        run: |
+          node -e '
+            const fs = require("node:fs");
+            (async () => {
+              const res = await fetch("https://alyq-store.vercel.app/");
+              if (!res.ok) throw new Error("Failed to reach production origin: " + res.status);
+              const html = await res.text();
+              const urlMatch = html.match(/https:\/\/[a-z0-9]+\.supabase\.co/);
+              const keyMatch = html.match(/eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/);
+              if (!urlMatch || !keyMatch) throw new Error("Could not resolve public client configuration");
+              const lines = [
+                "VITE_SUPABASE_URL=" + urlMatch[0],
+                "VITE_SUPABASE_ANON_KEY=" + keyMatch[0],
+                "VITE_CURRENCY=EGP",
+                "VITE_APP_VERSION=6.0.0"
+              ];
+              fs.writeFileSync(".env.production.local", lines.join("\n") + "\n", { mode: 0o600 });
+              console.log("Configured Windows Production Mode targeting Supabase host:", new URL(urlMatch[0]).host);
+            })().catch((e) => { console.error(e.message); process.exit(1); });
+          '
+          npm run desktop:package:win
+          rm -f .env.production.local
+          ls -lh release/ALYQ-POS-Setup-6.0.0-x64.exe
+          sha256sum release/ALYQ-POS-Setup-6.0.0-x64.exe > release/ALYQ-POS-Setup-6.0.0-x64.exe.sha256
+
+      - name: Upload Windows EXE Installer to Release Tag v2.1.0-rc1
+        shell: bash
+        run: |
+          HEAD_SHA=$(git rev-parse HEAD)
+          for i in 1 2 3 4 5; do
+            if gh release view v2.1.0-rc1 --repo youssefmaatyy-commits/alyq-cloud-pos >/dev/null 2>&1; then
+              gh release upload v2.1.0-rc1 \
+                release/ALYQ-POS-Setup-6.0.0-x64.exe \
+                release/ALYQ-POS-Setup-6.0.0-x64.exe.sha256 \
+                --repo youssefmaatyy-commits/alyq-cloud-pos \
+                --clobber && break
+            else
+              gh release create v2.1.0-rc1 \
+                release/ALYQ-POS-Setup-6.0.0-x64.exe \
+                release/ALYQ-POS-Setup-6.0.0-x64.exe.sha256 \
+                --repo youssefmaatyy-commits/alyq-cloud-pos \
+                --title "ALYQ POS v2.1.0 Release Candidate (Android APKs & Windows EXE)" \
+                --notes "Production-ready Android APKs (Coexist + Standard) and Windows x64 NSIS Installer connected to Production." \
+                --target "$HEAD_SHA" \
+                --prerelease && break
+            fi
+            sleep 5
+          done

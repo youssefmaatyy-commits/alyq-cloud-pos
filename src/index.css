@@ -116,22 +116,22 @@
     }
   }
 
-  /* ── Surfaces ─────────────────────────────────────────────────────────── */
+  /* ── Surfaces (Unified with ALYQ Mobile Management reference) ─────────── */
   .alyq-card {
-    border-radius: var(--radius-card);
-    border: 1px solid var(--color-slate-200);
+    border-radius: 15px;
+    border: 1px solid #e1e7ee;
     background-color: #fff;
-    box-shadow: var(--shadow-card);
+    box-shadow: 0 2px 7px #0f172a08;
   }
 
   /* ── KPI tile (clarified: accent edge, strong label/value pair) ───────── */
   .alyq-kpi {
     position: relative;
     overflow: hidden;
-    border-radius: var(--radius-card);
-    border: 1px solid var(--color-slate-200);
+    border-radius: 15px;
+    border: 1px solid #e1e7ee;
     background-color: #fff;
-    box-shadow: var(--shadow-card);
+    box-shadow: 0 2px 7px #0f172a08;
     padding: 1rem;
   }
   @media (min-width: 640px) {

@@ -32,7 +32,11 @@ function projectApp(source) {
   const routes = legacyPaths.map((route, index) => route
     ? `                <Route path="${route}" element={<${legacyPages[index]} />} />`
     : `                <Route index element={<${legacyPages[index]} />} />`).join("\n") + "\n";
-  return source.slice(0, first).replace(importAnchor, imports + importAnchor) + routes + source.slice(last);
+  const projected = source.slice(0, first).replace(importAnchor, imports + importAnchor) + routes + source.slice(last);
+  return projected.replace(
+    /\{\/\* Root public Storefront V2 for all visitors \*\/\}[\s\S]*?<Route index element=\{<StorefrontV2Home \/>\} \/>\s*<\/Route>/,
+    '<Route path="/" element={<LegacyStaffRedirect target="/dashboard" />} />',
+  );
 }
 
 function projectShell(source) {

@@ -37,7 +37,10 @@ import { deriveBarcodeFromSku } from "./barcode";
 import {
   colorKeyOf,
   compareVariants,
+  modelKeyOf,
+  modelNameOf,
   summarizeVariants,
+  variantGalleryProblem,
   variantLabel,
   variantSizeValue,
   type NewProductVariant,
@@ -134,7 +137,7 @@ export function variantSummary(variants: readonly ProductVariant[]): VariantSumm
 // ── create / edit ───────────────────────────────────────────────────────────
 
 export interface SaveVariantArgs {
-  product: Pick<Product, "id" | "sku" | "selling_price" | "cost_price">;
+  product: Pick<Product, "id" | "sku" | "selling_price" | "cost_price"> & { barcode?: string | null };
   /** Fields as the form has them. `color_key` is derived, never typed. */
   values: Omit<NewProductVariant, "product_id" | "color_key"> & { color_key?: string };
   /** The combination being edited, when this is not a create. */
@@ -144,7 +147,7 @@ export interface SaveVariantArgs {
 }
 
 /**
- * Create or edit one combination. Uniqueness (SKU, barcode, colour+size) is
+ * Create or edit one combination. Uniqueness (SKU, barcode, colour+size+model) is
  * checked here for a friendly message and again by the database as the truth.
  */
 export async function saveVariant({
@@ -173,28 +176,59 @@ export async function saveVariant({
       "23505",
     );
   }
-  // A sellable combination should not normally go without a barcode: when the
-  // admin leaves it blank, derive one from the now-final SKU — the same
-  // deterministic rule the product form already uses, so the catalogue never
-  // has two different barcode "dialects". An explicit manual value always wins.
-  const barcode = values.barcode?.trim() || deriveBarcodeFromSku(sku) || null;
+  const isNamedModel = modelNameOf(values) !== null;
+  if (isNamedModel && values.price_override !== null && values.price_override !== undefined) {
+    throw new AppError("VALIDATION", "A named model uses the product price", "price_override", "23514");
+  }
+  const gallery = (values.images ?? []).map((url) => url.trim()).filter(Boolean);
+  if (variantGalleryProblem(gallery)) {
+    throw new AppError("VALIDATION", "Invalid variant gallery", "images", "23514");
+  }
+
+  // Named models ("أشكال / موديلات متعددة") share the parent product's barcode by
+  // default (`barcode = null` in DB), whereas colour/size combinations derive a
+  // fallback barcode from SKU when left blank. An explicit distinct barcode wins.
+  const rawBarcode = values.barcode?.trim() || null;
+  const parentBarcode = (product.barcode ?? "").trim();
+  const barcode = isNamedModel
+    ? rawBarcode && (!parentBarcode || rawBarcode.toUpperCase() !== parentBarcode.toUpperCase())
+      ? rawBarcode
+      : null
+    : rawBarcode || deriveBarcodeFromSku(sku) || null;
   if (barcode && others.some((v) => (v.barcode ?? "").toUpperCase() === barcode.toUpperCase())) {
     throw new AppError("DUPLICATE_BARCODE", `${barcode} already belongs to another variant`, "barcode", "23505");
   }
 
-  const colorKey = values.color_key?.trim() || colorKeyOf(values);
-  if (!currentId) {
+  const rawKey = values.color_key?.trim().toLowerCase() || "";
+  const derivedKey = colorKeyOf(values);
+  const sizeKey = (values.size_value ?? values.size_label ?? (values.size == null ? "" : String(values.size)))
+    .trim()
+    .toLocaleLowerCase();
+  const modelKey = modelKeyOf(values);
+  const canHealSingleCharKey =
+    rawKey.length === 1 &&
+    derivedKey.length > 1 &&
+    derivedKey.startsWith(rawKey) &&
+    !others.some(
+      (v) =>
+        v.color_key === derivedKey &&
+        variantSizeValue(v).toLocaleLowerCase() === sizeKey &&
+        modelKeyOf(v) === modelKey,
+    );
+  const colorKey = canHealSingleCharKey ? derivedKey : rawKey || derivedKey;
+
+  if (!currentId || isNamedModel) {
     const twin = others.find(
       (v) =>
         v.color_key === colorKey &&
-        variantSizeValue(v).toLocaleLowerCase() ===
-          (values.size_value ?? values.size_label ?? (values.size == null ? "" : String(values.size))).trim().toLocaleLowerCase(),
+        variantSizeValue(v).toLocaleLowerCase() === sizeKey &&
+        modelKeyOf(v) === modelKey,
     );
     if (twin) {
       throw new AppError(
         "VALIDATION",
         `${variantLabel(values)} already exists for this product`,
-        "size",
+        isNamedModel ? "display_name_en" : "size",
         "23505",
       );
     }
@@ -209,13 +243,20 @@ export async function saveVariant({
   if (current && current.active !== values.active) {
     throw new AppError("VALIDATION", "Archive or reactivate this combination using its dedicated action", "active");
   }
-  const editPatch: ProductVariantPatch = { ...values, sku, barcode };
+  const normalizedValues = {
+    ...values,
+    color_key: colorKey,
+    display_name_ar: values.display_name_ar?.trim() || null,
+    display_name_en: values.display_name_en?.trim() || null,
+    images: gallery,
+  };
+  const editPatch: ProductVariantPatch = { ...normalizedValues, sku, barcode, color_key: colorKey };
   delete editPatch.stock_quantity;
   delete editPatch.active;
   const variant = currentId
     ? await repository.updateVariant(currentId, editPatch)
     : await repository.createVariant({
-        ...values,
+        ...normalizedValues,
         sku,
         barcode,
         color_key: colorKey,

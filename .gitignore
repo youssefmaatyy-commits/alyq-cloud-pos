@@ -12,6 +12,7 @@ dist-ssr/
 .env
 .env.*
 !.env.example
+.staging-preview-env.json
 
 # ── editor / OS ───────────────────────────────────────────────────────────
 .DS_Store
@@ -38,3 +39,7 @@ coverage/
 supabase/.temp/
 # Desktop packaging output (generated installers/unpacked apps)
 release/
+
+# ── private encrypted production backup vault (never tracked in git) ──────
+backups-vault/
+

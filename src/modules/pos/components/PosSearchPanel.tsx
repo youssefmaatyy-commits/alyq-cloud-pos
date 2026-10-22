@@ -6,7 +6,9 @@ import { variantLabel, variantPrice } from "@/modules/products/variants";
 import { usePos } from "../hooks/PosProvider";
 import { VariantPicker } from "./VariantPicker";
 import { ProductThumb } from "./ProductThumb";
+import { CameraBarcodeScannerModal } from "./CameraBarcodeScannerModal";
 import { POS_SEARCH_RESULT_CAP, matchPosProducts } from "../services/posSearch";
+import { resolveScannedVariantProduct } from "../services/scanner";
 
 /**
  * Catalog + scan register workspace — the product side of the till.
@@ -43,9 +45,24 @@ export function PosSearchPanel() {
   const [activeIndex, setActiveIndex] = useState(-1);
   // The product whose combinations the cashier is choosing between, if any.
   const [picking, setPicking] = useState<string | null>(null);
+  const [cameraOpen, setCameraOpen] = useState(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const onOpenPicker = (event: Event) => {
+      const detail = (event as CustomEvent<{ productId?: string }>).detail;
+      if (detail?.productId) {
+        setPicking(detail.productId);
+        setQuery("");
+        setOpen(false);
+        setActiveIndex(-1);
+      }
+    };
+    window.addEventListener("alyq:pos-open-variant-picker", onOpenPicker);
+    return () => window.removeEventListener("alyq:pos-open-variant-picker", onOpenPicker);
+  }, []);
 
   const hits = useMemo(
     () => matchPosProducts(products, variants, query),
@@ -56,7 +73,7 @@ export function PosSearchPanel() {
   const trimmed = query.trim();
   const listVisible = open && trimmed.length > 0;
   const visibleCategories = useMemo(
-    () => categories.filter((category) => products.some((product) => product.category_id === category.id)),
+    () => categories.filter((category) => category.active && products.some((product) => product.category_id === category.id)),
     [categories, products],
   );
   const browseProducts = useMemo(
@@ -133,6 +150,16 @@ export function PosSearchPanel() {
       afterAdd();
       return;
     }
+    // Shared parent barcode / SKU of a variant or multi-model product (e.g. BR101):
+    // open the visual Model/Variant Picker immediately and never auto-pick.
+    const exactVariantProduct = resolveScannedVariantProduct(code, products, variants);
+    if (exactVariantProduct) {
+      setQuery("");
+      setOpen(false);
+      setActiveIndex(-1);
+      setPicking(exactVariantProduct.id);
+      return;
+    }
     // Not an exact code: Enter acts on the visible matches, and only when
     // the choice is unambiguous — a single match, or the highlighted row.
     // Multiple matches with nothing highlighted stay open; nothing is added.
@@ -152,6 +179,35 @@ export function PosSearchPanel() {
   };
 
   const pickingProduct = picking ? products.find((p) => p.id === picking) ?? null : null;
+
+  const handleCameraScan = (rawCode: string) => {
+    const code = rawCode.trim();
+    if (!code) return;
+    if (addBySku(code)) {
+      afterAdd();
+      return;
+    }
+    const exactVariantProduct = resolveScannedVariantProduct(code, products, variants);
+    if (exactVariantProduct) {
+      setQuery("");
+      setOpen(false);
+      setActiveIndex(-1);
+      setPicking(exactVariantProduct.id);
+      return;
+    }
+    const matches = matchPosProducts(products, variants, code);
+    if (matches.length === 1) {
+      activate(matches[0].product);
+      return;
+    }
+    if (matches.length > 1) {
+      setQuery(code);
+      setOpen(true);
+      setActiveIndex(0);
+      return;
+    }
+    toast.error(t("pos.codeUnavailable"));
+  };
 
   return (
     <div className="flex min-h-0 min-w-0 flex-col gap-3">
@@ -187,8 +243,18 @@ export function PosSearchPanel() {
             if (query.trim()) setOpen(true);
           }}
           onKeyDown={onKeyDown}
-          className="h-12 min-w-0 w-full rounded-2xl border border-stone-300 bg-white py-2 pe-3 ps-11 text-[15px] font-semibold shadow-sm outline-none transition placeholder:font-medium placeholder:text-stone-400 focus:border-stone-500 focus:ring-2 focus:ring-stone-900/10"
+          className="h-12 min-w-0 w-full rounded-2xl border border-stone-300 bg-white py-2 pe-24 ps-11 text-[15px] font-semibold shadow-sm outline-none transition placeholder:font-medium placeholder:text-stone-400 focus:border-stone-500 focus:ring-2 focus:ring-stone-900/10"
         />
+        <button
+          type="button"
+          onClick={() => setCameraOpen(true)}
+          data-testid="pos-camera-scan-btn"
+          aria-label={lang === "ar" ? "مسح الباركود بالكاميرا" : "Scan barcode with camera"}
+          className="absolute end-1.5 top-1/2 inline-flex h-9 -translate-y-1/2 items-center gap-1 rounded-xl bg-stone-900 px-2.5 text-xs font-bold text-[#f3ede1] shadow-xs transition hover:bg-stone-800"
+        >
+          <span aria-hidden>📷</span>
+          <span>{lang === "ar" ? "مسح" : "Scan"}</span>
+        </button>
       </div>
 
       {listVisible ? (
@@ -401,6 +467,16 @@ export function PosSearchPanel() {
           onPick={() => afterAdd()}
           onClose={() => {
             setPicking(null);
+            inputRef.current?.focus();
+          }}
+        />
+      ) : null}
+
+      {cameraOpen ? (
+        <CameraBarcodeScannerModal
+          onScan={handleCameraScan}
+          onClose={() => {
+            setCameraOpen(false);
             inputRef.current?.focus();
           }}
         />

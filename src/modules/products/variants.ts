@@ -49,6 +49,14 @@ export interface ProductVariant {
   /** Explicit merchant order for size options. */
   size_sort_order?: number;
   image_url: string | null;
+  /**
+   * Optional model/shape name ("شكل 1" / "Model 1") for a combination that has
+   * no colour or size under a shared parent barcode (Migration 0097).
+   */
+  display_name_ar?: string | null;
+  display_name_en?: string | null;
+  /** Ordered variant gallery (max 5, https). Empty on legacy rows. */
+  images?: string[];
   /** Null → the product's own selling_price. */
   price_override: number | null;
   /** Null → the product's own cost_price. */
@@ -183,6 +191,8 @@ export function compareVariants(a: ProductVariant, b: ProductVariant): number {
   const sizeOrder = naturalSizeCompare(variantSizeValue(a), variantSizeValue(b));
   if (sizeOrder !== 0) return sizeOrder;
   if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
+  const modelOrder = naturalSizeCollator.compare(modelNameOf(a) ?? "", modelNameOf(b) ?? "");
+  if (modelOrder !== 0) return modelOrder;
   return a.sku.localeCompare(b.sku);
 }
 
@@ -222,22 +232,91 @@ export function naturalSizeCompare(a: string, b: string): number {
   return naturalSizeCollator.compare(left, right);
 }
 
-/** "Gold / 17" — the colour first, then the size, in the reader's language. */
+/** The model name in the reader's language, falling back across the pair. */
+export function modelNameOf(
+  variant: Partial<Pick<ProductVariant, "display_name_ar" | "display_name_en">>,
+  lang: "ar" | "en" = "en",
+): string | null {
+  const en = (variant.display_name_en ?? "").trim();
+  const ar = (variant.display_name_ar ?? "").trim();
+  const value = lang === "ar" ? ar || en : en || ar;
+  return value || null;
+}
+
+/**
+ * A free-size model: a named combination with no colour and no size. Such a
+ * variant never asks the shopper or the cashier for a size.
+ */
+export function isFreeSizeModel(
+  variant: Partial<Pick<ProductVariant, "color_key" | "color_en" | "color_ar" | "size" | "size_label" | "size_value" | "display_name_ar" | "display_name_en">>,
+): boolean {
+  const hasColour = Boolean((variant.color_key ?? "").trim() || (variant.color_en ?? "").trim() || (variant.color_ar ?? "").trim());
+  const hasSize = Boolean(variantSizeValue({ size: variant.size ?? null, size_label: variant.size_label ?? null, size_value: variant.size_value }));
+  return !hasColour && !hasSize && modelNameOf(variant) !== null;
+}
+
+/**
+ * The variant's own pictures in shop order: its gallery first, then the cover
+ * `image_url` if the gallery does not already carry it. Never shared with a
+ * sibling variant.
+ */
+export function variantGalleryOf(
+  variant: Partial<Pick<ProductVariant, "images" | "image_url">>,
+): string[] {
+  const gallery = (variant.images ?? []).filter((url): url is string => typeof url === "string" && url.trim() !== "");
+  const cover = variant.image_url ?? null;
+  const all = cover && !gallery.includes(cover) ? [...gallery, cover] : gallery;
+  return [...new Set(all)];
+}
+
+/** Identity of a model name inside one product (case- and space-insensitive). */
+export function modelKeyOf(variant: Partial<Pick<ProductVariant, "display_name_ar" | "display_name_en">>): string {
+  return (modelNameOf(variant) ?? "").replace(/\s+/g, " ").toLocaleLowerCase();
+}
+
+/** Most photos one variant may carry (mirrors migration 0097). */
+export const VARIANT_GALLERY_LIMIT = 5;
+
+/** Why a gallery cannot be saved, or null when it can. */
+export function variantGalleryProblem(urls: readonly string[]): string | null {
+  if (urls.length > VARIANT_GALLERY_LIMIT) return "too_many";
+  if (urls.some((url) => !/^https?:\/\/\S+$/i.test(url) || url.length > 2048)) return "invalid_url";
+  return null;
+}
+
+/**
+ * "Gold / 17" — the colour first, then the size, in the reader's language. A
+ * free-size model has no colour or size, so its label is the model name
+ * ("شكل 1" / "Model 1").
+ */
 export function variantLabel(
-  variant: Pick<ProductVariant, "color_en" | "color_ar" | "size" | "size_label"> & Partial<Pick<ProductVariant, "size_value">>,
+  variant: Pick<ProductVariant, "color_en" | "color_ar" | "size" | "size_label"> &
+    Partial<Pick<ProductVariant, "size_value" | "display_name_ar" | "display_name_en">>,
   lang: "ar" | "en" = "en",
 ): string {
   const color = (lang === "ar" ? variant.color_ar || variant.color_en : variant.color_en || variant.color_ar) ?? "";
+  const primary = color.trim() || modelNameOf(variant, lang) || "";
   const size = variantSizeValue(variant);
-  return [color.trim(), size].filter(Boolean).join(" / ");
+  return [primary, size].filter(Boolean).join(" / ");
 }
 
 /** The same label from a frozen snapshot (an invoice line, an order line). */
 export function snapshotLabel(
-  snapshot: Pick<VariantSnapshot, "color_en" | "color_ar" | "size" | "size_label">,
+  snapshot: Pick<VariantSnapshot, "color_en" | "color_ar" | "size" | "size_label"> & {
+    variant_display_name?: string | null;
+    display_name_ar?: string | null;
+    display_name_en?: string | null;
+  },
   lang: "ar" | "en" = "en",
 ): string {
-  return variantLabel(snapshot, lang);
+  return variantLabel(
+    {
+      ...snapshot,
+      display_name_ar: snapshot.display_name_ar ?? snapshot.variant_display_name ?? null,
+      display_name_en: snapshot.display_name_en ?? snapshot.variant_display_name ?? null,
+    },
+    lang,
+  );
 }
 
 /** What this variant actually sells for, given its product. */
@@ -366,6 +445,62 @@ export function colorKeyOf(color: {
   return (en || ar).replace(/\s+/g, " ").toLowerCase();
 }
 
+const ARABIC_COLOR_TOKENS: Readonly<Record<string, string>> = {
+  "روز": "ROSE",
+  "روز جولد": "ROSEG",
+  "أحمر": "RED",
+  "احمر": "RED",
+  "أبيض": "WHITE",
+  "ابيض": "WHITE",
+  "أسود": "BLACK",
+  "اسود": "BLACK",
+  "ذهبي": "GOLD",
+  "دهبي": "GOLD",
+  "فضي": "SILVER",
+  "أزرق": "BLUE",
+  "ازرق": "BLUE",
+  "أخضر": "GREEN",
+  "اخضر": "GREEN",
+  "وردي": "PINK",
+  "بينك": "PINK",
+  "بني": "BROWN",
+  "بيج": "BEIGE",
+  "رمادي": "GRAY",
+  "رصاصي": "GRAY",
+  "موف": "PURPLE",
+  "بنفسجي": "PURPLE",
+  "أصفر": "YELLOW",
+  "اصفر": "YELLOW",
+  "برتقالي": "ORANGE",
+  "كحلي": "NAVY",
+  "تركواز": "TURQ",
+  "زيتي": "OLIVE",
+  "نبيتي": "MAROON",
+  "سماوي": "CYAN",
+};
+
+const ARABIC_CHAR_MAP: Readonly<Record<string, string>> = {
+  "ا": "A", "أ": "A", "إ": "E", "آ": "A", "ب": "B", "ت": "T", "ث": "TH",
+  "ج": "G", "ح": "H", "خ": "KH", "د": "D", "ذ": "Z", "ر": "R", "ز": "Z",
+  "س": "S", "ش": "SH", "ص": "S", "ض": "D", "ط": "T", "ظ": "Z", "ع": "A",
+  "غ": "GH", "ف": "F", "ق": "Q", "ك": "K", "ل": "L", "م": "M", "ن": "N",
+  "ه": "H", "ة": "A", "و": "W", "ي": "Y", "ى": "A", "ئ": "Y", "ؤ": "W",
+};
+
+function toAsciiColorPart(en: string, ar: string): string {
+  const englishAscii = en.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
+  if (englishAscii) return englishAscii;
+  const normalizedAr = ar.replace(/\s+/g, " ").trim();
+  if (!normalizedAr) return "";
+  if (ARABIC_COLOR_TOKENS[normalizedAr]) return ARABIC_COLOR_TOKENS[normalizedAr];
+  let out = "";
+  for (const ch of normalizedAr.toUpperCase()) {
+    if (/[A-Z0-9]/.test(ch)) out += ch;
+    else if (ARABIC_CHAR_MAP[ch]) out += ARABIC_CHAR_MAP[ch];
+  }
+  return out.slice(0, 6);
+}
+
 /**
  * A suggested SKU for a combination: `ALYQ-R001-G17`.
  *
@@ -383,10 +518,7 @@ export function suggestVariantSku(
   const base = (baseSku || "VAR").toUpperCase().replace(/[^A-Z0-9-]/g, "").slice(0, 24) || "VAR";
   const en = (color?.color_en ?? "").trim();
   const ar = (color?.color_ar ?? "").trim();
-  const colorPart = (en || ar)
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, "")
-    .slice(0, 6);
+  const colorPart = toAsciiColorPart(en, ar);
   const rawSize = size === null ? (sizeLabel ?? "") : String(size);
   const sizePart = rawSize.toUpperCase().replace(/[^A-Z0-9]/g, "").replace(".", "D").slice(0, 8);
   const stem = [base, colorPart, sizePart].filter(Boolean).join("-").slice(0, 36);
@@ -394,9 +526,31 @@ export function suggestVariantSku(
   let candidate = stem;
   let n = 1;
   const used = new Set(taken.map((sku) => sku.trim().toUpperCase()));
+  // A variant SKU may never equal the parent product's own SKU.
+  used.add(base);
   while (used.has(candidate)) {
     n += 1;
     candidate = `${stem.slice(0, 36)}-${n}`;
+  }
+  return candidate;
+}
+
+/**
+ * Suggest a unique internal SKU for an individual model/shape under a parent
+ * product: e.g. `BR101` + model #1 -> `BR101-M01`, model #2 -> `BR101-M02`.
+ */
+export function suggestModelSku(
+  baseSku: string,
+  modelNumber: number,
+  taken: readonly string[] = [],
+): string {
+  const base = (baseSku || "MOD").toUpperCase().replace(/[^A-Z0-9-]/g, "").slice(0, 28) || "MOD";
+  const used = new Set(taken.map((sku) => sku.trim().toUpperCase()));
+  let num = Math.max(1, Math.trunc(modelNumber) || 1);
+  let candidate = `${base}-M${String(num).padStart(2, "0")}`;
+  while (used.has(candidate)) {
+    num += 1;
+    candidate = `${base}-M${String(num).padStart(2, "0")}`;
   }
   return candidate;
 }
@@ -423,9 +577,9 @@ export function needsVariantChoice(
 /**
  * Find the exact combination a scanned code belongs to.
  *
- * Returns the variant and its product, or null. Callers must treat a null as
- * "no such variant" and fall through to the product-level lookup — never as
- * "pick the first one".
+ * Returns the variant ONLY when the code unambiguously identifies one variant;
+ * otherwise returns null so the caller falls through to the product-level
+ * lookup and opens the visual model/variant picker — never picking the first one.
  */
 export function variantByCode(
   variants: readonly ProductVariant[],
@@ -433,11 +587,10 @@ export function variantByCode(
 ): ProductVariant | null {
   const wanted = code.trim().toUpperCase();
   if (!wanted) return null;
-  return (
-    variants.find(
-      (variant) =>
-        variant.sku.toUpperCase() === wanted ||
-        (variant.barcode ?? "").toUpperCase() === wanted,
-    ) ?? null
+  const matches = variants.filter(
+    (variant) =>
+      variant.sku.toUpperCase() === wanted ||
+      (variant.barcode ?? "").toUpperCase() === wanted,
   );
+  return matches.length === 1 ? matches[0] : null;
 }

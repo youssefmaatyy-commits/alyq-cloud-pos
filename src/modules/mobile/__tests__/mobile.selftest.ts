@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { parseMobileDeepLink, authorizeMobileDeepLink, safePushDeepLink } from "../services/deepLinks";
-import { safeNotificationId } from "../services/notificationCenter";
+import { safeNotificationId, webRouteFor } from "../services/notificationCenter";
 import { decodeVapidPublicKey, webPushCapability, webPushStateFor } from "../services/webPush";
 import { buildOperationalNotifications, type NotificationSnapshot } from "@/modules/operations/services/notifications";
 import { compareVariants, type ProductVariant } from "@/modules/products/variants";
@@ -91,7 +91,7 @@ test("PWA assets are installable and notification clicks carry only opaque ident
   };
   assert.equal(manifest.name, "ALYQ Mobile Management");
   assert.equal(manifest.short_name, "ALYQ");
-  assert.equal(manifest.start_url, "/#/mobile");
+  assert.equal(manifest.start_url, "/#/dashboard");
   assert.equal(manifest.display, "standalone");
   assert.deepEqual(manifest.icons.map((icon) => icon.sizes), ["192x192", "512x512"]);
   const index = fs.readFileSync("index.html", "utf8");
@@ -342,6 +342,73 @@ test("phone shell is purpose-built, RTL-aware and width hardened", () => {
   assert.match(css, /overflow-x:clip/);
   assert.match(app, /data-mobile-width-safe="360-430"/);
   assert.doesNotMatch(app, /AppShell|RegisterProvider|PosProvider/);
+});
+
+test("Web /dashboard/* achieves Phase 1 & Phase 2 parity with ALYQ Mobile Management", () => {
+  const sampleId = "123e4567-e89b-42d3-a456-426614174000";
+  assert.equal(webRouteFor("order", sampleId), `/dashboard/online/orders/${sampleId}`);
+  assert.equal(webRouteFor("product", sampleId), `/dashboard/inventory/stock/${sampleId}`);
+  assert.equal(webRouteFor("approval", sampleId), `/dashboard/approvals/${sampleId}`);
+  assert.equal(webRouteFor("invoice", sampleId), `/dashboard/pos/sales/${sampleId}`);
+  assert.equal(webRouteFor("health", ""), "/dashboard/system-health");
+  assert.equal(webRouteFor("order", "not-a-uuid"), null);
+
+  const dash = fs.readFileSync("src/modules/dashboard/DashboardPage.tsx", "utf8");
+  const health = fs.readFileSync("src/modules/system/pages/HealthCenterPage.tsx", "utf8");
+  const orders = fs.readFileSync("src/modules/online/pages/OnlineOrdersPage.tsx", "utf8");
+  const orderDetail = fs.readFileSync("src/modules/online/components/OrderDetailModal.tsx", "utf8");
+  const inventory = fs.readFileSync("src/modules/inventory/pages/InventoryPage.tsx", "utf8");
+  const approvals = fs.readFileSync("src/modules/approvals/pages/ApprovalsPage.tsx", "utf8");
+  const sales = fs.readFileSync("src/modules/pos/pages/SalesHistoryPage.tsx", "utf8");
+  const saleDetail = fs.readFileSync("src/modules/pos/pages/SaleDetailPage.tsx", "utf8");
+
+  assert.match(dash, /data-testid="dash-mobile-parity"/);
+  assert.match(health, /data-testid="health-notifications"/);
+  assert.match(orders, /data-testid="orders-view-toggle"/);
+  assert.match(orderDetail, /deliveryStatusOf/);
+  assert.match(orderDetail, /mobile-timeline/);
+  assert.match(inventory, /listColorImages/);
+  assert.match(inventory, /data-testid="inventory-exact-shelves"/);
+  assert.match(inventory, /data-testid="inventory-product-detail-modal"/);
+  assert.match(approvals, /data-testid="approval-detail-modal"/);
+  assert.match(approvals, /mobile-safe-evidence/);
+  assert.match(sales, /data-testid="sales-quick-dates"/);
+  assert.match(saleDetail, /data-testid="sale-mobile-summary"/);
+
+  const moduleHomes = fs.readFileSync("src/components/layout/moduleHomes.tsx", "utf8");
+  const webNotifCtx = fs.readFileSync("src/modules/notifications/WebNotificationsContext.tsx", "utf8");
+  const shell = fs.readFileSync("src/components/layout/AppShell.tsx", "utf8");
+  const mobileCss = fs.readFileSync("src/modules/mobile/mobile.css", "utf8");
+
+  assert.match(moduleHomes, /data-testid="module-more-parity"/);
+  assert.match(webNotifCtx, /runtime:\s*MobileRuntimeContext\s*\|\s*null/);
+  assert.match(shell, /overflow-x-clip/);
+  assert.match(mobileCss, /white-space:nowrap/);
+});
+
+test("Android Full POS APK retains eg.alyq.management, bumps versionCode to 2, and wires camera & print bridge", () => {
+  const capConfig = fs.readFileSync("capacitor.config.ts", "utf8");
+  const stringsXml = fs.readFileSync("android/app/src/main/res/values/strings.xml", "utf8");
+  const buildGradle = fs.readFileSync("android/app/build.gradle", "utf8");
+  const manifest = fs.readFileSync("android/app/src/main/AndroidManifest.xml", "utf8");
+  const mainActivity = fs.readFileSync("android/app/src/main/java/eg/alyq/management/MainActivity.java", "utf8");
+  const bottomNav = fs.readFileSync("src/components/layout/MobilePosBottomNav.tsx", "utf8");
+  const cameraModal = fs.readFileSync("src/modules/pos/components/CameraBarcodeScannerModal.tsx", "utf8");
+
+  assert.match(capConfig, /appId:\s*"eg\.alyq\.management"/);
+  assert.match(capConfig, /appName:\s*"ALYQ POS"/);
+  assert.match(stringsXml, /<string name="app_name">ALYQ POS<\/string>/);
+  assert.match(stringsXml, /<string name="package_name">eg\.alyq\.management<\/string>/);
+  assert.match(buildGradle, /applicationId\s+"eg\.alyq\.management"/);
+  assert.match(buildGradle, /versionCode\s+2\b/);
+  assert.match(buildGradle, /versionName\s+"2\.0\.0"/);
+  assert.match(buildGradle, /System\.getenv\("ALYQ_KEYSTORE_PATH"\)/);
+  assert.match(manifest, /android\.permission\.CAMERA/);
+  assert.match(mainActivity, /ALYQAndroidPrint/);
+  assert.match(mainActivity, /createPrintDocumentAdapter/);
+  assert.match(bottomNav, /data-testid="mobile-pos-bottom-nav"/);
+  assert.match(bottomNav, /data-testid="mobile-pos-modules-sheet"/);
+  assert.match(cameraModal, /data-testid="pos-camera-scanner-modal"/);
 });
 
 let failed = 0;
