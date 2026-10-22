@@ -37,6 +37,7 @@ export function V2ProductCard({ entry, priority = false, filters }: {
   const [chosen, setChosen] = useState<StoreVariant | null>(null);
   const [colorKey, setColorKey] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
+  const quickAddButton = useRef<HTMLButtonElement>(null);
   // Transient "Added ✓" state on the button itself. `addLock` is the actual
   // guard against rapid repeated taps adding the item more than once while
   // that confirmation is still showing; `justAdded` only drives the label.
@@ -77,6 +78,9 @@ export function V2ProductCard({ entry, priority = false, filters }: {
     addLockTimer.current = window.setTimeout(() => { addLock.current = false; }, 900);
     if (add(product, 1, variant)) {
       setOpen(false);
+      // The chosen-option button disappears on success; keep the keyboard
+      // starting point connected so the mini-cart can restore focus reliably.
+      quickAddButton.current?.focus();
       setNotice(t("store.v2.added"));
       setJustAdded(true);
       if (justAddedTimer.current !== null) window.clearTimeout(justAddedTimer.current);
@@ -133,6 +137,15 @@ export function V2ProductCard({ entry, priority = false, filters }: {
           <strong>{money(pricing.price)}</strong>
           {pricing.price < pricing.list ? <del>{money(pricing.list)}</del> : null}
         </div> : null}
+        {model.hasModels ? <div className="v2-model-preview" data-testid={`v2-model-preview-${product.id}`}>
+          <div className="v2-model-preview-images" aria-hidden="true">
+            {model.models.filter(({ available }) => available > 0).slice(0, 4).map(({ variant }) => {
+              const src = variant.images?.[0] || variant.image_url;
+              return src ? <img key={variant.id} src={src} alt="" loading="lazy" /> : null;
+            })}
+          </div>
+          <span>{t("store.v2.modelsAvailable", { count: model.sellable.length })}</span>
+        </div> : null}
         {settings.product_card.show_swatches && model.hasColors ? (
           <div className="v2-card-swatches" role="group" aria-label={t("store.variants.color")}>
             {model.groups.slice(0, 6).map((group) => {
@@ -149,7 +162,7 @@ export function V2ProductCard({ entry, priority = false, filters }: {
         ) : null}
         <V2Status available={cardAvailable} mode={mode} tracked={product.stock_tracking_enabled} />
         {settings.product_card.show_quick_add ? (
-          <button type="button" className="v2-card-add" data-testid={`v2-quick-add-${product.id}`}
+          <button ref={quickAddButton} type="button" className="v2-card-add" data-testid={`v2-quick-add-${product.id}`}
             data-added={justAdded || undefined}
             disabled={!sellable} aria-expanded={product.variants_enabled && matchingSellable.length > 1 ? open : undefined}
             onClick={quickAdd}>

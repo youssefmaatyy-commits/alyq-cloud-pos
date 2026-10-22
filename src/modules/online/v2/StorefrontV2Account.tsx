@@ -149,7 +149,6 @@ export function StorefrontV2Account() {
   };
 
   return <div className="v2-journey v2-container" data-testid="v2-account">
-    <p className="v2-eyebrow">{t("store.v2.eyebrow")}</p>
     <div className="v2-journey-title"><h1>{customer ? t("store.account.hello", { name: customer.name }) : t("store.account.title")}</h1>
       {customer ? <button type="button" className="v2-outline-button" disabled={busy} onClick={() => void logout()}>
         {t("store.account.signOut")}</button> : null}</div>

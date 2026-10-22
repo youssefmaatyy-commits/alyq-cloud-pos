@@ -37,7 +37,7 @@ npm run mobile:build | mobile:android | mobile:ios
 - `supabase/functions/`: Deno edge functions `alyq-admin`, `alyq-auth`, `alyq-push`.
 - `supabase/tests/`: SQL scenarios run by `db:check`.
 - `scripts/`: test runners, e2e `*.flow.mjs`, `migrations.check.mjs`, preflight, desktop dev.
-- `desktop/`: Electron `main.mjs`, `preload.mjs`, `contracts.mjs` (IPC contract).
+- `desktop/`: Electron `main.mjs`, sandbox-compatible CommonJS `preload.cjs`, `contracts.mjs` (IPC contract).
 - `android/`, `ios/`: Capacitor native projects.
 - `public/`: PWA manifest, icons, `alyq-sw.js` (Web Push service worker), brand assets.
 - `docs/`: architecture, auth, permission matrix, deployment, desktop/mobile runbooks. Root `PHASE-*.md` / `AUDIT-*.md` are historical reports.

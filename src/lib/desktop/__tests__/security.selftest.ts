@@ -2,16 +2,25 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 
 const main = fs.readFileSync("desktop/main.mjs", "utf8");
-const preload = fs.readFileSync("desktop/preload.mjs", "utf8");
+const preload = fs.readFileSync("desktop/preload.cjs", "utf8");
 const contracts = fs.readFileSync("desktop/contracts.mjs", "utf8");
 const packageManifest = fs.readFileSync("package.json", "utf8");
+const ipcChannels = [...contracts.matchAll(/^\s+\w+: "([^"]+)"/gm)].map((match) => match[1]);
 
 const tests: Array<[string, () => void]> = [
+  ["packaged desktop starts at real staff login without changing app identity or user-data policy", () => {
+    assert.ok(main.includes('packagedUrl.hash = "/login"'));
+    assert.ok(main.includes('parsed.hash = "/login"'));
+    assert.match(packageManifest, /"appId":\s*"eg\.alyq\.pos"/);
+    assert.match(packageManifest, /"deleteAppDataOnUninstall":\s*false/);
+    assert.match(main, /CONFIG_FILE = "desktop-config\.v1\.json"/);
+  }],
   ["renderer is isolated, sandboxed and has no Node integration", () => {
     assert.match(main, /contextIsolation:\s*true/);
     assert.match(main, /nodeIntegration:\s*false/);
     assert.match(main, /sandbox:\s*true/);
     assert.match(main, /webSecurity:\s*true/);
+    assert.match(main, /preload: path\.join\(__dirname, "preload\.cjs"\)/);
   }],
   ["new windows and untrusted navigation are denied", () => {
     assert.match(main, /setWindowOpenHandler/);
@@ -29,6 +38,11 @@ const tests: Array<[string, () => void]> = [
     assert.match(main, /event\.sender !== mainWindow\.webContents/);
     assert.match(main, /event\.senderFrame !== mainWindow\.webContents\.mainFrame/);
     assert.ok((main.match(/assertSender\(event\)/g) ?? []).length >= 12);
+  }],
+  ["sandboxed preload is CommonJS and stays compatible with the fixed IPC contract", () => {
+    assert.doesNotMatch(preload, /^\s*import\s/m);
+    assert.ok(ipcChannels.length > 0);
+    for (const channel of ipcChannels) assert.ok(preload.includes(`"${channel}"`), `preload is missing ${channel}`);
   }],
   ["preload has no arbitrary IPC or Node/filesystem/process surface", () => {
     assert.doesNotMatch(preload, /ipcRenderer\.(send|sendSync|once)\s*\(/);

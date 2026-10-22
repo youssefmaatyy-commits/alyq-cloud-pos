@@ -49,7 +49,7 @@ export function StorefrontV2Track() {
   };
 
   return <div className="v2-journey v2-container" data-testid="v2-track">
-    <p className="v2-eyebrow">{t("store.v2.eyebrow")}</p><h1>{t("store.track.title")}</h1>
+    <h1>{t("store.track.title")}</h1>
     <p className="v2-small">{t("store.track.hint")}</p>
     <div className="v2-journey-grid"><div className="v2-journey-main">
       <V2Panel><form className="v2-track-form" onSubmit={(event) => void submit(event)} noValidate>

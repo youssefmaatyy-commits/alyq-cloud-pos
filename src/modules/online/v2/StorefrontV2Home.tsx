@@ -29,10 +29,16 @@ export function StorefrontV2Home() {
       ...slide,
       title: source?.title_ar || source?.title_en ? slide.title : "",
       subtitle: source?.subtitle_ar || source?.subtitle_en ? slide.subtitle : "",
-      ctaLabel: source?.cta_label_ar || source?.cta_label_en ? slide.ctaLabel : "",
+      // The primary hero action is always a clear, localized route to the
+      // published catalogue. Keep merchant copy when it exists in this
+      // language; otherwise use the storefront's own bilingual fallback.
+      ctaLabel: lang === "ar"
+        ? source?.cta_label_ar?.trim() || t("store.v2.shopCollection")
+        : source?.cta_label_en?.trim() || t("store.v2.shopCollection"),
+      ctaHref: "#/store/products",
       secondaryCtaLabel: source?.secondary_cta_label_ar || source?.secondary_cta_label_en ? slide.secondaryCtaLabel : "",
     };
-  }).filter((slide) => slide.title || slide.imageUrl || slide.mobileImageUrl), [settings, pick]);
+  }).filter((slide) => slide.title || slide.imageUrl || slide.mobileImageUrl), [settings, pick, lang, t]);
   const [heroIndex, setHeroIndex] = useState(0);
   const [heroPaused, setHeroPaused] = useState(false);
   useEffect(() => {
@@ -91,7 +97,6 @@ export function StorefrontV2Home() {
                 <div className="v2-hero-scrim" style={{ opacity: Math.max(0.58, (slide.overlay ?? 36) / 100) }} aria-hidden /></>
             ) : null}
             <div className={`v2-hero-content v2-hero-${slide.contentPosition}`}>
-              <p className="v2-hero-kicker">{t("store.v2.eyebrow")}</p>
               {slide.title ? <h1>{slide.title}</h1> : null}
               {slide.subtitle ? <p className="v2-hero-subtitle">{slide.subtitle}</p> : null}
               <div className="v2-hero-actions">
@@ -114,23 +119,24 @@ export function StorefrontV2Home() {
           : categoryContents.filter((row) => row.featured).sort((a, b) => a.sort_order - b.sort_order).map((row) => row.category_id);
         const ids = curated.length ? curated : active.map((row) => row.id);
         const entries = ids.map((id) => active.find((row) => row.id === id)).filter((row) => row !== undefined).slice(0, sectionLimit(section));
-        if (!entries.length) return null;
         return (
-          <V2Section key="categories" id="categories" title={title} eyebrow={t("store.v2.eyebrow")} action={action(section)}>
-            <div className="v2-category-grid">
+          <V2Section key="categories" id="categories" title={title} action={entries.length ? action(section) : undefined}>
+            {entries.length ? <div className="v2-category-grid">
               {entries.map((category) => {
                 const content = categoryMap.get(category.id);
-                const label = pick(content?.title_ar || category.name_ar, content?.title_en || category.name_en);
-                const cover = content?.homepage_image_url || content?.image_url || image ||
-                  products.find((product) => product.category_id === category.id)?.image_url;
+                const arabic = content?.title_ar || category.name_ar;
+                const english = content?.title_en || category.name_en;
                 return (
                   <Link key={category.id} to={`/store/products?category=${encodeURIComponent(category.id)}`} className="v2-category">
-                    <V2Image src={cover} alt="" />
-                    <span className="v2-category-title">{label}<span aria-hidden></span></span>
+                    <span className="v2-category-copy">
+                      <span className="v2-category-ar" lang="ar" dir="rtl">{arabic}</span>
+                      <span className="v2-category-en" lang="en" dir="ltr">{english}</span>
+                    </span>
+                    <span className="v2-category-arrow" aria-hidden>↗</span>
                   </Link>
                 );
               })}
-            </div>
+            </div> : <p className="v2-category-empty" role="status">{t("store.v2.categoriesEmpty")}</p>}
           </V2Section>
         );
       }
@@ -151,11 +157,19 @@ export function StorefrontV2Home() {
         entries = entries.slice(0, sectionLimit(section));
         if (entries.length === 0) return null;
         return (
-          <V2Section key={section.key} id={section.key} title={title} eyebrow={t("store.v2.eyebrow")}
+          <V2Section key={section.key} id={section.key} title={title}
             action={action(section, section.key === "sale" ? "#/store/products?offer=1"
               : section.key === "newArrivals" ? "#/store/products?sort=newest"
                 : section.key === "bestSellers" ? "#/store/products?sort=best_selling" : "#/store/products")}>
-            <V2ProductGrid>{entries.map((entry, index) => <V2ProductCard key={entry.product.id} entry={entry} priority={index < 2} />)}</V2ProductGrid>
+            {section.key === "newArrivals" && entries.length <= 3
+              ? <div className={`v2-new-arrivals v2-new-arrivals-${entries.length}`} data-count={entries.length} data-testid="v2-new-arrivals">
+                {entries.map((entry, index) => <div key={entry.product.id} className="v2-new-arrival-item"
+                  data-featured={entries.length === 3 && index === 0 ? true : undefined}>
+                  <V2ProductCard entry={entry} priority={index < 2} />
+                </div>)}
+              </div>
+              : <V2ProductGrid>{entries.map((entry, index) =>
+                <V2ProductCard key={entry.product.id} entry={entry} priority={index < 2} />)}</V2ProductGrid>}
           </V2Section>
         );
       }
@@ -167,7 +181,7 @@ export function StorefrontV2Home() {
             <div className="v2-editorial-stack">
               {blocks.map((block) => <div key={block.id} className="v2-editorial v2-campaign">
                 <V2Image src={block.desktop_image_url} mobileSrc={block.mobile_image_url} alt="" />
-                <div className="v2-editorial-copy"><p className="v2-eyebrow">{t("store.v2.eyebrow")}</p>
+                <div className="v2-editorial-copy">
                   <h3>{pick(block.title_ar, block.title_en)}</h3>
                   {block.subtitle_ar || block.subtitle_en ? <p>{pick(block.subtitle_ar, block.subtitle_en)}</p> : null}
                   {block.cta_ar || block.cta_en ? <V2ActionLink href={block.cta_href} className="v2-text-link">{pick(block.cta_ar, block.cta_en)}</V2ActionLink> : null}

@@ -257,7 +257,6 @@ export function StorefrontV2Checkout() {
   };
 
   return <div className="v2-journey v2-container" data-testid="v2-checkout">
-    <p className="v2-eyebrow">{t("store.v2.eyebrow")}</p>
     <h1>{checkoutHeading}</h1>
     {!customer ? <p className="v2-small">{t("store.checkout.guestNote")}{" "}
       <Link to="/store/account">{t("store.account.signIn")}</Link></p> : null}
