@@ -499,9 +499,12 @@ if (!gotSingleInstanceLock) {
       if (parsed.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(parsed.hostname)) {
         throw new Error("ALYQ_DESKTOP_DEV_URL must be a local HTTP origin");
       }
+      parsed.hash = "/login";
       allowedAppUrl = parsed.toString();
     } else {
-      allowedAppUrl = pathToFileURL(path.resolve(__dirname, "..", "dist", "index.html")).toString();
+      const packagedUrl = new URL(pathToFileURL(path.resolve(__dirname, "..", "dist", "index.html")).toString());
+      packagedUrl.hash = "/login";
+      allowedAppUrl = packagedUrl.toString();
     }
     installSessionPolicy();
     installIpcHandlers();

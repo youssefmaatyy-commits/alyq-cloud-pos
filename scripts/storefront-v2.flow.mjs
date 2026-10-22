@@ -21,6 +21,10 @@ const ring = products.find((product) => product.sku === "ALYQ-1002");
 ring.variants_enabled = true;
 ring.stock_quantity = 5;
 ring.low_stock_level = 1;
+const modelProductId = "9caa4fe0-4147-4af0-9982-000000000101";
+const modelProduct = { ...products[0], id: modelProductId, sku: "BR101", barcode: "SHARED-BR101",
+  name_en: "BR101 Collection", name_ar: "مجموعة BR101", variants_enabled: true, stock_quantity: 66, low_stock_level: 2 };
+products.push(modelProduct);
 const UUID = {
   gold17: "4fb4125a-0f26-461e-8a94-31e365342101",
   gold18: "4fb4125a-0f26-461e-8a94-31e365342102",
@@ -41,6 +45,19 @@ const variants = [
   variant(UUID.silverXS, "silver", null, "XS", 1),
   variant(UUID.silverHalf, "silver", 16.5, null, 2),
 ];
+const modelPhoto = (index) => `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" fill="hsl(${index * 23} 32% 82%)"/><text x="32" y="38" text-anchor="middle" font-size="20">${index + 1}</text></svg>`)}`;
+const modelVariantIds = Array.from({ length: 12 }, (_, index) => `9caa4fe0-4147-4af0-9982-${String(index + 201).padStart(12, "0")}`);
+const modelVariants = modelVariantIds.map((id, index) => ({
+  id, product_id: modelProductId, sku: `BR101-M${String(index + 1).padStart(2, "0")}`,
+  barcode: "SHARED-BR101", color_key: "", color_en: null, color_ar: null, color_hex: null,
+  size: null, size_label: null, size_value: null, image_url: modelPhoto(index), images: [modelPhoto(index)],
+  display_name_en: `Model ${String(index + 1).padStart(2, "0")}`,
+  display_name_ar: `موديل ${String(index + 1).padStart(2, "0")}`,
+  price_override: 75 + index, cost_override: null, stock_quantity: index === 11 ? 0 : index + 1,
+  low_stock_level: 1, active: true, sort_order: index + 1,
+  created_at: modelProduct.created_at, updated_at: modelProduct.updated_at,
+}));
+variants.push(...modelVariants);
 
 const ux = await createUxHarness({ beforeImport: ({ localStorage }) => {
   localStorage.setItem("alyq.lang", "en");
@@ -51,6 +68,7 @@ const ux = await createUxHarness({ beforeImport: ({ localStorage }) => {
 const { dom, assert, waitFor, navigate, clickEl, clickTestid, setField, readJson, sleep, finish } = ux;
 const { document } = dom.window;
 const cart = () => readJson("alyq.store.cart.v2")?.lines ?? [];
+const orders = () => readJson("alyq.demo.online_orders.v1") ?? [];
 let passed = 0;
 function check(label, condition) { assert.ok(condition, label); console.log(`  ✓ ${++passed}. ${label}`); }
 
@@ -58,10 +76,17 @@ await navigate("#/store", 750);
 await waitFor(() => Boolean(document.querySelector('[data-testid="v2-home"] #featured .v2-product-card')),
   { label: "V2 homepage, seeded catalogue and featured rail" });
 check("V2 is public and inside the three existing shop providers", Boolean(document.querySelector('[data-testid="store-v2"]')));
-check("configured hero image/CTA and category tiles render from the settings/catalogue",
+check("configured hero image/CTA and typographic category tiles render without category photos",
   Boolean(document.querySelector('.v2-hero img[src]')) &&
   Boolean(document.querySelector('#categories a[href*="/store/products?category="]')) &&
+  !document.querySelector('#categories .v2-category img') &&
+  Boolean(document.querySelector('#categories .v2-category-ar[lang="ar"]')) &&
+  Boolean(document.querySelector('#categories .v2-category-en[lang="en"]')) &&
   Boolean(document.querySelector('.v2-hero a[href^="#/store/products"]')));
+check("archived categories are not exposed as shop links even when present in the fixture",
+  ![...document.querySelectorAll('#categories a[href*="category="]')].some((link) => link.getAttribute("href").includes("cat-office")));
+await waitFor(() => document.querySelector('meta[name="robots"]')?.content === "index, follow" &&
+  Boolean(document.querySelector('link[rel="canonical"]')?.href), { label: "home page metadata" });
 check("the canonical public shop is indexable with its real URL, not the old preview URL",
   document.querySelector('meta[name="robots"]')?.content === "index, follow" &&
   document.querySelector('link[rel="canonical"]')?.href.endsWith("#/store"));
@@ -177,6 +202,54 @@ await navigate("#/store/products", 450);
 check("existing /store/products deep links now render the V2 catalogue",
   Boolean(document.querySelector('[data-testid="store-v2"]')) &&
   Boolean(document.querySelector('[data-testid="v2-catalog"]')));
+await navigate("#/store/products", 350);
+await waitFor(() => Boolean(document.querySelector(`[data-testid="v2-card-${modelProductId}"]`)), { label: "single BR101 parent card" });
+const modelCard = document.querySelector(`[data-testid="v2-card-${modelProductId}"]`);
+check("BR101 remains one catalogue product with 12 model previews and an available count",
+  document.querySelectorAll(`[data-testid="v2-card-${modelProductId}"]`).length === 1 &&
+  modelCard.querySelectorAll(".v2-model-preview-images img").length === 4 &&
+  modelCard.querySelector(".v2-model-preview")?.textContent.includes("11"));
+await navigate(`#/store/products/${modelProductId}`, 350);
+await waitFor(() => Boolean(document.querySelector('[data-testid="v2-model-gallery"]')), { label: "all 12 model cards" });
+check("all 12 named BR101 models render in the PDP gallery with independent images and prices",
+  document.querySelectorAll('[data-testid="v2-model-gallery"] .v2-model-gallery-card').length === 12 &&
+  document.querySelectorAll('[data-testid="v2-model-gallery"] .v2-model-gallery-card img').length === 12 &&
+  /75(?:\.00|٫٠٠)/.test(document.querySelector('[data-testid="v2-model-gallery"] .v2-model-gallery-price')?.textContent ?? ""));
+clickEl(document.querySelector(`[data-testid="v2-model-gallery"] .v2-model-gallery-card:nth-child(1) .v2-model-gallery-select`));
+await sleep(40);
+check("selecting a model card chooses its exact variant and updates the PDP price",
+  document.querySelector('[data-testid="v2-model-gallery"] .v2-model-gallery-card:nth-child(1) .v2-model-gallery-select')?.getAttribute("aria-pressed") === "true" &&
+  /75(?:\.00|٫٠٠)/.test(document.querySelector('.v2-pdp-price')?.textContent ?? ""));
+const soldOutModel = document.querySelector(`[data-testid="v2-model-gallery"] .v2-model-gallery-card:nth-child(12)`);
+check("the sold-out named model remains visible but cannot be selected or purchased",
+  soldOutModel.querySelector(".v2-model-gallery-select").disabled && soldOutModel.querySelector(".v2-model-gallery-add").disabled &&
+  /Sold out|نفدت الكمية/.test(soldOutModel.querySelector(".v2-model-gallery-stock")?.textContent ?? ""));
+clickEl(document.querySelector(`[data-testid="v2-model-gallery"] .v2-model-gallery-card:nth-child(3) .v2-model-gallery-zoom`));
+await waitFor(() => Boolean(document.querySelector('[data-testid="v2-lightbox"]')), { label: "selected model photo zoom" });
+check("a model photo can be enlarged in the existing accessible lightbox",
+  document.querySelector("[data-testid='v2-lightbox'] img")?.getAttribute("src") === modelPhoto(2));
+clickEl(document.querySelector('[data-testid="v2-lightbox"] .v2-lightbox-close'));
+await sleep(40);
+clickEl(document.querySelector(`[data-testid="v2-model-gallery"] .v2-model-gallery-card:nth-child(3) .v2-model-gallery-add`));
+await waitFor(() => cart().some((line) => line.variant_id === modelVariantIds[2]), { label: "exact BR101 model cart line" });
+const exactModelLine = cart().find((line) => line.variant_id === modelVariantIds[2]);
+check("direct add from the model gallery keeps the exact model UUID and shared parent product",
+  exactModelLine?.product_id === modelProductId && cart().filter((line) => line.product_id === modelProductId).length === 1);
+await navigate("#/store/checkout", 350);
+await waitFor(() => Boolean(document.querySelector('[data-testid="v2-checkout"]')), { label: "model checkout" });
+const pickup = [...document.querySelectorAll(".v2-choice-grid button")].find((button) => /Pickup|استلام/.test(button.textContent ?? ""));
+if (pickup) clickEl(pickup);
+setField('.v2-checkout-form input[autocomplete="name"]', "BR101 Test Shopper");
+setField('.v2-checkout-form input[autocomplete="tel"]', "01012345678");
+await sleep(70);
+clickTestid("v2-place-order");
+await waitFor(() => Boolean(document.querySelector('[data-testid="v2-order-details"]')) && orders().length === 1,
+  { label: "model's exact order item" });
+const modelOrderItem = orders()[0].items.find((item) => item.variant_id === modelVariantIds[2]);
+check("the placed order records model 03 on the single shared-barcode BR101 product",
+  modelOrderItem?.product_id === modelProductId && modelOrderItem.variant_id === modelVariantIds[2] &&
+  /Model 03|موديل 03/.test(modelOrderItem.variant_display_name ?? modelOrderItem.variant_name ?? "") &&
+  products.filter((product) => product.barcode === "SHARED-BR101").length === 1);
 
 console.log(`\n${passed} V2 DOM end-to-end checks passed (CSS geometry is tested separately in Chromium).`);
 finish("Storefront V2 public presentation + exact cart handoff");

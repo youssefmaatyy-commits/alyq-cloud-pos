@@ -7,6 +7,13 @@ const contracts = fs.readFileSync("desktop/contracts.mjs", "utf8");
 const packageManifest = fs.readFileSync("package.json", "utf8");
 
 const tests: Array<[string, () => void]> = [
+  ["packaged desktop starts at real staff login without changing app identity or user-data policy", () => {
+    assert.ok(main.includes('packagedUrl.hash = "/login"'));
+    assert.ok(main.includes('parsed.hash = "/login"'));
+    assert.match(packageManifest, /"appId":\s*"eg\.alyq\.pos"/);
+    assert.match(packageManifest, /"deleteAppDataOnUninstall":\s*false/);
+    assert.match(main, /CONFIG_FILE = "desktop-config\.v1\.json"/);
+  }],
   ["renderer is isolated, sandboxed and has no Node integration", () => {
     assert.match(main, /contextIsolation:\s*true/);
     assert.match(main, /nodeIntegration:\s*false/);

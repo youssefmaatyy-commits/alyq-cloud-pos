@@ -133,6 +133,15 @@ export function V2ProductCard({ entry, priority = false, filters }: {
           <strong>{money(pricing.price)}</strong>
           {pricing.price < pricing.list ? <del>{money(pricing.list)}</del> : null}
         </div> : null}
+        {model.hasModels ? <div className="v2-model-preview" data-testid={`v2-model-preview-${product.id}`}>
+          <div className="v2-model-preview-images" aria-hidden="true">
+            {model.models.filter(({ available }) => available > 0).slice(0, 4).map(({ variant }) => {
+              const src = variant.images?.[0] || variant.image_url;
+              return src ? <img key={variant.id} src={src} alt="" loading="lazy" /> : null;
+            })}
+          </div>
+          <span>{t("store.v2.modelsAvailable", { count: model.sellable.length })}</span>
+        </div> : null}
         {settings.product_card.show_swatches && model.hasColors ? (
           <div className="v2-card-swatches" role="group" aria-label={t("store.variants.color")}>
             {model.groups.slice(0, 6).map((group) => {

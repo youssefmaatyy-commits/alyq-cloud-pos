@@ -51,8 +51,14 @@ For an attributable build, set `ALYQ_BUILD_SHA` to the source commit before pack
 6. Confirm that no service-role key, database password, manager PIN hash, register credential, signing key or user profile data is present in the package contents or logs.
 7. Record real printer/scanner/drawer model and driver versions. Do not convert emulator/contract checks into a physical-hardware claim.
 
-## Signing and update readiness
+## Program updates (manual-only until Windows signing is available)
 
-`electron-builder` may read its normal signing inputs from protected CI environment variables. Do not add signing values to `.env`, `package.json`, workflow logs or repository files.
+System → Program updates checks the pinned public GitHub Releases endpoint for the latest valid SemVer tag. It never downloads or executes a binary. If a newer release is found, the user may open the repository's official Releases page and download the installer manually. The panel does not display fabricated transfer progress or offer an automatic install/restart button.
 
-Auto-update is intentionally disabled until signed update metadata, a trusted HTTPS release endpoint and rollback procedures exist. Shipping an unsigned feed is not an acceptable temporary updater.
+There is no Authenticode certificate in this project. Do not describe the installer as signed or Windows-trusted. Windows may show SmartScreen/unknown-publisher warnings. Users must verify they are on `github.com/youssefmaatyy-commits/alyq-cloud-pos/releases` and install only after reviewing the release. No silent update runs, and the user chooses when to close/reinstall. Never publish a release without a new, unique SemVer version and rollback notes.
+
+`electron-builder` may read signing inputs from protected CI environment variables when a certificate becomes available. Do not add signing values to `.env`, `package.json`, workflow logs or repository files. A secure automatic updater remains disabled until signed artifacts/metadata, a trusted HTTPS feed, integrity verification and rollback procedures are available.
+
+## Upgrade/data-preservation boundary
+
+This preview keeps `appId: eg.alyq.pos`, Electron's default per-user `userData` location, `desktop-config.v1.json`, and NSIS `deleteAppDataOnUninstall: false`; the version change alone does not migrate or erase user data. These code/config invariants are covered by automated checks. **An install-over-existing-version test has not been run on a physical Windows machine**, so do not promise upgrade compatibility until the standard-user Windows acceptance procedure above passes. Keep the previous installer available for rollback. Local offline data and pending invoices stay governed by their existing durable storage/recovery implementation; do not uninstall or clear app data as part of a manual upgrade.

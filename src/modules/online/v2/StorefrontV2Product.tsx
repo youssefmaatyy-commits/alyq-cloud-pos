@@ -21,6 +21,7 @@ import { V2VariantChooser } from "./VariantChooser";
 import { hoverZoomHandlers } from "./HoverZoom";
 import { v2Price } from "./viewModel";
 import { variantModel } from "./variantModel";
+import { variantModelLabel } from "../services/variantLabel";
 
 export function StorefrontV2Product() {
   const { t } = useI18n();
@@ -47,7 +48,7 @@ export function StorefrontV2Product() {
 }
 
 function V2Detail({ product, entry }: { product: Product; entry: CatalogProduct }) {
-  const { t, pick, lang } = useI18n();
+  const { t, pick, lang, money } = useI18n();
   const { settings, contentByProduct, products, catalogContext, categories, mode,
     variantsOf, colorGalleryFor, campaigns, promotions, promotionTargets, reviews } = useStorefront();
   const { add, setQuantity, lines, notifyAdded } = useStoreCart();
@@ -163,6 +164,17 @@ function V2Detail({ product, entry }: { product: Product; entry: CatalogProduct 
     addLock.current = false;
     if (addedTimer.current !== null) { window.clearTimeout(addedTimer.current); addedTimer.current = null; }
   };
+  const addModelToBag = (variant: (typeof model.variants)[number]) => {
+    if (addLock.current || model.remaining(variant) <= 0) return;
+    addLock.current = true;
+    const success = add(product, 1, variant);
+    if (!success) { addLock.current = false; return; }
+    setSelectedId(variant.id);
+    setColor(null);
+    setAdded(true);
+    if (addedTimer.current !== null) window.clearTimeout(addedTimer.current);
+    addedTimer.current = window.setTimeout(() => { setAdded(false); addLock.current = false; }, 1600);
+  };
   const addToBag = () => {
     if (addLock.current || !orderable || (product.variants_enabled && !selected)) return;
     const already = lines.find((line) => line.product_id === product.id &&
@@ -237,6 +249,41 @@ function V2Detail({ product, entry }: { product: Product; entry: CatalogProduct 
           <p className="v2-pdp-description">{pick(product.description_ar, product.description_en)}</p> : null}
         {product.variants_enabled ? <V2VariantChooser model={model} colorKey={color} variantId={selectedId}
           onChoice={chooseVariant} /> : null}
+        {product.variants_enabled && model.hasModels ? <section className="v2-model-gallery" aria-labelledby="v2-model-gallery-title" data-testid="v2-model-gallery">
+          <h2 id="v2-model-gallery-title">{t("store.v2.modelGallery")}</h2>
+          <div className="v2-model-gallery-grid">
+            {model.models.map(({ variant, available }) => {
+              const label = variantModelLabel(variant, lang) || variant.sku;
+              const photo = variant.images?.[0] || variant.image_url || null;
+              const out = available <= 0;
+              const selectedModel = selectedId === variant.id;
+              const modelPrice = v2Price(product, variants, campaigns, promotions, promotionTargets,
+                variant, catalogContext.reservedVariant);
+              return <article key={variant.id} className="v2-model-gallery-card" data-selected={selectedModel}>
+                <button type="button" className="v2-model-gallery-select" aria-pressed={selectedModel}
+                  aria-label={`${t("store.v2.selectModel")}: ${label}${out ? ` — ${t("store.variants.soldOut")}` : ""}`}
+                  disabled={out} onClick={() => chooseVariant(variant, null)}>
+                  <span className="v2-model-gallery-photo">
+                    {photo ? <img src={photo} alt={label} loading="lazy" />
+                      : <span className="v2-model-gallery-photo-missing">{label}</span>}
+                  </span>
+                  <span className="v2-model-gallery-meta">
+                    <span className="v2-model-gallery-name">{label}</span>
+                    <span className="v2-model-gallery-price">{money(modelPrice.price)}</span>
+                    <span className="v2-model-gallery-stock" data-out={out} role="status">
+                      {out ? t("store.variants.soldOut") : t("pos.variants.availableUnits", { count: available })}
+                    </span>
+                  </span>
+                </button>
+                {photo ? <button type="button" className="v2-model-gallery-zoom"
+                  aria-label={`${t("store.v2.zoomModel")}: ${label}`}
+                  onClick={() => { chooseVariant(variant, null); setImageIndex(0); setZoomOpen(true); }}>⌕</button> : null}
+                <button type="button" className="v2-model-gallery-add" disabled={out}
+                  onClick={() => addModelToBag(variant)}>{t("store.v2.addModel")}</button>
+              </article>;
+            })}
+          </div>
+        </section> : null}
         {product.variants_enabled && model.hasSizes && hasSizeGuide ? <button type="button" className="v2-size-guide-link"
           onClick={() => { if (sizeGuide.current) { sizeGuide.current.open = true;
             sizeGuide.current.scrollIntoView({ behavior: "smooth", block: "nearest" });

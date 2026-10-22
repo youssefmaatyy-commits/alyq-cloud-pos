@@ -114,23 +114,24 @@ export function StorefrontV2Home() {
           : categoryContents.filter((row) => row.featured).sort((a, b) => a.sort_order - b.sort_order).map((row) => row.category_id);
         const ids = curated.length ? curated : active.map((row) => row.id);
         const entries = ids.map((id) => active.find((row) => row.id === id)).filter((row) => row !== undefined).slice(0, sectionLimit(section));
-        if (!entries.length) return null;
         return (
-          <V2Section key="categories" id="categories" title={title} eyebrow={t("store.v2.eyebrow")} action={action(section)}>
-            <div className="v2-category-grid">
+          <V2Section key="categories" id="categories" title={title} eyebrow={t("store.v2.eyebrow")} action={entries.length ? action(section) : undefined}>
+            {entries.length ? <div className="v2-category-grid">
               {entries.map((category) => {
                 const content = categoryMap.get(category.id);
-                const label = pick(content?.title_ar || category.name_ar, content?.title_en || category.name_en);
-                const cover = content?.homepage_image_url || content?.image_url || image ||
-                  products.find((product) => product.category_id === category.id)?.image_url;
+                const arabic = content?.title_ar || category.name_ar;
+                const english = content?.title_en || category.name_en;
                 return (
                   <Link key={category.id} to={`/store/products?category=${encodeURIComponent(category.id)}`} className="v2-category">
-                    <V2Image src={cover} alt="" />
-                    <span className="v2-category-title">{label}<span aria-hidden></span></span>
+                    <span className="v2-category-copy">
+                      <span className="v2-category-ar" lang="ar" dir="rtl">{arabic}</span>
+                      <span className="v2-category-en" lang="en" dir="ltr">{english}</span>
+                    </span>
+                    <span className="v2-category-arrow" aria-hidden>↗</span>
                   </Link>
                 );
               })}
-            </div>
+            </div> : <p className="v2-category-empty" role="status">{t("store.v2.categoriesEmpty")}</p>}
           </V2Section>
         );
       }

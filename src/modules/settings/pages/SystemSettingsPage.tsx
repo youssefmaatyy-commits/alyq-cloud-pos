@@ -29,6 +29,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { isSupabaseConfigured } from "@/lib/supabase/client";
 import { can } from "@/lib/permissions/enforce";
 import { SelectiveCleanupPanel } from "../components/SelectiveCleanupPanel";
+import { ProgramUpdatesPanel } from "../components/ProgramUpdatesPanel";
 import {
   clearOperationalData,
   factoryReset,
@@ -222,6 +223,7 @@ export function SystemSettingsPage() {
         backLabel={t("common.back")}
       />
 
+      <ProgramUpdatesPanel />
       <SelectiveCleanupPanel />
 
       {mayReset ? <>
