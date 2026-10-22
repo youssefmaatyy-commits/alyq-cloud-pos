@@ -4,6 +4,12 @@ on:
   push:
     branches: ["arena/**"]
   workflow_dispatch:
+    inputs:
+      publish_production_rc:
+        description: "Publish the legacy Production Android RC and attach its assets to GitHub Release v2.1.0-rc1"
+        type: boolean
+        required: true
+        default: false
 
 permissions:
   contents: write
@@ -15,7 +21,7 @@ concurrency:
 jobs:
   build_production_android_apks:
     name: Build ALYQ POS v2.1.0 Production APKs (Coexist + Standard)
-    if: "!contains(github.event.head_commit.message, '[skip android-build]')"
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_production_rc == true }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -114,7 +120,7 @@ jobs:
 
   build_windows_exe:
     name: Build ALYQ POS Windows x64 EXE Installer (NSIS)
-    if: "!contains(github.event.head_commit.message, '[skip android-build]')"
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_production_rc == true }}
     runs-on: windows-latest
     timeout-minutes: 25
     env:

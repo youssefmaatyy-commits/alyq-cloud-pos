@@ -1,0 +1,94 @@
+name: Windows preview installer & storefront screenshots
+
+on:
+  push:
+    branches: ["arena/f498e340-alyq-cloud-pos"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+    group: windows-preview-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+  build-and-capture:
+    name: Build unsigned 6.1.0 preview and capture local storefront
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout this development branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 1
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Verify version and data-preservation identity
+        shell: pwsh
+        run: |
+          $pkg = Get-Content package.json -Raw | ConvertFrom-Json
+          if ($pkg.version -ne '6.1.0-preview.1') { throw "Unexpected preview version: $($pkg.version)" }
+          if ($pkg.build.appId -ne 'eg.alyq.pos') { throw "Application ID changed unexpectedly" }
+          if ($pkg.build.nsis.deleteAppDataOnUninstall -ne $false) { throw "NSIS data-preservation policy changed unexpectedly" }
+          if (-not (Select-String -Path desktop/main.mjs -Pattern 'CONFIG_FILE = "desktop-config.v1.json"' -Quiet)) { throw "Desktop config filename changed unexpectedly" }
+          Write-Host "Version, Application ID and user configuration filename verified."
+
+      - name: Typecheck and focused storefront/desktop/update checks
+        run: |
+          npm run typecheck
+          npm test -- releaseCheck desktop v2 staffEntry
+          npm run test:e2e -- storefront-v2 staff-entry
+
+      - name: Build Windows x64 NSIS installer
+        run: npm run desktop:package:win
+
+      - name: Verify installer and create SHA-256 checksum
+        shell: pwsh
+        run: |
+          $installer = 'release/ALYQ-POS-Setup-6.1.0-preview.1-x64.exe'
+          if (-not (Test-Path $installer)) { throw "Expected installer missing: $installer" }
+          $signature = Get-AuthenticodeSignature $installer
+          Write-Host "Authenticode status: $($signature.Status)"
+          if ($signature.Status -ne 'NotSigned') { Write-Host "Unexpected signature status; verify certificate before distribution." }
+          $hash = (Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $(Split-Path $installer -Leaf)" | Set-Content "$installer.sha256" -Encoding ascii
+          Write-Host "Unsigned manual-preview installer verified; SHA-256 $hash"
+
+      - name: Capture EN/AR desktop/mobile storefront screenshots from local demo fixtures
+        shell: pwsh
+        run: |
+          $server = Start-Process -FilePath 'npm.cmd' -ArgumentList @('run','preview','--','--host','127.0.0.1','--port','4173') -PassThru -WindowStyle Hidden
+          try {
+            $ready = $false
+            for ($i = 0; $i -lt 60; $i++) {
+              try { $response = Invoke-WebRequest 'http://127.0.0.1:4173/' -TimeoutSec 2; if ($response.StatusCode -eq 200) { $ready = $true; break } } catch { Start-Sleep -Seconds 1 }
+            }
+            if (-not $ready) { throw 'Vite preview did not start.' }
+            npx playwright install chromium
+            if ($LASTEXITCODE -ne 0) { throw 'Chromium installation failed.' }
+            node scripts/capture-storefront-preview.mjs
+            if ($LASTEXITCODE -ne 0) { throw 'Storefront screenshot capture failed.' }
+          } finally {
+            if ($server -and -not $server.HasExited) { Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue }
+          }
+
+      - name: Upload preview installer, checksum, and screenshots (not a GitHub Release)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALYQ-6.1.0-preview.1-Windows-and-storefront-${{ github.run_number }}
+          path: |
+            release/ALYQ-POS-Setup-6.1.0-preview.1-x64.exe
+            release/ALYQ-POS-Setup-6.1.0-preview.1-x64.exe.sha256
+            coverage/alyq-preview/*.png
+          if-no-files-found: error
+          retention-days: 14
