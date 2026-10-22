@@ -76,42 +76,13 @@
 .store-v2 .v2-icon-button { width: 44px; height: 44px; position: relative; display: inline-grid; place-items: center; flex: none; border: 0; background: transparent; color: inherit; }
 .store-v2 .v2-icon-button:hover { opacity: .65; }
 .store-v2 .v2-icon-button svg { width: 21px; height: 21px; }
-/* Issue #1 (7th follow-up round / "Arabic clipped at the bottom"): the
-   Arabic name's diacritics (fatha/kasra/sukun) and its trailing "ق"
-   descender loop were being cut off. Root cause: `.v2-logo` sizes itself to
-   fit its own content (it's an auto-height grid item), and that auto
-   height was driven by `line-height: 1` — exactly 1x font-size, with zero
-   headroom — while `.v2-logo` itself clips overflow. The Arabic display
-   font stack's actual glyph ink (Amiri/Noto Naskh Arabic, painting stacked
-   combining marks well outside the plain Latin em-box) is taller than that
-   1x line box, so the excess got clipped by `.v2-logo`'s own
-   `overflow: hidden`, not by any fixed pixel height anywhere. Raising
-   line-height to 1.6 gives the line box the headroom real Arabic display
-   typography needs (verified with Canvas2D TextMetrics — see
-   scripts/rendered-v2-header.flow.mjs's assertNoVerticalClipping) without
-   touching font-size, color, text, or `.v2-header-inner`'s own height
-   budget (52px/40px logo-height defaults + 18px already comfortably cover
-   the new ~46px/~31px content height at desktop/mobile, so the header does
-   not grow). */
-.store-v2 .v2-logo { display: grid; place-items: center; min-width: 0; max-width: 62vw; overflow: hidden; text-align: center; font-family: var(--v2-font-display); font-size: clamp(19px, 5vw, 29px); font-weight: 600; letter-spacing: .12em; line-height: 1.6; }
+/* The logo is the centered grid item between two independent control groups.
+   Its bounded width and reserved line box keep custom text fallbacks and the
+   wider transparent image mark from colliding with the controls. */
+.store-v2 .v2-logo { display: grid; place-items: center; min-width: 0; max-width: 56vw; overflow: visible; text-align: center; font-family: var(--v2-font-display); font-size: clamp(19px, 5vw, 29px); font-weight: 600; letter-spacing: .12em; line-height: 1.6; }
 .store-v2[dir="rtl"] .v2-logo { letter-spacing: 0; }
-/* Bilingual header wordmark (Issue #1, 6th follow-up round): now the ONLY
-   header branding — the merchant removed the boxed logo image entirely in
-   favour of the shop's own configured name in both languages, e.g.
-   "ALYQ | أَلِــيْـــق", never a second, hardcoded branding system, and
-   asked explicitly for gold text. Both names render in `--v2-accent` (the
-   theme's own accent colour, #a48d59 gold by default for this shop) rather
-   than the auto-contrast `--v2-header-accent-text` token used elsewhere in
-   this header: measured against this shop's actual header background
-   (#34393b), the raw gold only reaches 3.64:1 contrast — under the 4.5:1
-   threshold that token enforces for regular text, so it was silently
-   falling back to plain white and never rendering gold at all. 3.64:1 still
-   clears WCAG's 3:1 threshold for bold/large text (this wordmark is both,
-   19-29px bold), so it stays legible while actually being the gold colour
-   asked for. There is no background on the logo/wordmark itself, so it is
-   always transparent — no white box. Everything clips instead of wrapping
-   so a long shop name can never push the header taller or break onto a
-   second line on mobile. */
+/* When a custom storefront has no logo image, retain its editable bilingual
+   wordmark. Gold follows the configured accent; the holder stays transparent. */
 .store-v2 .v2-logo { background: transparent; }
 .store-v2 .v2-wordmark { display: inline-flex; align-items: baseline; gap: .4em; max-width: 100%; min-width: 0; }
 .store-v2 .v2-wordmark-primary { color: var(--v2-accent); font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -126,26 +97,12 @@
   .store-v2 .v2-wordmark-secondary, .store-v2 .v2-wordmark-divider { display: none; }
   .store-v2 .v2-wordmark-primary { max-width: 46vw; }
 }
-/* Issue #1 (5th follow-up round / "logo too small"): a real uploaded mark
-   (public/alyq-logo.png) is a 1280x1280 square canvas whose actual wordmark
-   only occupies its centre ~767x336px band (measured with ImageMagick
-   `-trim`) — roughly 60% of the width and 26% of the height, the rest being
-   flat brand-colour padding baked into the file. `object-fit: contain` with
-   a fixed height (the previous rule) sizes the box to the image's own 1:1
-   *canvas* ratio, not the wordmark's real ~2.3:1 shape, so the box is
-   always a small square and the visible wordmark inside it shrinks to a
-   sliver (~14px tall out of a 52px-tall box) — no amount of raising the
-   height variable fixes that without also making the header noticeably
-   taller, which is out of bounds here. The uploaded file itself must not be
-   cropped, so the fix is presentation-only: give the `<img>` a fixed
-   `aspect-ratio` matching the wordmark's own real shape (auto-scales with
-   the admin's existing --v2-logo-height/--v2-mobile-logo-height sliders,
-   default 52px/40px -> ~120px/~92px wide, inside the required 90-140px /
-   64-100px ranges) and switch to `object-fit: cover`, which crops the box
-   to that ratio at render time only — the stored file is untouched, and a
-   logo that already has no padding just gets a normal, centred, very light
-   edge crop instead of being stretched or shrunk. */
-.store-v2 .v2-logo img { display: block; width: auto; aspect-ratio: 2.3; height: var(--v2-mobile-logo-height); max-width: min(48vw, 230px); object-fit: cover; object-position: center; }
+/* The supplied ALYQ master mark is cropped to its original artwork bounds and
+   has a real transparent PNG alpha channel. Keep its native ~2.27:1 ratio and
+   contain the whole bilingual mark + tagline: no opaque background, crop,
+   stretch or glyph changes. Size variables grow the centre mark while the
+   grid keeps the menu/search and account/cart controls in separate columns. */
+.store-v2 .v2-logo img { display: block; width: auto; aspect-ratio: 2.27; height: var(--v2-mobile-logo-height); max-width: min(48vw, 250px); object-fit: contain; object-position: center; background: transparent; }
 @media (min-width: 768px) {
   .store-v2 .v2-logo img { height: var(--v2-logo-height); }
   .store-v2 .v2-logo img.v2-mobile-only { display: none; }
@@ -578,6 +535,7 @@
 @media (max-width: 359px) {
   .store-v2 .v2-header-inner { width: calc(100% - 14px); gap: 0; }
   .store-v2 .v2-logo { font-size: 18px; }
+  .store-v2 .v2-logo img { max-width: 46vw; }
   .store-v2 .v2-section-action .v2-text-link { font-size: 9px; }
   .store-v2 .v2-category-title { inset-inline: 10px; bottom: 10px; }
   .store-v2 .v2-product-badge { font-size: 8px; }

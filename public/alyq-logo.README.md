@@ -15,6 +15,14 @@ mark from:
    (next to this file). PNG with the original background is correct.
 3. Rebuild. No code changes are needed.
 
+## Storefront header artwork
+
+The storefront header uses `/brand/alyq-logo-transparent.png`, a tightly
+trimmed, transparent-background derivative of the same supplied artwork. It
+preserves the original bilingual gold mark and proportions. The original
+`/alyq-logo.png` remains unchanged for receipt compatibility; the derivative is
+only for the storefront header so its square ivory canvas is not displayed.
+
 ## Behaviour
 
 - The receipt centers the logo at a thermal-friendly size

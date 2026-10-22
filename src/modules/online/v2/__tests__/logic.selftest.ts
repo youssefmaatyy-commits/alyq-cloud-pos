@@ -232,22 +232,21 @@ test("V2 save/read allowlist rejects forged CSS, images, enums, columns and unkn
 // the separate logo-size sliders. This pins the fix — an admin who only
 // uploads a logo, and never opens the size sliders, still gets a clearly
 // visible size — and that the fix does NOT grow the header row itself
-// (`.v2-header-inner` in storefront-v2.css floors at 74px desktop / 64px
-// mobile using exactly `logo-height + 18`), which is a hard constraint the
-// task called out ("do not enlarge the entire header excessively").
-test("a configured logo with no size chosen renders clearly visible, not a tiny square, and never grows the header", () => {
+// The default ALYQ master uses 72px/56px plus 18px breathing room, while
+// custom storefront logos retain their existing 52px/40px defaults.
+test("the default ALYQ logo is clearly visible with safe header spacing", () => {
   const settings = structuredClone(DEFAULT_WEBSITE_SETTINGS);
-  settings.images.logo_url = "https://project-ref.supabase.co/storage/v1/object/public/product-images/website/logo.png";
+  settings.images.logo_url = null;
   const vars = (settings2: typeof settings, overrides?: Partial<typeof settings.storefront_v2>) =>
     adaptV2Appearance(overrides ? { ...settings2, storefront_v2: { ...settings2.storefront_v2, ...overrides } } : settings2)
       .variables as Record<string, string>;
   const appearance = vars(settings);
   const desktopHeight = Number(String(appearance["--v2-logo-height"]).replace("px", ""));
   const mobileHeight = Number(String(appearance["--v2-mobile-logo-height"]).replace("px", ""));
-  assert.ok(desktopHeight >= 48, "the default desktop logo height is a real, visible size, not a tiny badge");
-  assert.ok(mobileHeight >= 36, "the default mobile logo height is a real, visible size, not a tiny badge");
-  assert.ok(desktopHeight + 18 <= 74, "the default fits inside the header's existing 74px floor — no header growth");
-  assert.ok(mobileHeight + 18 <= 64, "the default fits inside the header's existing 64px floor — no header growth");
+  assert.ok(desktopHeight >= 68, "the default desktop logo is clearly visible");
+  assert.ok(mobileHeight >= 52, "the default mobile logo is clearly visible");
+  assert.ok(desktopHeight + 18 <= 90, "the desktop header grows only enough to give the 72px logo safe vertical room");
+  assert.ok(mobileHeight + 18 <= 74, "the mobile header grows only enough to give the 56px logo safe vertical room");
   // An admin who DOES use the sliders keeps full control, unchanged.
   const chosen = vars(settings, { logo_height: 30, mobile_logo_height: 24 });
   assert.equal(chosen["--v2-logo-height"], "30px");

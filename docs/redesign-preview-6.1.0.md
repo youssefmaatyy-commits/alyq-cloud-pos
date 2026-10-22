@@ -2,34 +2,42 @@
 
 ## Branch / deployment boundary
 
-- Accepted base: commit `1451e4a` on `arena/f498e340-alyq-cloud-pos`; current work is a small follow-up on that same branch.
-- No merge, Production deployment, hosted migration, or Production data/order/stock/settings change was made.
-- The local preview is isolated to a read-only Staging snapshot and demo-only cart/checkout. It rejects HTTP writes; no order from this preview reaches Staging or Production.
+- Current work starts from `621be2bd` on `arena/f498e340-alyq-cloud-pos`; the final logo-fix commit is recorded in the delivery summary after it is created.
+- No merge to `main`, official-site deployment, production migration, Production data/order/stock/settings change, or Staging write was made.
+- Local storefront previews use the read-only Staging snapshot and demo-only cart/checkout; they cannot submit an order to Staging or Production.
 
-## Model gallery fixes
+## ALYQ header logo fix
 
-- Staging BR101's real model rows carry their Arabic model names in legacy `size_value`/`size_label` fields as well as `display_name_ar/en`. The V2 model detector now treats that duplicate compatibility label as a model name, not as a size option, so the real rows open the model gallery.
-- A model card now shows a neutral localized missing-photo state when there is no image URL **or when the URL fails to load**. The model name, SKU-bound choice, availability, price, add action, and exact variant ID remain intact; a broken image no longer leaves a browser broken-image glyph.
-- Screenshot and DOM fixtures use the exact read-only Staging snapshot in `scripts/staging-br101.snapshot.mjs`. They contain only the three existing records, no extra models, fabricated inventory/prices, repeated photos, or generated product images. One local negative-path test omits M03's photo only to test the fallback; it does not write the row back to Staging.
+- The official source `public/alyq-logo.png` remains unchanged for receipt compatibility. The header now uses `public/brand/alyq-logo-transparent.png`, a 767×338 alpha-transparent derivative cropped to the original artwork bounds. Its original bilingual gold `ALYQ | أليق` artwork and proportions are retained; the cream square canvas is not rendered.
+- The default ALYQ mark is 72px high on desktop and 56px on mobile. `object-fit: contain` preserves all artwork; responsive grid columns keep the logo between the controls instead of overlapping them. Custom merchant logos and their 52px/40px default sizing remain unchanged; a custom brand without a logo retains its text fallback.
+- Real-Chromium verification passed for desktop EN, desktop AR/RTL, mobile EN and mobile AR/RTL. It checked source load, transparent image corners, gold artwork, native ratio, actual responsive height, centering, direction, and non-overlap with menu/search/account/cart. The test is `scripts/rendered-v2-header.flow.mjs`.
+- Actual before/after header captures are in `release-evidence/logo-comparison/`: `before-desktop-en.png`, `before-desktop-ar.png`, `before-mobile-en.png`, `before-mobile-ar.png`, and matching `after-*.png`. The Before captures use the legacy opaque `/alyq-logo.png` setting and show its cream rectangle; the After captures show the larger transparent source. These are local real-browser captures, not edited mockups.
 
-## Verified Staging data (read-only)
+## Model gallery and read-only Staging snapshot
 
-- Parent `BR101`: active and website-visible, product barcode `BR101`, listed price EGP 240, three active variants.
-- `BR101-M01` / “Model 1” / `BR101-M01` barcode / stock 4; `BR101-M02` / “Model 2” / `BR101-M02` barcode / stock 3; `BR101-M03` / “Model 3” / `BR101-M03` barcode / stock 5. The three image URLs are actual Staging URLs. Staging has **no rows for models 04–12**; no such rows were invented.
-- Production remains untouched. Previous read-only checks found no variants for Production BR101 and no product images on its active public catalogue. That data state is not repaired by this preview.
+- Staging BR101's model rows carry Arabic model names in legacy `size_value`/`size_label` fields as well as `display_name_ar/en`. The V2 model detector treats that compatibility label as a model name, not as a size option, so the real rows open the model gallery.
+- A model card shows a neutral localized missing-photo state when there is no image URL or when its URL fails to load; model name, SKU-bound choice, availability, price, add action and exact variant ID remain intact.
+- Screenshot/DOM fixtures use the exact read-only Staging snapshot in `scripts/staging-br101.snapshot.mjs`; no product rows, fabricated inventory/prices, repeated photos or generated product images were added.
+- Last recorded read-only Staging catalog values: parent `BR101` is active and website-visible, listed at EGP 240, with three active variants. `BR101-M01` stock 4, `BR101-M02` stock 3, `BR101-M03` stock 5. These are Staging values only; Production was not checked or modified in this continuation.
 
-## Local checks and screenshots
+## Checks and pre-existing E2E failures
 
-- Passed locally: production preflight (26/26, with `--allow-dirty` while validating the follow-up); all 79 logic suites; typecheck; 49 storefront V2 DOM checks; 25 hidden-staff-entry checks; production build; targeted ESLint; workflow YAML parse; `git diff --check`.
-- The complete 33-suite browser DOM runner still has six broader failures: store/POS navigation, product lifecycle save, old storefront flow, promotions return detail, final integrated flow, and storepolish save. The base commit `1451e4a` already had a failing full-E2E Actions job; these six are outside the focused gallery tests and remain unaccepted. The current release workflow also records those full-E2E failures. Do not represent the entire E2E suite as green.
-- The new logic/DOM coverage verifies Staging's duplicate model-name/size fields, English/Arabic labels, real variant IDs/SKUs and stock 4/3/5, neutral fallback with a missing URL, and fallback after an image error. The demo checkout test is local-only.
-- A headless local browser captured 24 current storefront screenshots (home, categories, catalogue, gallery, cart, checkout; EN/AR; desktop 1366px/mobile 390px) and checked home/catalogue/product/cart/checkout at 360, 390, 768 and 1366px in both directions. In this sandbox, the three external Staging photo hosts were unreachable; the screenshots therefore show the neutral fallback for all three URLs. This is an image-network limit, not proof that the URLs are broken for customers. No TLS verification was disabled.
-- The live local preview uses a visible “local preview / demo checkout” notice and only GET/HEAD requests. The page can change browser-local demo cart state but cannot submit an order to Supabase.
+- Current change: `npm run typecheck` passed; `npm run build` passed; three targeted logic suites passed (brand dictionary, online appearance 105/105, V2 bootstrap 7/7); the real-Chromium logo matrix passed 4/4.
+- The full 33-suite browser DOM/E2E runner has six already-existing failures: **store/POS navigation; product lifecycle save; old storefront flow; promotions return detail; final integrated flow; storepolish save**. They were present on `main` and on the prior development commit `621be2b`; they are not suppressed, skipped, or claimed green here. CI run [39835400673](https://github.com/youssefmaatyy-commits/alyq-cloud-pos/actions/runs/39835400673) had Types & build, Migrations & schema, and Logic suites succeed, while E2E (jsdom) failed. The six broad failures were not rerun during this logo-only change to avoid repeating known unrelated flows.
+- A previous V2 DOM matrix and the broader release checks are documented by the prior run; they are not a substitute for the six failing end-to-end flows.
 
-## Windows and live Staging checkout
+## Windows artifact
 
-- The previous actual Windows run (`39804694194`, commit `1451e4a`) completed the build, checksum, typecheck and focused tests, but the 6.0.0-to-preview installed-app step failed. It is **not** counted as a passing upgrade.
-- The Windows runs `39814281480` (`c794cee`), `39824247277` (`2d0df9a`), and `39831261248` (`2709b84`) all built the unsigned installer but stopped before 6.1.0 installation. Diagnostics established that archived 6.0.0 exposes no `window.alyqDesktop`; it opens its renderer without a hash and does not initialize the optional hardware config during a clean, unsigned-out launch. On `2709b84` the helper then navigated to `#/login` successfully but the config file was absent. None of these is a passing upgrade.
-- The current test opens the archived 6.0.0 renderer's local `#/login` route through its hash router and checks the actual login text. Because the clean 6.0.0 install does not create the optional config until hardware IPC is used (and its bridge is unavailable in this archived build), the isolated runner seeds a schema-valid test-only 58 mm preference and installation ID in the fresh app's userData directory. It restarts 6.0.0 to check the login route and that file, writes a sentinel, then upgrades to 6.1.0. The upgraded app must expose its bridge, report `#/login`, read the 58 mm setting and same installation ID, and leave the config hash and sentinel unchanged. The next push exercises this test. Acceptance remains pending until a real Windows result says PASS.
-- No live Staging order was submitted: there is no demonstrated safe, reversible cancellation path for a pending order. Checkout form/cart are exercised only in local demo mode.
-- Physical printer, scanner, camera, and live sync have not been tested.
+- The successful Windows preview/upgrade run is [39835400652](https://github.com/youssefmaatyy-commits/alyq-cloud-pos/actions/runs/39835400652) at commit `621be2b`. The build, checksum, installed 6.0.0→6.1.0 preview upgrade, and screenshot steps all passed.
+- Keep the existing installer artifact [ALYQ-POS-Setup-6.1.0-preview.1-x64](https://github.com/youssefmaatyy-commits/alyq-cloud-pos/actions/runs/39835400652/artifacts/12450512527) and its checksum. This logo-only continuation did not rebuild or replace the EXE. `windows-preview.yml` now ignores these storefront-only paths on `push`; manual dispatch remains available when a desktop rebuild is actually needed.
+
+## Order WEB-000005 and inventory (Staging; read-only)
+
+- Read-only Staging query: `WEB-000005` is still `pending`, has `sale_id = null`, and one `reserved` unit on variant SKU `BR101-M01`. Variant on-hand is 4, reserved is 1, and available-to-promise is 3. No cancellation or inventory mutation was performed.
+- The correct authorized path is the Online Orders workspace: open `WEB-000005`, choose the pending-order **Reject** action (the UI labels the pending cancellation this way), enter the required reason, and confirm using a staff account with `manage_online_orders`. For orders already linked to a sale, cancellation also requires `canVoidSale`; this pending order has no sale link.
+- Only after an authorized cancellation, verify status `cancelled`, the reservation `released` with a resolution timestamp, on-hand still 4, reserved 0 and available-to-promise 4. That post-cancellation check has **not** been performed because no authorized account/session was available.
+
+## Vercel Preview / UAT
+
+- Last known preview URL: https://alyq-store-3dkf5ke24-youssef-maaty.vercel.app . It was not verifiably reachable in this continuation: the prior deployment lookup returned 404, and the connected Vercel account currently lists no project or preview deployments. No hosted page is claimed as tested and no official deployment was made.
+- After the development branch Preview is available, UAT should open the URL on desktop and a 390px mobile viewport; inspect `/` and `/#/store`, switch language EN↔AR, confirm the transparent bilingual header logo, navigation/control spacing, catalogue, product gallery, cart, and checkout validation. Do not place a real order; verify checkout remains demo-only.

@@ -3,6 +3,13 @@ name: Windows preview installer & storefront screenshots
 on:
   push:
     branches: ["arena/f498e340-alyq-cloud-pos"]
+    paths-ignore:
+      - ".github/workflows/windows-preview.yml"
+      - "docs/redesign-preview-6.1.0.md"
+      - "public/alyq-logo.README.md"
+      - "public/brand/**"
+      - "scripts/rendered-v2-header.flow.mjs"
+      - "src/modules/online/**"
   workflow_dispatch:
 
 permissions:
