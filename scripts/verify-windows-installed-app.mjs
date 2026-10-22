@@ -40,16 +40,23 @@ try {
   }
   assert.ok(page, `the installed app did not open a packaged file:// renderer; observed pages: ${observedUrls.join(", ") || "none"}`);
   const allowMissingApi = args.has("allow-missing-desktop-api");
-  await page.waitForFunction(() => document.readyState === "complete" && Boolean(document.body?.innerText?.trim()), null, { timeout: 20_000 });
-  const url = new URL(page.url());
   const legacyBaseline = allowMissingApi && expectedVersion === "6.0.0";
+  let url = new URL(page.url());
+  if (legacyBaseline && url.hash === "") {
+    // The archived 6.0.0 build opens the renderer without a router hash; visit
+    // its real login route locally rather than relying on the newer startup URL.
+    await page.evaluate(() => { window.location.hash = "#/login"; });
+  }
+  await page.waitForFunction(() => document.readyState === "complete" && Boolean(document.body?.innerText?.trim()), null, { timeout: 20_000 });
+  url = new URL(page.url());
   if (legacyBaseline) {
-    assert.ok(url.hash === "" || url.hash === "#/login", "6.0.0 baseline may have no hash, but must not open a different route");
+    assert.equal(url.hash, "#/login", "legacy 6.0.0 login route must render when opened locally");
   } else {
     assert.equal(url.hash, "#/login", "installed app must start on the employee login route");
   }
   const body = (await page.locator("body").innerText()).toLocaleLowerCase();
-  assert.ok(/sign in|تسجيل الدخول|دخول/.test(body), "the first installed screen must be the real employee login UI");
+  assert.ok(/sign in|تسجيل الدخول|دخول/.test(body),
+    `the installed screen must be the real employee login UI (title=${JSON.stringify(await page.title())}, body=${JSON.stringify(body.slice(0, 600))})`);
   let desktopApiReady = await page.evaluate(() => Boolean(window.alyqDesktop?.getContext && window.alyqDesktop?.getConfig));
   if (!desktopApiReady) {
     try {
