@@ -169,6 +169,28 @@
 .store-v2 .v2-search-submit { display: grid; place-items: center; width: 44px; border: 0; background: transparent; color: inherit; }
 .store-v2 .v2-search-submit svg { width: 18px; height: 18px; }
 
+/* The hidden staff entrance, revealed only while the exact keyword is typed
+   into the shop's own search. No new palette is introduced: inside the header
+   it inherits the header's own colours exactly like .v2-search-row does (the
+   accent is the shop's configured gold), and on the catalogue page it sits on
+   the page's ivory with the same gold border. 48px keeps it a comfortable
+   touch target on Android and iPhone; reduced motion is irrelevant here
+   because nothing animates. */
+.store-v2 .v2-staff-entry { display: flex; width: min(100% - 32px, 880px); margin: 0 auto 14px; }
+.store-v2 .v2-catalog .v2-staff-entry { width: min(100%, 650px); margin: -14px auto 26px; }
+.store-v2 .v2-staff-entry-action { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 48px;
+  padding: 10px 14px; border: 1px solid var(--v2-header-accent-text); border-radius: var(--v2-card-radius);
+  background: transparent; color: inherit; font: inherit; font-size: 13px; text-align: start; }
+.store-v2 .v2-staff-entry-action:hover { border-color: currentColor; }
+.store-v2 .v2-staff-entry-action:focus-visible { outline: 2px solid var(--v2-focus); outline-offset: 2px; }
+.store-v2 .v2-staff-entry-action svg { flex: none; width: 18px; height: 18px; color: var(--v2-header-accent-text); }
+.store-v2 .v2-staff-entry-copy { display: grid; gap: 2px; flex: 1; min-width: 0; }
+.store-v2 .v2-staff-entry-label { font-weight: 700; letter-spacing: .04em; }
+.store-v2 .v2-staff-entry-hint { font-size: 10px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase;
+  opacity: .72; }
+.store-v2 .v2-catalog .v2-staff-entry-action { border-color: var(--v2-accent-text); background: var(--v2-surface); }
+.store-v2 .v2-catalog .v2-staff-entry-action svg { color: var(--v2-accent-text); }
+
 /* Accessible, inert when closed, and fully scrolled inside the viewport. */
 .store-v2 .v2-drawer-layer { visibility: hidden; pointer-events: none; position: fixed; z-index: 60; inset: 0; }
 .store-v2 .v2-drawer-layer[data-open="true"] { visibility: visible; pointer-events: auto; }

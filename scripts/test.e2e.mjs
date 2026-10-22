@@ -112,6 +112,11 @@ const SUITES = [
     title: "Storefront V2 Phase 3: exact-variant bag, COD/InstaPay, private tracking, browser account and safe reorder",
   },
   {
+    id: "staff-entry",
+    file: "scripts/storefront-v2-staff-entry.flow.mjs",
+    title: "Storefront V2 hidden staff entrance: the exact search word reveals one option, option and Enter both open the real staff login, product search and shopper sign-in unchanged",
+  },
+  {
     id: "v2-cutover",
     file: "scripts/storefront-v2-cutover.flow.mjs",
     title: "Storefront V2 Phase 4A: canonical public routing, metadata, saved links, safe preview redirects and POS isolation",

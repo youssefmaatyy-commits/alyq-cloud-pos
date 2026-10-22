@@ -2,7 +2,7 @@
  * the published shared catalogue; the mobile sheet has an escape route and
  * focus containment without a separate search/stock/pricing system. */
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { useStorefront } from "../hooks/StorefrontProvider";
 import {
@@ -13,12 +13,15 @@ import { absoluteUrl, applyDocumentMeta, clearDocumentMeta } from "../services/s
 import { v2CatalogResults } from "./viewModel";
 import { V2ProductCard } from "./ProductCard";
 import { V2ProductGrid, V2State } from "./Primitives";
+import { V2StaffEntry } from "./StaffEntryOption";
+import { isStaffEntryQuery, STAFF_ENTRY_ROUTE } from "./staffEntry";
 
 export function StorefrontV2Catalog() {
   const { t, pick, money } = useI18n();
   const { products, categoriesFacet, categoryContents, brandsFacet, catalogContext, priceRange,
     campaigns, promotions, promotionTargets, loading, error, refresh, settings } = useStorefront();
   const [params, setParams] = useSearchParams();
+  const navigate = useNavigate();
   const filters = useMemo(() => filtersFromSearchParams(params), [params]);
   const [search, setSearch] = useState(filters.search);
   const [minPrice, setMinPrice] = useState(filters.minPrice?.toString() ?? "");
@@ -97,7 +100,15 @@ export function StorefrontV2Catalog() {
     if (offer) next.set("offer", "1");
     setParams(next);
   };
-  const submitSearch = (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); apply({ search: search.trim() }); };
+  // The hidden staff entrance, armed only by the exact keyword. Any other
+  // query keeps behaving exactly as before: same results, same URL state.
+  const staffEntryArmed = isStaffEntryQuery(search);
+  const submitSearch = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    // Enter on the keyword goes to the staff sign-in, not to a product search.
+    if (staffEntryArmed) { navigate(STAFF_ENTRY_ROUTE); return; }
+    apply({ search: search.trim() });
+  };
   const applyPrice = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const number = (raw: string) => raw.trim() && Number.isFinite(Number(raw)) ? Math.max(0, Number(raw)) : null;
@@ -112,9 +123,12 @@ export function StorefrontV2Catalog() {
     <form className="v2-catalog-search" onSubmit={submitSearch} role="search">
       <label className="sr-only" htmlFor="v2-search-input">{t("store.search.label")}</label>
       <input id="v2-search-input" type="search" value={search} onChange={(event) => setSearch(event.target.value)}
-        placeholder={t("store.search.placeholder")} />
+        placeholder={t("store.search.placeholder")} autoCapitalize="none" autoCorrect="off" spellCheck={false}
+        autoComplete="off" />
       <button type="submit">{t("store.v2.searchGo")}</button>
     </form>
+    {/* Rendered only while the exact keyword is typed: no permanent control. */}
+    {staffEntryArmed ? <V2StaffEntry /> : null}
     <div className="v2-category-chips" role="group" aria-label={t("store.nav.categories")}>
       <button type="button" aria-pressed={filters.categoryId === "all"} onClick={() => apply({ categoryId: "all" })}>{t("store.v2.allCategories")}</button>
       {categoriesFacet.map((item) => <button type="button" key={item.id} aria-pressed={filters.categoryId === item.id}
