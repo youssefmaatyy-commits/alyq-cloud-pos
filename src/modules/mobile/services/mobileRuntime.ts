@@ -45,13 +45,28 @@ export function isNativeMobileRuntime(): boolean {
 }
 
 /**
- * When the installed Capacitor APK launches at the bare root (`https://localhost/`
- * with an empty or `#/` hash), route directly into the full ALYQ POS system
- * (`#/dashboard`) instead of the public customer storefront. Public web
- * deployments (`https://alyq-store.vercel.app`) are unaffected.
+ * True when launched from an iPhone/iPad/Android Home Screen PWA icon
+ * (`navigator.standalone === true` on iOS Safari or `display-mode: standalone`).
+ */
+export function isStandalonePwaRuntime(win: Window | undefined = typeof window !== "undefined" ? window : undefined): boolean {
+  if (!win) return false;
+  try {
+    if ((win.navigator as { standalone?: boolean } | undefined)?.standalone === true) return true;
+    if (typeof win.matchMedia === "function" && win.matchMedia("(display-mode: standalone)").matches) return true;
+  } catch {
+    // Ignore restricted window access in synthetic test harnesses.
+  }
+  return false;
+}
+
+/**
+ * When the installed Capacitor APK or Home Screen PWA launches at the bare root
+ * (empty or `#/` hash), route directly into the full ALYQ POS system
+ * (`#/dashboard`) instead of the public customer storefront. Public browser tab
+ * visits (`https://alyq-store.vercel.app`) are unaffected.
  */
 export function normalizeNativeEntryUrl(win: Pick<Window, "location"> | undefined = typeof window !== "undefined" ? window : undefined): boolean {
-  if (!win || !isNativeMobileRuntime()) return false;
+  if (!win || (!isNativeMobileRuntime() && !isStandalonePwaRuntime(win as Window))) return false;
   const hash = win.location.hash ?? "";
   if (hash === "" || hash === "#" || hash === "#/") {
     win.location.hash = "#/dashboard";

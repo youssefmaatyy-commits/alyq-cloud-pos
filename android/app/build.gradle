@@ -7,12 +7,18 @@ android {
         applicationId "eg.alyq.management"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 2
-        versionName "2.0.0"
-        manifestPlaceholders = [appLabel: project.hasProperty("stagingBuild") ? "ALYQ POS Staging" : "@string/app_name"]
+        versionCode project.hasProperty("prodV21") ? 3 : 2
+        versionName project.hasProperty("prodV21") ? "2.1.0" : "2.0.0"
+        manifestPlaceholders = [
+            appLabel: project.hasProperty("stagingBuild")
+                ? "ALYQ POS Staging"
+                : (project.hasProperty("coexistBuild") ? "ALYQ POS v2.1" : "@string/app_name")
+        ]
         if (project.hasProperty("stagingBuild")) {
             applicationIdSuffix ".staging"
             versionNameSuffix "-models-staging"
+        } else if (project.hasProperty("coexistBuild")) {
+            applicationIdSuffix ".v21"
         }
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {

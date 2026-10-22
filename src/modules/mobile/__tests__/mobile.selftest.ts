@@ -91,7 +91,7 @@ test("PWA assets are installable and notification clicks carry only opaque ident
   };
   assert.equal(manifest.name, "ALYQ Mobile Management");
   assert.equal(manifest.short_name, "ALYQ");
-  assert.equal(manifest.start_url, "/#/mobile");
+  assert.equal(manifest.start_url, "/#/dashboard");
   assert.equal(manifest.display, "standalone");
   assert.deepEqual(manifest.icons.map((icon) => icon.sizes), ["192x192", "512x512"]);
   const index = fs.readFileSync("index.html", "utf8");

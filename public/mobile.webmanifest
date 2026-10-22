@@ -1,9 +1,9 @@
 {
   "name": "ALYQ Mobile Management",
   "short_name": "ALYQ",
-  "description": "ALYQ management and operational notifications",
-  "id": "/#/mobile",
-  "start_url": "/#/mobile",
+  "description": "ALYQ Cloud POS, management, and operational notifications",
+  "id": "/#/dashboard",
+  "start_url": "/#/dashboard",
   "scope": "/",
   "display": "standalone",
   "display_override": ["standalone"],

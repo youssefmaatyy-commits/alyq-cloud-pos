@@ -1,4 +1,4 @@
-name: Android POS APK & Mobile Screenshots
+name: Android POS APK & Windows EXE Release Builder
 
 on:
   push:
@@ -9,12 +9,12 @@ permissions:
   contents: write
 
 concurrency:
-  group: android-pos-${{ github.ref }}
+  group: release-builder-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build_staging_models_apk:
-    name: Build ALYQ POS Staging v2.0.0-models-staging Side-by-Side APK
+  build_production_android_apks:
+    name: Build ALYQ POS v2.1.0 Production APKs (Coexist + Standard)
     if: "!contains(github.event.head_commit.message, '[skip android-build]')"
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -42,128 +42,146 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build Staging Web Bundle & Compile Side-by-Side Android APK (eg.alyq.management.staging)
+      - name: Configure Production Web Bundle & Build Android APKs (v2.1.0)
         run: |
           node -e '
             const fs = require("node:fs");
             (async () => {
-              const res = await fetch("https://bubvtxctwqsfohrkenej.supabase.co/functions/v1/staging-client-config");
-              if (!res.ok) throw new Error("Failed to reach staging config endpoint: " + res.status);
-              const cfg = await res.json();
-              if (!cfg.url || !cfg.anonKey) throw new Error("Incomplete staging client configuration");
+              const res = await fetch("https://alyq-store.vercel.app/");
+              if (!res.ok) throw new Error("Failed to reach production origin: " + res.status);
+              const html = await res.text();
+              const urlMatch = html.match(/https:\/\/[a-z0-9]+\.supabase\.co/);
+              const keyMatch = html.match(/eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/);
+              if (!urlMatch || !keyMatch) throw new Error("Could not resolve public client configuration");
               const lines = [
-                "VITE_SUPABASE_URL=" + cfg.url,
-                "VITE_SUPABASE_ANON_KEY=" + cfg.anonKey,
+                "VITE_SUPABASE_URL=" + urlMatch[0],
+                "VITE_SUPABASE_ANON_KEY=" + keyMatch[0],
                 "VITE_CURRENCY=EGP",
-                "VITE_APP_VERSION=2.0.0-models-staging"
+                "VITE_APP_VERSION=2.1.0"
               ];
               fs.writeFileSync(".env.production.local", lines.join("\n") + "\n", { mode: 0o600 });
-              console.log("Configured Staging Mode targeting Supabase host:", new URL(cfg.url).host);
+              console.log("Configured Production Mode targeting Supabase host:", new URL(urlMatch[0]).host);
             })().catch((e) => { console.error(e.message); process.exit(1); });
           '
           npm run build
           rm -f .env.production.local
           npx cap sync android
           chmod +x android/gradlew
-          cd android
-          ./gradlew assembleDebug -PstagingBuild=true --no-daemon
-          cd ..
           mkdir -p releases
-          cp android/app/build/outputs/apk/debug/app-debug.apk releases/ALYQ-POS-v2.0.0-models-staging-debug.apk
-          rm -rf android/app/src/main/assets/public android/app/build android/.gradle ios/App/App/public dist
-          git checkout -- android/ ios/ || true
-          git clean -fd android/ ios/ || true
 
-      - name: Verify Side-by-Side Package ID, Staging Endpoint & Signatures
+          cd android
+          # 1. Coexist APK (eg.alyq.management.v21) — avoids signing certificate conflict & preserves v2.0.0 local data
+          ./gradlew assembleDebug -PprodV21=true -PcoexistBuild=true --no-daemon
+          cp app/build/outputs/apk/debug/app-debug.apk ../releases/ALYQ-POS-v2.1.0-prod-coexist.apk
+
+          # 2. Standard APK (eg.alyq.management) — for clean install or after syncing v2.0.0
+          ./gradlew assembleDebug -PprodV21=true --no-daemon
+          cp app/build/outputs/apk/debug/app-debug.apk ../releases/ALYQ-POS-v2.1.0-prod.apk
+          cd ..
+
+          sha256sum releases/ALYQ-POS-v2.1.0-prod-coexist.apk > releases/ALYQ-POS-v2.1.0-prod-coexist.apk.sha256
+          sha256sum releases/ALYQ-POS-v2.1.0-prod.apk > releases/ALYQ-POS-v2.1.0-prod.apk.sha256
+
+      - name: Verify Production APKs & Upload to Release Tag v2.1.0-rc1
         run: |
           AAPT_BIN=$(ls -d "$ANDROID_HOME"/build-tools/* 2>/dev/null | sort -V | tail -n 1)/aapt
-          BADGING=$("$AAPT_BIN" dump badging releases/ALYQ-POS-v2.0.0-models-staging-debug.apk)
-          echo "$BADGING" | grep -E "^package:|^application-label:"
-          echo "$BADGING" | grep -q "name='eg.alyq.management.staging'"
-          echo "$BADGING" | grep -q "versionName='2.0.0-models-staging'"
-          echo "$BADGING" | grep -q "application-label:'ALYQ POS Staging'"
-          unzip -p releases/ALYQ-POS-v2.0.0-models-staging-debug.apk assets/public/index.html | grep -q "https://bubvtxctwqsfohrkenej.supabase.co"
-          if unzip -p releases/ALYQ-POS-v2.0.0-models-staging-debug.apk assets/public/index.html | grep -q "zeaacjmmvyuwzmkgxhqf.supabase.co"; then
-            echo "ERROR: Production Supabase host found in Staging APK!"
-            exit 1
-          fi
-          echo "✓ Verified side-by-side package eg.alyq.management.staging connected strictly to bubvtxctwqsfohrkenej.supabase.co"
+          "$AAPT_BIN" dump badging releases/ALYQ-POS-v2.1.0-prod-coexist.apk | grep -q "name='eg.alyq.management.v21'"
+          "$AAPT_BIN" dump badging releases/ALYQ-POS-v2.1.0-prod.apk | grep -q "name='eg.alyq.management'"
+          unzip -p releases/ALYQ-POS-v2.1.0-prod-coexist.apk assets/public/index.html | grep -q "https://zeaacjmmvyuwzmkgxhqf.supabase.co"
+          unzip -p releases/ALYQ-POS-v2.1.0-prod.apk assets/public/index.html | grep -q "https://zeaacjmmvyuwzmkgxhqf.supabase.co"
 
-          sha256sum releases/ALYQ-POS-v2.0.0-models-staging-debug.apk > releases/ALYQ-POS-v2.0.0-models-staging-debug.apk.sha256
-          APK_BYTES=$(stat -c%s releases/ALYQ-POS-v2.0.0-models-staging-debug.apk)
-          APK_SHA256=$(awk '{print $1}' releases/ALYQ-POS-v2.0.0-models-staging-debug.apk.sha256)
-          APKSIGNER_BIN=$(ls -d "$ANDROID_HOME"/build-tools/* 2>/dev/null | sort -V | tail -n 1)/apksigner
-          CERT_INFO=$("$APKSIGNER_BIN" verify --print-certs releases/ALYQ-POS-v2.0.0-models-staging-debug.apk | head -n 6 | tr '\n' ' ' | sed 's/"/\\"/g')
-
-          cat > releases/staging-apk-metadata.json <<EOF
-          {
-            "appName": "ALYQ POS Staging",
-            "applicationId": "eg.alyq.management.staging",
-            "coexistsWithOfficialApp": "eg.alyq.management (v2.0.0)",
-            "fileProviderAuthority": "eg.alyq.management.staging.fileprovider",
-            "versionCode": 2,
-            "versionName": "2.0.0-models-staging",
-            "minSdkVersion": 24,
-            "targetSdkVersion": 36,
-            "runtimeMode": "staging-supabase-0097",
-            "supabaseProjectHost": "bubvtxctwqsfohrkenej.supabase.co",
-            "buildType": "debug-signed-side-by-side-staging",
-            "fileName": "releases/ALYQ-POS-v2.0.0-models-staging-debug.apk",
-            "sizeBytes": ${APK_BYTES},
-            "sha256": "${APK_SHA256}",
-            "signingSummary": "${CERT_INFO}",
-            "builtAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-          }
-          EOF
-
-      - name: Commit Staging APK to session branch & Publish Experimental Pre-Release
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -f releases/ALYQ-POS-v2.0.0-models-staging-debug.apk releases/ALYQ-POS-v2.0.0-models-staging-debug.apk.sha256 releases/staging-apk-metadata.json
-          git commit -m "chore(android): package side-by-side ALYQ POS Staging APK (eg.alyq.management.staging -> bubvtxctwqsfohrkenej) [skip android-build]"
-          npm run production:preflight
-          git push origin HEAD:${{ github.ref_name }}
           HEAD_SHA=$(git rev-parse HEAD)
-
-          cat > /tmp/staging-release-notes.md << 'EOF'
-          # 🧪 ALYQ POS v2.0.0-models-staging — Experimental Side-by-Side Staging Build (Android Only)
-
-          > **⚠️ Experimental Staging Pre-Release:**
-          > - Connects strictly to the isolated **Supabase Staging (`bubvtxctwqsfohrkenej.supabase.co`)** database with **Migration `0097` (Shared Barcode & Individual Variant Models)** applied.
-          > - **Does NOT touch Production (`zeaacjmmvyuwzmkgxhqf.supabase.co`)**.
-          > - Uses dedicated package ID **`eg.alyq.management.staging`** and label **`ALYQ POS Staging`** so it installs **side-by-side** alongside your official **`ALYQ POS v2.0.0` (`eg.alyq.management`)** app without replacing it, uninstalling it, or affecting any local data.
-
-          ---
-
-          ## 📦 Package & Coexistence Metadata
-
-          | Field | Value |
-          |---|---|
-          | **App Name on Phone** | `ALYQ POS Staging` |
-          | **Package ID (`applicationId`)** | `eg.alyq.management.staging` (coexists safely alongside `eg.alyq.management`) |
-          | **FileProvider Authority** | `eg.alyq.management.staging.fileprovider` |
-          | **Version** | `2.0.0-models-staging` (`versionCode: 2`, `minSdkVersion: 24`, `targetSdkVersion: 36`) |
-          | **Connected Database** | **Supabase Staging (`bubvtxctwqsfohrkenej.supabase.co`)** — 97 migrations (`0001`–`0097`) |
-          | **Public Signup (`disable_signup`)** | Disabled (`true`) — Protected against unauthorized external signups |
-          | **Seeded Synthetic Staging Products** | `BR101` (3 models: `4 + 3 + 5 = 12`) · `NK202` (2 models: `6 + 5 = 11`) · `STG-SZ-301` · `STG-CL-302` |
-          EOF
-
-          if gh release view v2.0.0-models-staging --repo youssefmaatyy-commits/alyq-cloud-pos >/dev/null 2>&1; then
-            gh release upload v2.0.0-models-staging \
-              releases/ALYQ-POS-v2.0.0-models-staging-debug.apk \
-              releases/ALYQ-POS-v2.0.0-models-staging-debug.apk.sha256 \
-              releases/staging-apk-metadata.json \
+          if gh release view v2.1.0-rc1 --repo youssefmaatyy-commits/alyq-cloud-pos >/dev/null 2>&1; then
+            gh release upload v2.1.0-rc1 \
+              releases/ALYQ-POS-v2.1.0-prod-coexist.apk \
+              releases/ALYQ-POS-v2.1.0-prod-coexist.apk.sha256 \
+              releases/ALYQ-POS-v2.1.0-prod.apk \
+              releases/ALYQ-POS-v2.1.0-prod.apk.sha256 \
               --repo youssefmaatyy-commits/alyq-cloud-pos \
               --clobber
           else
-            gh release create v2.0.0-models-staging \
-              releases/ALYQ-POS-v2.0.0-models-staging-debug.apk \
-              releases/ALYQ-POS-v2.0.0-models-staging-debug.apk.sha256 \
-              releases/staging-apk-metadata.json \
+            gh release create v2.1.0-rc1 \
+              releases/ALYQ-POS-v2.1.0-prod-coexist.apk \
+              releases/ALYQ-POS-v2.1.0-prod-coexist.apk.sha256 \
+              releases/ALYQ-POS-v2.1.0-prod.apk \
+              releases/ALYQ-POS-v2.1.0-prod.apk.sha256 \
               --repo youssefmaatyy-commits/alyq-cloud-pos \
-              --title "ALYQ POS v2.0.0-models-staging (Side-by-Side Staging APK)" \
-              --notes-file /tmp/staging-release-notes.md \
+              --title "ALYQ POS v2.1.0 Release Candidate (Android APKs & Windows EXE)" \
+              --notes "Production-ready Android APKs (Coexist + Standard) and Windows x64 NSIS Installer connected to Production." \
               --target "$HEAD_SHA" \
               --prerelease
           fi
+
+  build_windows_exe:
+    name: Build ALYQ POS Windows x64 EXE Installer (NSIS)
+    if: "!contains(github.event.head_commit.message, '[skip android-build]')"
+    runs-on: windows-latest
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Configure Production Web Bundle & Build Windows EXE Installer
+        shell: bash
+        run: |
+          node -e '
+            const fs = require("node:fs");
+            (async () => {
+              const res = await fetch("https://alyq-store.vercel.app/");
+              if (!res.ok) throw new Error("Failed to reach production origin: " + res.status);
+              const html = await res.text();
+              const urlMatch = html.match(/https:\/\/[a-z0-9]+\.supabase\.co/);
+              const keyMatch = html.match(/eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/);
+              if (!urlMatch || !keyMatch) throw new Error("Could not resolve public client configuration");
+              const lines = [
+                "VITE_SUPABASE_URL=" + urlMatch[0],
+                "VITE_SUPABASE_ANON_KEY=" + keyMatch[0],
+                "VITE_CURRENCY=EGP",
+                "VITE_APP_VERSION=6.0.0"
+              ];
+              fs.writeFileSync(".env.production.local", lines.join("\n") + "\n", { mode: 0o600 });
+              console.log("Configured Windows Production Mode targeting Supabase host:", new URL(urlMatch[0]).host);
+            })().catch((e) => { console.error(e.message); process.exit(1); });
+          '
+          npm run desktop:package:win
+          rm -f .env.production.local
+          ls -lh release/ALYQ-POS-Setup-6.0.0-x64.exe
+          sha256sum release/ALYQ-POS-Setup-6.0.0-x64.exe > release/ALYQ-POS-Setup-6.0.0-x64.exe.sha256
+
+      - name: Upload Windows EXE Installer to Release Tag v2.1.0-rc1
+        shell: bash
+        run: |
+          HEAD_SHA=$(git rev-parse HEAD)
+          for i in 1 2 3 4 5; do
+            if gh release view v2.1.0-rc1 --repo youssefmaatyy-commits/alyq-cloud-pos >/dev/null 2>&1; then
+              gh release upload v2.1.0-rc1 \
+                release/ALYQ-POS-Setup-6.0.0-x64.exe \
+                release/ALYQ-POS-Setup-6.0.0-x64.exe.sha256 \
+                --repo youssefmaatyy-commits/alyq-cloud-pos \
+                --clobber && break
+            else
+              gh release create v2.1.0-rc1 \
+                release/ALYQ-POS-Setup-6.0.0-x64.exe \
+                release/ALYQ-POS-Setup-6.0.0-x64.exe.sha256 \
+                --repo youssefmaatyy-commits/alyq-cloud-pos \
+                --title "ALYQ POS v2.1.0 Release Candidate (Android APKs & Windows EXE)" \
+                --notes "Production-ready Android APKs (Coexist + Standard) and Windows x64 NSIS Installer connected to Production." \
+                --target "$HEAD_SHA" \
+                --prerelease && break
+            fi
+            sleep 5
+          done
