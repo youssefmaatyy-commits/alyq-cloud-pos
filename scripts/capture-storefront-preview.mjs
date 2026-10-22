@@ -1,10 +1,11 @@
 #!/usr/bin/env node
-/** Capture local fixture pages plus read-only Production baseline screenshots; never writes to Supabase or Production. */
+/** Capture local-only screenshots using demo content plus the read-only Staging BR101 snapshot. */
 import assert from "node:assert/strict";
 import { mkdir, readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { transform } from "esbuild";
 import { chromium } from "@playwright/test";
+import { stagingBr101Snapshot } from "./staging-br101.snapshot.mjs";
 
 const base = process.env.ALYQ_PREVIEW_URL || "http://127.0.0.1:4173";
 const output = process.env.ALYQ_SCREENSHOT_DIR || "coverage/alyq-preview";
@@ -16,54 +17,16 @@ const { buildDemoProducts, buildDemoCategories } = await import(
 );
 
 const products = buildDemoProducts();
-const categories = buildDemoCategories();
-const ring = products.find((product) => product.sku === "ALYQ-1002");
-assert.ok(ring, "the local catalogue must include the ring fixture");
-const parent = {
-  ...ring,
-  id: "11111111-2222-4333-8444-000000000101",
-  sku: "BR101",
-  barcode: "BR101",
-  name_en: "ALYQ Royal Gold Bracelet",
-  name_ar: "سوار أَلِــيْـــق الذهبي",
-  category_id: categories[0]?.id ?? ring.category_id,
-  image_url: null,
-  images: [],
-  variants_enabled: true,
-  stock_quantity: 66,
-  low_stock_level: 2,
-};
+const categories = [...buildDemoCategories(), ...stagingBr101Snapshot.categories];
+const parent = { ...products[0], ...stagingBr101Snapshot.product };
 products.push(parent);
-// These are the three actual public image URLs found on the existing Staging
-// BR101 fixture. The other nine preview-only models intentionally have no
-// image so the gallery shows its honest missing-photo state instead of a
-// repeated or generated stand-in.
-const actualStagingModelImages = [
-  "https://images.unsplash.com/photo-1611591437281-460bfbe1220a?auto=format&fit=crop&w=900&q=80",
-  "https://images.unsplash.com/photo-1573408301185-9146fe634ad0?auto=format&fit=crop&w=900&q=80",
-  "https://images.unsplash.com/photo-1535632066927-ab7c9ab60908?auto=format&fit=crop&w=900&q=80",
-];
-const models = Array.from({ length: 12 }, (_, index) => {
-  const image = actualStagingModelImages[index] ?? null;
-  return {
-    id: `9caa4fe0-4147-4af0-9982-${String(index + 201).padStart(12, "0")}`,
-    product_id: parent.id,
-    sku: `BR101-M${String(index + 1).padStart(2, "0")}`,
-    barcode: null,
-    color_key: "", color_ar: null, color_en: null, color_hex: null,
-    size: null, size_label: null, size_value: null,
-    image_url: image, images: image ? [image] : [],
-    display_name_ar: `شكل ${String(index + 1).padStart(2, "0")}`,
-    display_name_en: `Model ${String(index + 1).padStart(2, "0")}`,
-    price_override: 145 + index * 5,
-    stock_quantity: index === 11 ? 0 : index + 1,
-    low_stock_level: 1,
-    active: true,
-    sort_order: index + 1,
-    created_at: parent.created_at,
-    updated_at: parent.updated_at,
-  };
-});
+const models = stagingBr101Snapshot.variants.map((model) => ({
+  ...model,
+  cost_override: null,
+  low_stock_level: 1,
+  created_at: parent.created_at,
+  updated_at: parent.updated_at,
+}));
 const catalog = { seed_revision: 3, categories, products, variants: models };
 const coreRoutes = [
   ["home", "#/store", "v2-home"],
@@ -73,13 +36,25 @@ const coreRoutes = [
   ["checkout", "#/store/checkout", "v2-checkout"],
 ];
 
-async function assertStagingGalleryPhotos(page, viewport) {
-  const images = page.locator(".v2-model-gallery-card img");
-  const loaded = await images.evaluateAll(async (nodes) => Promise.all(nodes.map(async (image) => {
-    try { await image.decode(); return image.naturalWidth > 0; } catch { return false; }
+async function waitForGalleryImages(page, label) {
+  await page.waitForFunction(() => [...document.querySelectorAll(".v2-model-gallery-card")].every((card) => {
+    const image = card.querySelector(".v2-model-gallery-photo img");
+    return Boolean(card.querySelector(".v2-model-gallery-photo-missing")) || Boolean(image?.complete && image.naturalWidth > 0);
+  }), null, { timeout: 20_000 });
+  const gallery = await page.locator(".v2-model-gallery-card").evaluateAll((cards) => cards.map((card) => ({
+    name: card.querySelector(".v2-model-gallery-name")?.textContent?.trim() ?? "",
+    stock: card.querySelector(".v2-model-gallery-stock")?.textContent?.trim() ?? "",
+    source: card.querySelector(".v2-model-gallery-photo img")?.getAttribute("src") ?? null,
+    placeholder: Boolean(card.querySelector(".v2-model-gallery-photo-missing")),
   })));
-  assert.equal(loaded.length, 3, `${viewport} must render only the three Staging model photos`);
-  assert.ok(loaded.every(Boolean), `${viewport} must load all three actual Staging model photos`);
+  const rtl = await page.locator("html").getAttribute("dir") === "rtl";
+  const expectedNames = rtl ? ["شكل 1", "شكل 2", "شكل 3"] : ["Model 1", "Model 2", "Model 3"];
+  assert.deepEqual(gallery.map((model) => model.name), expectedNames,
+    `${label} must show the exact Staging model names in the current language`);
+  assert.ok(gallery.every((model) => model.stock.length > 0), `${label} must show each model's stock status`);
+  assert.ok(gallery.every((model, index) => model.source === stagingBr101Snapshot.variants[index].image_url || model.placeholder),
+    `${label} images must be the recorded Staging URLs or the neutral on-error placeholder`);
+  console.log(`${label}: ${gallery.filter((model) => model.source && !model.placeholder).length} actual Staging photos loaded; ${gallery.filter((model) => model.placeholder).length} neutral placeholders`);
 }
 
 async function checkResponsiveRoutes(page, language) {
@@ -101,118 +76,85 @@ async function checkResponsiveRoutes(page, language) {
       assert.ok(!metrics.text.includes("the alyq edit") && !metrics.text.includes("مختارات أَلِــيْـــق"),
         `${language} ${label} at ${width}px must not render the removed tagline`);
       if (testId === "v2-product") {
-        assert.equal(await page.locator(".v2-model-gallery-card").count(), 12,
-          `${language} model gallery at ${width}px must show all twelve models`);
+        assert.equal(await page.locator(".v2-model-gallery-card").count(), stagingBr101Snapshot.variants.length,
+          `${language} gallery at ${width}px must show only the Staging model rows`);
       }
     }
     console.log(`✓ ${language} storefront routes fit ${width}px without horizontal overflow`);
   }
 }
 
-await mkdir(output, { recursive: true });
-const browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
-try {
-  // Read-only baseline evidence from the user-provided live store. This only
-  // performs page navigations/GETs; no login, cart mutation, or checkout.
-  try {
-    const before = await browser.newPage({ viewport: { width: 1366, height: 900 }, deviceScaleFactor: 1 });
-    await before.goto("https://alyq-store.vercel.app/", { waitUntil: "domcontentloaded", timeout: 30_000 });
-    await before.locator("body").waitFor();
-    await before.waitForLoadState("networkidle", { timeout: 12_000 }).catch(() => {});
-    await before.screenshot({ path: `${output}/before-production-home-desktop-1366.png`, fullPage: true, animations: "disabled" });
-    const liveCategories = before.locator("#categories").first();
-    if (await liveCategories.count()) {
-      await liveCategories.screenshot({ path: `${output}/before-production-categories-desktop-1366.png`, animations: "disabled" });
-    }
-    await before.goto("https://alyq-store.vercel.app/#/store/products", { waitUntil: "domcontentloaded", timeout: 30_000 });
-    await before.locator("body").waitFor();
-    await before.waitForLoadState("networkidle", { timeout: 12_000 }).catch(() => {});
-    await before.screenshot({ path: `${output}/before-production-catalog-desktop-1366.png`, fullPage: true, animations: "disabled" });
-    const brokenImages = await before.locator("img").evaluateAll((images) => images.filter((image) => image.complete && image.naturalWidth === 0).length);
-    console.log(`Read-only live baseline: ${brokenImages} image(s) failed to load on the catalogue page.`);
-    await before.setViewportSize({ width: 390, height: 844 });
-    await before.goto("https://alyq-store.vercel.app/", { waitUntil: "domcontentloaded", timeout: 30_000 });
-    await before.locator("body").waitFor();
-    await before.screenshot({ path: `${output}/before-production-home-mobile-390.png`, fullPage: true, animations: "disabled" });
-    await before.close();
-  } catch (error) {
-    console.warn(`Read-only Production baseline capture unavailable: ${error instanceof Error ? error.message : String(error)}`);
-  }
-
-  const context = await browser.newContext({ viewport: { width: 1366, height: 900 }, deviceScaleFactor: 1 });
+async function captureLocale(browser, language, device, viewport) {
+  const context = await browser.newContext({ viewport, deviceScaleFactor: 1 });
   await context.addInitScript((fixture) => {
+    if (location.protocol !== "http:" && location.protocol !== "https:") return;
     localStorage.setItem("alyq.demo.catalog.v1", JSON.stringify(fixture.catalog));
     localStorage.setItem("alyq.lang", fixture.language);
     localStorage.removeItem("alyq.store.cart.v2");
     localStorage.removeItem("alyq.store.account.v2");
-  }, { catalog, language: "en" });
+  }, { catalog, language });
   const page = await context.newPage();
-  page.setDefaultTimeout(45_000);
   const pageErrors = [];
+  page.setDefaultTimeout(45_000);
   page.on("pageerror", (error) => pageErrors.push(error.message));
-  await page.goto(`${base}/#/store`, { waitUntil: "domcontentloaded" });
-  await page.getByTestId("v2-home").waitFor();
-  await page.locator("#categories .v2-category").first().waitFor();
-  assert.ok(!/the alyq edit/i.test(await page.locator("body").innerText()), "English home must omit the removed tagline");
-  await page.screenshot({ path: `${output}/after-demo-home-desktop-en-1366.png`, fullPage: true, animations: "disabled" });
-  await page.locator("#categories").screenshot({ path: `${output}/after-categories-text-only-desktop-en.png`, animations: "disabled" });
+  const width = viewport.width;
+  const prefix = `${output}/preview`;
+  try {
+    await page.goto(`${base}/#/store`, { waitUntil: "domcontentloaded" });
+    await page.getByTestId("v2-home").waitFor();
+    await page.locator("#categories .v2-category").first().waitFor();
+    assert.ok(!/the alyq edit/i.test(await page.locator("body").innerText()), `${language} home must omit the removed tagline`);
+    await page.screenshot({ path: `${prefix}-home-${device}-${language}-${width}.png`, fullPage: true, animations: "disabled" });
+    await page.locator("#categories").screenshot({ path: `${prefix}-categories-${device}-${language}-${width}.png`, animations: "disabled" });
 
-  await page.goto(`${base}/#/store/products`, { waitUntil: "domcontentloaded" });
-  await page.getByTestId(`v2-card-${parent.id}`).waitFor();
-  await page.screenshot({ path: `${output}/after-catalog-desktop-en-1366.png`, fullPage: true, animations: "disabled" });
+    await page.goto(`${base}/#/store/products`, { waitUntil: "domcontentloaded" });
+    await page.getByTestId(`v2-card-${parent.id}`).waitFor();
+    await page.screenshot({ path: `${prefix}-catalog-${device}-${language}-${width}.png`, fullPage: true, animations: "disabled" });
 
-  await page.goto(`${base}/#/store/products/${parent.id}`, { waitUntil: "domcontentloaded" });
-  await page.getByTestId("v2-model-gallery").waitFor();
-  assert.equal(await page.locator(".v2-model-gallery-card").count(), 12, "fixture must show all twelve model tiles");
-  assert.equal(await page.locator(".v2-model-gallery-card img").count(), 3,
-    "only the three photos actually present in Staging may appear; missing photos must remain honest placeholders");
-  await assertStagingGalleryPhotos(page, "desktop");
-  await page.screenshot({ path: `${output}/after-product-gallery-desktop-en-1366.png`, fullPage: true, animations: "disabled" });
-  await page.locator(".v2-model-gallery-card:nth-child(3) .v2-model-gallery-add").click();
-  await page.goto(`${base}/#/store/cart`, { waitUntil: "domcontentloaded" });
-  await page.getByTestId("v2-cart").waitFor();
-  await page.screenshot({ path: `${output}/after-cart-desktop-en-1366.png`, fullPage: true, animations: "disabled" });
-  await page.goto(`${base}/#/store/checkout`, { waitUntil: "domcontentloaded" });
-  await page.getByTestId("v2-checkout").waitFor();
-  assert.ok(!/the alyq edit/i.test(await page.locator("body").innerText()), "English checkout must omit the removed tagline");
-  await page.screenshot({ path: `${output}/after-checkout-desktop-en-1366.png`, fullPage: true, animations: "disabled" });
-  await checkResponsiveRoutes(page, "en");
-  await context.close();
+    await page.goto(`${base}/#/store/products/${parent.id}`, { waitUntil: "domcontentloaded" });
+    await page.getByTestId("v2-model-gallery").waitFor();
+    assert.equal(await page.locator(".v2-model-gallery-card").count(), stagingBr101Snapshot.variants.length,
+      `${language} capture must include exactly the three real Staging variants`);
+    await waitForGalleryImages(page, `${language}/${device} gallery`);
+    await page.screenshot({ path: `${prefix}-product-gallery-${device}-${language}-${width}.png`, fullPage: true, animations: "disabled" });
 
-  const mobileContext = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 });
-  await mobileContext.addInitScript((fixture) => {
-    localStorage.setItem("alyq.demo.catalog.v1", JSON.stringify(fixture.catalog));
-    localStorage.setItem("alyq.lang", fixture.language);
-    localStorage.removeItem("alyq.store.cart.v2");
-    localStorage.removeItem("alyq.store.account.v2");
-  }, { catalog, language: "ar" });
-  const mobile = await mobileContext.newPage();
-  mobile.setDefaultTimeout(45_000);
-  mobile.on("pageerror", (error) => pageErrors.push(error.message));
-  await mobile.goto(`${base}/#/store`, { waitUntil: "domcontentloaded" });
-  await mobile.getByTestId("v2-home").waitFor();
-  await mobile.locator("#categories .v2-category").first().waitFor();
-  assert.ok(!/the alyq edit/i.test(await mobile.locator("body").innerText()), "Arabic home must omit the removed English tagline");
-  await mobile.screenshot({ path: `${output}/after-home-mobile-ar-390.png`, fullPage: true, animations: "disabled" });
-  await mobile.locator("#categories").screenshot({ path: `${output}/after-categories-text-only-mobile-ar-390.png`, animations: "disabled" });
-  await mobile.goto(`${base}/#/store/products/${parent.id}`, { waitUntil: "domcontentloaded" });
-  await mobile.getByTestId("v2-model-gallery").waitFor();
-  assert.equal(await mobile.locator(".v2-model-gallery-card").count(), 12, "mobile fixture must show all twelve models");
-  assert.equal(await mobile.locator(".v2-model-gallery-card img").count(), 3,
-    "mobile fixture must not fill missing model photos with substitutes");
-  await assertStagingGalleryPhotos(mobile, "mobile");
-  await mobile.screenshot({ path: `${output}/after-product-gallery-mobile-ar-390.png`, fullPage: true, animations: "disabled" });
-  await mobile.locator(".v2-model-gallery-card:nth-child(3) .v2-model-gallery-add").click();
-  await mobile.goto(`${base}/#/store/cart`, { waitUntil: "domcontentloaded" });
-  await mobile.getByTestId("v2-cart").waitFor();
-  await mobile.screenshot({ path: `${output}/after-cart-mobile-ar-390.png`, fullPage: true, animations: "disabled" });
-  await mobile.goto(`${base}/#/store/checkout`, { waitUntil: "domcontentloaded" });
-  await mobile.getByTestId("v2-checkout").waitFor();
-  await mobile.screenshot({ path: `${output}/after-checkout-mobile-ar-390.png`, fullPage: true, animations: "disabled" });
-  await checkResponsiveRoutes(mobile, "ar");
-  assert.deepEqual(pageErrors, [], `unexpected browser errors: ${pageErrors.join("; ")}`);
-  await mobileContext.close();
-  console.log(`Captured before/after screenshots; verified EN/AR routes at 360, 390, 768 and 1366px under ${output}`);
+    await page.locator(".v2-model-gallery-card:nth-child(3) .v2-model-gallery-add").click();
+    await page.goto(`${base}/#/store/cart`, { waitUntil: "domcontentloaded" });
+    await page.getByTestId("v2-cart").waitFor();
+    await page.screenshot({ path: `${prefix}-cart-${device}-${language}-${width}.png`, fullPage: true, animations: "disabled" });
+    await page.goto(`${base}/#/store/checkout`, { waitUntil: "domcontentloaded" });
+    await page.getByTestId("v2-checkout").waitFor();
+    assert.ok(!/the alyq edit/i.test(await page.locator("body").innerText()), `${language} checkout must omit the removed tagline`);
+    await page.screenshot({ path: `${prefix}-checkout-${device}-${language}-${width}.png`, fullPage: true, animations: "disabled" });
+
+    await checkResponsiveRoutes(page, language);
+    assert.deepEqual(pageErrors, [], `${language}/${device} browser errors: ${pageErrors.join("; ")}`);
+  } finally {
+    await context.close();
+  }
+}
+
+await mkdir(output, { recursive: true });
+const launchArgs = process.env.ALYQ_CHROMIUM_ARGS
+  ? JSON.parse(process.env.ALYQ_CHROMIUM_ARGS)
+  : ["--no-sandbox"];
+const browser = await chromium.launch({
+  headless: true,
+  args: launchArgs,
+  ...(process.env.ALYQ_CHROMIUM_EXECUTABLE_PATH
+    ? { executablePath: process.env.ALYQ_CHROMIUM_EXECUTABLE_PATH }
+    : {}),
+});
+try {
+  for (const [language, device, viewport] of [
+    ["en", "desktop", { width: 1366, height: 900 }],
+    ["ar", "desktop", { width: 1366, height: 900 }],
+    ["en", "mobile", { width: 390, height: 844 }],
+    ["ar", "mobile", { width: 390, height: 844 }],
+  ]) {
+    await captureLocale(browser, language, device, viewport);
+  }
+  console.log(`Captured current-commit local screenshots; verified EN/AR routes at 360, 390, 768 and 1366px under ${output}`);
 } finally {
   await browser.close();
 }

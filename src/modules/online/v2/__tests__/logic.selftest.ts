@@ -11,6 +11,7 @@ import {
 import { adaptV2Appearance, contrastRatio, v2Href } from "../appearance";
 import { canonicalPreviewSearch, canonicalStorePathname } from "../storeRoutes";
 import { sizeKeyOf, variantModel } from "../variantModel";
+import { variantLabelOf } from "../../services/variantLabel";
 import { v2Price, v2Gallery, v2CatalogResults } from "../viewModel";
 
 const product = { ...buildDemoProducts()[0], id: "example-product", variants_enabled: true,
@@ -61,6 +62,21 @@ test("letter, numeric and one-size labels all derive from data and sort without 
   const model = variantModel([silverXS, silverOne, silver17, variant("half", { color_key: "silver", size: 16.5 })]);
   assert.deepEqual(model.sizesFor("silver").map((option) => option.label), ["16.5", "17", "One Size", "XS"]);
   assert.equal(model.exact("silver", "size:one size")?.id, silverOne.id);
+});
+
+test("Staging model names duplicated in compatibility size fields still open the model gallery", () => {
+  const modelOne = variant("staging-model-1", {
+    color_key: "", color_ar: null, color_en: null, color_hex: null,
+    size: null, size_label: "شكل 1", size_value: "شكل 1",
+    display_name_ar: "شكل 1", display_name_en: "Model 1",
+  });
+  assert.equal(sizeKeyOf(modelOne), "");
+  const models = variantModel([modelOne]);
+  assert.equal(models.hasModels, true);
+  assert.equal(models.hasSizes, false);
+  assert.equal(models.models.length, 1);
+  assert.equal(variantLabelOf(modelOne, "en"), "Model 1");
+  assert.equal(variantLabelOf(modelOne, "ar"), "شكل 1");
 });
 
 test("reservation holds, disabled tracking and non-active variants never become Quick Add substitutes", () => {

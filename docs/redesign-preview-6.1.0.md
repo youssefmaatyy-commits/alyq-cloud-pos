@@ -1,35 +1,33 @@
-# ALYQ 6.1.0 preview — scope, evidence, and limits
+# ALYQ POS 6.1.0 preview — scope and verified evidence
 
-## Branch and deployment boundary
+## Branch / deployment boundary
 
-- Work stays on `arena/f498e340-alyq-cloud-pos`; no merge, Production deploy, hosted migration, or final release is part of this preview.
-- Existing V2 storefront, exact-variant/model gallery, `logpos` staff entry, and manual Windows update panel are continued in place.
-- The Vercel connector reported no connected projects, so the available browser preview is the Arena Live Preview. The Windows screenshot workflow also captures the public Production site read-only for a before baseline; it never logs in or checks out there.
+- Accepted base: commit `1451e4a` on `arena/f498e340-alyq-cloud-pos`; current work is a small follow-up on that same branch.
+- No merge, Production deployment, hosted migration, or Production data/order/stock/settings change was made.
+- The local preview is isolated to a read-only Staging snapshot and demo-only cart/checkout. It rejects HTTP writes; no order from this preview reaches Staging or Production.
 
-## Storefront changes and checks
+## Model gallery fixes
 
-- Removed the `store.v2.eyebrow` copy and every rendering site in both dictionaries. No replacement label or spacer is left. E2E assertions cover English and Arabic home/categories, catalogue, PDP, cart, and checkout; a dictionary self-test prevents the key/tagline from returning.
-- Category tiles remain bilingual text-only cream/gold links. They are sourced only from active categories with visible products; archived categories are not reactivated, and the empty state remains an intentional message.
-- Existing model gallery and cart/order ownership stay unchanged. The local E2E fixture verifies one parent product, a shared parent barcode, twelve distinct model IDs, correct model selection, sold-out refusal, and the exact variant ID/name in the local demo order.
-- The screenshot harness checks RTL/LTR and horizontal overflow on home, catalogue, product, cart and checkout at 360, 390, 768 and 1366 px. It captures read-only Production before images and local-preview after images. No production cart or checkout is submitted.
+- Staging BR101's real model rows carry their Arabic model names in legacy `size_value`/`size_label` fields as well as `display_name_ar/en`. The V2 model detector now treats that duplicate compatibility label as a model name, not as a size option, so the real rows open the model gallery.
+- A model card now shows a neutral localized missing-photo state when there is no image URL **or when the URL fails to load**. The model name, SKU-bound choice, availability, price, add action, and exact variant ID remain intact; a broken image no longer leaves a browser broken-image glyph.
+- Screenshot and DOM fixtures use the exact read-only Staging snapshot in `scripts/staging-br101.snapshot.mjs`. They contain only the three existing records, no extra models, fabricated inventory/prices, repeated photos, or generated product images. One local negative-path test omits M03's photo only to test the fallback; it does not write the row back to Staging.
 
-## Read-only database/image findings (2026-10-22)
+## Verified Staging data (read-only)
 
-- Production `BR101` is one parent row with `variants_enabled=false`, stock 2, no cover/gallery images and no variant rows. No Production change was made.
-- The Production catalogue has 44 active, website-visible products; the read-only query found all 44 with no product-level cover/gallery image. Production `product_content` had no rows, and its 12 variant rows had no images. The public site's broken/unavailable product imagery is therefore a data/storage-content problem, not caused by the V2 card layout. No substitute images were added.
-- The Production product named `test` is a real row with SKU/name `TEST`/`test`, active and website-visible, in an active category, with no image. It remains untouched as requested.
-- The separate Staging project contains only three BR101 variants (M01–M03), not the twelve-model record described in the prompt. The screenshot fixture uses those three Staging image URLs and deliberately leaves the other nine fixture cards image-less; it does not repeat or fabricate photos. A twelve-model **live Staging** purchase is not established by that database state.
+- Parent `BR101`: active and website-visible, product barcode `BR101`, listed price EGP 240, three active variants.
+- `BR101-M01` / “Model 1” / `BR101-M01` barcode / stock 4; `BR101-M02` / “Model 2” / `BR101-M02` barcode / stock 3; `BR101-M03` / “Model 3” / `BR101-M03` barcode / stock 5. The three image URLs are actual Staging URLs. Staging has **no rows for models 04–12**; no such rows were invented.
+- Production remains untouched. Previous read-only checks found no variants for Production BR101 and no product images on its active public catalogue. That data state is not repaired by this preview.
 
-## Validation
+## Local checks and screenshots
 
-- Local: `npm run typecheck`, production web build, 10 focused logic suites, and the storefront/staff-entry E2E passed; the targeted storefront flow includes the local fixture order and `logpos` click/Enter path.
-- Production-data safety: no Production rows, images, categories, stock, orders or settings were changed; no hosted migration was run.
-- Full legacy test failures are compared against `main` at `f1d7ccb`: the one Android `versionCode 2` assertion and six legacy E2E suite failures also reproduce on `main`. They were not disabled or rewritten as passes.
-- Full `production:preflight` intentionally rejects the preview version because that gate is pinned to `6.0.0`; this is not a Production deployment attempt.
-- Dependency triage removed all Critical/High alerts and leaves zero vulnerabilities in the production dependency set. Eight Moderate findings remain in the Electron packaging/build chain; forcing an out-of-range downgrade introduced worse alerts and was reverted.
+- Passed: `npm run typecheck`; 10 focused logic suites; 49 storefront V2 DOM checks; 25 hidden-staff-entry checks; `npm run build`; targeted ESLint; workflow YAML parse; `git diff --check`.
+- The new logic/DOM coverage verifies Staging's duplicate model-name/size fields, English/Arabic labels, real variant IDs/SKUs and stock 4/3/5, neutral fallback with a missing URL, and fallback after an image error. The demo checkout test is local-only.
+- A headless local browser captured 24 current storefront screenshots (home, categories, catalogue, gallery, cart, checkout; EN/AR; desktop 1366px/mobile 390px) and checked home/catalogue/product/cart/checkout at 360, 390, 768 and 1366px in both directions. In this sandbox, the three external Staging photo hosts were unreachable; the screenshots therefore show the neutral fallback for all three URLs. This is an image-network limit, not proof that the URLs are broken for customers. No TLS verification was disabled.
+- The live local preview uses a visible “local preview / demo checkout” notice and only GET/HEAD requests. The page can change browser-local demo cart state but cannot submit an order to Supabase.
 
-## Windows preview acceptance
+## Windows and live Staging checkout
 
-- The Windows GitHub Actions workflow builds the unsigned 6.1.0-preview.1 x64 NSIS installer, emits a SHA-256 file, and uploads artifacts only (not a GitHub Release). It verifies `eg.alyq.pos`, `ALYQ POS`, `#/login`, `desktop-config.v1.json`, Electron userData, and uninstall retention.
-- The current workflow also installs the checksummed, pre-existing 6.0.0 installer in a disposable Windows runner profile, launches both versions to verify the packaged login route, writes a userData sentinel, upgrades to 6.1.0-preview.1, then checks that the config and sentinel remain unchanged. This uses no customer profile or Production order.
-- Physical receipt printer, barcode scanner, camera, live sync, and a live Staging checkout remain separate tests; logic/DOM tests are not hardware or cloud evidence.
+- The previous actual Windows run (`39804694194`, commit `1451e4a`) completed the build, checksum, typecheck and focused tests, but the 6.0.0-to-preview installed-app step failed. It is **not** counted as a passing upgrade.
+- A follow-up Windows script now reports the failing stage, uploads diagnostics, and preserves the installer/screenshots even if the upgrade check fails. It installs the checksummed 6.0.0 installer in a fresh runner profile, changes a harmless test-only 58 mm receipt setting, writes a userData sentinel, upgrades to 6.1.0, and compares the setting, config hash, identity, and sentinel. This follow-up has not yet run; acceptance remains pending until a real Windows result says PASS.
+- No live Staging order was submitted: there is no demonstrated safe, reversible cancellation path for a pending order. Checkout form/cart are exercised only in local demo mode.
+- Physical printer, scanner, camera, and live sync have not been tested.

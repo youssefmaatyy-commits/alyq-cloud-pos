@@ -67,57 +67,32 @@ jobs:
           "$hash  $(Split-Path $installer -Leaf)" | Set-Content "$installer.sha256" -Encoding ascii
           Write-Host "Unsigned manual-preview installer verified; SHA-256 $hash"
 
+      - name: Upload unsigned Windows installer and checksum (not a GitHub Release)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALYQ-POS-Setup-6.1.0-preview.1-x64
+          path: |
+            release/ALYQ-POS-Setup-6.1.0-preview.1-x64.exe
+            release/ALYQ-POS-Setup-6.1.0-preview.1-x64.exe.sha256
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Install 6.0.0 and test preview upgrade in an isolated runner profile
+        id: windows_upgrade
+        continue-on-error: true
         shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $baseline = Join-Path $env:RUNNER_TEMP 'ALYQ-POS-Setup-6.0.0-x64.exe'
-          $checksumFile = "$baseline.sha256"
-          $releaseBase = 'https://github.com/youssefmaatyy-commits/alyq-cloud-pos/releases/download/v2.1.0-rc1'
-          Invoke-WebRequest "$releaseBase/ALYQ-POS-Setup-6.0.0-x64.exe" -OutFile $baseline
-          Invoke-WebRequest "$releaseBase/ALYQ-POS-Setup-6.0.0-x64.exe.sha256" -OutFile $checksumFile
-          $expected = (Get-Content $checksumFile -Raw) -match '(?i)^\s*([0-9a-f]{64})'
-          if (-not $expected) { throw 'The published 6.0.0 checksum file is malformed.' }
-          $expectedHash = $Matches[1].ToLowerInvariant()
-          $actualHash = (Get-FileHash $baseline -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ($actualHash -ne $expectedHash) { throw 'The published 6.0.0 installer checksum did not match.' }
-          Write-Host "Existing 6.0.0 installer checksum verified."
+        run: ./scripts/verify-windows-upgrade.ps1 -PreviewInstaller 'release/ALYQ-POS-Setup-6.1.0-preview.1-x64.exe'
 
-          $baselineInstall = Start-Process -FilePath $baseline -ArgumentList '/S' -PassThru -Wait
-          if ($baselineInstall.ExitCode -ne 0) { throw "6.0.0 silent installation failed with exit code $($baselineInstall.ExitCode)." }
-          $oldExe = Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Programs') -Filter 'ALYQ POS.exe' -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $oldExe) { throw 'Could not locate the installed 6.0.0 ALYQ POS executable.' }
-          $oldProcess = Start-Process -FilePath $oldExe.FullName -ArgumentList @('--disable-gpu','--remote-debugging-port=9222','--remote-debugging-address=127.0.0.1','--remote-allow-origins=*') -PassThru -WindowStyle Hidden
-          $env:ALYQ_EXPECTED_DESKTOP_VERSION = '6.0.0'
-          node scripts/verify-windows-installed-app.mjs --port=9222 --version=6.0.0
-          if ($LASTEXITCODE -ne 0) { throw 'Installed 6.0.0 login/userData smoke check failed.' }
-          if (-not $oldProcess.HasExited) { & taskkill.exe /PID $oldProcess.Id /T /F 2>$null | Out-Null }
-          $config = Get-ChildItem $env:APPDATA -Filter 'desktop-config.v1.json' -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $config) { throw 'Could not locate the 6.0.0 userData configuration under AppData.' }
-          $userData = $config.DirectoryName
-          $originalConfigHash = (Get-FileHash $config.FullName -Algorithm SHA256).Hash
-          $configJson = Get-Content $config.FullName -Raw | ConvertFrom-Json
-          if (-not $configJson.installationId) { throw 'The 6.0.0 configuration has no installation identity.' }
-          $marker = Join-Path $userData 'arena-upgrade-preservation-check.txt'
-          $markerValue = [guid]::NewGuid().ToString()
-          Set-Content -Path $marker -Value $markerValue -NoNewline -Encoding ascii
-          Start-Sleep -Seconds 2
+      - name: Upload Windows upgrade diagnostic log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALYQ-Windows-Upgrade-Diagnostics
+          path: ${{ runner.temp }}/alyq-windows-upgrade.log
+          if-no-files-found: ignore
+          retention-days: 14
 
-          $preview = Start-Process -FilePath 'release/ALYQ-POS-Setup-6.1.0-preview.1-x64.exe' -ArgumentList '/S' -PassThru -Wait
-          if ($preview.ExitCode -ne 0) { throw "Preview installer failed with exit code $($preview.ExitCode)." }
-          $newExe = Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Programs') -Filter 'ALYQ POS.exe' -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $newExe) { throw 'Could not locate the installed 6.1.0-preview.1 executable after upgrade.' }
-          $newProcess = Start-Process -FilePath $newExe.FullName -ArgumentList @('--disable-gpu','--remote-debugging-port=9223','--remote-debugging-address=127.0.0.1','--remote-allow-origins=*') -PassThru -WindowStyle Hidden
-          $env:ALYQ_EXPECTED_DESKTOP_VERSION = '6.1.0-preview.1'
-          node scripts/verify-windows-installed-app.mjs --port=9223 --version=6.1.0-preview.1
-          if ($LASTEXITCODE -ne 0) { throw 'Installed 6.1.0-preview.1 login/userData smoke check failed.' }
-          if (-not $newProcess.HasExited) { & taskkill.exe /PID $newProcess.Id /T /F 2>$null | Out-Null }
-          if (-not (Test-Path $marker) -or (Get-Content $marker -Raw) -ne $markerValue) { throw 'The 6.0.0 userData marker was not preserved by the 6.1.0 preview upgrade.' }
-          if (-not (Test-Path $config.FullName)) { throw 'The 6.0.0 desktop configuration was removed by the preview upgrade.' }
-          if ((Get-FileHash $config.FullName -Algorithm SHA256).Hash -ne $originalConfigHash) { throw 'The 6.0.0 desktop configuration changed during installer upgrade.' }
-          Write-Host "SAFE UPGRADE PASS: installed the checksummed 6.0.0 installer, launched it to create a fresh isolated userData configuration, then upgraded to 6.1.0-preview.1; the configuration and sentinel were preserved byte-for-byte. No customer data or Production order was used."
-
-      - name: Capture read-only Production baseline and EN/AR local-preview screenshots
+      - name: Capture current-commit local EN/AR storefront screenshots
         shell: pwsh
         run: |
           $server = Start-Process -FilePath 'npm.cmd' -ArgumentList @('run','preview','--','--host','127.0.0.1','--port','4173') -PassThru -WindowStyle Hidden
@@ -135,20 +110,15 @@ jobs:
             if ($server -and -not $server.HasExited) { Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue }
           }
 
-      - name: Upload unsigned Windows installer and checksum (not a GitHub Release)
+      - name: Upload current-commit storefront screenshots
         uses: actions/upload-artifact@v4
         with:
-          name: ALYQ-POS-Setup-6.1.0-preview.1-x64
-          path: |
-            release/ALYQ-POS-Setup-6.1.0-preview.1-x64.exe
-            release/ALYQ-POS-Setup-6.1.0-preview.1-x64.exe.sha256
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Upload before/after desktop/mobile screenshots
-        uses: actions/upload-artifact@v4
-        with:
-          name: ALYQ-6.1.0-preview.1-storefront-before-after
+          name: ALYQ-6.1.0-preview.1-storefront-current-local
           path: coverage/alyq-preview/*.png
           if-no-files-found: error
           retention-days: 14
+
+      - name: Fail job if installed-app upgrade verification failed
+        if: steps.windows_upgrade.outcome == 'failure'
+        shell: pwsh
+        run: throw 'The Windows 6.0.0-to-6.1.0-preview.1 installed-app upgrade was not verified; see the diagnostic artifact.'

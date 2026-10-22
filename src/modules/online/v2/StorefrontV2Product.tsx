@@ -61,6 +61,7 @@ function V2Detail({ product, entry }: { product: Product; entry: CatalogProduct 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [quantity, setQuantityDraft] = useState(1);
   const [imageIndex, setImageIndex] = useState(0);
+  const [brokenModelImages, setBrokenModelImages] = useState<Record<string, string>>({});
   const [zoomOpen, setZoomOpen] = useState(false);
   const openZoomButton = useRef<HTMLButtonElement>(null);
   const zoomCloseButton = useRef<HTMLButtonElement>(null);
@@ -255,6 +256,7 @@ function V2Detail({ product, entry }: { product: Product; entry: CatalogProduct 
             {model.models.map(({ variant, available }) => {
               const label = variantModelLabel(variant, lang) || variant.sku;
               const photo = variant.images?.[0] || variant.image_url || null;
+              const displayedPhoto = photo && brokenModelImages[variant.id] !== photo ? photo : null;
               const out = available <= 0;
               const selectedModel = selectedId === variant.id;
               const modelPrice = v2Price(product, variants, campaigns, promotions, promotionTargets,
@@ -264,8 +266,12 @@ function V2Detail({ product, entry }: { product: Product; entry: CatalogProduct 
                   aria-label={`${t("store.v2.selectModel")}: ${label}${out ? ` — ${t("store.variants.soldOut")}` : ""}`}
                   disabled={out} onClick={() => chooseVariant(variant, null)}>
                   <span className="v2-model-gallery-photo">
-                    {photo ? <img src={photo} alt={label} loading="lazy" />
-                      : <span className="v2-model-gallery-photo-missing">{label}</span>}
+                    {displayedPhoto ? <img src={displayedPhoto} alt={label} loading="lazy"
+                      onError={() => setBrokenModelImages((current) => current[variant.id] === displayedPhoto
+                        ? current : { ...current, [variant.id]: displayedPhoto })} />
+                      : <span className="v2-model-gallery-photo-missing" role="img" aria-label={t("store.v2.imageMissing")}>
+                        <span aria-hidden="true">◇</span><small>{t("store.v2.imageMissing")}</small>
+                      </span>}
                   </span>
                   <span className="v2-model-gallery-meta">
                     <span className="v2-model-gallery-name">{label}</span>
@@ -275,7 +281,7 @@ function V2Detail({ product, entry }: { product: Product; entry: CatalogProduct 
                     </span>
                   </span>
                 </button>
-                {photo ? <button type="button" className="v2-model-gallery-zoom"
+                {displayedPhoto ? <button type="button" className="v2-model-gallery-zoom"
                   aria-label={`${t("store.v2.zoomModel")}: ${label}`}
                   onClick={() => { chooseVariant(variant, null); setImageIndex(0); setZoomOpen(true); }}>⌕</button> : null}
                 <button type="button" className="v2-model-gallery-add" disabled={out}

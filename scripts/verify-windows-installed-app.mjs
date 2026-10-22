@@ -42,10 +42,22 @@ try {
   assert.equal(context?.version, expectedVersion, "installed executable version did not match");
   const body = (await page.locator("body").innerText()).toLocaleLowerCase();
   assert.ok(/sign in|تسجيل الدخول|دخول/.test(body), "the first installed screen must be the real employee login UI");
-  const config = await page.evaluate(() => window.alyqDesktop.getConfig());
+  let config = await page.evaluate(() => window.alyqDesktop.getConfig());
   assert.ok(/^[0-9a-f-]{36}$/i.test(config?.installationId ?? ""), "desktop userData config must initialize a valid installation identity");
+  assert.equal(config.installationId, context.installationId, "app context and userData must expose the same installation identity");
   assert.ok(config?.hardware && Number.isFinite(config.hardware.paperWidthMm), "desktop hardware defaults must load from userData");
-  console.log(`Installed-app smoke passed: version=${context.version}, route=${url.hash}, packaged=${context.packaged}, hardwareConfig=${Boolean(config.hardware)}`);
+  if (args.has("seed-paper-width")) {
+    const paperWidthMm = Number(args.get("seed-paper-width"));
+    assert.ok([58, 80].includes(paperWidthMm), "seeded paper width must be a supported hardware setting");
+    const hardware = { ...config.hardware, paperWidthMm };
+    await page.evaluate((value) => window.alyqDesktop.saveHardwareConfig(value), hardware);
+    config = await page.evaluate(() => window.alyqDesktop.getConfig());
+    assert.equal(config.hardware.paperWidthMm, paperWidthMm, "isolated custom printer setting must persist before upgrade");
+  }
+  if (args.has("expect-paper-width")) {
+    assert.equal(config.hardware.paperWidthMm, Number(args.get("expect-paper-width")), "custom hardware setting did not survive installer upgrade");
+  }
+  console.log(`Installed-app smoke passed: version=${context.version}, route=${url.hash}, packaged=${context.packaged}, paperWidthMm=${config.hardware.paperWidthMm}`);
 } finally {
   await browser.close();
 }

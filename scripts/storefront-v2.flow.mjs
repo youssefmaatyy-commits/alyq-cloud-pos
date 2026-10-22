@@ -8,6 +8,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { transform } from "esbuild";
 import { createUxHarness } from "./lib/ux-harness.mjs";
+import { stagingBr101Snapshot } from "./staging-br101.snapshot.mjs";
 
 // The repo's own demo data is the fixture; add one exact-variant ring *in this
 // test's localStorage only* to exercise a real UUID, numeric/letter sizes,
@@ -21,9 +22,9 @@ const ring = products.find((product) => product.sku === "ALYQ-1002");
 ring.variants_enabled = true;
 ring.stock_quantity = 5;
 ring.low_stock_level = 1;
-const modelProductId = "9caa4fe0-4147-4af0-9982-000000000101";
-const modelProduct = { ...products[0], id: modelProductId, sku: "BR101", barcode: "SHARED-BR101",
-  name_en: "BR101 Collection", name_ar: "مجموعة BR101", variants_enabled: true, stock_quantity: 66, low_stock_level: 2 };
+categories.push(...stagingBr101Snapshot.categories);
+const modelProductId = stagingBr101Snapshot.product.id;
+const modelProduct = { ...products[0], ...stagingBr101Snapshot.product };
 products.push(modelProduct);
 const UUID = {
   gold17: "4fb4125a-0f26-461e-8a94-31e365342101",
@@ -45,17 +46,20 @@ const variants = [
   variant(UUID.silverXS, "silver", null, "XS", 1),
   variant(UUID.silverHalf, "silver", 16.5, null, 2),
 ];
-const modelPhoto = (index) => `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" fill="hsl(${index * 23} 32% 82%)"/><text x="32" y="38" text-anchor="middle" font-size="20">${index + 1}</text></svg>`)}`;
-const modelVariantIds = Array.from({ length: 12 }, (_, index) => `9caa4fe0-4147-4af0-9982-${String(index + 201).padStart(12, "0")}`);
-const modelVariants = modelVariantIds.map((id, index) => ({
-  id, product_id: modelProductId, sku: `BR101-M${String(index + 1).padStart(2, "0")}`,
-  barcode: "SHARED-BR101", color_key: "", color_en: null, color_ar: null, color_hex: null,
-  size: null, size_label: null, size_value: null, image_url: modelPhoto(index), images: [modelPhoto(index)],
-  display_name_en: `Model ${String(index + 1).padStart(2, "0")}`,
-  display_name_ar: `موديل ${String(index + 1).padStart(2, "0")}`,
-  price_override: 75 + index, cost_override: null, stock_quantity: index === 11 ? 0 : index + 1,
-  low_stock_level: 1, active: true, sort_order: index + 1,
-  created_at: modelProduct.created_at, updated_at: modelProduct.updated_at,
+// Snapshot holds only the three real Staging rows. M03's image is omitted in
+// this isolated UI fixture only to exercise the missing-photo state; its ID,
+// SKU, name, stock, and price remain the exact Staging values. No extra models
+// or image assets are synthesized.
+const modelVariantIds = stagingBr101Snapshot.variants.map((model) => model.id);
+const modelPhoto = (index) => stagingBr101Snapshot.variants[index]?.image_url ?? null;
+const modelVariants = stagingBr101Snapshot.variants.map((model, index) => ({
+  ...model,
+  image_url: index === 2 ? null : model.image_url,
+  images: index === 2 ? [] : model.images,
+  cost_override: null,
+  low_stock_level: 1,
+  created_at: modelProduct.created_at,
+  updated_at: modelProduct.updated_at,
 }));
 variants.push(...modelVariants);
 
@@ -222,36 +226,49 @@ check("existing /store/products deep links now render the V2 catalogue",
 await navigate("#/store/products", 350);
 await waitFor(() => Boolean(document.querySelector(`[data-testid="v2-card-${modelProductId}"]`)), { label: "single BR101 parent card" });
 const modelCard = document.querySelector(`[data-testid="v2-card-${modelProductId}"]`);
-check("BR101 remains one catalogue product with 12 model previews and an available count",
-  document.querySelectorAll(`[data-testid="v2-card-${modelProductId}"]`).length === 1 &&
-  modelCard.querySelectorAll(".v2-model-preview-images img").length === 4 &&
-  modelCard.querySelector(".v2-model-preview")?.textContent.includes("11"));
+check("BR101 remains one catalogue product in the catalogue", document.querySelectorAll(`[data-testid="v2-card-${modelProductId}"]`).length === 1);
+check("the BR101 catalogue card previews only the two available photos, without filling the missing M03 photo",
+  modelCard.querySelectorAll(".v2-model-preview-images img").length === 2);
+check("the BR101 catalogue card reports the available model count", /3/.test(modelCard.querySelector(".v2-model-preview")?.textContent ?? ""));
 await navigate(`#/store/products/${modelProductId}`, 350);
-await waitFor(() => Boolean(document.querySelector('[data-testid="v2-model-gallery"]')), { label: "all 12 model cards" });
-check("all 12 named BR101 models render in the PDP gallery with independent images and prices",
-  document.querySelectorAll('[data-testid="v2-model-gallery"] .v2-model-gallery-card').length === 12 &&
-  document.querySelectorAll('[data-testid="v2-model-gallery"] .v2-model-gallery-card img').length === 12 &&
-  /75(?:\.00|٫٠٠)/.test(document.querySelector('[data-testid="v2-model-gallery"] .v2-model-gallery-price')?.textContent ?? ""));
+await waitFor(() => Boolean(document.querySelector('[data-testid="v2-model-gallery"]')), { label: "three Staging model cards" });
+const modelCards = [...document.querySelectorAll('[data-testid="v2-model-gallery"] .v2-model-gallery-card')];
+const modelStocks = modelCards.map((card) => card.querySelector(".v2-model-gallery-stock")?.textContent ?? "");
+const normalizedStock = (text) => text.replace(/[٠-٩]/g, (digit) => String("٠١٢٣٤٥٦٧٨٩".indexOf(digit)));
+const expectedModelNames = document.documentElement.dir === "rtl" ? "شكل 1|شكل 2|شكل 3" : "Model 1|Model 2|Model 3";
+check("all three real BR101 model rows render with their exact labels and stock 4/3/5",
+  modelCards.length === 3 &&
+  modelCards.map((card) => card.querySelector(".v2-model-gallery-name")?.textContent).join("|") === expectedModelNames &&
+  /4/.test(normalizedStock(modelStocks[0])) && /3/.test(normalizedStock(modelStocks[1])) && /5/.test(normalizedStock(modelStocks[2])));
+check("a missing model photo keeps its real name and stock beside a neutral placeholder",
+  Boolean(document.querySelector('[data-testid="v2-model-gallery"] .v2-model-gallery-card:nth-child(3) .v2-model-gallery-photo-missing')) &&
+  document.querySelector('[data-testid="v2-model-gallery"] .v2-model-gallery-card:nth-child(3) .v2-model-gallery-name')?.textContent === expectedModelNames.split("|")[2] &&
+  /5/.test(normalizedStock(document.querySelector('[data-testid="v2-model-gallery"] .v2-model-gallery-card:nth-child(3) .v2-model-gallery-stock')?.textContent ?? "")));
+const brokenModelImage = document.querySelector('[data-testid="v2-model-gallery"] .v2-model-gallery-card:nth-child(1) .v2-model-gallery-photo img');
+brokenModelImage.dispatchEvent(new dom.window.Event("error"));
+await sleep(40);
+check("a failed photo URL becomes a neutral placeholder without hiding the exact name or stock",
+  Boolean(document.querySelector('[data-testid="v2-model-gallery"] .v2-model-gallery-card:nth-child(1) .v2-model-gallery-photo-missing')) &&
+  !document.querySelector('[data-testid="v2-model-gallery"] .v2-model-gallery-card:nth-child(1) .v2-model-gallery-photo img') &&
+  document.querySelector('[data-testid="v2-model-gallery"] .v2-model-gallery-card:nth-child(1) .v2-model-gallery-name')?.textContent === expectedModelNames.split("|")[0] &&
+  /4/.test(normalizedStock(document.querySelector('[data-testid="v2-model-gallery"] .v2-model-gallery-card:nth-child(1) .v2-model-gallery-stock')?.textContent ?? "")));
 clickEl(document.querySelector(`[data-testid="v2-model-gallery"] .v2-model-gallery-card:nth-child(1) .v2-model-gallery-select`));
 await sleep(40);
-check("selecting a model card chooses its exact variant and updates the PDP price",
+check("selecting a model card chooses its exact Staging variant ID and preserves the parent price",
   document.querySelector('[data-testid="v2-model-gallery"] .v2-model-gallery-card:nth-child(1) .v2-model-gallery-select')?.getAttribute("aria-pressed") === "true" &&
-  /75(?:\.00|٫٠٠)/.test(document.querySelector('.v2-pdp-price')?.textContent ?? ""));
-const soldOutModel = document.querySelector(`[data-testid="v2-model-gallery"] .v2-model-gallery-card:nth-child(12)`);
-check("the sold-out named model remains visible but cannot be selected or purchased",
-  soldOutModel.querySelector(".v2-model-gallery-select").disabled && soldOutModel.querySelector(".v2-model-gallery-add").disabled &&
-  /Sold out|نفدت الكمية/.test(soldOutModel.querySelector(".v2-model-gallery-stock")?.textContent ?? ""));
-clickEl(document.querySelector(`[data-testid="v2-model-gallery"] .v2-model-gallery-card:nth-child(3) .v2-model-gallery-zoom`));
+  /240/.test(document.querySelector('.v2-pdp-price')?.textContent ?? ""));
+clickEl(document.querySelector(`[data-testid="v2-model-gallery"] .v2-model-gallery-card:nth-child(2) .v2-model-gallery-zoom`));
 await waitFor(() => Boolean(document.querySelector('[data-testid="v2-lightbox"]')), { label: "selected model photo zoom" });
-check("a model photo can be enlarged in the existing accessible lightbox",
-  document.querySelector("[data-testid='v2-lightbox'] img")?.getAttribute("src") === modelPhoto(2));
+check("a real Staging model photo can be enlarged in the existing accessible lightbox",
+  document.querySelector("[data-testid='v2-lightbox'] img")?.getAttribute("src") === modelPhoto(1));
 clickEl(document.querySelector('[data-testid="v2-lightbox"] .v2-lightbox-close'));
 await sleep(40);
 clickEl(document.querySelector(`[data-testid="v2-model-gallery"] .v2-model-gallery-card:nth-child(3) .v2-model-gallery-add`));
 await waitFor(() => cart().some((line) => line.variant_id === modelVariantIds[2]), { label: "exact BR101 model cart line" });
 const exactModelLine = cart().find((line) => line.variant_id === modelVariantIds[2]);
-check("direct add from the model gallery keeps the exact model UUID and shared parent product",
-  exactModelLine?.product_id === modelProductId && cart().filter((line) => line.product_id === modelProductId).length === 1);
+check("direct add from the gallery preserves the actual M03 SKU, variant ID, and shared parent product",
+  exactModelLine?.product_id === modelProductId && exactModelLine?.variant_id === modelVariantIds[2] &&
+  cart().filter((line) => line.product_id === modelProductId).length === 1);
 await navigate("#/store/checkout", 350);
 await waitFor(() => Boolean(document.querySelector('[data-testid="v2-checkout"]')), { label: "model checkout" });
 check("the removed campaign tagline is absent from checkout in Arabic", !hasRemovedTagline());
@@ -264,10 +281,10 @@ clickTestid("v2-place-order");
 await waitFor(() => Boolean(document.querySelector('[data-testid="v2-order-details"]')) && orders().length === 1,
   { label: "model's exact order item" });
 const modelOrderItem = orders()[0].items.find((item) => item.variant_id === modelVariantIds[2]);
-check("the placed order records model 03 on the single shared-barcode BR101 product",
+check("the local demo order records exact Staging model M03 on its one BR101 parent product",
   modelOrderItem?.product_id === modelProductId && modelOrderItem.variant_id === modelVariantIds[2] &&
-  /Model 03|موديل 03/.test(modelOrderItem.variant_display_name ?? modelOrderItem.variant_name ?? "") &&
-  products.filter((product) => product.barcode === "SHARED-BR101").length === 1);
+  /Model 3|شكل 3/.test(modelOrderItem.variant_display_name ?? modelOrderItem.variant_name ?? "") &&
+  products.filter((product) => product.barcode === "BR101").length === 1);
 
 console.log(`\n${passed} V2 DOM end-to-end checks passed (CSS geometry is tested separately in Chromium).`);
 finish("Storefront V2 public presentation + exact cart handoff");
