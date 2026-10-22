@@ -39,9 +39,12 @@ jobs:
           $pkg = Get-Content package.json -Raw | ConvertFrom-Json
           if ($pkg.version -ne '6.1.0-preview.1') { throw "Unexpected preview version: $($pkg.version)" }
           if ($pkg.build.appId -ne 'eg.alyq.pos') { throw "Application ID changed unexpectedly" }
+          if ($pkg.build.productName -ne 'ALYQ POS') { throw "Desktop product name changed unexpectedly" }
           if ($pkg.build.nsis.deleteAppDataOnUninstall -ne $false) { throw "NSIS data-preservation policy changed unexpectedly" }
           if (-not (Select-String -Path desktop/main.mjs -Pattern 'CONFIG_FILE = "desktop-config.v1.json"' -Quiet)) { throw "Desktop config filename changed unexpectedly" }
-          Write-Host "Version, Application ID and user configuration filename verified."
+          if (-not (Select-String -Path desktop/main.mjs -Pattern 'path.join\(app.getPath\("userData"\), CONFIG_FILE\)' -Quiet)) { throw "Desktop configuration no longer uses the existing userData folder" }
+          if (-not (Select-String -Path desktop/main.mjs -Pattern 'hash = "/login"' -Quiet)) { throw "Desktop login start route changed unexpectedly" }
+          Write-Host "Version, Application ID, product name, userData path, configuration filename, login start route, and uninstall data preservation verified."
 
       - name: Typecheck and focused storefront/desktop/update checks
         run: |
@@ -82,13 +85,20 @@ jobs:
             if ($server -and -not $server.HasExited) { Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue }
           }
 
-      - name: Upload preview installer, checksum, and screenshots (not a GitHub Release)
+      - name: Upload unsigned Windows installer and checksum (not a GitHub Release)
         uses: actions/upload-artifact@v4
         with:
-          name: ALYQ-6.1.0-preview.1-Windows-and-storefront-${{ github.run_number }}
+          name: ALYQ-POS-Setup-6.1.0-preview.1-x64
           path: |
             release/ALYQ-POS-Setup-6.1.0-preview.1-x64.exe
             release/ALYQ-POS-Setup-6.1.0-preview.1-x64.exe.sha256
-            coverage/alyq-preview/*.png
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload EN/AR desktop/mobile storefront screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALYQ-6.1.0-preview.1-storefront-screenshots
+          path: coverage/alyq-preview/*.png
           if-no-files-found: error
           retention-days: 14
