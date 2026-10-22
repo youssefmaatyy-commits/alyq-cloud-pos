@@ -455,13 +455,18 @@ async function seedProductionShapeSynthetic(db) {
  * even when `public.backups` is empty and even when the target database is still
  * at Migration 0096 (before 0098's trigger guards).
  */
-async function restoreFromIndependentBundleFile(db, bundleFilePath, adminUserId) {
+export async function restoreFromIndependentBundleFile(db, bundleFilePath, adminUserId) {
   const rawText = fs.readFileSync(bundleFilePath, "utf8");
   const bundle = JSON.parse(rawText);
 
   if (bundle.bundle_format !== "alyq-independent-dr-bundle" || bundle.bundle_version !== 1) {
     throw new Error("Invalid bundle_format or bundle_version");
   }
+
+  const authUsers = bundle.auth_metadata?.users ?? bundle.auth_schema?.users_redacted ?? [];
+  const authIdentities = bundle.auth_metadata?.identities ?? bundle.auth_schema?.identities_redacted ?? [];
+  const storageBuckets = bundle.storage_metadata?.buckets ?? bundle.storage_schema?.buckets ?? [];
+  const storageObjects = bundle.storage_metadata?.objects ?? bundle.storage_schema?.objects ?? [];
 
   await db.exec("BEGIN");
   try {
@@ -491,7 +496,7 @@ async function restoreFromIndependentBundleFile(db, bundleFilePath, adminUserId)
             raw_user_meta_data = EXCLUDED.raw_user_meta_data,
             updated_at = EXCLUDED.updated_at;
       `,
-      [JSON.stringify(bundle.auth_metadata.users)],
+      [JSON.stringify(authUsers)],
     );
 
     await db.query(
@@ -511,7 +516,7 @@ async function restoreFromIndependentBundleFile(db, bundleFilePath, adminUserId)
       FROM jsonb_array_elements($1::jsonb) AS i
       ON CONFLICT (id) DO NOTHING;
       `,
-      [JSON.stringify(bundle.auth_metadata.identities)],
+      [JSON.stringify(authIdentities)],
     );
 
     // 2. Restore Storage buckets & object metadata
@@ -535,7 +540,7 @@ async function restoreFromIndependentBundleFile(db, bundleFilePath, adminUserId)
             file_size_limit = EXCLUDED.file_size_limit,
             allowed_mime_types = EXCLUDED.allowed_mime_types;
       `,
-      [JSON.stringify(bundle.storage_metadata.buckets)],
+      [JSON.stringify(storageBuckets)],
     );
 
     await db.query(
@@ -552,7 +557,7 @@ async function restoreFromIndependentBundleFile(db, bundleFilePath, adminUserId)
         SET bucket_id = EXCLUDED.bucket_id,
             name = EXCLUDED.name;
       `,
-      [JSON.stringify(bundle.storage_metadata.objects)],
+      [JSON.stringify(storageObjects)],
     );
 
     // 3. Ensure pre-0098 databases honor `alyq.backup_restore = 'on'` inside
@@ -722,9 +727,13 @@ async function restoreFromIndependentBundleFile(db, bundleFilePath, adminUserId)
 
     // 4. Call the authoritative `public.admin_restore_document(p_document jsonb)`
     //    using the external JSON document from disk (NOT `admin_restore_backup(id)`!)
+    const docTextToRestore =
+      typeof bundle.alyq_backup_document_raw_text === "string" && bundle.alyq_backup_document_raw_text.length > 0
+        ? bundle.alyq_backup_document_raw_text
+        : JSON.stringify(bundle.alyq_backup_document);
     const restoreRes = await db.query(
       `SELECT public.admin_restore_document(public.normalize_backup_document_for_restore($1::jsonb)) AS outcome`,
-      [JSON.stringify(bundle.alyq_backup_document)],
+      [docTextToRestore],
     );
     const outcome = restoreRes.rows[0].outcome;
 

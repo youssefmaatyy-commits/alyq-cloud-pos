@@ -39,3 +39,7 @@ coverage/
 supabase/.temp/
 # Desktop packaging output (generated installers/unpacked apps)
 release/
+
+# ── private encrypted production backup vault (never tracked in git) ──────
+backups-vault/
+
