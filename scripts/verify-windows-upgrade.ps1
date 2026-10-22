@@ -53,7 +53,40 @@ try {
   $stage = 'capture and mark the isolated 6.0.0 userData configuration'
   Write-Host "UPGRADE_STAGE: $stage"
   $config = Get-ChildItem $env:APPDATA -Filter 'desktop-config.v1.json' -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-  if (-not $config) { throw 'Could not locate the 6.0.0 desktop configuration under AppData.' }
+  if (-not $config) {
+    # The archived 6.0.0 renderer has no exposed preload bridge and does not
+    # initialize a config until a hardware IPC is invoked. Seed the real schema
+    # in its fresh Electron userData directory to exercise installer preservation.
+    $userDataDirectory = Get-ChildItem $env:APPDATA -Directory -ErrorAction SilentlyContinue |
+      Where-Object { $_.Name -match '(?i)alyq' } |
+      Sort-Object LastWriteTime -Descending |
+      Select-Object -First 1
+    if ($userDataDirectory) {
+      $userData = $userDataDirectory.FullName
+    } else {
+      $userData = Join-Path $env:APPDATA 'ALYQ POS'
+      New-Item -ItemType Directory -Path $userData -Force | Out-Null
+    }
+    $configPath = Join-Path $userData 'desktop-config.v1.json'
+    $baselineInstallationId = [guid]::NewGuid().ToString()
+    $seedConfig = [ordered]@{
+      schemaVersion = 1
+      installationId = $baselineInstallationId
+      hardware = [ordered]@{
+        printerName = $null
+        paperWidthMm = 58
+        copies = 1
+        silentPrint = $true
+        autoPrintAfterSale = $false
+        drawerMode = 'none'
+        autoOpenCashDrawer = $false
+      }
+      registerBinding = $null
+    }
+    $seedConfig | ConvertTo-Json -Depth 10 | Set-Content -Path $configPath -Encoding utf8NoBOM
+    $config = Get-Item $configPath
+    Write-Host "The clean 6.0.0 app did not create its optional hardware config before login; seeded valid schema in its isolated userData path: $userData"
+  }
   $userData = $config.DirectoryName
   $configJson = Get-Content $config.FullName -Raw | ConvertFrom-Json
   if (-not $configJson.installationId) { throw 'The 6.0.0 configuration has no installation identity.' }
