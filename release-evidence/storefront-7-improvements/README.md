@@ -9,7 +9,7 @@
 
 - تعذّر العثور على commit الاستمرار الذي ذكره الطلب، `91880c61742b6713c7ba57ef81ea1878cf9e2d9b`؛ ليس له كائن Git في هذا checkout.
 - عند بدء المراجعة كان HEAD المحلي `f1d7ccb5937a7aa66e77e14a568f411fd30c8319`، مع تغييرات عمل متراكمة غير ملتزمة.
-- بعد الجلب، كان `origin/arena/f498e340-alyq-cloud-pos` عند `c06389c4b4a3a277f3aff1b8f29410a634ba9daa`، مبنيًا فوق سلسلة التغييرات السابقة (ومنها `3f6abe1`). أُنشئ commit التنفيذ `21ebef0` ثم merge commit `b6854a0` لدمج تاريخ الفرع البعيد دون إسقاط أي عمل؛ حُلّت الملفات المتعارضة لصالح النسخة المحلية الأحدث بعد مقارنة النسختين، وكانت شجرة الدمج مطابقة للشجرة المختبرة. ثم دُفع تحديث التقرير إلى الفرع نفسه عند `feb77c2f11f9b74e89ba09a214990fd8c4610262`؛ الشجرة نظيفة ولا تغيير على `main`.
+- بعد الجلب، كان `origin/arena/f498e340-alyq-cloud-pos` عند `c06389c4b4a3a277f3aff1b8f29410a634ba9daa`، مبنيًا فوق سلسلة التغييرات السابقة (ومنها `3f6abe1`). أُنشئ commit التنفيذ `21ebef0` ثم merge commit `b6854a0` لدمج تاريخ الفرع البعيد دون إسقاط أي عمل؛ حُلّت الملفات المتعارضة لصالح النسخة المحلية الأحدث بعد مقارنة النسختين، وكانت شجرة الدمج مطابقة للشجرة المختبرة. دُفعت التغييرات والتقرير إلى فرع التطوير فقط؛ لا تغيير على `main`. آخر CI مكتمل قبل هذا التحديث كان على SHA `06a4066fb4e53e47c2285beccec17f3799dcc009`، وهذا التعديل يحدّث سجل التقرير فقط.
 - لا يثبت نص الوثيقة القديمة التي تشير إلى `3f6abe1` أن ذلك SHA موجود في تاريخ الفرع الحالي؛ لذلك لا أتعامل معه على أنه HEAD أو مصدر حالة أحدث من الشجرة والفرع اللذين جرى فحصهما.
 
 ## نتيجة E2E الكاملة وتحليل الإخفاقات
@@ -42,7 +42,7 @@
 | `npm run db:check` | ناجح محليًا؛ **98 migration** طُبّقت مرتين في PGlite مع فحوص التكافؤ. لم تُنفذ migration على Supabase. |
 | `npm run lint` | exit 0: **0 أخطاء، 40 تحذيرًا**؛ التحذيرات لا تمنع CI الحالي. |
 | `npm run production:preflight` | ناجح على شجرة نظيفة بعد الدمج: **26/26**، بلا `--allow-dirty`. |
-| GitHub CI | على SHA `feb77c2f11f9b74e89ba09a214990fd8c4610262`، run [39867571371](https://github.com/youssefmaatyy-commits/alyq-cloud-pos/actions/runs/39867571371): **Types & build ناجح** (شمل preflight/lint/types/build)، **Logic ناجح**، **Migrations & schema ناجح**، **E2E (jsdom) فاشل**، وLive Supabase E2E متخطٍ. تعذر تنزيل سجل E2E من GitHub بسبب EOF؛ لذلك لا أنسب failures الستة المحلية إلى CI دون سجل. |
+| GitHub CI | على SHA `06a4066fb4e53e47c2285beccec17f3799dcc009`، run [39869159405](https://github.com/youssefmaatyy-commits/alyq-cloud-pos/actions/runs/39869159405): **Types & build ناجح** (شمل preflight/lint/types/build)، **Logic ناجح**، **Migrations & schema ناجح**، **E2E (jsdom) فاشل**، وLive Supabase E2E متخطٍ. فشل E2E أيضًا في run السابق [39867571371](https://github.com/youssefmaatyy-commits/alyq-cloud-pos/actions/runs/39867571371) على SHA `feb77c2`. تعذر تنزيل سجل الفشل من GitHub بسبب EOF؛ لذلك لا أنسب failures الستة المحلية إلى CI دون سجل. |
 
 ## مراجعة معايير المتجر السبعة
 
@@ -74,11 +74,11 @@
 ## المعاينة المستضافة وWindows
 
 - أظهر استعلام Vercel لهذه المراجعة **0 مشاريع** مطابقة لـ`alyq` و**0 Preview deployments** في النطاق المتاح. الخادم المحلي `127.0.0.1:4173` كان متوقفًا؛ لا أصف رابطًا أو Preview على أنها متاحة حاليًا ولا أدّعي فحص الصور البعيدة الآن.
-- Windows preview workflow الحالي [39867571467](https://github.com/youssefmaatyy-commits/alyq-cloud-pos/actions/runs/39867571467) نجح: بنى installer x64 غير موقّع لـ`6.1.0-preview.1`، تحقق من checksum، وثبّت 6.0.0 واختبر الترقية في ملف مستخدم معزول على GitHub runner. رُفع installer كـworkflow artifact فقط (ليس GitHub Release)؛ لم يُنشر إلى Production. هذا **ليس اختبار جهاز Windows فعليًا**. كما رُفعت لقطات متجر EN/AR للـcommit الحالي كـartifact؛ محاولة تنزيل artifact إلى هذه البيئة فشلت بـEOF، لذا لم أعاين هذه اللقطات الجديدة هنا. لم تُنشأ APK.
+- Windows preview workflow الأحدث [39869159198](https://github.com/youssefmaatyy-commits/alyq-cloud-pos/actions/runs/39869159198) نجح (كما نجح أيضًا run [39867571467](https://github.com/youssefmaatyy-commits/alyq-cloud-pos/actions/runs/39867571467)): بُني installer x64 غير موقّع لـ`6.1.0-preview.1`، تم التحقق من checksum، وثُبّت 6.0.0 واختُبرت الترقية في ملف مستخدم معزول على GitHub runner. رُفع installer كـworkflow artifact فقط (ليس GitHub Release)؛ لم يُنشر إلى Production. هذا **ليس اختبار جهاز Windows فعليًا**. كما رُفعت لقطات متجر EN/AR للـcommit الحالي كـartifact؛ محاولة تنزيل artifacts إلى هذه البيئة فشلت بـEOF، لذا لم أعاين هذه اللقطات الجديدة هنا. لم تُنشأ APK.
 
 ## موانع الإصدار والخطوات التالية
 
-1. حسم فشل E2E في CI run `39867571371`؛ محليًا الستة التاريخية نفسها تفشل، لكن سجل CI لم يُنزّل (EOF)، لذا يلزم فحصه عند توفر سجلات GitHub. لا تُخفى ولا تُعطّل الاختبارات.
+1. حسم فشل E2E في CI runs `39867571371` و`39869159405`؛ محليًا الستة التاريخية نفسها تفشل، لكن سجل CI لم يُنزّل (EOF)، لذا يلزم فحصه عند توفر سجلات GitHub. لا تُخفى ولا تُعطّل الاختبارات.
 2. إعادة التحقق من `WEB-000005` عندما تتوفر Supabase؛ وإذا كان pending، الإلغاء فقط من جلسة Staging مخولة عبر التدفق الرسمي والتحقق من تحرير الحجز.
 3. إجراء UAT مستضاف معتمد وفحص الصور الخارجية إذا أُتيح Preview؛ واختبار الجهاز الحقيقي وNew Arrivals مع 2–3 عناصر حقيقية عند توفرها. Artifact الصور الحالي رُفع لكن تعذر تنزيله/معاينته هنا.
 4. إبقاء الحزمة عند `6.1.0-preview.1` وقرار **NO-GO** حتى مراجعة الموانع. لا merge إلى `main`، ولا نشر Vercel/Production، ولا migrations إنتاجية، ولا GitHub Release دون موافقة صريحة.
