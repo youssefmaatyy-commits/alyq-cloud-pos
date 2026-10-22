@@ -3521,7 +3521,6 @@ export const en = {
   "store.variants.seeDetails": "See details",
   "store.variants.defaultColor": "Standard",
   // Storefront V2 presentation — still the same translation provider.
-  "store.v2.eyebrow": "The ALYQ edit",
   "store.v2.viewAll": "View all",
   "store.v2.quickAdd": "Quick add",
   "store.v2.selectOptions": "Choose options",
@@ -8199,7 +8198,6 @@ export const ar: Record<TranslationKey, string> = {
   "store.variants.seeDetails": "عرض التفاصيل",
   "store.variants.defaultColor": "قياسي",
   // واجهة المتجر V2 — مفاتيح ضمن مزوّد الترجمة الحالي.
-  "store.v2.eyebrow": "مختارات أَلِــيْـــق",
   "store.v2.viewAll": "عرض الكل",
   "store.v2.quickAdd": "إضافة سريعة",
   "store.v2.selectOptions": "اختر الخيارات",

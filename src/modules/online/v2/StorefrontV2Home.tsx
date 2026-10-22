@@ -91,7 +91,6 @@ export function StorefrontV2Home() {
                 <div className="v2-hero-scrim" style={{ opacity: Math.max(0.58, (slide.overlay ?? 36) / 100) }} aria-hidden /></>
             ) : null}
             <div className={`v2-hero-content v2-hero-${slide.contentPosition}`}>
-              <p className="v2-hero-kicker">{t("store.v2.eyebrow")}</p>
               {slide.title ? <h1>{slide.title}</h1> : null}
               {slide.subtitle ? <p className="v2-hero-subtitle">{slide.subtitle}</p> : null}
               <div className="v2-hero-actions">
@@ -115,7 +114,7 @@ export function StorefrontV2Home() {
         const ids = curated.length ? curated : active.map((row) => row.id);
         const entries = ids.map((id) => active.find((row) => row.id === id)).filter((row) => row !== undefined).slice(0, sectionLimit(section));
         return (
-          <V2Section key="categories" id="categories" title={title} eyebrow={t("store.v2.eyebrow")} action={entries.length ? action(section) : undefined}>
+          <V2Section key="categories" id="categories" title={title} action={entries.length ? action(section) : undefined}>
             {entries.length ? <div className="v2-category-grid">
               {entries.map((category) => {
                 const content = categoryMap.get(category.id);
@@ -152,7 +151,7 @@ export function StorefrontV2Home() {
         entries = entries.slice(0, sectionLimit(section));
         if (entries.length === 0) return null;
         return (
-          <V2Section key={section.key} id={section.key} title={title} eyebrow={t("store.v2.eyebrow")}
+          <V2Section key={section.key} id={section.key} title={title}
             action={action(section, section.key === "sale" ? "#/store/products?offer=1"
               : section.key === "newArrivals" ? "#/store/products?sort=newest"
                 : section.key === "bestSellers" ? "#/store/products?sort=best_selling" : "#/store/products")}>
@@ -168,7 +167,7 @@ export function StorefrontV2Home() {
             <div className="v2-editorial-stack">
               {blocks.map((block) => <div key={block.id} className="v2-editorial v2-campaign">
                 <V2Image src={block.desktop_image_url} mobileSrc={block.mobile_image_url} alt="" />
-                <div className="v2-editorial-copy"><p className="v2-eyebrow">{t("store.v2.eyebrow")}</p>
+                <div className="v2-editorial-copy">
                   <h3>{pick(block.title_ar, block.title_en)}</h3>
                   {block.subtitle_ar || block.subtitle_en ? <p>{pick(block.subtitle_ar, block.subtitle_en)}</p> : null}
                   {block.cta_ar || block.cta_en ? <V2ActionLink href={block.cta_href} className="v2-text-link">{pick(block.cta_ar, block.cta_en)}</V2ActionLink> : null}

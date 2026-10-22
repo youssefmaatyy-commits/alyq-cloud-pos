@@ -25,7 +25,6 @@ export function StorefrontV2About() {
   }, [about.image_url, body, lang, pick, settings.contact.tagline_ar, settings.contact.tagline_en,
     settings.seo.keywords, storeName, title]);
   return <div className="v2-journey v2-container v2-about" data-testid="v2-about">
-    <p className="v2-eyebrow">{t("store.v2.eyebrow")}</p>
     <div className="v2-about-layout">{about.image_url ? <div className="v2-about-photo">
       <V2Image src={about.image_url} alt={title} priority /></div> : null}
       <div className="v2-about-copy"><h1>{title}</h1>

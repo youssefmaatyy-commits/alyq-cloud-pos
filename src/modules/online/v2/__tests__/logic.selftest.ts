@@ -271,10 +271,17 @@ test("V2 overrides leave legacy theme alone and use accessible text for extreme 
 });
 
 test("new public copy ships in both languages", () => {
-  for (const key of ["eyebrow", "quickAdd", "selectOptions", "notOrderable", "results", "noSizeGuide"] as const) {
+  for (const key of ["quickAdd", "selectOptions", "notOrderable", "results", "noSizeGuide"] as const) {
     assert.ok(dictionaries.en[`store.v2.${key}`].length);
     assert.ok(dictionaries.ar[`store.v2.${key}`].length);
   }
+});
+
+test("removed campaign tagline is absent from both storefront dictionaries", () => {
+  assert.equal("store.v2.eyebrow" in dictionaries.en, false);
+  assert.equal("store.v2.eyebrow" in dictionaries.ar, false);
+  assert.equal(Object.values(dictionaries.en).some((value) => /the alyq edit/i.test(value)), false);
+  assert.equal(Object.values(dictionaries.ar).some((value) => value.includes("مختارات أَلِــيْـــق")), false);
 });
 
 console.log(`${passed}/${passed} V2 logic tests passed`);

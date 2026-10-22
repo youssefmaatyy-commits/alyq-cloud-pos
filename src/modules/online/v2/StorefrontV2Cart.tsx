@@ -24,7 +24,6 @@ export function StorefrontV2Cart() {
     (settings.delivery.cod_enabled || settings.delivery.instapay_enabled);
 
   return <div className="v2-journey v2-container" data-testid="v2-cart">
-    <p className="v2-eyebrow">{t("store.v2.eyebrow")}</p>
     <h1>{t("store.cart.title")}</h1>
     {prunedCount > 0 ? <p role="status" className="v2-alert" data-testid="v2-cart-pruned">
       {t("store.v2.journey.cartPruned")}

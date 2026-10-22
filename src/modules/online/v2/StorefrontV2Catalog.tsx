@@ -118,7 +118,7 @@ export function StorefrontV2Catalog() {
     setParams(filtersToSearchParams(EMPTY_CATALOG_FILTERS)); setFiltersOpen(false); };
 
   return <div className="v2-catalog v2-container" data-testid="v2-catalog">
-    <div className="v2-catalog-intro"><p className="v2-eyebrow">{t("store.v2.eyebrow")}</p>
+    <div className="v2-catalog-intro">
       <h1>{heading}</h1><p>{t("store.v2.results", { count: results.length })}</p></div>
     <form className="v2-catalog-search" onSubmit={submitSearch} role="search">
       <label className="sr-only" htmlFor="v2-search-input">{t("store.search.label")}</label>

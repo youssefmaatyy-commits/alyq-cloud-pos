@@ -35,7 +35,7 @@ export function StorefrontV2Contact() {
   }, [address, contact.tagline_ar, contact.tagline_en, name, pick, settings, t]);
 
   return <div className="v2-journey v2-container" data-testid="v2-contact">
-    <p className="v2-eyebrow">{t("store.v2.eyebrow")}</p><h1>{t("store.contact.title")}</h1>
+    <h1>{t("store.contact.title")}</h1>
     <p className="v2-small">{pick(contact.tagline_ar, contact.tagline_en) || t("store.contact.subtitle")}</p>
     <div className="v2-journey-grid"><div className="v2-journey-main"><V2Panel title={t("store.contact.details")}>
       <dl className="v2-contact-list">

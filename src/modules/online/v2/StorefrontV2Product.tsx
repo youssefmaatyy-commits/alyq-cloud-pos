@@ -241,7 +241,7 @@ function V2Detail({ product, entry }: { product: Product; entry: CatalogProduct 
         </div> : null}
       </div>
       <div className="v2-pdp-info">
-        <p className="v2-eyebrow">{content?.brand_ar || content?.brand_en ? pick(content.brand_ar, content.brand_en) : t("store.v2.eyebrow")}</p>
+        {content?.brand_ar || content?.brand_en ? <p className="v2-eyebrow">{pick(content.brand_ar, content.brand_en)}</p> : null}
         <h1>{name}</h1>
         <p className="v2-pdp-sku">{t("store.product.sku")}: {product.sku}</p>
         <V2Price price={price} className="v2-pdp-price" />

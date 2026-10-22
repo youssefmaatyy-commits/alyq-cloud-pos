@@ -69,6 +69,8 @@ const { dom, assert, waitFor, navigate, clickEl, clickTestid, setField, readJson
 const { document } = dom.window;
 const cart = () => readJson("alyq.store.cart.v2")?.lines ?? [];
 const orders = () => readJson("alyq.demo.online_orders.v1") ?? [];
+const removedTaglines = ["the alyq edit", "مختارات أَلِــيْـــق"];
+const hasRemovedTagline = () => removedTaglines.some((phrase) => (document.body.textContent ?? "").toLocaleLowerCase().includes(phrase.toLocaleLowerCase()));
 let passed = 0;
 function check(label, condition) { assert.ok(condition, label); console.log(`  ✓ ${++passed}. ${label}`); }
 
@@ -76,6 +78,7 @@ await navigate("#/store", 750);
 await waitFor(() => Boolean(document.querySelector('[data-testid="v2-home"] #featured .v2-product-card')),
   { label: "V2 homepage, seeded catalogue and featured rail" });
 check("V2 is public and inside the three existing shop providers", Boolean(document.querySelector('[data-testid="store-v2"]')));
+check("the removed campaign tagline is absent from the English home and categories", !hasRemovedTagline());
 check("configured hero image/CTA and typographic category tiles render without category photos",
   Boolean(document.querySelector('.v2-hero img[src]')) &&
   Boolean(document.querySelector('#categories a[href*="/store/products?category="]')) &&
@@ -105,9 +108,19 @@ const routeBeforeSkip = dom.window.location.hash;
 clickEl(document.querySelector('.v2-skip'));
 check("keyboard skip targets main content without changing the HashRouter route",
   dom.window.location.hash === routeBeforeSkip && document.activeElement?.id === "v2-main");
+const firstCategory = document.querySelector("#categories .v2-category");
+const expectedCategoryRoute = firstCategory?.getAttribute("href") ?? "";
+clickEl(firstCategory);
+await waitFor(() => dom.window.location.hash === expectedCategoryRoute && Boolean(document.querySelector('[data-testid="v2-catalog"]')),
+  { label: "category link opens its own filtered catalogue" });
+check("category tile opens the exact category without changing its active state",
+  new URLSearchParams(dom.window.location.hash.split("?")[1] ?? "").get("category") ===
+    new URLSearchParams(expectedCategoryRoute.split("?")[1] ?? "").get("category") &&
+  categories.find((category) => category.id === new URLSearchParams(expectedCategoryRoute.split("?")[1] ?? "").get("category"))?.active === true);
 
 await navigate("#/store/products", 500);
 await waitFor(() => Boolean(document.querySelector(`[data-testid="v2-card-${ring.id}"]`)), { label: "V2 ring tile" });
+check("the removed campaign tagline is absent from the English product list", !hasRemovedTagline());
 const ringCard = () => document.querySelector(`[data-testid="v2-card-${ring.id}"]`);
 check("a card shows its live image/price and explicit options", Boolean(ringCard()?.querySelector('.v2-card-price')) &&
   (ringCard()?.querySelector('button.v2-card-add')?.textContent ?? "").includes("Choose options"));
@@ -136,6 +149,7 @@ check("the catalogue stock was not decremented by a cart action",
 
 await navigate(`#/store/products/${ring.id}`, 500);
 await waitFor(() => Boolean(document.querySelector('[data-testid="v2-product"]')), { label: "V2 PDP by id" });
+check("the removed campaign tagline is absent from the English product detail", !hasRemovedTagline());
 const buy = () => document.querySelector('[data-testid="v2-pdp-add"]');
 check("PDP requires a combination before it can add to the cart", buy()?.disabled === true);
 clickEl(document.querySelector('[data-testid="v2-color-silver"]'));
@@ -183,6 +197,7 @@ clickTestid("v2-menu-open");
 const language = document.querySelector('.v2-drawer-foot button');
 clickEl(language);
 await waitFor(() => document.documentElement.dir === 'rtl', { label: "Arabic RTL" });
+check("the removed campaign tagline is absent from the Arabic home and categories", !hasRemovedTagline());
 check("AR translations + RTL scope appear on the same public route",
   document.querySelector('.store-v2')?.getAttribute('dir') === 'rtl' &&
   (document.querySelector('.v2-desktop-nav')?.textContent ?? '').includes('الرئيسية'));
@@ -191,10 +206,12 @@ check("in Arabic RTL the header wordmark flips lead — Arabic name first, ALYQ 
   Boolean(document.querySelector('.v2-logo .v2-wordmark-primary')?.textContent?.includes('ي')) &&
   document.querySelector('.v2-logo .v2-wordmark-secondary')?.textContent === 'ALYQ');
 await navigate(`#/store/products/${ring.id}`, 320);
+check("the removed campaign tagline is absent from the Arabic product detail", !hasRemovedTagline());
 check("variant color names switch to Arabic without changing shelf IDs",
   Boolean(document.querySelector('[data-testid="v2-color-gold"]')?.textContent?.includes('ذهبي')));
 await navigate("#/store/cart", 450);
 await waitFor(() => Boolean(document.querySelector('[data-testid="v2-cart"]')), { label: "canonical V2 bag" });
+check("the removed campaign tagline is absent from the Arabic cart", !hasRemovedTagline());
 check("canonical V2 bag reuses the existing exact-variant cart provider",
   Boolean(document.querySelector('[data-testid="store-v2"]')) &&
   cart().some((line) => line.variant_id === UUID.silverXS));
@@ -237,6 +254,7 @@ check("direct add from the model gallery keeps the exact model UUID and shared p
   exactModelLine?.product_id === modelProductId && cart().filter((line) => line.product_id === modelProductId).length === 1);
 await navigate("#/store/checkout", 350);
 await waitFor(() => Boolean(document.querySelector('[data-testid="v2-checkout"]')), { label: "model checkout" });
+check("the removed campaign tagline is absent from checkout in Arabic", !hasRemovedTagline());
 const pickup = [...document.querySelectorAll(".v2-choice-grid button")].find((button) => /Pickup|استلام/.test(button.textContent ?? ""));
 if (pickup) clickEl(pickup);
 setField('.v2-checkout-form input[autocomplete="name"]', "BR101 Test Shopper");
