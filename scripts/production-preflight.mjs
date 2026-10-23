@@ -29,7 +29,7 @@ const pushWorker = read("supabase/functions/alyq-push/index.ts");
 
 const status = git("status", "--porcelain");
 check(allowDirty || status === "", allowDirty ? "dirty-tree check explicitly bypassed for development validation" : "Git worktree is clean");
-const supportedReleaseVersions = new Set(["6.0.0", "6.1.0-preview.1"]);
+const supportedReleaseVersions = new Set(["6.0.0", "6.1.0"]);
 check(
   supportedReleaseVersions.has(pkg.version) && lock.packages?.[""]?.version === pkg.version,
   `package and lockfile versions agree at supported release ${pkg.version}`,

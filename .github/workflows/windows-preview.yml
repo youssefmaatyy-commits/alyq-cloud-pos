@@ -1,4 +1,4 @@
-name: Windows preview installer & storefront screenshots
+name: Windows 6.1.0 candidate validation & storefront screenshots
 
 on:
   push:
@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   build-and-capture:
-    name: Build unsigned 6.1.0 preview, test 6.0 upgrade, and capture storefront
+    name: Build unsigned 6.1.0 candidate, test 6.0 upgrade, and capture storefront
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
@@ -44,7 +44,7 @@ jobs:
         shell: pwsh
         run: |
           $pkg = Get-Content package.json -Raw | ConvertFrom-Json
-          if ($pkg.version -ne '6.1.0-preview.1') { throw "Unexpected preview version: $($pkg.version)" }
+          if ($pkg.version -ne '6.1.0') { throw "Unexpected release-candidate version: $($pkg.version)" }
           if ($pkg.build.appId -ne 'eg.alyq.pos') { throw "Application ID changed unexpectedly" }
           if ($pkg.build.productName -ne 'ALYQ POS') { throw "Desktop product name changed unexpectedly" }
           if ($pkg.build.nsis.deleteAppDataOnUninstall -ne $false) { throw "NSIS data-preservation policy changed unexpectedly" }
@@ -65,7 +65,7 @@ jobs:
       - name: Verify installer and create SHA-256 checksum
         shell: pwsh
         run: |
-          $installer = 'release/ALYQ-POS-Setup-6.1.0-preview.1-x64.exe'
+          $installer = 'release/ALYQ-POS-Setup-6.1.0-x64.exe'
           if (-not (Test-Path $installer)) { throw "Expected installer missing: $installer" }
           $signature = Get-AuthenticodeSignature $installer
           Write-Host "Authenticode status: $($signature.Status)"
@@ -77,18 +77,18 @@ jobs:
       - name: Upload unsigned Windows installer and checksum (not a GitHub Release)
         uses: actions/upload-artifact@v4
         with:
-          name: ALYQ-POS-Setup-6.1.0-preview.1-x64
+          name: ALYQ-POS-Setup-6.1.0-x64
           path: |
-            release/ALYQ-POS-Setup-6.1.0-preview.1-x64.exe
-            release/ALYQ-POS-Setup-6.1.0-preview.1-x64.exe.sha256
+            release/ALYQ-POS-Setup-6.1.0-x64.exe
+            release/ALYQ-POS-Setup-6.1.0-x64.exe.sha256
           if-no-files-found: error
           retention-days: 14
 
-      - name: Install 6.0.0 and test preview upgrade in an isolated runner profile
+      - name: Install 6.0.0 and test candidate upgrade in an isolated runner profile
         id: windows_upgrade
         continue-on-error: true
         shell: pwsh
-        run: ./scripts/verify-windows-upgrade.ps1 -PreviewInstaller 'release/ALYQ-POS-Setup-6.1.0-preview.1-x64.exe'
+        run: ./scripts/verify-windows-upgrade.ps1 -StableInstaller 'release/ALYQ-POS-Setup-6.1.0-x64.exe'
 
       - name: Upload Windows upgrade diagnostic log
         if: always()
@@ -120,7 +120,7 @@ jobs:
       - name: Upload current-commit storefront screenshots
         uses: actions/upload-artifact@v4
         with:
-          name: ALYQ-6.1.0-preview.1-storefront-current-local
+          name: ALYQ-6.1.0-storefront-current-local
           path: coverage/alyq-preview/*.png
           if-no-files-found: error
           retention-days: 14
@@ -128,4 +128,4 @@ jobs:
       - name: Fail job if installed-app upgrade verification failed
         if: steps.windows_upgrade.outcome == 'failure'
         shell: pwsh
-        run: throw 'The Windows 6.0.0-to-6.1.0-preview.1 installed-app upgrade was not verified; see the diagnostic artifact.'
+        run: throw 'The Windows 6.0.0-to-6.1.0 installed-app upgrade was not verified; see the diagnostic artifact.'

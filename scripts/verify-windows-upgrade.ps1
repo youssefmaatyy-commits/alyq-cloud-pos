@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-  [string]$PreviewInstaller = 'release/ALYQ-POS-Setup-6.1.0-preview.1-x64.exe'
+  [string]$StableInstaller = 'release/ALYQ-POS-Setup-6.1.0-x64.exe'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -112,25 +112,25 @@ try {
   $markerValue = [guid]::NewGuid().ToString()
   Set-Content -Path $marker -Value $markerValue -NoNewline -Encoding ascii
 
-  $stage = 'install the 6.1.0 preview over the isolated 6.0.0 installation'
+  $stage = 'install the 6.1.0 candidate over the isolated 6.0.0 installation'
   Write-Host "UPGRADE_STAGE: $stage"
-  $preview = Start-Process -FilePath $PreviewInstaller -ArgumentList '/S' -PassThru -Wait
-  if ($preview.ExitCode -ne 0) { throw "Preview installer returned exit code $($preview.ExitCode)." }
+  $candidate = Start-Process -FilePath $StableInstaller -ArgumentList '/S' -PassThru -Wait
+  if ($candidate.ExitCode -ne 0) { throw "Stable installer returned exit code $($candidate.ExitCode)." }
   $newExe = Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Programs') -Filter 'ALYQ POS.exe' -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-  if (-not $newExe) { throw 'Could not locate the installed 6.1.0-preview.1 executable after upgrade.' }
+  if (-not $newExe) { throw 'Could not locate the installed 6.1.0 executable after upgrade.' }
 
   $stage = 'smoke-test the upgraded app and verify user settings/data preservation'
   Write-Host "UPGRADE_STAGE: $stage"
   $newProcess = Start-Process -FilePath $newExe.FullName -ArgumentList @('--disable-gpu','--remote-debugging-port=9223','--remote-debugging-address=127.0.0.1','--remote-allow-origins=*') -PassThru -WindowStyle Hidden
-  Invoke-InstalledSmoke -NodeArguments @('scripts/verify-windows-installed-app.mjs','--port=9223','--version=6.1.0-preview.1','--expect-paper-width=58') -Label 'Installed 6.1.0-preview.1 packaged-login/userData check'
+  Invoke-InstalledSmoke -NodeArguments @('scripts/verify-windows-installed-app.mjs','--port=9223','--version=6.1.0','--expect-paper-width=58') -Label 'Installed 6.1.0 packaged-login/userData check'
   if (-not $newProcess.HasExited) {
     $null = & taskkill.exe /PID $newProcess.Id /T /F 2>&1
-    if ($LASTEXITCODE -ne 0 -and -not $newProcess.HasExited) { throw 'Could not close the isolated preview app after verification.' }
+    if ($LASTEXITCODE -ne 0 -and -not $newProcess.HasExited) { throw 'Could not close the isolated candidate app after verification.' }
   }
-  if (-not (Test-Path $marker) -or (Get-Content $marker -Raw) -ne $markerValue) { throw 'The 6.0.0 userData sentinel was not preserved by the preview upgrade.' }
-  if (-not (Test-Path $config.FullName)) { throw 'The 6.0.0 desktop configuration was removed by the preview upgrade.' }
+  if (-not (Test-Path $marker) -or (Get-Content $marker -Raw) -ne $markerValue) { throw 'The 6.0.0 userData sentinel was not preserved by the candidate upgrade.' }
+  if (-not (Test-Path $config.FullName)) { throw 'The 6.0.0 desktop configuration was removed by the candidate upgrade.' }
   if ((Get-FileHash $config.FullName -Algorithm SHA256).Hash -ne $originalConfigHash) { throw 'The desktop configuration changed during installer upgrade.' }
-  Write-Host 'SAFE UPGRADE PASS: checksummed 6.0.0 install -> login/config smoke -> non-default 58 mm setting + userData sentinel -> 6.1.0-preview.1 upgrade -> login/config smoke; setting and config hash plus sentinel survived unchanged.'
+  Write-Host 'SAFE UPGRADE PASS: checksummed 6.0.0 install -> login/config smoke -> non-default 58 mm setting + userData sentinel -> 6.1.0 upgrade -> login/config smoke; setting and config hash plus sentinel survived unchanged.'
   Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "### Windows installed-app upgrade: **PASS**`nChecksummed 6.0.0 installer upgraded in an isolated runner profile. The packaged login, installation identity, custom 58 mm receipt setting, unchanged config hash, and userData sentinel were verified. No customer profile, Production data, or Production order was used."
 } catch {
   $detail = ($_.Exception.Message -replace '[\r\n]+', ' ').Trim()
