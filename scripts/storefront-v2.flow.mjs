@@ -91,6 +91,16 @@ check("configured hero image/CTA and typographic category tiles render without c
   Boolean(document.querySelector('#categories .v2-category-ar[lang="ar"]')) &&
   Boolean(document.querySelector('#categories .v2-category-en[lang="en"]')) &&
   Boolean(document.querySelector('.v2-hero a[href^="#/store/products"]')));
+const categoryArrows = [...document.querySelectorAll("#categories .v2-category-arrow")];
+check("category arrows are fixed thin ArrowUpRight SVGs with no platform-dependent emoji text",
+  categoryArrows.length > 0 && categoryArrows.every((arrow) => {
+    const icon = arrow.querySelector("svg");
+    const paths = icon ? [...icon.querySelectorAll("path")].map((path) => path.getAttribute("d")) : [];
+    return arrow.textContent.trim() === "" && icon?.getAttribute("viewBox") === "0 0 24 24" &&
+      icon.getAttribute("fill") === "none" && icon.getAttribute("stroke") === "currentColor" &&
+      Number(icon.getAttribute("stroke-width")) === 1.55 &&
+      paths.join("|") === "M7 17 17 7|M7 7h10v10";
+  }));
 check("archived categories are not exposed as shop links even when present in the fixture",
   ![...document.querySelectorAll('#categories a[href*="category="]')].some((link) => link.getAttribute("href").includes("cat-office")));
 const arrivalCards = [...document.querySelectorAll('#newArrivals .v2-product-card')];

@@ -16,7 +16,7 @@ import { productContentSections } from "../types";
 import type { Product } from "@/modules/products/types";
 import type { ProductContent } from "../types";
 import { V2ProductCard } from "./ProductCard";
-import { V2Image, V2Price, V2ProductGrid, V2Section, V2State } from "./Primitives";
+import { V2Icon, V2Image, V2Price, V2ProductGrid, V2Section, V2State } from "./Primitives";
 import { V2VariantChooser } from "./VariantChooser";
 import { hoverZoomHandlers } from "./HoverZoom";
 import { v2Price } from "./viewModel";
@@ -246,10 +246,10 @@ function V2Detail({ product, entry }: { product: Product; entry: CatalogProduct 
           <div className="v2-lightbox-picture"><V2Image src={gallery[imageIndex]} alt={name} priority fit="contain" /></div>
           {gallery.length > 1 ? <div className="v2-lightbox-navigation">
             <button type="button" aria-label={t("store.product.viewImage", { number: ((imageIndex + gallery.length - 1) % gallery.length) + 1 })}
-              onClick={() => setImageIndex((index) => (index + gallery.length - 1) % gallery.length)}>‹</button>
+              onClick={() => setImageIndex((index) => (index + gallery.length - 1) % gallery.length)}><V2Icon name="chevronLeft" /></button>
             <span aria-live="polite" dir="ltr">{imageIndex + 1} / {gallery.length}</span>
             <button type="button" aria-label={t("store.product.viewImage", { number: (imageIndex + 1) % gallery.length + 1 })}
-              onClick={() => setImageIndex((index) => (index + 1) % gallery.length)}>›</button>
+              onClick={() => setImageIndex((index) => (index + 1) % gallery.length)}><V2Icon name="chevronRight" /></button>
           </div> : null}
         </div> : null}
       </div>
