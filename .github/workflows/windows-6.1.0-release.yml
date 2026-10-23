@@ -52,6 +52,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          try {
           if ($env:RUNNER_ENVIRONMENT -ne 'github-hosted') {
             throw 'The release and upgrade acceptance test require an isolated GitHub-hosted Windows runner.'
           }
@@ -62,9 +63,9 @@ jobs:
           if ((git status --porcelain)) { throw 'The release source worktree is not clean.' }
 
           $pkg = Get-Content package.json -Raw | ConvertFrom-Json
-          $lock = Get-Content package-lock.json -Raw | ConvertFrom-Json
-          $lockVersion = $lock.packages.PSObject.Properties[''].Value.version
-          if ($pkg.version -ne '6.1.0' -or $lockVersion -ne '6.1.0') { throw 'Package and lockfile must both be version 6.1.0.' }
+          $lockVersion = (node -p "require('./package-lock.json').packages[''].version").Trim()
+          if ($LASTEXITCODE -ne 0) { throw 'Could not read the locked root package version with Node.' }
+          if ($pkg.version -ne '6.1.0' -or $lockVersion -ne '6.1.0') { throw "Package and lockfile must both be version 6.1.0 (package=$($pkg.version), lock=$lockVersion)." }
           if ($pkg.build.appId -ne 'eg.alyq.pos') { throw 'Application ID changed unexpectedly.' }
           if ($pkg.build.productName -ne 'ALYQ POS') { throw 'Desktop product name changed unexpectedly.' }
           if ($pkg.build.publish -ne $null -or $pkg.build.asar -ne $true) { throw 'Desktop publish/asar policy changed unexpectedly.' }
@@ -88,6 +89,11 @@ jobs:
           }
           if (Test-Path release) { throw 'A pre-existing release directory is not allowed; preview artifacts must never be reused.' }
           Write-Host "Verified clean source $source, version 6.1.0, stable Application ID, userData persistence, and desktop TLS/security policy."
+          } catch {
+            $detail = ($_.Exception.Message -replace '[\r\n]+', ' ').Trim()
+            Write-Host "::error title=Windows release source preflight failed::$detail"
+            throw
+          }
 
       - name: Run read-only production source preflight (no network or migrations)
         run: npm run production:preflight
