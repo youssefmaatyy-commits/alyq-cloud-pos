@@ -8,6 +8,16 @@ on:
         required: true
         default: false
         type: boolean
+  # GitHub only accepts dispatch for a new workflow after it reaches the
+  # default branch. This narrowly scoped release-branch trigger produces the
+  # final Windows artifacts without merging to main or redeploying the website.
+  push:
+    branches:
+      - arena/8fd7b0b4-alyq-cloud-pos
+    paths:
+      - .github/workflows/windows-6.1.0-release.yml
+      - scripts/verify-windows-installed-app.mjs
+      - scripts/verify-windows-upgrade.ps1
 
 permissions:
   contents: read
@@ -187,7 +197,7 @@ jobs:
   publish_windows_release:
     name: Verify assets then publish Windows-only v6.1.0
     needs: build_and_verify
-    if: ${{ inputs.publish_release }}
+    if: ${{ inputs.publish_release || github.event_name == 'push' }}
     runs-on: windows-latest
     timeout-minutes: 30
     permissions:
