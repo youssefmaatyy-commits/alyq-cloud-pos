@@ -5,6 +5,7 @@ on:
     branches: ["arena/f498e340-alyq-cloud-pos"]
     paths-ignore:
       - "docs/redesign-preview-6.1.0.md"
+      - "release-evidence/storefront-7-improvements/README.md"
       - "public/alyq-logo.README.md"
       - "public/brand/**"
       - "scripts/rendered-v2-header.flow.mjs"
@@ -61,23 +62,50 @@ jobs:
       - name: Build Windows x64 NSIS installer
         run: npm run desktop:package:win
 
-      - name: Verify installer and create SHA-256 checksum
+      - name: Verify installer and publish SHA-256 in the job summary
         shell: pwsh
         run: |
           $installer = 'release/ALYQ-POS-Setup-6.1.0-x64.exe'
           if (-not (Test-Path $installer)) { throw "Expected installer missing: $installer" }
+          if (-not $env:GITHUB_STEP_SUMMARY) { throw "GitHub Actions Job Summary path is unavailable" }
           $signature = Get-AuthenticodeSignature $installer
           Write-Host "Authenticode status: $($signature.Status)"
           if ($signature.Status -ne 'NotSigned') { Write-Host "Unexpected signature status; verify certificate before distribution." }
           $hash = (Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$hash  $(Split-Path $installer -Leaf)" | Set-Content "$installer.sha256" -Encoding ascii
-          Write-Host "Unsigned candidate installer verified in runner only; no Windows binary is published. SHA-256 $hash"
+          $checksumLine = "$hash  $(Split-Path $installer -Leaf)"
+          $checksumLine | Set-Content "$installer.sha256" -Encoding ascii
+          @(
+            '## Windows 6.1.0 candidate — SHA-256',
+            "- Workflow commit: $env:GITHUB_SHA",
+            "- Runner-local installer: $installer",
+            "- SHA-256: $hash",
+            "- Checksum file contents: $checksumLine",
+            "- Authenticode status: $($signature.Status)",
+            '- Installer release/upload: none (candidate remains runner-local)'
+          ) | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8
+          Write-Host "Unsigned candidate installer verified in runner only. SHA-256 $hash"
 
       - name: Install 6.0.0 and test candidate upgrade in an isolated runner profile
         id: windows_upgrade
         continue-on-error: true
         shell: pwsh
         run: ./scripts/verify-windows-upgrade.ps1 -StableInstaller 'release/ALYQ-POS-Setup-6.1.0-x64.exe'
+
+      - name: Confirm tested installer SHA-256 is unchanged
+        if: always()
+        shell: pwsh
+        run: |
+          $installer = 'release/ALYQ-POS-Setup-6.1.0-x64.exe'
+          $checksumFile = "$installer.sha256"
+          if (-not (Test-Path $installer)) { throw "Installer is missing after the upgrade test: $installer" }
+          if (-not (Test-Path $checksumFile)) { throw "SHA-256 record is missing after the upgrade test: $checksumFile" }
+          $record = (Get-Content $checksumFile -Raw).Trim()
+          if ($record -notmatch '^([0-9a-fA-F]{64})\s+(.+)$') { throw "Malformed SHA-256 record: $record" }
+          $expected = $Matches[1].ToLowerInvariant()
+          $actual = (Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($expected -ne $actual) { throw "Installer changed after the upgrade test: expected $expected, got $actual" }
+          "- Post-upgrade file comparison: **PASS** — SHA-256 $actual" | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8
+          Write-Host "The exact installer tested for upgrade still matches its SHA-256 record: $actual"
 
       - name: Upload Windows upgrade diagnostic log
         if: always()
