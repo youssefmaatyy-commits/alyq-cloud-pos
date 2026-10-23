@@ -83,6 +83,7 @@ jobs:
             "- Authenticode status: $($signature.Status)",
             '- Installer release/upload: none (candidate remains runner-local)'
           ) | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8
+          Write-Host "::notice title=Windows 6.1.0 candidate SHA-256::$hash"
           Write-Host "Unsigned candidate installer verified in runner only. SHA-256 $hash"
 
       - name: Install 6.0.0 and test candidate upgrade in an isolated runner profile
@@ -105,6 +106,7 @@ jobs:
           $actual = (Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($expected -ne $actual) { throw "Installer changed after the upgrade test: expected $expected, got $actual" }
           "- Post-upgrade file comparison: **PASS** — SHA-256 $actual" | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8
+          Write-Host "::notice title=Post-upgrade installer SHA-256 check::PASS — $actual"
           Write-Host "The exact installer tested for upgrade still matches its SHA-256 record: $actual"
 
       - name: Upload Windows upgrade diagnostic log
