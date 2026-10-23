@@ -1,11 +1,12 @@
 import { createContext, useContext } from "react";
 import type { MobileRuntimeContext } from "./services/mobileRuntime";
-import type { PushRegistrationState } from "./services/mobilePush";
+import type { PushDiagnostics, PushRegistrationState } from "./services/mobilePush";
 
 export interface MobileContextValue {
   runtime: MobileRuntimeContext | null;
   network: "online" | "offline" | "unknown";
   pushState: PushRegistrationState;
+  pushDiagnostics: PushDiagnostics;
   notificationUnreadCount: number;
   notificationRevision: number;
   enablePush: () => Promise<void>;

@@ -16,10 +16,13 @@
  *   APNS_TEAM_ID, APNS_KEY_ID, APNS_PRIVATE_KEY, APNS_TOPIC, APNS_ENVIRONMENT
  *   WEB_PUSH_VAPID_PUBLIC_KEY, WEB_PUSH_VAPID_PRIVATE_KEY, WEB_PUSH_SUBJECT
  *
- * Only the VAPID public key may also be embedded in the browser build. Never put
- * private/provider values in the database, app bundle or logs.
+ * With PUSH_CONFIG_SOURCE=vault, missing dispatch/VAPID values are instead read
+ * through service-role-only RPCs from Supabase Vault. PUSH_VAULT_BOOTSTRAP=1 is
+ * a one-time Staging operation that installs a new keypair without printing it;
+ * the compare-before-install RPC refuses rotation. Production can keep using
+ * its existing Edge secrets unchanged. Only the VAPID public key may reach the
+ * browser. Never put private/provider values in public tables, bundles or logs.
  */
-import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import webpush from "npm:web-push@3.6.7";
 import {
@@ -88,26 +91,59 @@ function env(name: string): string | null {
   return Deno.env.get(name)?.trim() || null;
 }
 
-function loadConfig(): WorkerConfig {
+type VaultValues = Record<string, unknown>;
+
+function vaultText(values: VaultValues, name: string): string | null {
+  const value = values[name];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+async function readVaultValues(client: SupabaseClient): Promise<VaultValues> {
+  const { data, error } = await client.rpc("notification_dispatcher_config");
+  if (error || !data || typeof data !== "object" || Array.isArray(data)) {
+    throw new WorkerError("not_configured", "Vault dispatcher configuration is unavailable");
+  }
+  return data as VaultValues;
+}
+
+async function loadConfig(): Promise<{ config: WorkerConfig; client: SupabaseClient }> {
   const supabaseUrl = env("SUPABASE_URL");
   const serviceRoleKey = env("SUPABASE_SERVICE_ROLE_KEY");
-  const dispatchSecret = env("PUSH_DISPATCH_SECRET");
-  if (!supabaseUrl || !serviceRoleKey || !dispatchSecret) {
-    throw new WorkerError(
-      "not_configured",
-      "SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY and PUSH_DISPATCH_SECRET must be set",
-    );
+  if (!supabaseUrl || !serviceRoleKey) {
+    throw new WorkerError("not_configured", "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set");
   }
-  if (dispatchSecret === serviceRoleKey) {
-    throw new WorkerError("not_configured", "PUSH_DISPATCH_SECRET must differ from SUPABASE_SERVICE_ROLE_KEY");
-  }
+  const client = createClient(supabaseUrl, serviceRoleKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
   const apnsEnvironment = env("APNS_ENVIRONMENT");
   if (apnsEnvironment && apnsEnvironment !== "production" && apnsEnvironment !== "sandbox") {
     throw new WorkerError("not_configured", "APNS_ENVIRONMENT must be production or sandbox");
   }
-  const webPushVapidPublicKey = env("WEB_PUSH_VAPID_PUBLIC_KEY");
-  const webPushVapidPrivateKey = env("WEB_PUSH_VAPID_PRIVATE_KEY");
-  const webPushSubject = env("WEB_PUSH_SUBJECT");
+
+  let dispatchSecret = env("PUSH_DISPATCH_SECRET");
+  let webPushVapidPublicKey = env("WEB_PUSH_VAPID_PUBLIC_KEY");
+  let webPushVapidPrivateKey = env("WEB_PUSH_VAPID_PRIVATE_KEY");
+  let webPushSubject = env("WEB_PUSH_SUBJECT");
+  const environmentVapidCount = [webPushVapidPublicKey, webPushVapidPrivateKey, webPushSubject]
+    .filter(Boolean).length;
+  if (environmentVapidCount !== 0 && environmentVapidCount !== 3) {
+    throw new WorkerError("not_configured", "All Web Push VAPID settings must be configured together");
+  }
+
+  if (env("PUSH_CONFIG_SOURCE") === "vault") {
+    const vault = await readVaultValues(client);
+    dispatchSecret ??= vaultText(vault, "ALYQ_PUSH_DISPATCH_SECRET");
+    if (environmentVapidCount === 0) {
+      webPushVapidPublicKey = vaultText(vault, "ALYQ_WEB_PUSH_VAPID_PUBLIC_KEY");
+      webPushVapidPrivateKey = vaultText(vault, "ALYQ_WEB_PUSH_VAPID_PRIVATE_KEY");
+      webPushSubject = vaultText(vault, "ALYQ_WEB_PUSH_SUBJECT");
+    }
+  }
+
+  if (!dispatchSecret) throw new WorkerError("not_configured", "PUSH_DISPATCH_SECRET must be set");
+  if (dispatchSecret === serviceRoleKey) {
+    throw new WorkerError("not_configured", "PUSH_DISPATCH_SECRET must differ from SUPABASE_SERVICE_ROLE_KEY");
+  }
   const webPushConfigured = [webPushVapidPublicKey, webPushVapidPrivateKey, webPushSubject]
     .filter(Boolean).length;
   if (webPushConfigured !== 0 && webPushConfigured !== 3) {
@@ -117,21 +153,49 @@ function loadConfig(): WorkerConfig {
     throw new WorkerError("not_configured", "WEB_PUSH_SUBJECT must be a mailto or HTTPS URI");
   }
   return {
-    supabaseUrl,
-    serviceRoleKey,
-    dispatchSecret,
-    fcmProjectId: env("FCM_PROJECT_ID"),
-    fcmClientEmail: env("FCM_CLIENT_EMAIL"),
-    fcmPrivateKey: env("FCM_PRIVATE_KEY"),
-    apnsTeamId: env("APNS_TEAM_ID"),
-    apnsKeyId: env("APNS_KEY_ID"),
-    apnsPrivateKey: env("APNS_PRIVATE_KEY"),
-    apnsTopic: env("APNS_TOPIC"),
-    apnsEnvironment: apnsEnvironment === "sandbox" ? "sandbox" : "production",
-    webPushVapidPublicKey,
-    webPushVapidPrivateKey,
-    webPushSubject,
+    config: {
+      supabaseUrl,
+      serviceRoleKey,
+      dispatchSecret,
+      fcmProjectId: env("FCM_PROJECT_ID"),
+      fcmClientEmail: env("FCM_CLIENT_EMAIL"),
+      fcmPrivateKey: env("FCM_PRIVATE_KEY"),
+      apnsTeamId: env("APNS_TEAM_ID"),
+      apnsKeyId: env("APNS_KEY_ID"),
+      apnsPrivateKey: env("APNS_PRIVATE_KEY"),
+      apnsTopic: env("APNS_TOPIC"),
+      apnsEnvironment: apnsEnvironment === "sandbox" ? "sandbox" : "production",
+      webPushVapidPublicKey,
+      webPushVapidPrivateKey,
+      webPushSubject,
+    },
+    client,
   };
+}
+
+async function bootstrapVapidAfterAuthorization(
+  client: SupabaseClient,
+  config: WorkerConfig,
+): Promise<void> {
+  if (env("PUSH_CONFIG_SOURCE") !== "vault" || env("PUSH_VAULT_BOOTSTRAP") !== "1") return;
+  if (config.webPushVapidPublicKey || config.webPushVapidPrivateKey || config.webPushSubject) return;
+
+  // This runs only after the dedicated dispatcher bearer has been verified.
+  // The RPC locks and compares existing material, so retry cannot rotate keys.
+  const keys = webpush.generateVAPIDKeys();
+  const { error } = await client.rpc("notification_dispatcher_install_vapid", {
+    p_public_key: keys.publicKey,
+    p_private_key: keys.privateKey,
+    p_subject: new URL(config.supabaseUrl).origin,
+  });
+  if (error) throw new WorkerError("not_configured", "VAPID bootstrap could not be installed");
+  const vault = await readVaultValues(client);
+  config.webPushVapidPublicKey = vaultText(vault, "ALYQ_WEB_PUSH_VAPID_PUBLIC_KEY");
+  config.webPushVapidPrivateKey = vaultText(vault, "ALYQ_WEB_PUSH_VAPID_PRIVATE_KEY");
+  config.webPushSubject = vaultText(vault, "ALYQ_WEB_PUSH_SUBJECT");
+  if (!config.webPushVapidPublicKey || !config.webPushVapidPrivateKey || !config.webPushSubject) {
+    throw new WorkerError("not_configured", "VAPID bootstrap did not return a complete configuration");
+  }
 }
 
 async function authorize(req: Request, config: WorkerConfig): Promise<void> {
@@ -476,8 +540,9 @@ async function runPool<T, R>(items: T[], concurrency: number, task: (item: T) =>
 async function handler(req: Request): Promise<Response> {
   if (req.method !== "POST") return jsonResponse(405, { ok: false, code: "method_not_allowed" });
   try {
-    const config = loadConfig();
+    const { config, client } = await loadConfig();
     await authorize(req, config);
+    await bootstrapVapidAfterAuthorization(client, config);
     const declaredLength = Number(req.headers.get("content-length") ?? 0);
     if (declaredLength > MAX_BODY_BYTES) throw new WorkerError("request_too_large", "Request body is too large", 413);
     const text = await req.text();
@@ -495,9 +560,6 @@ async function handler(req: Request): Promise<Response> {
     }
     const { limit, eventLimit } = selectDispatchBatchLimits(payload, MAX_CLAIM, MAX_EVENTS);
     const workerId = `alyq-push-${crypto.randomUUID()}`;
-    const client = createClient(config.supabaseUrl, config.serviceRoleKey, {
-      auth: { persistSession: false, autoRefreshToken: false },
-    });
     const { data, error } = await client.rpc("notification_claim_push_batch", {
       p_worker: workerId,
       p_limit: limit,

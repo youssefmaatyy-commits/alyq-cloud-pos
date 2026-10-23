@@ -4,7 +4,8 @@ import { useI18n } from "@/lib/i18n/I18nProvider";
 import { useBranch } from "@/lib/branch";
 import { PageHeader } from "@/components/layout/AppShell";
 import { MobileBadge, MobileCard, MobileState } from "@/modules/mobile/components/MobilePrimitives";
-import { noticeCopy, pushStateCopy } from "@/modules/mobile/pages/MobileNotificationsPage";
+import { NotificationKindPreferences } from "@/modules/mobile/components/NotificationKindPreferences";
+import { noticeCopy, PushDiagnosticsRows, pushStateCopy } from "@/modules/mobile/pages/MobileNotificationsPage";
 import {
   listMobileNotifications,
   markAllMobileNotificationsRead,
@@ -115,7 +116,7 @@ export function WebNotificationsPage() {
     filter === "unread"
       ? notifications.filter((note) => !note.readAt)
       : notifications;
-  const pushCopy = pushStateCopy(webNotifications.pushState, lang);
+  const pushCopy = pushStateCopy(webNotifications.pushState, lang, { native: webNotifications.runtime?.native ?? false });
 
   return (
     <div data-testid="web-notifications-page" className="space-y-4">
@@ -188,6 +189,7 @@ export function WebNotificationsPage() {
             {webNotifications.pushState}
           </MobileBadge>
         </div>
+        <PushDiagnosticsRows diagnostics={webNotifications.pushDiagnostics} lang={lang} />
         {webNotifications.pushState === "not_requested" ||
         webNotifications.pushState === "granted" ||
         webNotifications.pushState === "error" ? (
@@ -206,6 +208,7 @@ export function WebNotificationsPage() {
           </button>
         ) : null}
       </MobileCard>
+      <NotificationKindPreferences />
 
       {routeNotice ? (
         <MobileCard className="mobile-notice-card">

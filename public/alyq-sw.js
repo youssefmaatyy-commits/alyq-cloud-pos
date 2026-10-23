@@ -27,6 +27,15 @@ self.addEventListener("push", (event) => {
   }));
 });
 
+// Browser/provider rotation is not a permission change. Ask an open authorized
+// ALYQ shell to re-register the replacement subscription through its narrow RPC.
+self.addEventListener("pushsubscriptionchange", (event) => {
+  event.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true })
+    .then((clients) => {
+      for (const client of clients) client.postMessage({ type: "ALYQ_WEB_PUSH_SUBSCRIPTION_CHANGE" });
+    }));
+});
+
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const notificationId = notificationIdOf(event.notification.data);

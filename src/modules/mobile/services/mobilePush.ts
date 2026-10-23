@@ -26,8 +26,29 @@ export type PushRegistrationState =
   | "registered"
   | "error";
 
+export type PushPermissionState = NotificationPermission | "unsupported";
+export type PushSubscriptionState = "unsupported" | "not_subscribed" | "registering" | "registered" | "error";
+export type PushServiceWorkerState = "unsupported" | "not_applicable" | "not_checked" | "registering" | "registered" | "error";
+export type PushConfigurationState = "not_applicable" | "not_checked" | "configured" | "missing" | "invalid" | "unavailable";
+export interface PushDiagnostics {
+  capability: "available" | "install_required" | "unsupported" | "native";
+  permission: PushPermissionState;
+  serviceWorker: PushServiceWorkerState;
+  subscription: PushSubscriptionState;
+  configuration: PushConfigurationState;
+}
+
+export const EMPTY_PUSH_DIAGNOSTICS: PushDiagnostics = {
+  capability: "unsupported",
+  permission: "unsupported",
+  serviceWorker: "unsupported",
+  subscription: "unsupported",
+  configuration: "not_applicable",
+};
+
 export interface PushController {
   state: PushRegistrationState;
+  diagnostics: PushDiagnostics;
   asked: boolean;
   enable: () => Promise<PushRegistrationState>;
   deactivate: () => Promise<void>;
@@ -145,6 +166,7 @@ export async function createPushController(
   }
   const asked = (await Preferences.get({ key: ASKED_KEY })).value === "true";
   let state: PushRegistrationState = "not_requested";
+  let permissionState: PushPermissionState = "default";
   const handles: Array<{ remove: () => Promise<void> }> = [];
   const setState = (next: PushRegistrationState) => { state = next; onState(next); };
   const consumePending = () => consumePendingNotificationAction(navigate, onNotificationsChanged);
@@ -152,6 +174,7 @@ export async function createPushController(
   if (native) {
     await ensureAndroidChannel().catch(() => undefined);
     const permission = await PushNotifications.checkPermissions();
+    permissionState = permission.receive === "granted" ? "granted" : permission.receive === "denied" ? "denied" : "default";
     state = permission.receive === "granted" ? "registering"
       : permission.receive === "denied" ? "denied"
         : "not_requested";
@@ -181,6 +204,7 @@ export async function createPushController(
       onNotificationsChanged();
       void consumePending();
       void PushNotifications.checkPermissions().then(async (current) => {
+        permissionState = current.receive === "granted" ? "granted" : current.receive === "denied" ? "denied" : "default";
         if (current.receive === "denied") {
           await deactivateMobileInstallation();
           setState("denied");
@@ -199,11 +223,22 @@ export async function createPushController(
 
   return {
     get state() { return state; },
+    get diagnostics(): PushDiagnostics {
+      return {
+        capability: "native",
+        permission: permissionState,
+        serviceWorker: "not_applicable",
+        subscription: state === "registered" ? "registered" : state === "registering" ? "registering"
+          : state === "error" ? "error" : "not_subscribed",
+        configuration: "not_applicable",
+      };
+    },
     asked,
     async enable() {
       if (!native) return "unsupported";
       await Preferences.set({ key: ASKED_KEY, value: "true" });
       const permission = await PushNotifications.requestPermissions();
+      permissionState = permission.receive === "granted" ? "granted" : permission.receive === "denied" ? "denied" : "default";
       if (permission.receive !== "granted") {
         await deactivateMobileInstallation();
         setState("denied");
