@@ -1,10 +1,11 @@
 import { createContext, useContext } from "react";
-import type { PushRegistrationState } from "@/modules/mobile/services/mobilePush";
+import { EMPTY_PUSH_DIAGNOSTICS, type PushDiagnostics, type PushRegistrationState } from "@/modules/mobile/services/mobilePush";
 import type { MobileRuntimeContext } from "@/modules/mobile/services/mobileRuntime";
 
 export interface WebNotificationsContextValue {
   runtime: MobileRuntimeContext | null;
   pushState: PushRegistrationState;
+  pushDiagnostics: PushDiagnostics;
   notificationUnreadCount: number;
   notificationRevision: number;
   enablePush: () => Promise<void>;
@@ -15,6 +16,7 @@ export interface WebNotificationsContextValue {
 const DEFAULT_VALUE: WebNotificationsContextValue = {
   runtime: null,
   pushState: "unsupported",
+  pushDiagnostics: EMPTY_PUSH_DIAGNOSTICS,
   notificationUnreadCount: 0,
   notificationRevision: 0,
   enablePush: async () => undefined,

@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { parseMobileDeepLink, authorizeMobileDeepLink, safePushDeepLink } from "../services/deepLinks";
 import { safeNotificationId, webRouteFor } from "../services/notificationCenter";
-import { decodeVapidPublicKey, webPushCapability, webPushStateFor } from "../services/webPush";
+import { decodeVapidPublicKey, webPushCapability, webPushPlatform, webPushStateFor } from "../services/webPush";
+import { permissionStatusLabel, pushStateCopy, serviceWorkerStatusLabel, subscriptionStatusLabel, webPushConfigurationStatusLabel } from "../pages/MobileNotificationsPage";
 import { buildOperationalNotifications, type NotificationSnapshot } from "@/modules/operations/services/notifications";
 import { compareVariants, type ProductVariant } from "@/modules/products/variants";
 import {
@@ -78,6 +79,9 @@ test("PWA Web Push support distinguishes iOS Home Screen, browser support and pe
   assert.equal(webPushStateFor("available", "granted", true), "registered");
   assert.equal(webPushStateFor("install_required", "default", false), "install_required");
   assert.equal(webPushStateFor("unsupported", "default", false), "unsupported");
+  assert.equal(webPushPlatform({ userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/153.0", maxTouchPoints: 0 }), "windows");
+  assert.equal(webPushPlatform({ userAgent: "Mozilla/5.0 (Linux; Android 15) Chrome/153.0", maxTouchPoints: 5 }), "android");
+  assert.equal(webPushPlatform({ userAgent: "Mozilla/5.0 (iPhone) Version/26.0 Mobile/15E148 Safari/604.1", maxTouchPoints: 5 }), "ios");
 
   const publicKey = Buffer.from(Uint8Array.from([4, ...Array.from({ length: 64 }, (_, index) => index + 1)]))
     .toString("base64url");
@@ -102,6 +106,8 @@ test("PWA assets are installable and notification clicks carry only opaque ident
   assert.match(sw, /showNotification\("ALYQ"/);
   assert.match(sw, /self\.addEventListener\("notificationclick"/);
   assert.match(sw, /ALYQ_WEB_PUSH_OPEN/);
+  assert.match(sw, /pushsubscriptionchange/);
+  assert.match(sw, /ALYQ_WEB_PUSH_SUBSCRIPTION_CHANGE/);
   assert.match(sw, /alyq_notification=/);
   assert.match(sw, /client\.navigate\(target\)/);
   assert.doesNotMatch(sw, /route_key|entity_id|phone|address|payment|refund|auth_token|capabilit/i);
@@ -110,6 +116,8 @@ test("PWA assets are installable and notification clicks carry only opaque ident
   assert.match(bridge, /alyq_notification/);
   assert.match(bridge, /localStorage\.setItem\(WEB_PUSH_PENDING_KEY, id\)/);
   assert.match(bridge, /history\.replaceState/);
+  assert.match(bridge, /ALYQ_WEB_PUSH_SUBSCRIPTION_CHANGE/);
+  assert.match(bridge, /WEB_PUSH_SUBSCRIPTION_EVENT/);
 });
 
 test("Web Push registration is explicit, isolated from auth and server-authorized on click", () => {
@@ -120,6 +128,10 @@ test("Web Push registration is explicit, isolated from auth and server-authorize
   assert.match(enable, /Notification\.requestPermission\(\)/);
   assert.match(enable, /pushManager\.subscribe/);
   assert.match(web, /applicationServerKeyMatches/);
+  assert.match(web, /navigator\.permissions\.query\(\{ name: "notifications" \}\)/);
+  assert.match(web, /currentPermission\(\)/);
+  assert.match(web, /get diagnostics\(\): PushDiagnostics/);
+  assert.match(web, /WEB_PUSH_SUBSCRIPTION_EVENT/);
   assert.match(web, /web_push_subscription_register/);
   assert.match(web, /web_push_subscription_deactivate/);
   assert.match(web, /resolveMobileNotificationRoute\(notificationId\)/);
@@ -163,12 +175,25 @@ test("push dispatch authentication is separate, fail-closed and body-authority-f
   const edge = fs.readFileSync("supabase/functions/alyq-push/index.ts", "utf8");
   assert.match(edge, /env\("PUSH_DISPATCH_SECRET"\)/);
   assert.match(edge, /isDispatchAuthorized\(authorization, config\.dispatchSecret, config\.serviceRoleKey\)/);
-  assert.match(edge, /createClient\(config\.supabaseUrl, config\.serviceRoleKey/);
+  assert.match(edge, /createClient\(supabaseUrl, serviceRoleKey/);
+  assert.match(edge, /client\.rpc\("notification_dispatcher_config"\)/);
+  assert.match(edge, /client\.rpc\("notification_dispatcher_install_vapid"/);
+  assert.doesNotMatch(edge, /edge-runtime\.d\.ts/, "runtime type imports caused Staging BOOT_ERROR");
+  assert.ok(edge.indexOf("await authorize(req, config)") < edge.indexOf("await bootstrapVapidAfterAuthorization(client, config)"),
+    "VAPID bootstrap cannot run before dispatcher authentication");
   assert.match(edge, /selectDispatchBatchLimits\(payload, MAX_CLAIM, MAX_EVENTS\)/);
   assert.match(edge, /jsonResponse\(known\.status, \{ ok: false, code: known\.code \}\)/);
   const logStatements = edge.match(/console\.(?:info|error)\([^\n]+/g)?.join("\n") ?? "";
   assert.doesNotMatch(logStatements, /dispatchSecret|serviceRoleKey|authorization|push_token|privateKey/i);
   assert.doesNotMatch(edge, /VITE_/);
+});
+
+test("0099 dispatcher entry point uses bounded cron input and PostgreSQL-safe URL validation", () => {
+  const migration = fs.readFileSync("supabase/migrations/0099_notification_reliability_and_dispatch.sql", "utf8");
+  assert.ok(migration.includes("char_length(coalesce(v_url,'')) not between 9 and 2008"));
+  assert.ok(migration.includes("coalesce(v_url,'')!~'^https://.'"));
+  assert.ok(!migration.includes("{1,2000}"), "PostgreSQL rejects repetition bounds above 255");
+  assert.ok(migration.includes("body:=jsonb_build_object('limit',50,'event_limit',20)"));
 });
 
 test("realtime, refresh and push identities deduplicate to one notification", () => {
@@ -231,7 +256,7 @@ test("notification center is server-backed and push opens are deferred through c
   const push = fs.readFileSync("src/modules/mobile/services/mobilePush.ts", "utf8");
   assert.match(page, /listMobileNotifications/);
   assert.match(page, /markAllMobileNotificationsRead/);
-  assert.doesNotMatch(page, /Preferences|buildOperationalNotifications|READ_KEY/);
+  assert.doesNotMatch(page, /@capacitor\/preferences|buildOperationalNotifications|READ_KEY/);
   assert.match(center, /notification_center_list/);
   assert.match(center, /notification_center_resolve_route/);
   assert.match(push, /PENDING_NOTIFICATION_KEY/);
@@ -291,6 +316,50 @@ test("notification UX has explicit bilingual install, permission, enabled and fa
     "تم رفض إذن الإشعارات",
     "تم تفعيل الإشعارات",
   ]) assert.match(page, new RegExp(copy));
+});
+
+test("browser permission and device subscription stay separate with platform-correct recovery copy", () => {
+  assert.equal(permissionStatusLabel("granted", "en"), "Granted");
+  assert.equal(permissionStatusLabel("denied", "en"), "Denied");
+  assert.equal(permissionStatusLabel("default", "en"), "Default");
+  assert.equal(permissionStatusLabel("unsupported", "en"), "Unsupported");
+  assert.equal(permissionStatusLabel("default", "ar"), "لم يُطلب");
+  assert.equal(subscriptionStatusLabel("registered", "en"), "Registered");
+  assert.equal(subscriptionStatusLabel("not_subscribed", "en"), "Not subscribed");
+  assert.equal(subscriptionStatusLabel("error", "en"), "Subscription error");
+  assert.equal(subscriptionStatusLabel("unsupported", "en"), "Unsupported");
+  assert.equal(serviceWorkerStatusLabel("registered", "en"), "Registered");
+  assert.equal(serviceWorkerStatusLabel("error", "en"), "Service Worker error");
+  assert.equal(webPushConfigurationStatusLabel("configured", "en"), "Configured");
+  assert.equal(webPushConfigurationStatusLabel("missing", "en"), "Public key missing");
+  assert.equal(webPushConfigurationStatusLabel("invalid", "en"), "Invalid public key");
+
+  const windows = pushStateCopy("denied", "en", { platform: "windows", native: false });
+  assert.match(windows.detail, /Chrome on Windows/);
+  assert.match(windows.detail, /Windows Settings/);
+  assert.doesNotMatch(windows.detail, /Safari/);
+  const android = pushStateCopy("denied", "en", { platform: "android", native: false });
+  assert.match(android.detail, /Android: Settings → Apps → Chrome/);
+  assert.doesNotMatch(android.detail, /Safari/);
+  const iosInstall = pushStateCopy("install_required", "en", { platform: "ios", native: false });
+  assert.match(iosInstall.detail, /In Safari, tap Share, then Add to Home Screen/);
+  const iosDenied = pushStateCopy("denied", "en", { platform: "ios", native: false });
+  assert.match(iosDenied.detail, /Settings → Notifications → ALYQ/);
+  assert.doesNotMatch(iosDenied.detail, /Safari/);
+
+  // A subscription/RPC failure must not rewrite the actual browser permission.
+  assert.equal(permissionStatusLabel("granted", "en"), "Granted");
+  assert.equal(subscriptionStatusLabel("error", "en"), "Subscription error");
+  const center = fs.readFileSync("src/modules/mobile/services/notificationCenter.ts", "utf8");
+  assert.doesNotMatch(center, /Notification\.permission|requestPermission|PushManager/);
+  for (const file of [
+    "src/modules/mobile/pages/MobileNotificationsPage.tsx",
+    "src/modules/notifications/WebNotificationsPage.tsx",
+  ]) {
+    assert.match(fs.readFileSync(file, "utf8"), /PushDiagnosticsRows/);
+  }
+  assert.match(fs.readFileSync("src/modules/mobile/pages/MobileNotificationsPage.tsx", "utf8"),
+    /internal Notification Center works independently|مركز الإشعارات الداخلي يعمل بشكل مستقل/);
 });
 
 test("native push configuration protects external custody and relays APNs tokens", () => {

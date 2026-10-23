@@ -60,9 +60,15 @@ for (let i = 1; i <= 26; i += 1) {
     const firstCategory = [...category.options].find((option) => option.value !== "");
     if (firstCategory) setReactValue(category, firstCategory.value);
   }
-  await sleep(50);
-  clickExact("Save");
-  await waitFor(() => !dom.window.location.hash.includes("/new") && dom.window.location.hash.includes("/products"), { label: `saved product ${i}` });
+  await waitFor(() => {
+    const save = testid("product-form-save");
+    return Boolean(save) && !save.disabled;
+  }, { label: `enabled save ${i}` });
+  clickEl(testid("product-form-save"));
+  await waitFor(
+    () => !dom.window.location.hash.includes("/new") && dom.window.location.hash.includes("/products"),
+    { label: `saved product ${i}`, timeout: 45_000 },
+  );
 }
 const idOf = (sku) => catalog().products.find((p) => p.sku === sku)?.id;
 assert.ok(idOf("POS-SCROLL-5"), "the created products are in the catalogue");

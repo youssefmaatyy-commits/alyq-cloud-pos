@@ -208,6 +208,7 @@
 .store-v2 .v2-category-ar { font-family: var(--v2-font-arabic-display); font-size: clamp(18px, 3vw, 25px); line-height: 1.4; }
 .store-v2 .v2-category-en { color: var(--v2-muted); font-family: var(--v2-font-body); font-size: 11px; letter-spacing: .08em; }
 .store-v2 .v2-category-arrow { display: grid; place-items: center; flex: none; width: 34px; height: 34px; border: 1px solid var(--v2-accent); border-radius: 50%; color: var(--v2-accent-text); font-size: 18px; transition: transform .2s ease, background .2s ease; }
+.store-v2 .v2-category-arrow svg { display: block; width: 17px; height: 17px; }
 .store-v2 .v2-category:hover .v2-category-arrow { transform: translate(2px, -2px); background: var(--v2-accent); color: var(--v2-primary-text); }
 .store-v2[dir="rtl"] .v2-category:hover .v2-category-arrow { transform: translate(-2px, -2px); }
 .store-v2 .v2-category-empty { border: 1px dashed var(--v2-border); padding: 24px; color: var(--v2-muted); text-align: center; }
@@ -837,8 +838,9 @@
 .store-v2 .v2-lightbox-picture { height: 100%; width: min(100%, 1000px); min-height: 0; }
 .store-v2 .v2-lightbox-picture .v2-image { width: 100%; height: 100%; background: transparent; }
 .store-v2 .v2-lightbox-navigation { display: flex; align-items: center; gap: 20px; }
-.store-v2 .v2-lightbox-navigation button { width: 48px; height: 48px; border: 1px solid currentColor;
+.store-v2 .v2-lightbox-navigation button { display: inline-grid; place-items: center; width: 48px; height: 48px; border: 1px solid currentColor;
   background: transparent; color: inherit; font-size: 28px; }
+.store-v2 .v2-lightbox-navigation button svg { display: block; width: 22px; height: 22px; }
 .store-v2 .v2-lightbox :is(button, a):focus-visible { outline-color: #fff; }
 
 /* Add-to-cart toast: a single global, non-interactive confirmation shared by

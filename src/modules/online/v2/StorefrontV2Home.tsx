@@ -8,7 +8,7 @@ import { resolvedBanners, resolvedSlides, sectionImage, sectionLimit, sectionTit
 import { absoluteUrl, applyDocumentMeta, applyJsonLd, clearDocumentMeta, keywordList, storeJsonLd } from "../services/seo";
 import type { HomepageSectionConfig } from "../types";
 import { V2ProductCard } from "./ProductCard";
-import { V2ActionLink, V2Image, V2ProductGrid, V2Section, V2State } from "./Primitives";
+import { V2ActionLink, V2Icon, V2Image, V2ProductGrid, V2Section, V2State } from "./Primitives";
 import { resolvedV2SocialChannels } from "./SocialChannels";
 import { SocialIcon } from "../components/storefront/SocialIcon";
 import { v2Price } from "./viewModel";
@@ -132,7 +132,7 @@ export function StorefrontV2Home() {
                       <span className="v2-category-ar" lang="ar" dir="rtl">{arabic}</span>
                       <span className="v2-category-en" lang="en" dir="ltr">{english}</span>
                     </span>
-                    <span className="v2-category-arrow" aria-hidden>↗</span>
+                    <span className="v2-category-arrow" aria-hidden><V2Icon name="arrowUpRight" /></span>
                   </Link>
                 );
               })}

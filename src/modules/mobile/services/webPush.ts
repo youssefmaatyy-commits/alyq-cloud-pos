@@ -1,9 +1,18 @@
 import { getSupabaseClient } from "@/lib/supabase/client";
-import type { PushController, PushRegistrationState } from "./mobilePush";
+import type {
+  PushController,
+  PushConfigurationState,
+  PushDiagnostics,
+  PushPermissionState,
+  PushRegistrationState,
+  PushServiceWorkerState,
+  PushSubscriptionState,
+} from "./mobilePush";
 import {
   clearPendingWebPushNotification,
   readPendingWebPushNotification,
   WEB_PUSH_PENDING_EVENT,
+  WEB_PUSH_SUBSCRIPTION_EVENT,
 } from "./pwaBridge";
 import { markMobileNotificationRead, resolveMobileNotificationRoute } from "./notificationCenter";
 
@@ -21,6 +30,29 @@ export interface WebPushCapabilityInput {
 }
 
 export type WebPushCapability = "install_required" | "available" | "unsupported";
+export type WebPushPlatform = "ios" | "android" | "windows" | "macos" | "other";
+
+/** Narrow test seam; production defaults retain the real browser/RPC adapters. */
+export interface WebPushControllerDependencies {
+  publicKey?: string;
+  loadPublicKey?: () => Promise<string>;
+  registerSubscription?: (subscription: PushSubscription) => Promise<void>;
+  deactivateServerSubscription?: () => Promise<void>;
+}
+
+export function webPushPlatform(input: Pick<WebPushCapabilityInput, "userAgent" | "maxTouchPoints">): WebPushPlatform {
+  if (/iPad|iPhone|iPod/i.test(input.userAgent)
+      || (/Macintosh/i.test(input.userAgent) && input.maxTouchPoints > 1)) return "ios";
+  if (/Android/i.test(input.userAgent)) return "android";
+  if (/Windows/i.test(input.userAgent)) return "windows";
+  if (/Macintosh|Mac OS X/i.test(input.userAgent)) return "macos";
+  return "other";
+}
+
+export function currentWebPushPlatform(): WebPushPlatform {
+  if (typeof navigator === "undefined") return "other";
+  return webPushPlatform({ userAgent: navigator.userAgent, maxTouchPoints: navigator.maxTouchPoints ?? 0 });
+}
 
 export function webPushStateFor(
   capability: WebPushCapability,
@@ -36,9 +68,7 @@ export function webPushStateFor(
 
 /** iPadOS may identify itself as Macintosh, so touch capability is included. */
 export function webPushCapability(input: WebPushCapabilityInput): WebPushCapability {
-  const ios = /iPad|iPhone|iPod/i.test(input.userAgent)
-    || (/Macintosh/i.test(input.userAgent) && input.maxTouchPoints > 1);
-  if (ios && !input.standalone) return "install_required";
+  if (webPushPlatform(input) === "ios" && !input.standalone) return "install_required";
   return input.serviceWorker && input.pushManager && input.notifications ? "available" : "unsupported";
 }
 
@@ -55,6 +85,17 @@ export function decodeVapidPublicKey(value: string): Uint8Array<ArrayBuffer> {
 
 function configuredVapidPublicKey(): string {
   try { return import.meta.env.WEB_PUSH_VAPID_PUBLIC_KEY?.trim() ?? ""; } catch { return ""; }
+}
+
+/** The server fallback returns only the browser-safe public application key. */
+async function serverVapidPublicKey(): Promise<string> {
+  const client = getSupabaseClient();
+  if (!client) return "";
+  const { data, error } = await client.rpc("notification_web_push_public_config");
+  if (error) throw error;
+  if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("Invalid public Web Push configuration");
+  const key = (data as Record<string, unknown>).public_key;
+  return typeof key === "string" ? key.trim() : "";
 }
 
 function applicationServerKeyMatches(subscription: PushSubscription, expected: Uint8Array<ArrayBuffer>): boolean {
@@ -74,6 +115,19 @@ function currentCapability(): WebPushCapability {
     pushManager: "PushManager" in window,
     notifications: "Notification" in window,
   });
+}
+
+function currentPermission(): PushPermissionState {
+  if (typeof window === "undefined" || !("Notification" in window)) return "unsupported";
+  return Notification.permission;
+}
+
+async function serviceWorkerRegistration(): Promise<ServiceWorkerRegistration> {
+  // `serviceWorker.ready` can remain pending forever after a failed worker
+  // installation. Reuse the current registration or explicitly retry it so a
+  // subscription failure becomes a visible, retryable error instead.
+  const existing = await navigator.serviceWorker.getRegistration();
+  return existing ?? navigator.serviceWorker.register("/alyq-sw.js", { scope: "/" });
 }
 
 function currentLocale(): "en" | "ar" {
@@ -141,8 +195,8 @@ async function deactivateServerSubscription(): Promise<void> {
 export async function deactivateWebPushSubscription(): Promise<void> {
   await deactivateServerSubscription();
   try {
-    const registration = await navigator.serviceWorker.ready;
-    const subscription = await registration.pushManager.getSubscription();
+    const registration = await navigator.serviceWorker.getRegistration();
+    const subscription = await registration?.pushManager.getSubscription();
     if (subscription) await subscription.unsubscribe();
   } catch {
     // Local browser/provider cleanup is best effort; server state is already inactive.
@@ -182,112 +236,264 @@ export async function createWebPushController(
   navigate: (route: string) => void,
   onState: (state: PushRegistrationState) => void,
   onNotificationsChanged: () => void,
+  dependencies: WebPushControllerDependencies = {},
 ): Promise<PushController> {
-  const capability = currentCapability();
+  const loadRemoteKey = dependencies.loadPublicKey ?? serverVapidPublicKey;
+  let remoteKeyPromise: Promise<string> | null = null;
+  const publicKey = async (): Promise<string> => {
+    if (dependencies.publicKey !== undefined) return dependencies.publicKey;
+    const embedded = configuredVapidPublicKey();
+    if (embedded) return embedded;
+    if (!remoteKeyPromise) {
+      remoteKeyPromise = loadRemoteKey()
+        .then((key) => {
+          const normalized = key.trim();
+          // A missing key may be repaired by an operator while ALYQ is open;
+          // allow the next focus/online refresh to retry instead of caching it.
+          if (!normalized) remoteKeyPromise = null;
+          return normalized;
+        })
+        .catch((error: unknown) => {
+          remoteKeyPromise = null;
+          throw error;
+        });
+    }
+    return remoteKeyPromise;
+  };
+  const register = dependencies.registerSubscription ?? registerSubscription;
+  const deactivate = dependencies.deactivateServerSubscription ?? deactivateServerSubscription;
+  const readConfiguration = async (): Promise<{
+    applicationServerKey: ReturnType<typeof decodeVapidPublicKey> | null;
+    state: PushConfigurationState;
+  }> => {
+    let key: string;
+    try {
+      key = await publicKey();
+    } catch {
+      return { applicationServerKey: null, state: "unavailable" };
+    }
+    if (!key) return { applicationServerKey: null, state: "missing" };
+    try {
+      return { applicationServerKey: decodeVapidPublicKey(key), state: "configured" };
+    } catch {
+      return { applicationServerKey: null, state: "invalid" };
+    }
+  };
+  let capability = currentCapability();
+  let permission = currentPermission();
+  let serviceWorkerState: PushServiceWorkerState = capability === "unsupported" ? "unsupported" : "not_checked";
+  let subscriptionState: PushSubscriptionState = capability === "unsupported" ? "unsupported" : "not_subscribed";
+  let configurationState: PushConfigurationState = capability === "unsupported" ? "not_applicable" : "not_checked";
   let state: PushRegistrationState = webPushStateFor(
     capability,
-    capability === "available" ? Notification.permission : "default",
+    permission === "unsupported" ? "default" : permission,
     false,
   );
   let disposed = false;
+  let permissionStatus: PermissionStatus | null = null;
   const setState = (next: PushRegistrationState) => {
     state = next;
     if (!disposed) onState(next);
   };
   const consumePending = () => consumePendingWebPushNotification(navigate, onNotificationsChanged);
 
-  const refresh = async () => {
-    if (capability !== "available") return;
-    if (Notification.permission === "denied") {
-      await deactivateServerSubscription();
+  const performRefresh = async () => {
+    // Permission and install capability are live browser facts, not a one-time
+    // login snapshot. This also repairs a stale Denied badge after Chrome or
+    // system settings change while ALYQ remains open.
+    capability = currentCapability();
+    permission = currentPermission();
+    if (capability !== "available") {
+      serviceWorkerState = capability === "unsupported" ? "unsupported" : "not_checked";
+      subscriptionState = capability === "unsupported" ? "unsupported" : "not_subscribed";
+      configurationState = capability === "unsupported" ? "not_applicable" : "not_checked";
+      setState(capability === "install_required" ? "install_required" : "unsupported");
+      return;
+    }
+
+    const configuration = await readConfiguration();
+    configurationState = configuration.state;
+    serviceWorkerState = "registering";
+    let registration: ServiceWorkerRegistration | null = null;
+    try {
+      registration = await serviceWorkerRegistration();
+      serviceWorkerState = "registered";
+    } catch {
+      serviceWorkerState = "error";
+    }
+
+    if (permission === "denied") {
+      subscriptionState = "not_subscribed";
+      await deactivate();
       setState("denied");
       return;
     }
-    if (Notification.permission !== "granted") {
+    if (permission !== "granted") {
+      subscriptionState = "not_subscribed";
       setState("not_requested");
       return;
     }
+    const applicationServerKey = configuration.applicationServerKey;
+    if (!registration || !applicationServerKey) {
+      subscriptionState = "error";
+      setState("error");
+      return;
+    }
     try {
-      const publicKey = configuredVapidPublicKey();
-      if (!publicKey) throw new Error("Web Push public key is unavailable");
-      const expectedKey = decodeVapidPublicKey(publicKey);
-      const registration = await navigator.serviceWorker.ready;
-      const subscription = await registration.pushManager.getSubscription();
-      if (!subscription) {
+      const currentSubscription = await registration.pushManager.getSubscription();
+      if (!currentSubscription) {
+        subscriptionState = "not_subscribed";
         setState("granted");
         return;
       }
-      if (!applicationServerKeyMatches(subscription, expectedKey)) {
-        await deactivateServerSubscription();
-        await subscription.unsubscribe().catch(() => false);
+      if (!applicationServerKeyMatches(currentSubscription, applicationServerKey)) {
+        await deactivate();
+        await currentSubscription.unsubscribe().catch(() => false);
+        subscriptionState = "not_subscribed";
         setState("granted");
         return;
       }
+      subscriptionState = "registering";
       setState("registering");
-      await registerSubscription(subscription);
+      await register(currentSubscription);
+      subscriptionState = "registered";
       setState("registered");
     } catch {
+      subscriptionState = "error";
       setState("error");
     }
+  };
+
+  // Permission, visibility, network and provider events may arrive together.
+  // Serialize refreshes so an older RPC result cannot overwrite newer facts.
+  let refreshQueue: Promise<void> = Promise.resolve();
+  const refresh = () => {
+    const next = refreshQueue.then(performRefresh);
+    refreshQueue = next.catch(() => undefined);
+    return next;
   };
 
   const onPending = () => { void consumePending(); };
   const onOnline = () => { void refresh(); void consumePending(); };
   const onVisibility = () => { if (document.visibilityState === "visible") void refresh(); };
+  const onPermissionChange = () => { void refresh(); };
+  const onSubscriptionChange = () => { void refresh(); };
   window.addEventListener(WEB_PUSH_PENDING_EVENT, onPending);
+  window.addEventListener(WEB_PUSH_SUBSCRIPTION_EVENT, onSubscriptionChange);
   window.addEventListener("online", onOnline);
   document.addEventListener("visibilitychange", onVisibility);
+  try {
+    permissionStatus = await navigator.permissions.query({ name: "notifications" });
+    permissionStatus.addEventListener("change", onPermissionChange);
+  } catch {
+    // Safari and older WebKit do not expose the Notifications PermissionStatus.
+    permissionStatus = null;
+  }
   onState(state);
-  await refresh().catch(() => setState("error"));
+  await refresh().catch(() => {
+    subscriptionState = "error";
+    setState("error");
+  });
   await consumePending().catch(() => undefined);
 
   return {
     get state() { return state; },
-    asked: capability === "available" && Notification.permission !== "default",
+    get diagnostics(): PushDiagnostics {
+      return {
+        capability,
+        permission,
+        serviceWorker: serviceWorkerState,
+        subscription: subscriptionState,
+        configuration: configurationState,
+      };
+    },
+    get asked() { return capability === "available" && permission !== "default" && permission !== "unsupported"; },
     async enable() {
-      if (capability === "install_required") return "install_required";
-      if (capability !== "available") return "unsupported";
-      const publicKey = configuredVapidPublicKey();
-      if (!publicKey) {
+      capability = currentCapability();
+      permission = currentPermission();
+      if (capability === "install_required") {
+        serviceWorkerState = "not_checked";
+        subscriptionState = "not_subscribed";
+        configurationState = "not_checked";
+        setState("install_required");
+        return state;
+      }
+      if (capability !== "available") {
+        serviceWorkerState = "unsupported";
+        subscriptionState = "unsupported";
+        configurationState = "not_applicable";
+        setState("unsupported");
+        return state;
+      }
+      const configuration = await readConfiguration();
+      configurationState = configuration.state;
+      if (permission === "denied") {
+        subscriptionState = "not_subscribed";
+        setState("denied");
+        return state;
+      }
+      const applicationServerKey = configuration.applicationServerKey;
+      if (!applicationServerKey) {
+        subscriptionState = "error";
         setState("error");
         return state;
       }
+      let serviceWorkerAttempted = false;
       try {
-        const permission = await Notification.requestPermission();
+        permission = permission === "granted" ? "granted" : await Notification.requestPermission();
         if (permission === "denied") {
-          await deactivateServerSubscription();
+          subscriptionState = "not_subscribed";
+          await deactivate();
           setState("denied");
           return state;
         }
         if (permission !== "granted") {
+          subscriptionState = "not_subscribed";
           setState("not_requested");
           return state;
         }
+        serviceWorkerAttempted = true;
+        serviceWorkerState = "registering";
+        subscriptionState = "registering";
         setState("registering");
-        const registration = await navigator.serviceWorker.ready;
-        const applicationServerKey = decodeVapidPublicKey(publicKey);
+        const registration = await serviceWorkerRegistration();
+        serviceWorkerState = "registered";
+        serviceWorkerAttempted = false;
         let existing = await registration.pushManager.getSubscription();
         if (existing && !applicationServerKeyMatches(existing, applicationServerKey)) {
-          await deactivateServerSubscription();
+          await deactivate();
           await existing.unsubscribe().catch(() => false);
           existing = null;
         }
-        const subscription = existing ?? await registration.pushManager.subscribe({
+        const currentSubscription = existing ?? await registration.pushManager.subscribe({
           userVisibleOnly: true,
           applicationServerKey,
         });
-        await registerSubscription(subscription);
+        await register(currentSubscription);
+        subscriptionState = "registered";
         setState("registered");
       } catch {
+        if (serviceWorkerAttempted) serviceWorkerState = "error";
+        subscriptionState = "error";
         setState("error");
       }
       return state;
     },
     async deactivate() {
       await deactivateWebPushSubscription();
+      capability = currentCapability();
+      permission = currentPermission();
+      if (capability === "unsupported") {
+        serviceWorkerState = "unsupported";
+        configurationState = "not_applicable";
+      } else if (capability === "install_required") {
+        serviceWorkerState = "not_checked";
+        configurationState = "not_checked";
+      }
+      subscriptionState = capability === "unsupported" ? "unsupported" : "not_subscribed";
       setState(webPushStateFor(
         capability,
-        capability === "available" ? Notification.permission : "default",
+        permission === "unsupported" ? "default" : permission,
         false,
       ));
     },
@@ -295,8 +501,10 @@ export async function createWebPushController(
     async dispose() {
       disposed = true;
       window.removeEventListener(WEB_PUSH_PENDING_EVENT, onPending);
+      window.removeEventListener(WEB_PUSH_SUBSCRIPTION_EVENT, onSubscriptionChange);
       window.removeEventListener("online", onOnline);
       document.removeEventListener("visibilitychange", onVisibility);
+      permissionStatus?.removeEventListener("change", onPermissionChange);
     },
   };
 }

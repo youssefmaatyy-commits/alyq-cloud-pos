@@ -60,6 +60,7 @@ export const REALTIME_TABLES = [
   "sales",
   "products",
   "stock_movements",
+  "user_notification_inbox",
 ] as const;
 
 export type RealtimeTable = (typeof REALTIME_TABLES)[number];

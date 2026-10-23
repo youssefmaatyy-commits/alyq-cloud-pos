@@ -3,7 +3,10 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { useBranch } from "@/lib/branch";
 import { MobileBadge, MobileCard, MobilePage, MobileState } from "../components/MobilePrimitives";
+import { NotificationKindPreferences } from "../components/NotificationKindPreferences";
 import { useMobile } from "../MobileContext";
+import type { PushConfigurationState, PushDiagnostics, PushPermissionState, PushServiceWorkerState, PushSubscriptionState } from "../services/mobilePush";
+import { currentWebPushPlatform, type WebPushPlatform } from "../services/webPush";
 import {
   listMobileNotifications,
   markAllMobileNotificationsRead,
@@ -12,7 +15,104 @@ import {
   type MobileNotification,
 } from "../services/notificationCenter";
 
-export function pushStateCopy(state: ReturnType<typeof useMobile>["pushState"], lang: "en" | "ar") {
+interface PushCopyOptions {
+  platform?: WebPushPlatform;
+  native?: boolean;
+}
+
+function deniedPermissionDetail(lang: "en" | "ar", options: PushCopyOptions): string {
+  const ar = lang === "ar";
+  const platform = options.platform ?? currentWebPushPlatform();
+  if (platform === "windows") return ar
+    ? "في Chrome على Windows: ⋮ ← الإعدادات ← الخصوصية والأمان ← إعدادات الموقع ← الإشعارات، واسمح لموقع ALYQ الحالي. فعّل Chrome أيضًا من إعدادات Windows ← النظام ← الإشعارات. يظل مركز الإشعارات متاحًا."
+    : "In Chrome on Windows: ⋮ → Settings → Privacy and security → Site settings → Notifications, and allow this exact ALYQ site. Also enable Chrome in Windows Settings → System → Notifications. Notification Center remains available.";
+  if (platform === "android") return options.native
+    ? (ar ? "في Android: الإعدادات ← التطبيقات ← ALYQ ← الإشعارات، ثم فعّل السماح بالإشعارات. يظل مركز الإشعارات متاحًا."
+      : "On Android: Settings → Apps → ALYQ → Notifications, then allow notifications. Notification Center remains available.")
+    : (ar ? "في Android: الإعدادات ← التطبيقات ← Chrome ← الإشعارات، ثم اسمح لموقع ALYQ الحالي من إعدادات المواقع في Chrome. يظل مركز الإشعارات متاحًا."
+      : "On Android: Settings → Apps → Chrome → Notifications, then allow this exact ALYQ site in Chrome's site settings. Notification Center remains available.");
+  if (platform === "ios") return ar
+    ? "في iPhone: الإعدادات ← الإشعارات ← ALYQ، ثم فعّل السماح بالإشعارات. يظل مركز الإشعارات متاحًا."
+    : "On iPhone: Settings → Notifications → ALYQ, then enable Allow Notifications. Notification Center remains available.";
+  if (platform === "macos") return ar
+    ? "اسمح لموقع ALYQ الحالي من إعدادات المواقع في Chrome، وفعّل Chrome من إعدادات macOS ← الإشعارات. يظل مركز الإشعارات متاحًا."
+    : "Allow this exact ALYQ site in Chrome's site settings, and enable Chrome in macOS Settings → Notifications. Notification Center remains available.";
+  return ar
+    ? "اسمح لموقع ALYQ الحالي في إعدادات المتصفح، وفعّل إشعارات المتصفح في إعدادات النظام. يظل مركز الإشعارات متاحًا."
+    : "Allow this exact ALYQ site in browser settings, and enable browser notifications in system settings. Notification Center remains available.";
+}
+
+export function permissionStatusLabel(state: PushPermissionState, lang: "en" | "ar"): string {
+  const ar = lang === "ar";
+  if (state === "granted") return ar ? "مسموح" : "Granted";
+  if (state === "denied") return ar ? "مرفوض" : "Denied";
+  if (state === "default") return ar ? "لم يُطلب" : "Default";
+  return ar ? "غير مدعوم" : "Unsupported";
+}
+
+export function subscriptionStatusLabel(state: PushSubscriptionState, lang: "en" | "ar"): string {
+  const ar = lang === "ar";
+  if (state === "registered") return ar ? "نشط" : "Registered";
+  if (state === "registering") return ar ? "جارٍ التسجيل" : "Registering";
+  if (state === "error") return ar ? "خطأ في الاشتراك" : "Subscription error";
+  if (state === "not_subscribed") return ar ? "غير مشترك" : "Not subscribed";
+  return ar ? "غير مدعوم" : "Unsupported";
+}
+
+export function serviceWorkerStatusLabel(state: PushServiceWorkerState, lang: "en" | "ar"): string {
+  const ar = lang === "ar";
+  if (state === "registered") return ar ? "مسجّل" : "Registered";
+  if (state === "registering") return ar ? "جارٍ التسجيل" : "Registering";
+  if (state === "error") return ar ? "خطأ في Service Worker" : "Service Worker error";
+  if (state === "not_checked") return ar ? "لم يُفحص" : "Not checked";
+  if (state === "not_applicable") return ar ? "غير منطبق" : "Not applicable";
+  return ar ? "غير مدعوم" : "Unsupported";
+}
+
+export function webPushConfigurationStatusLabel(state: PushConfigurationState, lang: "en" | "ar"): string {
+  const ar = lang === "ar";
+  if (state === "configured") return ar ? "مكوّن" : "Configured";
+  if (state === "missing") return ar ? "المفتاح العام مفقود" : "Public key missing";
+  if (state === "invalid") return ar ? "المفتاح العام غير صالح" : "Invalid public key";
+  if (state === "unavailable") return ar ? "تعذر فحص الإعداد العام" : "Public configuration unavailable";
+  if (state === "not_checked") return ar ? "لم يُفحص" : "Not checked";
+  return ar ? "غير منطبق" : "Not applicable";
+}
+
+export function PushDiagnosticsRows({ diagnostics, lang }: { diagnostics: PushDiagnostics; lang: "en" | "ar" }) {
+  const ar = lang === "ar";
+  return <div className="space-y-2 pt-3" data-testid="push-diagnostics">
+    <div className="mobile-row" data-testid="push-permission-status">
+      <span className="mobile-muted">{ar ? "إذن المتصفح" : "Browser permission"}</span>
+      <MobileBadge tone={diagnostics.permission === "granted" ? "success" : diagnostics.permission === "denied" ? "warning" : "neutral"}>
+        {permissionStatusLabel(diagnostics.permission, lang)}
+      </MobileBadge>
+    </div>
+    <div className="mobile-row" data-testid="push-service-worker-status">
+      <span className="mobile-muted">Service Worker</span>
+      <MobileBadge tone={diagnostics.serviceWorker === "registered" ? "success" : diagnostics.serviceWorker === "registering" ? "info" : diagnostics.serviceWorker === "error" ? "warning" : "neutral"}>
+        {serviceWorkerStatusLabel(diagnostics.serviceWorker, lang)}
+      </MobileBadge>
+    </div>
+    <div className="mobile-row" data-testid="push-subscription-status">
+      <span className="mobile-muted">{ar ? "اشتراك هذا الجهاز" : "This device's subscription"}</span>
+      <MobileBadge tone={diagnostics.subscription === "registered" ? "success" : diagnostics.subscription === "registering" ? "info" : diagnostics.subscription === "error" ? "warning" : "neutral"}>
+        {subscriptionStatusLabel(diagnostics.subscription, lang)}
+      </MobileBadge>
+    </div>
+    <div className="mobile-row" data-testid="push-configuration-status">
+      <span className="mobile-muted">{ar ? "إعداد Web Push العام" : "Public Web Push configuration"}</span>
+      <MobileBadge tone={diagnostics.configuration === "configured" ? "success" : diagnostics.configuration === "missing" || diagnostics.configuration === "invalid" || diagnostics.configuration === "unavailable" ? "warning" : "neutral"}>
+        {webPushConfigurationStatusLabel(diagnostics.configuration, lang)}
+      </MobileBadge>
+    </div>
+    <p className="mobile-muted">{ar
+      ? "مركز الإشعارات الداخلي يعمل بشكل مستقل حتى لو كانت إشعارات الجهاز مرفوضة أو غير مدعومة."
+      : "The internal Notification Center works independently even when device notifications are denied or unsupported."}</p>
+  </div>;
+}
+
+export function pushStateCopy(state: ReturnType<typeof useMobile>["pushState"], lang: "en" | "ar", options: PushCopyOptions = {}) {
   const ar = lang === "ar";
   if (state === "install_required") return {
     title: ar ? "ثبّت ALYQ على الشاشة الرئيسية لتفعيل الإشعارات" : "Install ALYQ on your Home Screen to enable notifications",
@@ -31,7 +131,7 @@ export function pushStateCopy(state: ReturnType<typeof useMobile>["pushState"], 
   };
   if (state === "denied") return {
     title: ar ? "تم رفض إذن الإشعارات" : "Notification permission denied",
-    detail: ar ? "يمكنك تغيير الإذن من إعدادات الجهاز أو Safari. يظل مركز الإشعارات متاحًا." : "Change the permission in device or Safari settings. Notification Center remains available.",
+    detail: deniedPermissionDetail(lang, options),
     tone: "warning" as const,
   };
   if (state === "registered") return {
@@ -120,7 +220,7 @@ export function MobileNotificationsPage() {
   };
 
   const unread = notifications.filter((note) => !note.readAt).length;
-  const pushCopy = pushStateCopy(mobile.pushState, lang);
+  const pushCopy = pushStateCopy(mobile.pushState, lang, { native: mobile.runtime?.native ?? false });
   return <MobilePage
     title={lang === "ar" ? "الإشعارات" : "Notifications"}
     subtitle={lang === "ar" ? "تنبيهات تشغيلية محفوظة ومخوّلة من الخادم" : "Durable, server-authorized operational attention"}
@@ -131,10 +231,12 @@ export function MobileNotificationsPage() {
         <div><strong>{pushCopy.title}</strong><p className="mobile-muted">{pushCopy.detail}</p></div>
         <MobileBadge tone={pushCopy.tone}>{mobile.pushState}</MobileBadge>
       </div>
+      <PushDiagnosticsRows diagnostics={mobile.pushDiagnostics} lang={lang} />
       {mobile.pushState === "not_requested" || mobile.pushState === "granted" || mobile.pushState === "error" ? <button type="button" className="mobile-primary-button" onClick={() => void mobile.enablePush()}>{mobile.pushState === "error"
         ? (lang === "ar" ? "إعادة المحاولة" : "Try again")
         : (lang === "ar" ? "تفعيل الإشعارات" : "Enable notifications")}</button> : null}
     </MobileCard>
+    <NotificationKindPreferences />
 
     {routeNotice ? <MobileCard className="mobile-notice-card"><div className="mobile-row"><p>{routeNotice}</p><button type="button" className="mobile-action" onClick={() => setRouteNotice(null)}>{lang === "ar" ? "إخفاء" : "Dismiss"}</button></div></MobileCard> : null}
     {error ? <MobileCard className="mobile-notice-card"><div className="mobile-row"><p>{error}</p><button type="button" className="mobile-action" onClick={() => void load()}>{lang === "ar" ? "إعادة المحاولة" : "Retry"}</button></div></MobileCard> : null}

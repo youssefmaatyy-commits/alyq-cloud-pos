@@ -91,13 +91,9 @@ Protected Edge Function secret names (values stay in Supabase secret custody):
 - `WEB_PUSH_VAPID_PRIVATE_KEY` (server-only)
 - `WEB_PUSH_SUBJECT` (`mailto:` or HTTPS operator contact)
 
-Generate a local VAPID pair without committing it:
+For migration 0099, follow [the notification rollout and rollback runbook](production/notification-0099-rollout.md). Its preferred Staging Vault path generates the dispatcher bearer inside PostgreSQL and the VAPID pair inside the authenticated worker, so neither private value is printed in a terminal or deployment log. Existing Production Edge-secret configuration remains supported and must not be rotated incidentally.
 
-```bash
-npx --yes web-push generate-vapid-keys --json
-```
-
-Put the public value in the controlled Web build environment as `WEB_PUSH_VAPID_PUBLIC_KEY`. Put the same public value, private value, and subject in Supabase Edge Function secret custody. Do not place the private key or subject in any `VITE_*` variable or repository file.
+The browser may obtain the **public** VAPID key either from the controlled Web build environment as `WEB_PUSH_VAPID_PUBLIC_KEY` or from the authenticated `notification_web_push_public_config` RPC. Put the same public value, private value, and subject in protected server custody when using Edge secrets. Never place the private key or subject in any `VITE_*` variable, repository file, command transcript, or browser-visible configuration.
 
 ## iPhone/iPad Home Screen Web Push
 

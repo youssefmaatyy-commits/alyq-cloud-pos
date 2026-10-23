@@ -91,6 +91,16 @@ check("configured hero image/CTA and typographic category tiles render without c
   Boolean(document.querySelector('#categories .v2-category-ar[lang="ar"]')) &&
   Boolean(document.querySelector('#categories .v2-category-en[lang="en"]')) &&
   Boolean(document.querySelector('.v2-hero a[href^="#/store/products"]')));
+const categoryArrows = [...document.querySelectorAll("#categories .v2-category-arrow")];
+check("category arrows are fixed thin ArrowUpRight SVGs with no platform-dependent emoji text",
+  categoryArrows.length > 0 && categoryArrows.every((arrow) => {
+    const icon = arrow.querySelector("svg");
+    const paths = icon ? [...icon.querySelectorAll("path")].map((path) => path.getAttribute("d")) : [];
+    return arrow.textContent.trim() === "" && icon?.getAttribute("viewBox") === "0 0 24 24" &&
+      icon.getAttribute("fill") === "none" && icon.getAttribute("stroke") === "currentColor" &&
+      Number(icon.getAttribute("stroke-width")) === 1.55 &&
+      paths.join("|") === "M7 17 17 7|M7 7h10v10";
+  }));
 check("archived categories are not exposed as shop links even when present in the fixture",
   ![...document.querySelectorAll('#categories a[href*="category="]')].some((link) => link.getAttribute("href").includes("cat-office")));
 const arrivalCards = [...document.querySelectorAll('#newArrivals .v2-product-card')];
@@ -225,13 +235,20 @@ readdButton.focus();
 clickEl(readdButton);
 await waitFor(() => cart().some((line) => line.variant_id === UUID.gold17),
   { label: "exact Gold / 17 line restored for following flows" });
+await waitFor(() =>
+  miniCart().parentElement?.getAttribute("data-open") === "true" &&
+  document.activeElement === miniCart().querySelector('.v2-cart-drawer-close'),
+  { label: "reopened mini-cart initial focus settled before trap testing" });
 const drawerFocusables = [...miniCart().querySelectorAll('a[href],button:not([disabled]),input:not([disabled]),[tabindex="0"]')];
 drawerFocusables.at(-1)?.focus();
 drawerFocusables.at(-1)?.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
 check("mini-cart keeps keyboard focus inside its modal dialog",
   document.activeElement === drawerFocusables[0]);
 document.activeElement?.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-await sleep(50);
+await waitFor(() =>
+  document.querySelector('[data-testid="v2-mini-cart-layer"]')?.getAttribute("data-open") !== "true" &&
+  document.activeElement === ringCard().querySelector('.v2-card-add'),
+  { label: "mini-cart Escape close and focus restoration" });
 check("Escape closes the mini-cart and restores focus to the add control",
   document.querySelector('[data-testid="v2-mini-cart-layer"]')?.getAttribute("data-open") !== "true" &&
   document.activeElement === ringCard().querySelector('.v2-card-add'));

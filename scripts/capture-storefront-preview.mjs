@@ -48,6 +48,51 @@ async function captureSection(page, selector, path) {
   await section.screenshot({ path, animations: "disabled" });
 }
 
+async function assertCategorySvgArrows(page, label) {
+  const arrows = await page.locator("#categories .v2-category-arrow").evaluateAll((elements) => elements.map((element) => {
+    const icon = element.querySelector("svg");
+    const iconRect = icon?.getBoundingClientRect();
+    const rect = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    const cardStyle = getComputedStyle(element.closest(".v2-category"));
+    const iconStyle = icon ? getComputedStyle(icon) : null;
+    return {
+      text: element.textContent.trim(),
+      viewBox: icon?.getAttribute("viewBox"),
+      fill: icon?.getAttribute("fill"),
+      stroke: icon?.getAttribute("stroke"),
+      strokeWidth: Number(icon?.getAttribute("stroke-width")),
+      geometry: icon ? [...icon.querySelectorAll("path")].map((path) => path.getAttribute("d")).join("|") : "",
+      width: rect.width,
+      height: rect.height,
+      borderRadius: style.borderRadius,
+      borderWidth: style.borderTopWidth,
+      goldMatchesCard: style.borderTopColor === cardStyle.borderTopColor,
+      iconWidth: iconRect?.width ?? 0,
+      iconHeight: iconRect?.height ?? 0,
+      inheritedColor: iconStyle?.color === style.color && iconStyle.stroke === iconStyle.color,
+    };
+  }));
+  assert.ok(arrows.length > 0, `${label}: category SVG arrows must exist`);
+  for (const arrow of arrows) {
+    assert.equal(arrow.text, "", `${label}: arrow must not contain Unicode/emoji text`);
+    assert.equal(arrow.viewBox, "0 0 24 24", `${label}: fixed SVG viewBox`);
+    assert.equal(arrow.fill, "none", `${label}: outline icon fill`);
+    assert.equal(arrow.stroke, "currentColor", `${label}: icon inherits ALYQ color`);
+    assert.equal(arrow.strokeWidth, 1.55, `${label}: thin icon stroke`);
+    assert.equal(arrow.geometry, "M7 17 17 7|M7 7h10v10", `${label}: ArrowUpRight geometry`);
+    assert.ok(Math.abs(arrow.width - 34) < 0.1 && Math.abs(arrow.height - 34) < 0.1,
+      `${label}: original 34px circle dimensions are unchanged`);
+    assert.equal(arrow.borderRadius, "50%", `${label}: golden circle remains round`);
+    assert.equal(arrow.borderWidth, "1px", `${label}: original circle border width`);
+    assert.ok(arrow.goldMatchesCard, `${label}: circle retains the configured gold accent`);
+    assert.ok(Math.abs(arrow.iconWidth - 17) < 0.1 && Math.abs(arrow.iconHeight - 17) < 0.1,
+      `${label}: deterministic 17px SVG geometry on mobile and desktop`);
+    assert.ok(arrow.inheritedColor, `${label}: SVG stroke and color inherit the ALYQ theme`);
+  }
+  console.log(`✓ ${label}: ${arrows.length} category arrows are thin themed SVGs inside the unchanged golden circles`);
+}
+
 async function waitForGalleryImages(page, label) {
   await page.waitForFunction(() => [...document.querySelectorAll(".v2-model-gallery-card")].every((card) => {
     const image = card.querySelector(".v2-model-gallery-photo img");
@@ -130,6 +175,7 @@ async function captureLocale(browser, language, device, viewport) {
     await page.goto(`${base}/#/store`, { waitUntil: "domcontentloaded" });
     await page.getByTestId("v2-home").waitFor();
     await page.locator("#categories .v2-category").first().waitFor();
+    await assertCategorySvgArrows(page, `${language}/${device}/${width}px`);
     assert.ok(!/the alyq edit/i.test(await page.locator("body").innerText()), `${language} home must omit the removed tagline`);
     await page.screenshot({ path: `${prefix}-home-${device}-${language}-${width}.png`, fullPage: true, animations: "disabled" });
     const arrivals = page.locator("#newArrivals .v2-product-card");
@@ -190,6 +236,9 @@ async function captureLocale(browser, language, device, viewport) {
         await page.screenshot({ path: `${prefix}-product-purchase-${device}-${language}-${width}.png`, animations: "disabled" });
         await page.getByTestId("v2-image-zoom").click();
         await page.getByTestId("v2-lightbox").waitFor({ state: "visible" });
+        assert.ok(await page.locator(".v2-lightbox-navigation button").evaluateAll((buttons) =>
+          buttons.length === 2 && buttons.every((button) => button.textContent.trim() === "" && Boolean(button.querySelector("svg")))),
+        `${language}/${device}: lightbox navigation must use SVG arrows without emoji text`);
         assert.equal(await sticky.isVisible(), false, `${language} sticky bar must yield to the image lightbox`);
         await page.locator(".v2-lightbox-close").click();
         await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));

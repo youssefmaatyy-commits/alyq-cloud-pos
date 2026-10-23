@@ -5,12 +5,13 @@ import { useAuth } from "@/lib/auth";
 import { BranchProvider, useBranch } from "@/lib/branch";
 import { can } from "@/lib/permissions/enforce";
 import { useI18n } from "@/lib/i18n/I18nProvider";
+import { useRealtimeWatch } from "@/lib/supabase/useRealtimeWatch";
 import { CatalogProvider } from "@/modules/products";
 import { InventoryProvider } from "@/modules/inventory";
 import { ApprovalProvider } from "@/modules/approvals";
 import { OnlineNotificationsProvider, OnlineOrdersProvider, useOnlineOrders } from "@/modules/online";
 import { MobileContext } from "./MobileContext";
-import { createPushController, deactivateCurrentPushRegistration, type PushController, type PushRegistrationState } from "./services/mobilePush";
+import { createPushController, deactivateCurrentPushRegistration, EMPTY_PUSH_DIAGNOSTICS, type PushController, type PushDiagnostics, type PushRegistrationState } from "./services/mobilePush";
 import { mobileNotificationUnreadCount } from "./services/notificationCenter";
 import { getMobileRuntime, mobileNetworkState, type MobileNetworkState, type MobileRuntimeContext } from "./services/mobileRuntime";
 import { MobileDashboardPage } from "./pages/MobileDashboardPage";
@@ -37,6 +38,7 @@ function MobileShell() {
   const [runtime, setRuntime] = useState<MobileRuntimeContext | null>(null);
   const [network, setNetwork] = useState<MobileNetworkState>("unknown");
   const [pushState, setPushState] = useState<PushRegistrationState>("unsupported");
+  const [pushDiagnostics, setPushDiagnostics] = useState<PushDiagnostics>(EMPTY_PUSH_DIAGNOSTICS);
   const [notificationUnreadCount, setNotificationUnreadCount] = useState(0);
   const [notificationRevision, setNotificationRevision] = useState(0);
   const push = useRef<PushController | null>(null);
@@ -51,6 +53,9 @@ function MobileShell() {
       // next receipt, reconnect, branch switch, foreground, or manual refresh.
     }
   }, []);
+  useRealtimeWatch(["user_notification_inbox"], refreshNotifications, {
+    enabled: Boolean(auth.user && branch.current && network !== "offline"),
+  });
   useEffect(() => {
     let handle: { remove: () => Promise<void> } | null = null;
     void getMobileRuntime().then(setRuntime);
@@ -68,27 +73,45 @@ function MobileShell() {
     void createPushController(
       auth.user,
       navigate,
-      (state) => { if (active) setPushState(state); },
+      (state) => {
+        if (!active) return;
+        setPushState(state);
+        if (push.current) setPushDiagnostics(push.current.diagnostics);
+      },
       () => { if (active) void refreshNotifications(); },
     )
-      .then((controller) => { if (!active) void controller.dispose(); else { push.current = controller; setPushState(controller.state); } })
+      .then((controller) => {
+        if (!active) void controller.dispose();
+        else {
+          push.current = controller;
+          setPushState(controller.state);
+          setPushDiagnostics(controller.diagnostics);
+        }
+      })
       .catch(() => { if (active) setPushState("error"); });
     return () => { active = false; const current = push.current; push.current = null; if (current) void current.dispose(); };
   }, [auth.user?.id, branch.current?.id, navigate, refreshNotifications]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const enablePush = useCallback(async () => { if (push.current) setPushState(await push.current.enable()); }, []);
+  const enablePush = useCallback(async () => {
+    const controller = push.current;
+    if (controller) {
+      setPushState(await controller.enable());
+      setPushDiagnostics(controller.diagnostics);
+    }
+  }, []);
   const context = useMemo(
     () => ({
       runtime,
       network,
       pushState,
+      pushDiagnostics,
       notificationUnreadCount,
       notificationRevision,
       enablePush,
       refreshNetwork,
       refreshNotifications,
     }),
-    [runtime, network, pushState, notificationUnreadCount, notificationRevision, enablePush, refreshNetwork, refreshNotifications],
+    [runtime, network, pushState, pushDiagnostics, notificationUnreadCount, notificationRevision, enablePush, refreshNetwork, refreshNotifications],
   );
   const logout = async () => {
     if (push.current) await push.current.deactivate();

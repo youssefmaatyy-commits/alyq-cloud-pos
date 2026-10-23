@@ -14,13 +14,16 @@ import { can } from "@/lib/permissions/enforce";
 import { openStorefrontRoute } from "@/lib/storefront/storefrontLink";
 import { pathPermits } from "@/lib/permissions/routes";
 import { useOnlineNotificationState } from "@/modules/online/hooks/OnlineNotificationsProvider";
+import { useRealtimeWatch } from "@/lib/supabase/useRealtimeWatch";
 import { useOptionalApprovals } from "@/modules/approvals";
 import { normalizeText } from "@/modules/products/services/productQuery";
 import { brandDisplayName, useBrand } from "@/lib/branding/brand";
 import {
   createPushController,
   deactivateCurrentPushRegistration,
+  EMPTY_PUSH_DIAGNOSTICS,
   type PushController,
+  type PushDiagnostics,
   type PushRegistrationState,
 } from "@/modules/mobile/services/mobilePush";
 import { mobileNotificationUnreadCount } from "@/modules/mobile/services/notificationCenter";
@@ -345,6 +348,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // ── Shared Mobile/Web Notification Center & Push controller ───────────────
   const [runtime, setRuntime] = useState<MobileRuntimeContext | null>(null);
   const [pushState, setPushState] = useState<PushRegistrationState>("unsupported");
+  const [pushDiagnostics, setPushDiagnostics] = useState<PushDiagnostics>(EMPTY_PUSH_DIAGNOSTICS);
   const [notificationUnreadCount, setNotificationUnreadCount] = useState(0);
   const [notificationRevision, setNotificationRevision] = useState(0);
   const pushControllerRef = useRef<PushController | null>(null);
@@ -361,6 +365,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       // Non-fatal in demo/offline mode; retried on reconnect or branch change.
     }
   }, []);
+  useRealtimeWatch(["user_notification_inbox"], refreshNotifications, {
+    enabled: Boolean(sessionUser && branch.current && pos.connectivityState !== "offline"),
+  });
 
   useEffect(() => {
     if (!sessionUser || !branch.current || pos.connectivityState === "offline") return;
@@ -391,7 +398,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       sessionUser,
       navigateFromPush,
       (state) => {
-        if (active) setPushState(state);
+        if (!active) return;
+        setPushState(state);
+        if (pushControllerRef.current) setPushDiagnostics(pushControllerRef.current.diagnostics);
       },
       () => {
         if (active) void refreshNotifications();
@@ -402,6 +411,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         else {
           pushControllerRef.current = controller;
           setPushState(controller.state);
+          setPushDiagnostics(controller.diagnostics);
         }
       })
       .catch(() => {
@@ -416,14 +426,20 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, [sessionUser?.id, branch.current?.id, navigate, refreshNotifications]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const enablePush = useCallback(async () => {
-    if (pushControllerRef.current) {
-      setPushState(await pushControllerRef.current.enable());
+    const controller = pushControllerRef.current;
+    if (controller) {
+      setPushState(await controller.enable());
+      setPushDiagnostics(controller.diagnostics);
     }
   }, []);
 
   const deactivatePush = useCallback(async () => {
-    if (pushControllerRef.current) await pushControllerRef.current.deactivate();
-    else await deactivateCurrentPushRegistration();
+    const controller = pushControllerRef.current;
+    if (controller) {
+      await controller.deactivate();
+      setPushState(controller.state);
+      setPushDiagnostics(controller.diagnostics);
+    } else await deactivateCurrentPushRegistration();
   }, []);
 
   const handleSignOut = async () => {
@@ -440,6 +456,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     () => ({
       runtime,
       pushState,
+      pushDiagnostics,
       notificationUnreadCount,
       notificationRevision,
       enablePush,
@@ -449,6 +466,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     [
       runtime,
       pushState,
+      pushDiagnostics,
       notificationUnreadCount,
       notificationRevision,
       enablePush,
