@@ -92,14 +92,22 @@ try {
   if (-not $configJson.installationId) { throw 'The 6.0.0 configuration has no installation identity.' }
   $baselineInstallationId = $configJson.installationId
   if (-not $configJson.hardware) { throw 'The 6.0.0 userData configuration has no hardware settings object.' }
-  if ($configJson.hardware.paperWidthMm -ne 58) {
-    # Seed one harmless, valid test preference in this fresh runner profile.
-    # The 6.1.0 packaged API must read it after the actual installer upgrade.
-    $configJson.hardware.paperWidthMm = 58
-    $configJson | ConvertTo-Json -Depth 20 | Set-Content -Path $config.FullName -Encoding utf8NoBOM
+  # This is a clean, disposable runner profile. Seed a complete synthetic
+  # printer/drawer configuration so every field — not only paper width — must
+  # survive unchanged. No physical printer or Production register is contacted.
+  $configJson.hardware = [ordered]@{
+    printerName = 'ALYQ-Upgrade-Test-Printer'
+    paperWidthMm = 58
+    copies = 2
+    silentPrint = $false
+    autoPrintAfterSale = $true
+    drawerMode = 'printer-driver'
+    autoOpenCashDrawer = $true
   }
+  $configJson | ConvertTo-Json -Depth 20 | Set-Content -Path $config.FullName -Encoding utf8NoBOM
+  $storageSentinel = [guid]::NewGuid().ToString()
   $oldProcess = Start-Process -FilePath $oldExe.FullName -ArgumentList @('--disable-gpu','--remote-debugging-port=9224','--remote-debugging-address=127.0.0.1','--remote-allow-origins=*') -PassThru -WindowStyle Hidden
-  Invoke-InstalledSmoke -NodeArguments @('scripts/verify-windows-installed-app.mjs','--port=9224','--version=6.0.0','--allow-missing-desktop-api') -Label 'Restarted 6.0.0 login after seeding isolated userData'
+  Invoke-InstalledSmoke -NodeArguments @('scripts/verify-windows-installed-app.mjs','--port=9224','--version=6.0.0','--allow-missing-desktop-api',"--seed-storage-sentinel=$storageSentinel") -Label 'Restarted 6.0.0 login after seeding isolated userData'
   if (-not $oldProcess.HasExited) {
     $null = & taskkill.exe /PID $oldProcess.Id /T /F 2>&1
     if ($LASTEXITCODE -ne 0 -and -not $oldProcess.HasExited) { throw 'Could not close the restarted isolated 6.0.0 app before upgrading.' }
@@ -107,6 +115,8 @@ try {
   $configJson = Get-Content $config.FullName -Raw | ConvertFrom-Json
   if ($configJson.installationId -ne $baselineInstallationId) { throw 'The 6.0.0 restart changed its installation identity.' }
   if ($configJson.hardware.paperWidthMm -ne 58) { throw 'The isolated 58 mm setting did not persist when the 6.0.0 app restarted.' }
+  $expectedConfig = Join-Path $env:RUNNER_TEMP 'alyq-windows-6.0.0-expected-config.json'
+  Copy-Item -LiteralPath $config.FullName -Destination $expectedConfig -Force
   $originalConfigHash = (Get-FileHash $config.FullName -Algorithm SHA256).Hash
   $marker = Join-Path $userData 'arena-upgrade-preservation-check.txt'
   $markerValue = [guid]::NewGuid().ToString()
@@ -122,7 +132,7 @@ try {
   $stage = 'smoke-test the upgraded app and verify user settings/data preservation'
   Write-Host "UPGRADE_STAGE: $stage"
   $newProcess = Start-Process -FilePath $newExe.FullName -ArgumentList @('--disable-gpu','--remote-debugging-port=9223','--remote-debugging-address=127.0.0.1','--remote-allow-origins=*') -PassThru -WindowStyle Hidden
-  Invoke-InstalledSmoke -NodeArguments @('scripts/verify-windows-installed-app.mjs','--port=9223','--version=6.1.0','--expect-paper-width=58') -Label 'Installed 6.1.0 packaged-login/userData check'
+  Invoke-InstalledSmoke -NodeArguments @('scripts/verify-windows-installed-app.mjs','--port=9223','--version=6.1.0','--expect-paper-width=58',"--expect-config=$expectedConfig","--expect-storage-sentinel=$storageSentinel") -Label 'Installed 6.1.0 packaged-login/userData check'
   if (-not $newProcess.HasExited) {
     $null = & taskkill.exe /PID $newProcess.Id /T /F 2>&1
     if ($LASTEXITCODE -ne 0 -and -not $newProcess.HasExited) { throw 'Could not close the isolated candidate app after verification.' }
@@ -130,8 +140,8 @@ try {
   if (-not (Test-Path $marker) -or (Get-Content $marker -Raw) -ne $markerValue) { throw 'The 6.0.0 userData sentinel was not preserved by the candidate upgrade.' }
   if (-not (Test-Path $config.FullName)) { throw 'The 6.0.0 desktop configuration was removed by the candidate upgrade.' }
   if ((Get-FileHash $config.FullName -Algorithm SHA256).Hash -ne $originalConfigHash) { throw 'The desktop configuration changed during installer upgrade.' }
-  Write-Host 'SAFE UPGRADE PASS: checksummed 6.0.0 install -> login/config smoke -> non-default 58 mm setting + userData sentinel -> 6.1.0 upgrade -> login/config smoke; setting and config hash plus sentinel survived unchanged.'
-  Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "### Windows installed-app upgrade: **PASS**`nChecksummed 6.0.0 installer upgraded in an isolated runner profile. The packaged login, installation identity, custom 58 mm receipt setting, unchanged config hash, and userData sentinel were verified. No customer profile, Production data, or Production order was used."
+  Write-Host 'SAFE UPGRADE PASS: checksummed 6.0.0 install -> login/config/storage smoke -> complete synthetic hardware config + localStorage/IndexedDB/userData sentinels -> 6.1.0 upgrade -> login/config/storage smoke; installation identity, all hardware fields, config hash, and browser/userData sentinels survived unchanged.'
+  Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "### Windows installed-app upgrade: **PASS**`nChecksummed 6.0.0 installer upgraded in an isolated GitHub-hosted Windows runner. The packaged login, installation identity, complete synthetic printer/drawer configuration, unchanged config hash, localStorage sentinel, IndexedDB sentinel, and userData sentinel were verified. Barcode and offline-sync contracts were checked separately by their focused test suites. No customer profile, physical printer, Production write, or Production order was used."
 } catch {
   $detail = ($_.Exception.Message -replace '[\r\n]+', ' ').Trim()
   Write-Host "::error title=Windows upgrade verification failed::$stage — $detail"

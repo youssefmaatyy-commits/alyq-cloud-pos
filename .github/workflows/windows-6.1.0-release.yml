@@ -1,0 +1,343 @@
+name: Windows 6.1.0 Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: "After every build/upgrade/checksum gate passes, publish the new Windows-only v6.1.0 Release"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-6-1-0-release
+  cancel-in-progress: false
+
+jobs:
+  build_and_verify:
+    name: Build fresh Windows 6.1.0 NSIS and verify the 6.0.0 upgrade
+    runs-on: windows-latest
+    timeout-minutes: 60
+    outputs:
+      installer_sha256: ${{ steps.checksum.outputs.sha256 }}
+    steps:
+      - name: Checkout the selected source commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Verify source, release identity, and persistence policy
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:RUNNER_ENVIRONMENT -ne 'github-hosted') {
+            throw 'The release and upgrade acceptance test require an isolated GitHub-hosted Windows runner.'
+          }
+          $source = (git rev-parse HEAD).Trim()
+          if ($source -ne $env:GITHUB_SHA) { throw "Checkout SHA $source does not match the dispatched SHA $env:GITHUB_SHA" }
+          git merge-base --is-ancestor 0193abeb88a256c4fe73ce0084a0a35f852c8234 $source
+          if ($LASTEXITCODE -ne 0) { throw 'The selected source is not descended from the approved 6.1.0 main baseline.' }
+          if ((git status --porcelain)) { throw 'The release source worktree is not clean.' }
+
+          $pkg = Get-Content package.json -Raw | ConvertFrom-Json
+          $lock = Get-Content package-lock.json -Raw | ConvertFrom-Json
+          $lockVersion = $lock.packages.PSObject.Properties[''].Value.version
+          if ($pkg.version -ne '6.1.0' -or $lockVersion -ne '6.1.0') { throw 'Package and lockfile must both be version 6.1.0.' }
+          if ($pkg.build.appId -ne 'eg.alyq.pos') { throw 'Application ID changed unexpectedly.' }
+          if ($pkg.build.productName -ne 'ALYQ POS') { throw 'Desktop product name changed unexpectedly.' }
+          if ($pkg.build.publish -ne $null -or $pkg.build.asar -ne $true) { throw 'Desktop publish/asar policy changed unexpectedly.' }
+          if ($pkg.build.nsis.deleteAppDataOnUninstall -ne $false) { throw 'NSIS user-data preservation policy changed unexpectedly.' }
+          if ($pkg.build.win.artifactName -ne 'ALYQ-POS-Setup-${version}-${arch}.${ext}') { throw 'Windows artifact naming changed unexpectedly.' }
+
+          $main = Get-Content desktop/main.mjs -Raw
+          foreach ($required in @(
+            'CONFIG_FILE = "desktop-config.v1.json"',
+            'app.setAppUserModelId("eg.alyq.pos")',
+            'contextIsolation: true',
+            'nodeIntegration: false',
+            'sandbox: true',
+            'webSecurity: true',
+            'allowRunningInsecureContent: false'
+          )) {
+            if (-not $main.Contains($required)) { throw "Desktop security/persistence invariant is missing: $required" }
+          }
+          foreach ($forbidden in @('ignoreCertificateErrors', 'NODE_TLS_REJECT_UNAUTHORIZED', 'rejectUnauthorized: false')) {
+            if ($main.Contains($forbidden)) { throw "Forbidden TLS/certificate bypass found: $forbidden" }
+          }
+          if (Test-Path release) { throw 'A pre-existing release directory is not allowed; preview artifacts must never be reused.' }
+          Write-Host "Verified clean source $source, version 6.1.0, stable Application ID, userData persistence, and desktop TLS/security policy."
+
+      - name: Run read-only production source preflight (no network or migrations)
+        run: npm run production:preflight
+
+      - name: Typecheck and test desktop, barcode, offline sync, and manual update contracts
+        shell: bash
+        run: |
+          npm run typecheck
+          npm test -- releaseCheck desktop scanner offline-indexeddb
+          npm run test:e2e -- posux
+
+      - name: Build a fresh production-connected Windows x64 NSIS installer
+        shell: pwsh
+        env:
+          ALYQ_BUILD_SHA: ${{ github.sha }}
+          VITE_APP_VERSION: 6.1.0
+          VITE_BUILD_SHA: ${{ github.sha }}
+          VITE_CURRENCY: EGP
+          VITE_DEMO_SEED: "off"
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Read only the browser-safe client configuration already published by
+          # the official site. This performs no Vercel deployment and no Supabase
+          # write. Normal HTTPS certificate validation remains fully enabled.
+          $response = Invoke-WebRequest 'https://alyq-store.vercel.app/' -TimeoutSec 45
+          if ($response.StatusCode -ne 200) { throw "Official site returned HTTP $($response.StatusCode)." }
+          $urls = @([regex]::Matches($response.Content, 'https://[a-z0-9]+\.supabase\.co') | ForEach-Object { $_.Value } | Sort-Object -Unique)
+          $keys = @([regex]::Matches($response.Content, 'eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}') | ForEach-Object { $_.Value } | Sort-Object -Unique)
+          if ($urls.Count -ne 1 -or $keys.Count -ne 1) { throw 'Could not uniquely resolve the official public Supabase client configuration.' }
+          $expectedBackend = 'https://zeaacjmmvyuwzmkgxhqf.supabase.co'
+          if ($urls[0] -ne $expectedBackend) { throw "Refusing unexpected backend $($urls[0]); Production identity must remain unchanged." }
+          Write-Host "Building against the existing public Production client host: $expectedBackend"
+          try {
+            $env:VITE_SUPABASE_URL = $urls[0]
+            $env:VITE_SUPABASE_ANON_KEY = $keys[0]
+            npm run desktop:package:win
+            if ($LASTEXITCODE -ne 0) { throw "electron-builder returned exit code $LASTEXITCODE" }
+          } finally {
+            Remove-Item Env:VITE_SUPABASE_URL -ErrorAction SilentlyContinue
+            Remove-Item Env:VITE_SUPABASE_ANON_KEY -ErrorAction SilentlyContinue
+          }
+          $renderer = Get-Content dist/index.html -Raw
+          if (-not $renderer.Contains($expectedBackend)) { throw 'The packaged renderer does not contain the expected Production client host.' }
+          if ($renderer.Contains('bubvtxctwqsfohrkenej.supabase.co')) { throw 'The final Windows renderer contains the Staging backend.' }
+          if (-not $renderer.Contains('6.1.0')) { throw 'The final Windows renderer does not contain version 6.1.0.' }
+          if (Test-Path '.env.production.local') { throw 'Unexpected persistent environment file found after packaging.' }
+          if ((git status --porcelain)) { throw 'Packaging changed tracked source files.' }
+
+      - name: Calculate SHA-256 and verify the installer is explicitly unsigned
+        id: checksum
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installer = 'release/ALYQ-POS-Setup-6.1.0-x64.exe'
+          if (-not (Test-Path $installer)) { throw "Expected fresh installer missing: $installer" }
+          if ((Get-Item $installer).Length -lt 1MB) { throw 'Installer is unexpectedly small.' }
+          $signature = Get-AuthenticodeSignature $installer
+          if ($signature.Status -ne 'NotSigned') { throw "Expected an unsigned installer, got Authenticode status $($signature.Status)." }
+          $hash = (Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          $checksumLine = "$hash  $(Split-Path $installer -Leaf)"
+          $checksumLine | Set-Content "$installer.sha256" -Encoding ascii
+          "sha256=$hash" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8
+          @(
+            '## Windows 6.1.0 final build',
+            "- Source commit: $env:GITHUB_SHA",
+            "- Installer: $(Split-Path $installer -Leaf)",
+            "- SHA-256: $hash",
+            '- Authenticode: NotSigned (manual update only)',
+            '- Old preview artifacts reused: no'
+          ) | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8
+          Write-Host "::notice title=Windows 6.1.0 SHA-256::$hash"
+
+      - name: Install 6.0.0 then upgrade to this exact 6.1.0 installer
+        shell: pwsh
+        run: ./scripts/verify-windows-upgrade.ps1 -StableInstaller 'release/ALYQ-POS-Setup-6.1.0-x64.exe'
+
+      - name: Confirm the tested installer still matches its checksum
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installer = 'release/ALYQ-POS-Setup-6.1.0-x64.exe'
+          $record = (Get-Content "$installer.sha256" -Raw).Trim()
+          if ($record -notmatch '^([0-9a-f]{64})  ALYQ-POS-Setup-6\.1\.0-x64\.exe$') { throw 'Malformed final SHA-256 record.' }
+          $actual = (Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $Matches[1]) { throw 'Installer bytes changed during the upgrade test.' }
+          "- Post-upgrade installer comparison: **PASS** — $actual" | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8
+
+      - name: Upload final Windows EXE and SHA-256 as Actions artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALYQ-POS-6.1.0-Windows-x64
+          path: |
+            release/ALYQ-POS-Setup-6.1.0-x64.exe
+            release/ALYQ-POS-Setup-6.1.0-x64.exe.sha256
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload isolated Windows upgrade diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALYQ-POS-6.1.0-Windows-Upgrade-Diagnostics
+          path: ${{ runner.temp }}/alyq-windows-upgrade.log
+          if-no-files-found: ignore
+          retention-days: 30
+
+  publish_windows_release:
+    name: Verify assets then publish Windows-only v6.1.0
+    needs: build_and_verify
+    if: ${{ inputs.publish_release }}
+    runs-on: windows-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      EXPECTED_SHA256: ${{ needs.build_and_verify.outputs.installer_sha256 }}
+    steps:
+      - name: Download the exact tested Actions artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ALYQ-POS-6.1.0-Windows-x64
+          path: artifact
+
+      - name: Re-verify the downloaded artifact before creating a release
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $files = @(Get-ChildItem artifact -File -Recurse)
+          if ($files.Count -ne 2) { throw "The final artifact must contain exactly the EXE and checksum; found $($files.Count) files." }
+          $installer = 'artifact/ALYQ-POS-Setup-6.1.0-x64.exe'
+          $checksumFile = "$installer.sha256"
+          if (-not (Test-Path $installer) -or -not (Test-Path $checksumFile)) { throw 'Downloaded artifact is incomplete.' }
+          $actual = (Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $env:EXPECTED_SHA256) { throw "Actions artifact hash $actual does not match the tested hash $env:EXPECTED_SHA256" }
+          $expectedRecord = "$actual  ALYQ-POS-Setup-6.1.0-x64.exe"
+          if ((Get-Content $checksumFile -Raw).Trim() -ne $expectedRecord) { throw 'Downloaded checksum file does not match the downloaded EXE.' }
+          if ((Get-AuthenticodeSignature $installer).Status -ne 'NotSigned') { throw 'Unexpected signature state; release notes would be inaccurate.' }
+          Write-Host "Tested Actions artifact verified after download: $actual"
+
+      - name: Create a new draft v6.1.0 release with only Windows assets
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $repo = 'youssefmaatyy-commits/alyq-cloud-pos'
+          gh api "repos/$repo/releases/tags/v6.1.0" 2>$null | Out-Null
+          if ($LASTEXITCODE -eq 0) { throw 'v6.1.0 already exists; refusing to replace or modify any existing release.' }
+          gh api "repos/$repo/git/ref/tags/v6.1.0" 2>$null | Out-Null
+          if ($LASTEXITCODE -eq 0) { throw 'Tag v6.1.0 already exists; refusing to repoint or reuse it.' }
+
+          $stableBase = "https://github.com/$repo/releases/download/v6.1.0"
+          $notes = Join-Path $env:RUNNER_TEMP 'alyq-v6.1.0-release-notes.md'
+          @(
+            '## ALYQ POS 6.1.0 — Windows only',
+            '',
+            'Windows x64 NSIS installer. هذا الإصدار لبرنامج Windows فقط؛ لا يتضمن Android أو iOS.',
+            '',
+            "- Source commit: $env:GITHUB_SHA",
+            "- SHA-256: $env:EXPECTED_SHA256",
+            "- Stable EXE download: $stableBase/ALYQ-POS-Setup-6.1.0-x64.exe",
+            "- Checksum: $stableBase/ALYQ-POS-Setup-6.1.0-x64.exe.sha256",
+            '',
+            '### نتيجة الترقية',
+            'نجح تثبيت 6.1.0 فوق 6.0.0 على Windows Runner معزول. تم التحقق من شاشة الدخول، هوية التثبيت، كامل إعدادات الطابعة/الدرج الاختبارية، وبقاء ملف الإعدادات وlocalStorage وIndexedDB وuserData دون تغيير. لم تُستخدم بيانات عميل أو عمليات إنتاجية.',
+            '',
+            '### التوقيع والتحديث اليدوي',
+            'المثبّت **غير موقّع رقميًا** (Authenticode: NotSigned)، لذلك قد يعرض Windows SmartScreen تحذير Unknown publisher. التحديث **يدوي فقط**؛ لا يوجد تنزيل أو تثبيت تلقائي. للتحديث، شغّل المثبّت فوق 6.0.0 دون إلغاء التثبيت أو حذف بيانات التطبيق، واحتفظ بمثبّت 6.0.0 للرجوع عند الحاجة.',
+            '',
+            'تحقق من تطابق SHA-256 مع ملف checksum قبل التثبيت. لا يثبت اختبار الترقية عمل طابعة أو ماسح ضوئي فعلي؛ فحوص الباركود والمزامنة دون اتصال هي اختبارات برمجية منفصلة.'
+          ) | Set-Content -LiteralPath $notes -Encoding utf8
+
+          gh release create v6.1.0 `
+            artifact/ALYQ-POS-Setup-6.1.0-x64.exe `
+            artifact/ALYQ-POS-Setup-6.1.0-x64.exe.sha256 `
+            --repo $repo `
+            --title 'ALYQ POS v6.1.0 — Windows x64' `
+            --notes-file $notes `
+            --target $env:GITHUB_SHA `
+            --draft
+          if ($LASTEXITCODE -ne 0) { throw 'Draft release creation or asset upload failed; nothing was published.' }
+
+      - name: Verify both uploaded draft assets before publication
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $repo = 'youssefmaatyy-commits/alyq-cloud-pos'
+          $releaseText = gh api "repos/$repo/releases/tags/v6.1.0"
+          if ($LASTEXITCODE -ne 0) { throw 'Could not read the draft release.' }
+          $release = $releaseText | ConvertFrom-Json
+          if (-not $release.draft -or $release.prerelease) { throw 'v6.1.0 must still be a non-prerelease draft at this gate.' }
+          if ($release.target_commitish -ne $env:GITHUB_SHA) { throw "Draft target $($release.target_commitish) does not match tested commit $env:GITHUB_SHA" }
+          $assets = @($release.assets)
+          $expectedNames = @('ALYQ-POS-Setup-6.1.0-x64.exe', 'ALYQ-POS-Setup-6.1.0-x64.exe.sha256')
+          if ($assets.Count -ne 2 -or @($assets | Where-Object { $_.name -notin $expectedNames }).Count -ne 0) { throw 'Draft release does not contain exactly the two Windows assets.' }
+
+          $verifyDir = Join-Path $env:RUNNER_TEMP 'alyq-draft-asset-verification'
+          New-Item -ItemType Directory -Path $verifyDir -Force | Out-Null
+          foreach ($name in $expectedNames) {
+            $asset = $assets | Where-Object { $_.name -eq $name } | Select-Object -First 1
+            Invoke-WebRequest $asset.url -OutFile (Join-Path $verifyDir $name) -Headers @{
+              Authorization = "Bearer $env:GH_TOKEN"
+              Accept = 'application/octet-stream'
+              'X-GitHub-Api-Version' = '2022-11-28'
+            }
+          }
+          $actual = (Get-FileHash (Join-Path $verifyDir $expectedNames[0]) -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $env:EXPECTED_SHA256) { throw 'Uploaded draft EXE does not match the tested SHA-256; refusing publication.' }
+          $record = (Get-Content (Join-Path $verifyDir $expectedNames[1]) -Raw).Trim()
+          if ($record -ne "$actual  $($expectedNames[0])") { throw 'Uploaded draft checksum is invalid; refusing publication.' }
+          Write-Host 'Draft EXE and checksum were downloaded from GitHub and verified. Publication is now allowed.'
+
+      - name: Publish v6.1.0 and verify its permanent public download links
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $repo = 'youssefmaatyy-commits/alyq-cloud-pos'
+          gh release edit v6.1.0 --repo $repo --draft=false --latest
+          if ($LASTEXITCODE -ne 0) { throw 'Could not publish the verified draft release.' }
+
+          $tagText = gh api "repos/$repo/git/ref/tags/v6.1.0"
+          if ($LASTEXITCODE -ne 0) { throw 'Published tag v6.1.0 could not be read.' }
+          $tag = $tagText | ConvertFrom-Json
+          if ($tag.object.sha -ne $env:GITHUB_SHA) { throw "Published tag points to $($tag.object.sha), not tested commit $env:GITHUB_SHA" }
+          $releaseText = gh api "repos/$repo/releases/tags/v6.1.0"
+          if ($LASTEXITCODE -ne 0) { throw 'Published release could not be read.' }
+          $release = $releaseText | ConvertFrom-Json
+          if ($release.draft -or $release.prerelease -or @($release.assets).Count -ne 2) { throw 'Published release state or Windows-only asset count is invalid.' }
+
+          $base = "https://github.com/$repo/releases/download/v6.1.0"
+          $installerName = 'ALYQ-POS-Setup-6.1.0-x64.exe'
+          $checksumName = "$installerName.sha256"
+          $verifyDir = Join-Path $env:RUNNER_TEMP 'alyq-public-release-verification'
+          New-Item -ItemType Directory -Path $verifyDir -Force | Out-Null
+          foreach ($name in @($installerName, $checksumName)) {
+            $destination = Join-Path $verifyDir $name
+            $downloaded = $false
+            for ($attempt = 1; $attempt -le 5 -and -not $downloaded; $attempt++) {
+              try {
+                Invoke-WebRequest "$base/$name" -OutFile $destination -TimeoutSec 120
+                $downloaded = $true
+              } catch {
+                if ($attempt -eq 5) { throw }
+                Start-Sleep -Seconds 5
+              }
+            }
+          }
+          $actual = (Get-FileHash (Join-Path $verifyDir $installerName) -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $env:EXPECTED_SHA256) { throw 'Public Release EXE does not match the tested SHA-256.' }
+          $record = (Get-Content (Join-Path $verifyDir $checksumName) -Raw).Trim()
+          if ($record -ne "$actual  $installerName") { throw 'Public Release checksum does not match the public EXE.' }
+          if ((Get-AuthenticodeSignature (Join-Path $verifyDir $installerName)).Status -ne 'NotSigned') { throw 'Public installer signature state changed unexpectedly.' }
+
+          @(
+            '## Windows v6.1.0 Release published and independently downloaded',
+            "- Release: https://github.com/$repo/releases/tag/v6.1.0",
+            "- Permanent EXE: $base/$installerName",
+            "- Permanent checksum: $base/$checksumName",
+            "- Verified public SHA-256: $actual",
+            "- Source/tag commit: $env:GITHUB_SHA",
+            '- Windows 6.0.0 to 6.1.0 isolated upgrade: PASS',
+            '- Authenticode: NotSigned; updates are manual'
+          ) | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8
+          Write-Host "::notice title=Windows 6.1.0 final download::$base/$installerName"
