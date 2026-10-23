@@ -235,13 +235,20 @@ readdButton.focus();
 clickEl(readdButton);
 await waitFor(() => cart().some((line) => line.variant_id === UUID.gold17),
   { label: "exact Gold / 17 line restored for following flows" });
+await waitFor(() =>
+  miniCart().parentElement?.getAttribute("data-open") === "true" &&
+  document.activeElement === miniCart().querySelector('.v2-cart-drawer-close'),
+  { label: "reopened mini-cart initial focus settled before trap testing" });
 const drawerFocusables = [...miniCart().querySelectorAll('a[href],button:not([disabled]),input:not([disabled]),[tabindex="0"]')];
 drawerFocusables.at(-1)?.focus();
 drawerFocusables.at(-1)?.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
 check("mini-cart keeps keyboard focus inside its modal dialog",
   document.activeElement === drawerFocusables[0]);
 document.activeElement?.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-await sleep(50);
+await waitFor(() =>
+  document.querySelector('[data-testid="v2-mini-cart-layer"]')?.getAttribute("data-open") !== "true" &&
+  document.activeElement === ringCard().querySelector('.v2-card-add'),
+  { label: "mini-cart Escape close and focus restoration" });
 check("Escape closes the mini-cart and restores focus to the add control",
   document.querySelector('[data-testid="v2-mini-cart-layer"]')?.getAttribute("data-open") !== "true" &&
   document.activeElement === ringCard().querySelector('.v2-card-add'));
