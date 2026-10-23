@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useI18n } from "@/lib/i18n/I18nProvider";
 import { useStorefront } from "../hooks/StorefrontProvider";
@@ -12,6 +12,7 @@ import { resolvedV2SocialChannels, V2SocialIcons } from "./SocialChannels";
 import { SocialIcon } from "../components/storefront/SocialIcon";
 import { useV2ScrollRestoration } from "./scrollRestoration";
 import { V2StaffEntry } from "./StaffEntryOption";
+import { MiniCartDrawer } from "./MiniCartDrawer";
 import { isStaffEntryQuery, STAFF_ENTRY_ROUTE } from "./staffEntry";
 import { StorefrontV2BootstrapShield, StorefrontV2ErrorShield } from "./BootstrapShield";
 import "./storefront-v2.css";
@@ -28,6 +29,8 @@ export function StorefrontV2Shell({ children }: { children: ReactNode }) {
   useV2ScrollRestoration();
   const appearance = useMemo(() => adaptV2Appearance(settings), [settings]);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [miniCartOpen, setMiniCartOpen] = useState(false);
+  const closeMiniCart = useCallback(() => setMiniCartOpen(false), []);
   const [searchOpen, setSearchOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [messageIndex, setMessageIndex] = useState(0);
@@ -116,6 +119,8 @@ export function StorefrontV2Shell({ children }: { children: ReactNode }) {
     if (addPulse === 0) return;
     setBagPulse(true);
     setAddedToastVisible(true);
+    setMenuOpen(false);
+    setMiniCartOpen(true);
     const pulseTimer = window.setTimeout(() => setBagPulse(false), 650);
     const toastTimer = window.setTimeout(() => setAddedToastVisible(false), 2600);
     return () => { window.clearTimeout(pulseTimer); window.clearTimeout(toastTimer); };
@@ -166,6 +171,7 @@ export function StorefrontV2Shell({ children }: { children: ReactNode }) {
   useEffect(() => {
     // Back/forward navigation while the drawer is open must not leave a body lock.
     setMenuOpen(false);
+    setMiniCartOpen(false);
     setSearchOpen(false);
   }, [location.pathname]);
 
@@ -209,6 +215,7 @@ export function StorefrontV2Shell({ children }: { children: ReactNode }) {
 
   return (
     <div className="store-v2" dir={dir} data-testid="store-v2"
+      data-cart-open={miniCartOpen ? "true" : undefined}
       style={headerHeight > 0 ? { ...appearance.variables, "--v2-header-live-height": `${headerHeight}px` } as CSSProperties
         : appearance.variables}>
       <a href="#v2-main" className="v2-skip" onClick={(event) => {
@@ -263,10 +270,12 @@ export function StorefrontV2Shell({ children }: { children: ReactNode }) {
               aria-label={t("store.nav.changeLanguage")}>{lang === "ar" ? "EN" : "عربي"}</button> : null}
             {appearance.showAccount ? <Link to="/store/account" className="v2-icon-button" aria-label={t("store.account.title")}
               title={customer ? customer.name : t("store.account.signIn")}><Icon name="user" /></Link> : null}
-            {appearance.showCart ? <Link to="/store/cart" className="v2-icon-button v2-bag-button"
-              data-pulse={bagPulse || undefined} aria-label={`${t("store.v2.bag")} (${unitCount})`}>
+            {appearance.showCart ? <button type="button" className="v2-icon-button v2-bag-button"
+              data-pulse={bagPulse || undefined} aria-label={`${t("store.v2.bag")} (${unitCount})`}
+              aria-expanded={miniCartOpen} aria-controls="v2-cart-drawer"
+              onClick={() => { setMenuOpen(false); setMiniCartOpen(true); }}>
               <Icon name="bag" /><span className="v2-bag-count" aria-hidden>{unitCount}</span>
-            </Link> : null}
+            </button> : null}
           </div>
         </div>
         <nav className="v2-desktop-nav" aria-label={t("store.nav.menu")}>
@@ -393,6 +402,7 @@ export function StorefrontV2Shell({ children }: { children: ReactNode }) {
             aria-label={t("store.nav.changeLanguage")}>{lang === "ar" ? "English" : "العربية"}</button> : null}
         </div>
       </footer>
+      <MiniCartDrawer open={miniCartOpen} onClose={closeMiniCart} />
       {/* One shared confirmation for every add-to-cart action on the site.
           `key={addPulse}` forces a fresh text node on each add so a screen
           reader announces repeat identical messages too, not only the first. */}

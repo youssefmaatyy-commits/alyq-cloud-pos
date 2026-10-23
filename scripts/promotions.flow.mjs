@@ -336,7 +336,7 @@ async function main() {
   // The success handler routes to the return detail once the catalog refresh
   // settles — after our own navigation, so wait for its landing first, or it
   // overwrites the next screen mid-step.
-  await waitFor(() => ux.dom.window.location.hash.startsWith("#/returns/ret-"), {
+  await waitFor(() => ux.dom.window.location.hash.startsWith("#/dashboard/returns/ret-"), {
     label: "the return detail",
   });
 

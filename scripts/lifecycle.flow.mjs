@@ -279,11 +279,11 @@ async function main() {
   setField("#stock_quantity", "5");
   setField("#low_stock_level", "2");
   selectOption("#category_id", (o) => o.value !== "");
-  // The form routes to /products once the save resolves; the SKU is visible on
+  // The form routes to the canonical /dashboard/products path once the save resolves; the SKU is visible on
   // the form page itself (barcode preview), so a text wait alone can race the
   // navigation and have the pending route clobber the next one.
   clickExact("Save");
-  await waitFor(() => dom.window.location.hash === "#/products", {
+  await waitFor(() => dom.window.location.hash === "#/dashboard/products", {
     label: "the save to route back to the catalogue",
   });
   await waitFor(() => bodyText().includes(unusedSku), { label: "the new product to appear" });
@@ -324,7 +324,7 @@ async function main() {
   setField("#low_stock_level", "2");
   selectOption("#category_id", (o) => o.value !== "");
   clickExact("Save");
-  await waitFor(() => dom.window.location.hash === "#/products", {
+  await waitFor(() => dom.window.location.hash === "#/dashboard/products", {
     label: "the save to route back to the catalogue",
   });
   await waitFor(() => bodyText().includes(ringSku), { label: "the ring to appear" });

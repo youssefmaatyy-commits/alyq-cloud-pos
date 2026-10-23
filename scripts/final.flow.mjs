@@ -137,7 +137,7 @@ setField("#low_stock_level", "1");
   if (option) setReactValue(categorySelect, option.value);
 }
 clickExact("Save");
-await waitFor(() => ux.dom.window.location.hash === "#/products", { label: "the save to land" });
+await waitFor(() => ux.dom.window.location.hash === "#/dashboard/products", { label: "the save to land" });
 const productId = catalog().products.find((p) => p.sku === RING_SKU)?.id;
 assert.ok(productId, "the ring is in the catalogue");
 

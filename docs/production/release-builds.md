@@ -2,7 +2,7 @@
 
 ## Version identity
 
-Current application version is `6.0.0`; Desktop 5.0.0 remains a historical milestone, not a version to rewrite. Every release records semantic app version, platform build number, full Git SHA and schema maximum. Database migrations remain monotonic and independent of app semantic version.
+Current application version is `6.1.0`; Desktop 5.0.0 remains a historical milestone, not a version to rewrite. Every release records semantic app version, platform build number, full Git SHA and schema maximum. Database migrations remain monotonic and independent of app semantic version.
 
 - Web: release version + immutable artifact digest + Git SHA.
 - Desktop: package version + `ALYQ_BUILD_SHA`; Windows x64 NSIS target.

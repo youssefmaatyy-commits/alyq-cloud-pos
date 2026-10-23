@@ -4,7 +4,8 @@
 import type { CSSProperties } from "react";
 import type { StorefrontV2Settings, WebsiteSettings } from "../types";
 import {
-  configuredHref, safeImageField, safeV2Color, sanitizeStorefrontV2Settings, STORE_PALETTE,
+  configuredHref, DEFAULT_STORE_NAME_AR, DEFAULT_STORE_NAME_EN, safeImageField, safeV2Color,
+  sanitizeStorefrontV2Settings, STORE_PALETTE,
 } from "../services/settingsDefaults";
 import { buttonRadiusOf, fontStackOf, shade } from "../services/theme";
 import { canonicalConfiguredStorePath } from "./storeRoutes";
@@ -42,6 +43,23 @@ const DISPLAY_STACKS = {
 const ARABIC_BODY_STACK = '"Noto Sans Arabic", "Cairo", Tahoma, Arial, sans-serif';
 const ARABIC_DISPLAY_STACK = '"Noto Naskh Arabic", "Amiri", Tahoma, Arial, serif';
 
+const ALYQ_TRANSPARENT_HEADER_LOGO = "/brand/alyq-logo-transparent.png";
+
+function normalizedArabicBrandName(value: string): string {
+  return value.normalize("NFD").replace(/\p{M}/gu, "").replace(/\u0640/g, "").replace(/\s+/g, "").toLowerCase();
+}
+
+function isDefaultBrand(settings: WebsiteSettings): boolean {
+  const english = (settings.brand.display_name_en || settings.contact.store_name_en).trim().toLowerCase();
+  const arabic = normalizedArabicBrandName(settings.brand.display_name_ar || settings.contact.store_name_ar);
+  return english === DEFAULT_STORE_NAME_EN.toLowerCase()
+    && arabic === normalizedArabicBrandName(DEFAULT_STORE_NAME_AR);
+}
+
+function isBundledOpaqueMark(safe: string | null): boolean {
+  return Boolean(safe && /^\/alyq-logo\.(?:png|jpe?g)(?:[?#].*)?$/i.test(safe));
+}
+
 export function adaptV2Appearance(settings: WebsiteSettings, overrides: V2AppearanceOverrides = {}) {
   // Defend at the renderer too: old SQL validates shared theme fields, but does
   // not validate V2-only JSON. Invalid stored URLs, enums or CSS never render.
@@ -64,25 +82,25 @@ export function adaptV2Appearance(settings: WebsiteSettings, overrides: V2Appear
   const bodyFont = v2.body_font === "inherit" ? fontStackOf(theme.font_stack) : fontStackOf(v2.body_font);
   const displayFont = v2.display_font === "inherit" ? DISPLAY_STACKS.editorial : DISPLAY_STACKS[v2.display_font];
   const buttonStyle = v2.button_style === "inherit" ? theme.button_style : v2.button_style;
-  // Issue C (3rd follow-up round): manual preview confirmed the configured
-  // logo IMAGE renders (loading/path logic is correct) but shows as "a very
-  // small square in the center of the header" — traced to this unconfigured
-  // default. 38px is tiny for a logo that fills its box by height alone (a
-  // square/icon-shaped mark at 38px reads as a tiny badge, not a logo). Both
-  // defaults are chosen to stay *inside* the header's own existing height
-  // floor (see .v2-header-inner in storefront-v2.css: desktop needs
-  // `logo-height + 18 <= 74`, mobile needs `mobile-logo-height + 18 <= 64`),
-  // so a shop that never touches the admin's logo-size sliders gets a
-  // clearly visible logo with ZERO change to the header's own height —
-  // never "enlarging the header," just filling the room already reserved
-  // for it. The admin's own sliders (up to 96px / 64px) still work exactly
-  // as before for a shop that wants something different.
-  const height = v2.logo_height ?? 52;
-  const mobileHeight = v2.mobile_logo_height ?? 40;
-  const headerLogoUrl = safeImageField(luminance(header) < 0.179
+  // Replace only the default brand's bundled opaque square mark; merchant
+  // uploads remain authoritative and retain their previous default dimensions.
+  const defaultBrand = isDefaultBrand(settings);
+  const configuredHeaderLogo = luminance(header) < 0.179
     ? settings.brand.logo_dark_url ?? settings.images.logo_url
-    : settings.images.logo_url);
-  const mobileLogoUrl = v2.mobile_logo_url ?? headerLogoUrl;
+    : settings.images.logo_url;
+  const safeHeaderLogo = safeImageField(configuredHeaderLogo);
+  const usesTransparentMaster = defaultBrand && (!safeHeaderLogo || isBundledOpaqueMark(safeHeaderLogo));
+  const headerLogoUrl = usesTransparentMaster ? ALYQ_TRANSPARENT_HEADER_LOGO : safeHeaderLogo;
+  const safeMobileLogo = safeImageField(v2.mobile_logo_url);
+  const mobileLogoUrl = v2.mobile_logo_url
+    ? (defaultBrand && isBundledOpaqueMark(safeMobileLogo)
+      ? ALYQ_TRANSPARENT_HEADER_LOGO
+      : safeMobileLogo) ?? headerLogoUrl
+    : headerLogoUrl;
+  // Keep the larger 72px/56px defaults scoped to this official, transparent
+  // mark. Admin slider values and all custom-store defaults are unchanged.
+  const height = v2.logo_height ?? (usesTransparentMaster ? 72 : 52);
+  const mobileHeight = v2.mobile_logo_height ?? (usesTransparentMaster ? 56 : 40);
   const variables = {
     "--v2-bg": bg,
     "--v2-surface": surface,

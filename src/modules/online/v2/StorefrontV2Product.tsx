@@ -21,6 +21,7 @@ import { V2VariantChooser } from "./VariantChooser";
 import { hoverZoomHandlers } from "./HoverZoom";
 import { v2Price } from "./viewModel";
 import { variantModel } from "./variantModel";
+import { variantModelLabel } from "../services/variantLabel";
 
 export function StorefrontV2Product() {
   const { t } = useI18n();
@@ -47,7 +48,7 @@ export function StorefrontV2Product() {
 }
 
 function V2Detail({ product, entry }: { product: Product; entry: CatalogProduct }) {
-  const { t, pick, lang } = useI18n();
+  const { t, pick, lang, money } = useI18n();
   const { settings, contentByProduct, products, catalogContext, categories, mode,
     variantsOf, colorGalleryFor, campaigns, promotions, promotionTargets, reviews } = useStorefront();
   const { add, setQuantity, lines, notifyAdded } = useStoreCart();
@@ -60,10 +61,13 @@ function V2Detail({ product, entry }: { product: Product; entry: CatalogProduct 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [quantity, setQuantityDraft] = useState(1);
   const [imageIndex, setImageIndex] = useState(0);
+  const [brokenModelImages, setBrokenModelImages] = useState<Record<string, string>>({});
   const [zoomOpen, setZoomOpen] = useState(false);
   const openZoomButton = useRef<HTMLButtonElement>(null);
   const zoomCloseButton = useRef<HTMLButtonElement>(null);
   const sizeGuide = useRef<HTMLDetailsElement>(null);
+  const buyRowRef = useRef<HTMLDivElement>(null);
+  const [buyAreaVisible, setBuyAreaVisible] = useState(true);
   const [added, setAdded] = useState(false);
   // Guards the button against a rapid double tap adding the line twice while
   // the "Added ✓" confirmation is still showing; cleared with the same timer
@@ -111,6 +115,16 @@ function V2Detail({ product, entry }: { product: Product; entry: CatalogProduct 
   const productReviews = reviews.filter((review) => review.visible && review.product_id === product.id);
 
   useEffect(() => setImageIndex(0), [color, selectedId]);
+
+  useEffect(() => {
+    const target = buyRowRef.current;
+    if (!target || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry) setBuyAreaVisible(entry.isIntersecting && entry.intersectionRatio >= 0.12);
+    }, { threshold: [0, 0.12, 0.5, 1] });
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [product.id]);
 
   useEffect(() => {
     const baseUrl = window.location.href.split("#")[0];
@@ -162,6 +176,17 @@ function V2Detail({ product, entry }: { product: Product; entry: CatalogProduct 
     setAdded(false);
     addLock.current = false;
     if (addedTimer.current !== null) { window.clearTimeout(addedTimer.current); addedTimer.current = null; }
+  };
+  const addModelToBag = (variant: (typeof model.variants)[number]) => {
+    if (addLock.current || model.remaining(variant) <= 0) return;
+    addLock.current = true;
+    const success = add(product, 1, variant);
+    if (!success) { addLock.current = false; return; }
+    setSelectedId(variant.id);
+    setColor(null);
+    setAdded(true);
+    if (addedTimer.current !== null) window.clearTimeout(addedTimer.current);
+    addedTimer.current = window.setTimeout(() => { setAdded(false); addLock.current = false; }, 1600);
   };
   const addToBag = () => {
     if (addLock.current || !orderable || (product.variants_enabled && !selected)) return;
@@ -229,7 +254,7 @@ function V2Detail({ product, entry }: { product: Product; entry: CatalogProduct 
         </div> : null}
       </div>
       <div className="v2-pdp-info">
-        <p className="v2-eyebrow">{content?.brand_ar || content?.brand_en ? pick(content.brand_ar, content.brand_en) : t("store.v2.eyebrow")}</p>
+        {content?.brand_ar || content?.brand_en ? <p className="v2-eyebrow">{pick(content.brand_ar, content.brand_en)}</p> : null}
         <h1>{name}</h1>
         <p className="v2-pdp-sku">{t("store.product.sku")}: {product.sku}</p>
         <V2Price price={price} className="v2-pdp-price" />
@@ -237,6 +262,47 @@ function V2Detail({ product, entry }: { product: Product; entry: CatalogProduct 
           <p className="v2-pdp-description">{pick(product.description_ar, product.description_en)}</p> : null}
         {product.variants_enabled ? <V2VariantChooser model={model} colorKey={color} variantId={selectedId}
           onChoice={chooseVariant} /> : null}
+        {product.variants_enabled && model.hasModels ? <section className="v2-model-gallery" aria-labelledby="v2-model-gallery-title" data-testid="v2-model-gallery">
+          <h2 id="v2-model-gallery-title">{t("store.v2.modelGallery")}</h2>
+          <div className="v2-model-gallery-grid">
+            {model.models.map(({ variant, available }) => {
+              const label = variantModelLabel(variant, lang) || variant.sku;
+              const photo = variant.images?.[0] || variant.image_url || null;
+              const displayedPhoto = photo && brokenModelImages[variant.id] !== photo ? photo : null;
+              const out = available <= 0;
+              const selectedModel = selectedId === variant.id;
+              const modelPrice = v2Price(product, variants, campaigns, promotions, promotionTargets,
+                variant, catalogContext.reservedVariant);
+              return <article key={variant.id} className="v2-model-gallery-card" data-selected={selectedModel}>
+                <button type="button" className="v2-model-gallery-select" aria-pressed={selectedModel}
+                  aria-label={`${t("store.v2.selectModel")}: ${label}${out ? ` — ${t("store.variants.soldOut")}` : ""}`}
+                  disabled={out} onClick={() => chooseVariant(variant, null)}>
+                  {selectedModel ? <span className="v2-model-gallery-selected-mark" aria-hidden="true">✓</span> : null}
+                  <span className="v2-model-gallery-photo">
+                    {displayedPhoto ? <img src={displayedPhoto} alt={label} loading="lazy"
+                      onError={() => setBrokenModelImages((current) => current[variant.id] === displayedPhoto
+                        ? current : { ...current, [variant.id]: displayedPhoto })} />
+                      : <span className="v2-model-gallery-photo-missing" role="img" aria-label={t("store.v2.imageMissing")}>
+                        <span aria-hidden="true">◇</span><small>{t("store.v2.imageMissing")}</small>
+                      </span>}
+                  </span>
+                  <span className="v2-model-gallery-meta">
+                    <span className="v2-model-gallery-name">{label}</span>
+                    <span className="v2-model-gallery-price">{money(modelPrice.price)}</span>
+                    <span className="v2-model-gallery-stock" data-out={out} role="status">
+                      {out ? t("store.variants.soldOut") : t("pos.variants.availableUnits", { count: available })}
+                    </span>
+                  </span>
+                </button>
+                {displayedPhoto ? <button type="button" className="v2-model-gallery-zoom"
+                  aria-label={`${t("store.v2.zoomModel")}: ${label}`}
+                  onClick={() => { chooseVariant(variant, null); setImageIndex(0); setZoomOpen(true); }}>⌕</button> : null}
+                <button type="button" className="v2-model-gallery-add" disabled={out}
+                  onClick={() => addModelToBag(variant)}>{t("store.v2.addModel")}</button>
+              </article>;
+            })}
+          </div>
+        </section> : null}
         {product.variants_enabled && model.hasSizes && hasSizeGuide ? <button type="button" className="v2-size-guide-link"
           onClick={() => { if (sizeGuide.current) { sizeGuide.current.open = true;
             sizeGuide.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -251,7 +317,7 @@ function V2Detail({ product, entry }: { product: Product; entry: CatalogProduct 
                   ? t("store.product.onlyLeft", { count: available }) : t("store.v2.limited")
                   : t("store.product.inStock")}
         </p>
-        <div className="v2-pdp-buy-row">
+        <div className="v2-pdp-buy-row" ref={buyRowRef}>
           <label className="v2-quantity">{t("store.v2.quantity")}
             <input aria-label={t("store.v2.quantity")} type="number" min="1" max={max || 1} inputMode="numeric"
               value={quantity} onChange={(event) => setQuantityDraft(Math.max(1, Math.min(max || 1, Math.floor(Number(event.target.value) || 1))))} />
@@ -283,6 +349,18 @@ function V2Detail({ product, entry }: { product: Product; entry: CatalogProduct 
           ? <p className="v2-size-note">{t("store.v2.noSizeGuide")}</p> : null}
       </div>
     </div>
+    {!buyAreaVisible ? <div className="v2-sticky-buy" data-testid="v2-sticky-buy">
+      <div className="v2-sticky-buy-copy">
+        <strong>{money(price.price)}</strong>
+        <span>{selected ? variantModelLabel(selected, lang) : product.variants_enabled ? t("store.v2.pleaseChoose") : name}</span>
+      </div>
+      <button type="button" className="v2-primary-button" data-testid="v2-sticky-add"
+        disabled={!orderable || available <= 0} onClick={addToBag}>
+        {added ? t("store.v2.addedShort")
+          : available <= 0 && (selected || !product.variants_enabled) ? t("store.product.outOfStock")
+            : t("store.product.addToCart")}
+      </button>
+    </div> : null}
     {productReviews.length ? <V2Section title={t("store.product.reviews")}> <div className="v2-review-grid">
       {productReviews.map((review) => <blockquote key={review.id}>
         <span aria-label={`${review.rating}/5`}>{"★".repeat(Math.max(0, Math.min(5, Math.round(review.rating))))}</span>

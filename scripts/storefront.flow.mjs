@@ -234,7 +234,7 @@ setField("#low_stock_level", "1");
   setField("#category_id", option.value);
 }
 clickExact("Save");
-await waitFor(() => dom.window.location.hash === "#/products", { label: "route back to the catalogue" });
+await waitFor(() => dom.window.location.hash === "#/dashboard/products", { label: "route back to the catalogue" });
 await waitFor(() => bodyText().includes(SKU), { label: "the ring to appear" });
 const productId = catalog().products.find((p) => p.sku === SKU)?.id;
 assert.ok(productId, "the ring is in the demo catalogue");

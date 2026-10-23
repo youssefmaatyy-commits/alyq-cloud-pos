@@ -13,6 +13,7 @@ export type VariantLabelSource = {
   color_en: string | null;
   size: number | null;
   size_label: string | null;
+  size_value?: string | null;
   display_name_ar?: string | null;
   display_name_en?: string | null;
   variant_display_name?: string | null;
@@ -43,7 +44,12 @@ export function variantLabelOf(
     (lang === "ar" ? variant.color_ar || variant.color_en : variant.color_en || variant.color_ar) ??
     "";
   const primary = color.trim() || variantModelLabel(variant, lang);
-  const size = storeSizeLabel(variant.size, variant.size_label);
+  const modelNames = [variant.display_name_ar, variant.display_name_en, variant.variant_display_name]
+    .map((name) => name?.trim().toLocaleLowerCase())
+    .filter((name): name is string => Boolean(name));
+  const compatibilitySize = (variant.size_value ?? variant.size_label ?? "").trim().toLocaleLowerCase();
+  const duplicatedModelLabel = variant.size === null && modelNames.includes(compatibilitySize);
+  const size = duplicatedModelLabel ? "" : storeSizeLabel(variant.size, variant.size_label);
   return [primary, size].filter(Boolean).join(" / ");
 }
 

@@ -29,7 +29,11 @@ const pushWorker = read("supabase/functions/alyq-push/index.ts");
 
 const status = git("status", "--porcelain");
 check(allowDirty || status === "", allowDirty ? "dirty-tree check explicitly bypassed for development validation" : "Git worktree is clean");
-check(pkg.version === "6.0.0" && lock.packages?.[""]?.version === pkg.version, "package and lockfile versions agree at 6.0.0");
+const supportedReleaseVersions = new Set(["6.0.0", "6.1.0"]);
+check(
+  supportedReleaseVersions.has(pkg.version) && lock.packages?.[""]?.version === pkg.version,
+  `package and lockfile versions agree at supported release ${pkg.version}`,
+);
 check(pkg.build?.publish === null && pkg.build?.asar === true, "Desktop publishing is disabled and ASAR is enabled");
 check(pkg.build?.appId === "eg.alyq.pos", "Desktop app ID is eg.alyq.pos");
 check(/appId:\s*["']eg\.alyq\.management["']/.test(cap), "Mobile app ID is eg.alyq.management");

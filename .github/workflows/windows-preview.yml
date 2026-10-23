@@ -1,0 +1,150 @@
+name: Windows 6.1.0 candidate validation & storefront screenshots
+
+on:
+  push:
+    branches: ["arena/f498e340-alyq-cloud-pos"]
+    paths-ignore:
+      - "docs/redesign-preview-6.1.0.md"
+      - "release-evidence/storefront-7-improvements/README.md"
+      - "public/alyq-logo.README.md"
+      - "public/brand/**"
+      - "scripts/rendered-v2-header.flow.mjs"
+      - "src/modules/online/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-preview-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-capture:
+    name: Build unsigned 6.1.0 candidate, test 6.0 upgrade, and capture storefront
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout this development branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 1
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Verify version and data-preservation identity
+        shell: pwsh
+        run: |
+          $pkg = Get-Content package.json -Raw | ConvertFrom-Json
+          if ($pkg.version -ne '6.1.0') { throw "Unexpected release-candidate version: $($pkg.version)" }
+          if ($pkg.build.appId -ne 'eg.alyq.pos') { throw "Application ID changed unexpectedly" }
+          if ($pkg.build.productName -ne 'ALYQ POS') { throw "Desktop product name changed unexpectedly" }
+          if ($pkg.build.nsis.deleteAppDataOnUninstall -ne $false) { throw "NSIS data-preservation policy changed unexpectedly" }
+          if (-not (Select-String -Path desktop/main.mjs -Pattern 'CONFIG_FILE = "desktop-config.v1.json"' -Quiet)) { throw "Desktop config filename changed unexpectedly" }
+          if (-not (Select-String -Path desktop/main.mjs -Pattern 'path.join\(app.getPath\("userData"\), CONFIG_FILE\)' -Quiet)) { throw "Desktop configuration no longer uses the existing userData folder" }
+          if (-not (Select-String -Path desktop/main.mjs -Pattern 'hash = "/login"' -Quiet)) { throw "Desktop login start route changed unexpectedly" }
+          Write-Host "Version, Application ID, product name, userData path, configuration filename, login start route, and uninstall data preservation verified."
+
+      - name: Typecheck and focused storefront/desktop/update checks
+        run: |
+          npm run typecheck
+          npm test -- releaseCheck desktop v2 staffEntry
+          npm run test:e2e -- storefront-v2 staff-entry
+
+      - name: Build Windows x64 NSIS installer
+        run: npm run desktop:package:win
+
+      - name: Verify installer and publish SHA-256 in the job summary
+        shell: pwsh
+        run: |
+          $installer = 'release/ALYQ-POS-Setup-6.1.0-x64.exe'
+          if (-not (Test-Path $installer)) { throw "Expected installer missing: $installer" }
+          if (-not $env:GITHUB_STEP_SUMMARY) { throw "GitHub Actions Job Summary path is unavailable" }
+          $signature = Get-AuthenticodeSignature $installer
+          Write-Host "Authenticode status: $($signature.Status)"
+          if ($signature.Status -ne 'NotSigned') { Write-Host "Unexpected signature status; verify certificate before distribution." }
+          $hash = (Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          $checksumLine = "$hash  $(Split-Path $installer -Leaf)"
+          $checksumLine | Set-Content "$installer.sha256" -Encoding ascii
+          @(
+            '## Windows 6.1.0 candidate — SHA-256',
+            "- Workflow commit: $env:GITHUB_SHA",
+            "- Runner-local installer: $installer",
+            "- SHA-256: $hash",
+            "- Checksum file contents: $checksumLine",
+            "- Authenticode status: $($signature.Status)",
+            '- Installer release/upload: none (candidate remains runner-local)'
+          ) | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8
+          Write-Host "::notice title=Windows 6.1.0 candidate SHA-256::$hash"
+          Write-Host "Unsigned candidate installer verified in runner only. SHA-256 $hash"
+
+      - name: Install 6.0.0 and test candidate upgrade in an isolated runner profile
+        id: windows_upgrade
+        continue-on-error: true
+        shell: pwsh
+        run: ./scripts/verify-windows-upgrade.ps1 -StableInstaller 'release/ALYQ-POS-Setup-6.1.0-x64.exe'
+
+      - name: Confirm tested installer SHA-256 is unchanged
+        if: always()
+        shell: pwsh
+        run: |
+          $installer = 'release/ALYQ-POS-Setup-6.1.0-x64.exe'
+          $checksumFile = "$installer.sha256"
+          if (-not (Test-Path $installer)) { throw "Installer is missing after the upgrade test: $installer" }
+          if (-not (Test-Path $checksumFile)) { throw "SHA-256 record is missing after the upgrade test: $checksumFile" }
+          $record = (Get-Content $checksumFile -Raw).Trim()
+          if ($record -notmatch '^([0-9a-fA-F]{64})\s+(.+)$') { throw "Malformed SHA-256 record: $record" }
+          $expected = $Matches[1].ToLowerInvariant()
+          $actual = (Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($expected -ne $actual) { throw "Installer changed after the upgrade test: expected $expected, got $actual" }
+          "- Post-upgrade file comparison: **PASS** — SHA-256 $actual" | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8
+          Write-Host "::notice title=Post-upgrade installer SHA-256 check::PASS — $actual"
+          Write-Host "The exact installer tested for upgrade still matches its SHA-256 record: $actual"
+
+      - name: Upload Windows upgrade diagnostic log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALYQ-Windows-Upgrade-Diagnostics
+          path: ${{ runner.temp }}/alyq-windows-upgrade.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Capture current-commit local EN/AR storefront screenshots
+        shell: pwsh
+        run: |
+          $server = Start-Process -FilePath 'npm.cmd' -ArgumentList @('run','preview','--','--host','127.0.0.1','--port','4173') -PassThru -WindowStyle Hidden
+          try {
+            $ready = $false
+            for ($i = 0; $i -lt 60; $i++) {
+              try { $response = Invoke-WebRequest 'http://127.0.0.1:4173/' -TimeoutSec 2; if ($response.StatusCode -eq 200) { $ready = $true; break } } catch { Start-Sleep -Seconds 1 }
+            }
+            if (-not $ready) { throw 'Vite preview did not start.' }
+            npx playwright install chromium
+            if ($LASTEXITCODE -ne 0) { throw 'Chromium installation failed.' }
+            node scripts/capture-storefront-preview.mjs
+            if ($LASTEXITCODE -ne 0) { throw 'Storefront screenshot capture or responsive checks failed.' }
+          } finally {
+            if ($server -and -not $server.HasExited) { Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue }
+          }
+
+      - name: Upload current-commit storefront screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALYQ-6.1.0-storefront-current-local
+          path: coverage/alyq-preview/*.png
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Fail job if installed-app upgrade verification failed
+        if: steps.windows_upgrade.outcome == 'failure'
+        shell: pwsh
+        run: throw 'The Windows 6.0.0-to-6.1.0 installed-app upgrade was not verified; see the diagnostic artifact.'

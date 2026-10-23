@@ -515,14 +515,14 @@ async function main() {
   // Phase 49: the sidebar offers the Online MODULE; its queue lives on the
   // module home as the first card, reached on the next line.
   const navHrefs = [...document.querySelectorAll("aside nav a")].map((a) => a.getAttribute("href") ?? "");
-  assert.ok(navHrefs.includes("#/online"), "the POS sidebar offers the Online module");
-  await navigate("#/online", 600);
+  assert.ok(navHrefs.includes("#/dashboard/online"), "the POS sidebar offers the Online module");
+  await navigate("#/dashboard/online", 600);
   await waitFor(
     () => document.querySelector('[data-testid="module-card-orders"]'),
     { label: "the Online home's orders card" },
   );
 
-  await navigate("#/online/orders", 900);
+  await navigate("#/dashboard/online/orders", 900);
   await waitFor(() => bodyText().includes(codNumber), { label: "the order to appear in the POS" });
   assert.ok(bodyText().includes("Mona Mahmoud"), "with the customer's name");
   assert.ok(bodyText().includes("Pending"), "and its status");
@@ -530,7 +530,7 @@ async function main() {
     "the payment is described on the row");
 
   // The notification badge counts what needs a decision — it rides the module door.
-  const badge = document.querySelector('aside nav a[href="#/online"] span');
+  const badge = document.querySelector('aside nav a[href="#/dashboard/online"] span');
   assert.ok(badge, "the Online module door carries a count badge");
 
   // Approve it: this is the mandatory website → till step.
@@ -647,7 +647,7 @@ async function main() {
   assert.equal(stockOf(secondSku), secondStockBefore, "and nothing shipped");
 
   // The till sees an order waiting on verification, and cannot approve it yet.
-  await navigate("#/online/orders", 900);
+  await navigate("#/dashboard/online/orders", 900);
   await waitFor(() => bodyText().includes(instapayNumber), { label: "the InstaPay order in the POS" });
   assert.ok(bodyText().includes("Verification pending"), "the POS shows the payment needs verifying");
 
@@ -709,7 +709,7 @@ async function main() {
   const { number: cancelledNumber } = await placeOrderThroughTheStore({ payment: "cod" });
   assert.equal(stockOf(thirdSku), thirdStockBefore, "a pending order holds, it does not deduct");
 
-  await navigate("#/online/orders", 900);
+  await navigate("#/dashboard/online/orders", 900);
   await waitFor(() => bodyText().includes(cancelledNumber), { label: "the order in the POS" });
   const cancelRow = [...document.querySelectorAll("tbody tr")].find((tr) =>
     (tr.textContent ?? "").includes(cancelledNumber),
@@ -764,10 +764,10 @@ async function main() {
 
   // ── 9 · the rest of the back office renders ───────────────────────────────
   for (const [hash, expected] of [
-    ["#/online/reports", "Online"],
-    ["#/online/marketing", "Marketing"],
-    ["#/online/content", "Website content"],
-    ["#/online/website", "Website"],
+    ["#/dashboard/online/reports", "Online"],
+    ["#/dashboard/online/marketing", "Marketing"],
+    ["#/dashboard/online/content", "Website content"],
+    ["#/dashboard/online/website", "Website"],
   ]) {
     await navigate(hash, 800);
     await waitFor(() => bodyText().includes(expected), { label: `${hash} to render` });
@@ -781,13 +781,13 @@ async function main() {
   // nothing to report. That is the point of the assertion: a shop whose orders
   // were worked correctly is told so in words, instead of being shown a table of
   // green rows nobody needs to act on.
-  await navigate("#/online/reservations", 900);
+  await navigate("#/dashboard/online/reservations", 900);
   await waitFor(() => bodyText().includes("Stock holds & reconciliation"), {
     label: "the stock-holds screen",
   });
   // Phase 49: holds live on the Online module home — one card, not a sidebar
   // leaf. The card is proven, then the screen itself is opened as the card does.
-  await navigate("#/online", 600);
+  await navigate("#/dashboard/online", 600);
   await waitFor(
     () => document.querySelector('[data-testid="module-card-holds"]'),
     { label: "the Online home's holds card" },
@@ -796,7 +796,7 @@ async function main() {
     document.querySelector('[data-testid="module-card-holds"]'),
     "the Online home links to holds — a reconciliation tool nobody can find is a tool nobody uses",
   );
-  await navigate("#/online/reservations", 900);
+  await navigate("#/dashboard/online/reservations", 900);
   await waitFor(() => bodyText().includes("A pending website order holds its stock"), {
     label: "the holds screen copy",
   });
@@ -858,7 +858,7 @@ async function main() {
   );
 
   // ── 10 · the builder goes live on the storefront ──────────────────────────
-  await navigate("#/online/website", 900);
+  await navigate("#/dashboard/online/website", 900);
   await waitFor(() => bodyText().includes("Website"), { label: "the website builder" });
   // Phase 45: the builder's sub-tabs; the colour picker lives under Theme.
   const themeTab = [...document.querySelectorAll("button")].find(
@@ -895,7 +895,7 @@ async function main() {
 
   // Social links: written under "Contact & social", they become real links on the
   // storefront — the header, the footer and the floating WhatsApp button.
-  await navigate("#/online/website", 900);
+  await navigate("#/dashboard/online/website", 900);
   clickExact("General");
   await sleep(500);
   const whatsappField = [...document.querySelectorAll("input")].find(
@@ -990,7 +990,7 @@ async function main() {
   };
 
   const QR_URL = "https://cdn.example.test/alyq-qr.png";
-  await navigate("#/online/website", 900);
+  await navigate("#/dashboard/online/website", 900);
   clickExact("Delivery & payment");
   await waitFor(() => bodyText().includes("Payment methods"), { label: "the payment methods section" });
   assert.ok(bodyText().includes("Cash on delivery"), "the COD toggle is in the payment methods section");
@@ -1071,7 +1071,7 @@ async function main() {
 
   // An unsafe link renders nowhere, and "no proof required" hides the panel
   // without touching the verification workflow.
-  await navigate("#/online/website", 900);
+  await navigate("#/dashboard/online/website", 900);
   clickExact("Delivery & payment");
   await waitFor(() => bodyText().includes("Payment methods"), { label: "the payment methods section" });
   setInputValue(fieldByPlaceholder("https://instapay.eg/…"), "javascript:alert(1)");
@@ -1172,7 +1172,7 @@ async function main() {
     await sleep(400);
   };
 
-  await navigate("#/online/website", 900);
+  await navigate("#/dashboard/online/website", 900);
   clickExact("Delivery & payment");
   await waitFor(() => bodyText().includes("Payment methods"), { label: "the payment methods section" });
   assert.ok(bodyText().includes("Delivery areas"), "the builder configures where the shop delivers");
@@ -1204,7 +1204,7 @@ async function main() {
 
   // Switched back on: both channels are offered, and a delivery order carries
   // its chosen zone's fee and the whole address.
-  await navigate("#/online/website", 900);
+  await navigate("#/dashboard/online/website", 900);
   clickExact("Delivery & payment");
   await waitFor(() => bodyText().includes("Payment methods"), { label: "the payment methods section" });
   switchByLabel("Offer delivery").dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
@@ -1264,7 +1264,7 @@ async function main() {
   );
 
   // The staff read the same fee and the whole address the customer typed.
-  await navigate("#/online/orders", 900);
+  await navigate("#/dashboard/online/orders", 900);
   await waitFor(() => bodyText().includes(deliveryNumber), { label: "the delivery order in the list" });
   const orderSearch = document.querySelector('input[type="search"]');
   assert.ok(orderSearch, "the order list can be searched");
@@ -1288,7 +1288,7 @@ async function main() {
   // Real https profiles and the map link render exactly where they did before.
   // Admin now rejects unsafe social URLs before saving; a forged/pre-existing
   // row with unsafe values still renders no executable link.
-  await navigate("#/online/website", 900);
+  await navigate("#/dashboard/online/website", 900);
   clickExact("General");
   await sleep(500);
   setInputValue(fieldByPlaceholder("https://instagram.com/…"), "https://instagram.com/alyq.shop");
@@ -1345,7 +1345,7 @@ async function main() {
   // New social contract: unsafe accounts refuse the entire Save, preserving
   // the last published document. A fresh process tests that a forged/old row
   // still renders no executable links in either storefront or contact page.
-  await navigate("#/online/website", 900);
+  await navigate("#/dashboard/online/website", 900);
   clickExact("General");
   await sleep(500);
   setInputValue(fieldByPlaceholder("https://facebook.com/…"), "JaVaScRiPt:alert(1)");
@@ -1432,7 +1432,7 @@ async function main() {
   assert.equal(openReservationsFor(pendingOrder.id).length, 1, "so its stock is held");
   const heldUnits = openReservationsFor(pendingOrder.id)[0].quantity;
 
-  await navigate("#/online/reservations", 900);
+  await navigate("#/dashboard/online/reservations", 900);
   await waitFor(() => bodyText().includes("Stock holds & reconciliation"), {
     label: "the stock-holds screen",
   });
@@ -1576,7 +1576,7 @@ async function main() {
   assert.ok(bodyText().includes("Oldest hold"), "and so is how long the oldest has been sitting");
   assert.ok(
     document.querySelector('a[href="#/online/reservations"]'),
-    "the widget links to the screen that can act on it",
+    "the widget keeps its supported staff route to the screen that can act on it",
   );
   assert.ok(
     !bodyText().includes("holds.summary"),

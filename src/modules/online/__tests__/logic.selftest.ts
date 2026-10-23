@@ -1745,14 +1745,9 @@ test("the theme document becomes CSS variables, and shades stay valid hex", () =
   assert.equal(fontStackOf(null), fontStackOf("system"), "an unknown font falls back to the system stack");
 });
 
-// Issue #4 (follow-up): the header must show a configured Website Settings
-// logo image — never the bilingual text wordmark instead of it — and fall
-// back to the wordmark ONLY when no logo image is configured at all.
-// `StorefrontV2Shell` renders purely off `adaptV2Appearance().headerLogoUrl`
-// (`{headerLogoUrl ? <img/> : wordmark}`), so pinning that adapter's contract
-// here is what would have caught a field-name drift or an over-eager URL
-// sanitizer silently discarding a real, valid logo.
-test("a configured Website Settings logo always wins the header, and the wordmark shows only when none is configured", () => {
+// The default ALYQ brand uses the bundled transparent master mark; custom
+// merchant logos remain authoritative and custom shops retain their wordmark.
+test("default ALYQ uses the transparent master mark while custom logo settings are preserved", () => {
   const withLogo = adaptV2Appearance(
     settings({ images: { ...DEFAULT_WEBSITE_SETTINGS.images, logo_url: "https://cdn.example.com/alyq-logo.png" } }),
   );
@@ -1760,8 +1755,34 @@ test("a configured Website Settings logo always wins the header, and the wordmar
     "the exact configured URL is what the header receives, unmodified");
 
   const withoutLogo = adaptV2Appearance(settings({ images: { ...DEFAULT_WEBSITE_SETTINGS.images, logo_url: null } }));
-  assert.equal(withoutLogo.headerLogoUrl, null,
-    "no logo configured means the shell's `headerLogoUrl ? <img/> : wordmark` falls to the wordmark");
+  assert.equal(withoutLogo.headerLogoUrl, "/brand/alyq-logo-transparent.png",
+    "the default ALYQ store uses its supplied transparent master mark");
+
+  const customBrand = structuredClone(DEFAULT_WEBSITE_SETTINGS);
+  customBrand.contact.store_name_en = "Another House";
+  customBrand.contact.store_name_ar = "دار أخرى";
+  const customAppearance = adaptV2Appearance(customBrand);
+  assert.equal(customAppearance.headerLogoUrl, null,
+    "a custom brand with no uploaded logo keeps its own bilingual wordmark fallback");
+  const customVariables = customAppearance.variables as Record<string, unknown>;
+  assert.equal(customVariables["--v2-logo-height"], "52px",
+    "the ALYQ-specific logo enlargement does not change custom-store defaults");
+  assert.equal(customVariables["--v2-mobile-logo-height"], "40px",
+    "custom-store mobile sizing remains unchanged");
+
+  const customUploadedMark = adaptV2Appearance(settings({ images: {
+    ...DEFAULT_WEBSITE_SETTINGS.images, logo_url: "https://cdn.example.com/custom-mark.png",
+  } }));
+  const customLogoVariables = customUploadedMark.variables as Record<string, unknown>;
+  assert.equal(customUploadedMark.headerLogoUrl, "https://cdn.example.com/custom-mark.png");
+  assert.equal(customLogoVariables["--v2-logo-height"], "52px",
+    "custom uploaded marks keep the original default size even on the default brand");
+
+  const legacyOpaqueMark = adaptV2Appearance(settings({ images: {
+    ...DEFAULT_WEBSITE_SETTINGS.images, logo_url: "/alyq-logo.png",
+  } }));
+  assert.equal(legacyOpaqueMark.headerLogoUrl, "/brand/alyq-logo-transparent.png",
+    "the known opaque legacy ALYQ file is replaced by the same transparent source artwork");
 
   // An unsafe/invalid value (a paste gone wrong, or an old data: URI) must
   // never reach an <img src>, the same absolute-http(s)-only policy every
@@ -1769,7 +1790,8 @@ test("a configured Website Settings logo always wins the header, and the wordmar
   const unsafe = adaptV2Appearance(
     settings({ images: { ...DEFAULT_WEBSITE_SETTINGS.images, logo_url: "javascript:alert(1)" } }),
   );
-  assert.equal(unsafe.headerLogoUrl, null, "an unsafe URL is refused, not smuggled into the header as an <img src>");
+  assert.equal(unsafe.headerLogoUrl, "/brand/alyq-logo-transparent.png",
+    "an unsafe URL is refused and the default-brand asset remains the safe fallback");
 
   // No separate mobile logo configured: the same image serves both — it is
   // never silently dropped on small screens just because only the desktop

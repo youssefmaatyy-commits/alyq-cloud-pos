@@ -11,6 +11,7 @@ import {
 import { adaptV2Appearance, contrastRatio, v2Href } from "../appearance";
 import { canonicalPreviewSearch, canonicalStorePathname } from "../storeRoutes";
 import { sizeKeyOf, variantModel } from "../variantModel";
+import { variantLabelOf } from "../../services/variantLabel";
 import { v2Price, v2Gallery, v2CatalogResults } from "../viewModel";
 
 const product = { ...buildDemoProducts()[0], id: "example-product", variants_enabled: true,
@@ -61,6 +62,21 @@ test("letter, numeric and one-size labels all derive from data and sort without 
   const model = variantModel([silverXS, silverOne, silver17, variant("half", { color_key: "silver", size: 16.5 })]);
   assert.deepEqual(model.sizesFor("silver").map((option) => option.label), ["16.5", "17", "One Size", "XS"]);
   assert.equal(model.exact("silver", "size:one size")?.id, silverOne.id);
+});
+
+test("Staging model names duplicated in compatibility size fields still open the model gallery", () => {
+  const modelOne = variant("staging-model-1", {
+    color_key: "", color_ar: null, color_en: null, color_hex: null,
+    size: null, size_label: "شكل 1", size_value: "شكل 1",
+    display_name_ar: "شكل 1", display_name_en: "Model 1",
+  });
+  assert.equal(sizeKeyOf(modelOne), "");
+  const models = variantModel([modelOne]);
+  assert.equal(models.hasModels, true);
+  assert.equal(models.hasSizes, false);
+  assert.equal(models.models.length, 1);
+  assert.equal(variantLabelOf(modelOne, "en"), "Model 1");
+  assert.equal(variantLabelOf(modelOne, "ar"), "شكل 1");
 });
 
 test("reservation holds, disabled tracking and non-active variants never become Quick Add substitutes", () => {
@@ -216,22 +232,21 @@ test("V2 save/read allowlist rejects forged CSS, images, enums, columns and unkn
 // the separate logo-size sliders. This pins the fix — an admin who only
 // uploads a logo, and never opens the size sliders, still gets a clearly
 // visible size — and that the fix does NOT grow the header row itself
-// (`.v2-header-inner` in storefront-v2.css floors at 74px desktop / 64px
-// mobile using exactly `logo-height + 18`), which is a hard constraint the
-// task called out ("do not enlarge the entire header excessively").
-test("a configured logo with no size chosen renders clearly visible, not a tiny square, and never grows the header", () => {
+// The default ALYQ master uses 72px/56px plus 18px breathing room, while
+// custom storefront logos retain their existing 52px/40px defaults.
+test("the default ALYQ logo is clearly visible with safe header spacing", () => {
   const settings = structuredClone(DEFAULT_WEBSITE_SETTINGS);
-  settings.images.logo_url = "https://project-ref.supabase.co/storage/v1/object/public/product-images/website/logo.png";
+  settings.images.logo_url = null;
   const vars = (settings2: typeof settings, overrides?: Partial<typeof settings.storefront_v2>) =>
     adaptV2Appearance(overrides ? { ...settings2, storefront_v2: { ...settings2.storefront_v2, ...overrides } } : settings2)
       .variables as Record<string, string>;
   const appearance = vars(settings);
   const desktopHeight = Number(String(appearance["--v2-logo-height"]).replace("px", ""));
   const mobileHeight = Number(String(appearance["--v2-mobile-logo-height"]).replace("px", ""));
-  assert.ok(desktopHeight >= 48, "the default desktop logo height is a real, visible size, not a tiny badge");
-  assert.ok(mobileHeight >= 36, "the default mobile logo height is a real, visible size, not a tiny badge");
-  assert.ok(desktopHeight + 18 <= 74, "the default fits inside the header's existing 74px floor — no header growth");
-  assert.ok(mobileHeight + 18 <= 64, "the default fits inside the header's existing 64px floor — no header growth");
+  assert.ok(desktopHeight >= 68, "the default desktop logo is clearly visible");
+  assert.ok(mobileHeight >= 52, "the default mobile logo is clearly visible");
+  assert.ok(desktopHeight + 18 <= 90, "the desktop header grows only enough to give the 72px logo safe vertical room");
+  assert.ok(mobileHeight + 18 <= 74, "the mobile header grows only enough to give the 56px logo safe vertical room");
   // An admin who DOES use the sliders keeps full control, unchanged.
   const chosen = vars(settings, { logo_height: 30, mobile_logo_height: 24 });
   assert.equal(chosen["--v2-logo-height"], "30px");
@@ -271,10 +286,17 @@ test("V2 overrides leave legacy theme alone and use accessible text for extreme 
 });
 
 test("new public copy ships in both languages", () => {
-  for (const key of ["eyebrow", "quickAdd", "selectOptions", "notOrderable", "results", "noSizeGuide"] as const) {
+  for (const key of ["quickAdd", "selectOptions", "notOrderable", "results", "noSizeGuide"] as const) {
     assert.ok(dictionaries.en[`store.v2.${key}`].length);
     assert.ok(dictionaries.ar[`store.v2.${key}`].length);
   }
+});
+
+test("removed campaign tagline is absent from both storefront dictionaries", () => {
+  assert.equal("store.v2.eyebrow" in dictionaries.en, false);
+  assert.equal("store.v2.eyebrow" in dictionaries.ar, false);
+  assert.equal(Object.values(dictionaries.en).some((value) => /the alyq edit/i.test(value)), false);
+  assert.equal(Object.values(dictionaries.ar).some((value) => value.includes("مختارات أَلِــيْـــق")), false);
 });
 
 console.log(`${passed}/${passed} V2 logic tests passed`);

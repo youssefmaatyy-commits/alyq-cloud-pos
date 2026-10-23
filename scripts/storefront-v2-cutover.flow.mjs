@@ -114,6 +114,7 @@ check("missing product stays inside V2, shows a noindex not-found state and no o
   };
   const simulateScroll = (y) => { simulatedY = y; dom.window.dispatchEvent(new dom.window.Event("scroll")); };
   const lastScrollTarget = () => scrollCalls.at(-1);
+  const currentScrollY = () => simulatedY;
   const clickLink = (selector, scope = document) => {
     const el = scope.querySelector(selector);
     if (!el) throw new Error(`scroll-restoration test: link not found: ${selector}`);
@@ -147,11 +148,23 @@ check("missing product stays inside V2, shows a noindex not-found state and no o
     lastScrollTarget() === 0 && productB !== productA);
   simulateScroll(150); // shopper scrolls down product B
 
-  clickLink("a.v2-bag-button"); // header cart icon
-  await waitFor(() => testid("v2-cart"), { label: "bag icon click opens the cart" });
-  check("clicking the header bag icon (Product -> Cart, a new destination) scrolls to the top",
-    lastScrollTarget() === 0);
-  simulateScroll(90); // shopper scrolls down the (empty) cart
+  clickLink(".v2-bag-button"); // The header bag opens the Mini Cart in place.
+  await waitFor(() => testid("v2-mini-cart-layer")?.getAttribute("data-open") === "true",
+    { label: "bag icon opens the shared mini-cart drawer" });
+  check("header bag opens the mini-cart without changing the route or the shopper's scroll position",
+    dom.window.location.hash === productB && currentScrollY() === 150 && Boolean(testid("v2-mini-cart")));
+  clickEl(testid("v2-mini-cart")?.querySelector(".v2-cart-drawer-close"));
+  await waitFor(() => testid("v2-mini-cart-layer")?.getAttribute("data-open") !== "true",
+    { label: "close the mini-cart before adding a line" });
+  clickEl(testid("v2-pdp-add"));
+  await waitFor(() => testid("v2-mini-cart-layer")?.getAttribute("data-open") === "true" &&
+    Boolean(testid("v2-mini-cart")?.querySelector(".v2-cart-drawer-full")),
+    { label: "add product and reveal the full-cart destination" });
+  clickLink(".v2-cart-drawer-full");
+  await waitFor(() => testid("v2-cart"), { label: "full-cart link opens the cart page" });
+  check("the drawer's full-cart link is a new destination and scrolls to the top",
+    dom.window.location.hash === "#/store/cart" && lastScrollTarget() === 0);
+  simulateScroll(90); // shopper scrolls down the cart
 
   clickLink('.v2-desktop-nav a[href="#/store/about"]');
   await waitFor(() => testid("v2-about"), { label: "nav click opens About" });

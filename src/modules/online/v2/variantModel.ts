@@ -5,9 +5,21 @@ import type { StoreVariant } from "../services/pricing";
 import { colorGroupsOf, sortStoreVariants, storeVariantSizeValue } from "../services/pricing";
 import { variantAvailableToPromise } from "../services/availability";
 
-export function sizeKeyOf(variant: Pick<StoreVariant, "size" | "size_label"> & Partial<Pick<StoreVariant,"size_value">>): string {
-  const value=storeVariantSizeValue(variant);
-  return value ? `size:${value.toLocaleLowerCase()}` : "";
+type StoreVariantSizeSource = Pick<StoreVariant, "size" | "size_label"> &
+  Partial<Pick<StoreVariant, "size_value" | "display_name_ar" | "display_name_en">>;
+
+export function sizeKeyOf(variant: StoreVariantSizeSource): string {
+  const value = storeVariantSizeValue(variant);
+  if (!value) return "";
+  // Older Staging model rows also store their Arabic model name in size_value
+  // and its compatibility size_label. Treat that duplicate as a model label,
+  // not as a second size choice. A genuine size still remains a size.
+  const key = value.toLocaleLowerCase();
+  const displayNames = [variant.display_name_ar, variant.display_name_en]
+    .map((name) => name?.trim().toLocaleLowerCase())
+    .filter((name): name is string => Boolean(name));
+  if (variant.size === null && displayNames.includes(key)) return "";
+  return `size:${key}`;
 }
 
 export function variantModel(
