@@ -94,6 +94,7 @@ import { StorefrontV2Track } from "@/modules/online/v2/StorefrontV2Track";
 import { StorefrontV2Account } from "@/modules/online/v2/StorefrontV2Account";
 import { StorefrontV2About } from "@/modules/online/v2/StorefrontV2About";
 import { StorefrontV2Contact } from "@/modules/online/v2/StorefrontV2Contact";
+import { UpdateBanner } from "@/components/system/UpdateBanner";
 import { StorefrontV2PreviewRedirect } from "@/modules/online/v2/StorefrontV2PreviewRedirect";
 
 /**
@@ -207,6 +208,7 @@ export default function App() {
       <I18nProvider>
         <AuthProvider>
           <ToastProvider>
+            <UpdateBanner />
             <HashRouter>
               <Routes>
                 <Route path="/login" element={<LoginRoute />} />

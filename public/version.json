@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "appName": "ALYQ POS",
+  "current": {
+    "version": "6.1.0",
+    "buildNumber": 60100,
+    "minSupportedVersion": "6.0.0",
+    "gitSha": "9ac222261603c1d444874e089636c9819010c43d",
+    "gitShaShort": "9ac2222",
+    "releasedAt": "2026-10-24T15:20:37.928Z",
+    "releaseNotes": {
+      "en": "Bug fixes and performance improvements. Printer 58/80mm presets preserved.",
+      "ar": "إصلاحات وتحسينات في الأداء. إعدادات الطابعة 58/80 مم محفوظة."
+    },
+    "channels": {
+      "web": {
+        "url": "https://alyq-store.vercel.app",
+        "available": true
+      },
+      "windows": {
+        "url": "https://github.com/youssefmaatyy-commits/alyq-cloud-pos/releases/download/v6.1.0/ALYQ-POS-Setup-6.1.0-x64.exe",
+        "sha256": null,
+        "sizeBytes": null,
+        "available": true,
+        "note": "Manual download; no silent install. Check SHA-256 before installing. / Manual download required; verify checksum."
+      },
+      "android": {
+        "url": "https://github.com/youssefmaatyy-commits/alyq-cloud-pos/releases/download/v6.1.0/ALYQ-POS-6.1.0.apk",
+        "sha256": null,
+        "sizeBytes": null,
+        "available": false,
+        "reason": "APK channel pending signing key setup; use PWA on Android until APK is signed and published."
+      }
+    },
+    "backend": {
+      "requiredMigration": "0099_notification_reliability_and_dispatch.sql",
+      "requiredMigrationCount": 99,
+      "minCompatibleMigration": "0091_health_and_factory_reset_repair.sql",
+      "minCompatibleMigrationCount": 91
+    }
+  },
+  "history": [
+    {
+      "version": "6.0.0",
+      "releasedAt": "2026-10-21T00:00:00Z",
+      "gitSha": "540e36817b7ea8876489d35ec13e9895890291c7"
+    },
+    {
+      "version": "6.1.0",
+      "releasedAt": "2026-10-23T00:00:00Z",
+      "gitSha": "9ac222261603c1d444874e089636c9819010c43d"
+    }
+  ]
+}

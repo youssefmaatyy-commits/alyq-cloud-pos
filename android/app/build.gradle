@@ -7,8 +7,9 @@ android {
         applicationId "eg.alyq.management"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode project.hasProperty("prodV21") ? 3 : 2
-        versionName project.hasProperty("prodV21") ? "2.1.0" : "2.0.0"
+        // Unified SemVer: default is the current release; legacy flags (prodV21/stagingBuild) are preserved for coexist builds.
+        versionCode project.hasProperty("prodV21") ? 3 : 61
+        versionName project.hasProperty("prodV21") ? "2.1.0" : "6.1.0"
         manifestPlaceholders = [
             appLabel: project.hasProperty("stagingBuild")
                 ? "ALYQ POS Staging"
