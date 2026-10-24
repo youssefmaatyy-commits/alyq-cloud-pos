@@ -132,7 +132,7 @@ async function loadConfig(): Promise<{ config: WorkerConfig; client: SupabaseCli
 
   if (env("PUSH_CONFIG_SOURCE") === "vault") {
     const vault = await readVaultValues(client);
-    dispatchSecret ??= vaultText(vault, "ALYQ_PUSH_DISPATCH_SECRET");
+    dispatchSecret = vaultText(vault, "ALYQ_PUSH_DISPATCH_SECRET");
     if (environmentVapidCount === 0) {
       webPushVapidPublicKey = vaultText(vault, "ALYQ_WEB_PUSH_VAPID_PUBLIC_KEY");
       webPushVapidPrivateKey = vaultText(vault, "ALYQ_WEB_PUSH_VAPID_PRIVATE_KEY");
