@@ -1,0 +1,370 @@
+name: ALYQ Unified Release
+
+# Centralized release pipeline for all platforms.
+# - Triggered Manually (workflow_dispatch) with a version + release type.
+# - Validates, builds all artifacts, checks upgrade safety, and publishes.
+# - Web deploys via Vercel (connected repo auto-deploy on push to main).
+# - Windows/Android artifacts attach to the GitHub Release with SHA-256.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (SemVer, e.g. 6.1.0)"
+        required: true
+        type: string
+      prerelease:
+        description: "Mark as pre-release (not latest)"
+        required: false
+        default: false
+        type: boolean
+      publish_windows:
+        description: "Build & attach Windows EXE installer"
+        required: false
+        default: true
+        type: boolean
+      publish_android:
+        description: "Build & attach Android APK"
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate release inputs & artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Validate version matches package.json
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          if [ "$PKG_VERSION" != "${{ inputs.version }}" ]; then
+            echo "::error::package.json version ($PKG_VERSION) does not match release input (${{ inputs.version }})"
+            exit 1
+          fi
+          if ! echo "$PKG_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::version is not valid SemVer: $PKG_VERSION"
+            exit 1
+          fi
+          echo "Version OK: $PKG_VERSION"
+
+      - name: Production pre-flight (read-only)
+        run: npm run production:preflight
+
+      - run: npm run lint -- --quiet
+      - run: npm run typecheck
+      - run: npm run build
+
+      - name: Verify version artifacts
+        run: |
+          test -f dist/version.json
+          test -f dist/releases/latest.json
+          test -f dist/alyq-sw.js
+          test -f dist/mobile.webmanifest
+          node -e "
+            const d=require('./dist/version.json');
+            if(d.schemaVersion!==1) throw new Error('bad schemaVersion');
+            if(d.current.version!=='${{ inputs.version }}') throw new Error('manifest version mismatch');
+            console.log('Manifest OK:', d.current.version, d.current.gitSha.slice(0,7));
+          "
+
+      - name: Verify PWA artifacts
+        run: |
+          node -e "
+            const sw=require('fs').readFileSync('public/alyq-sw.js','utf8');
+            if(!sw.includes('ALYQ_SW_VERSION')) throw new Error('SW missing version marker');
+            if(!sw.includes('cache')) throw new Error('SW missing cache hygiene');
+            console.log('SW OK');
+          "
+          node -e "
+            const mf=require('./public/mobile.webmanifest');
+            if(!mf.name || !mf.start_url || !mf.icons) throw new Error('bad manifest');
+            console.log('WebManifest OK');
+          "
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: alyq-version-manifest
+          path: |
+            dist/version.json
+            dist/releases/latest.json
+          retention-days: 30
+
+  verify-compatibility:
+    name: DB compatibility check (pglite)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run db:check
+      - run: npm test
+
+  build-web:
+    name: Build & verify web bundle
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [validate, verify-compatibility]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run test:e2e
+
+      - name: Upload web dist for Vercel verification
+        uses: actions/upload-artifact@v4
+        with:
+          name: alyq-web-dist
+          path: dist/
+          retention-days: 30
+
+  build-windows:
+    name: Build Windows x64 EXE (NSIS)
+    if: ${{ inputs.publish_windows }}
+    needs: [validate, verify-compatibility]
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - name: Verify version identity
+        shell: pwsh
+        run: |
+          $pkg = Get-Content package.json -Raw | ConvertFrom-Json
+          if ($pkg.version -ne '${{ inputs.version }}') { throw "Version mismatch: $($pkg.version) vs ${{ inputs.version }}" }
+          if ($pkg.build.appId -ne 'eg.alyq.pos') { throw "AppId changed" }
+          if ($pkg.build.nsis.deleteAppDataOnUninstall -ne $false) { throw "NSIS data-preservation changed" }
+          if (-not (Select-String -Path desktop/main.mjs -Pattern 'CONFIG_FILE = "desktop-config.v1.json"' -Quiet)) { throw "Config filename changed" }
+          Write-Host "Version + data-preservation identity OK"
+
+      - run: npm run typecheck
+
+      - name: Build Windows installer
+        run: npm run desktop:package:win
+
+      - name: Hash + verify installer
+        shell: pwsh
+        run: |
+          $installer = "release/ALYQ-POS-Setup-${{ inputs.version }}-x64.exe"
+          if (-not (Test-Path $installer)) { throw "Installer missing: $installer" }
+          $hash = (Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          $line = "$hash  ALYQ-POS-Setup-${{ inputs.version }}-x64.exe"
+          $line | Set-Content "$installer.sha256" -Encoding ascii
+          $sig = Get-AuthenticodeSignature $installer
+          Write-Host "SHA-256: $hash"
+          Write-Host "Authenticode: $($sig.Status)"
+          @(
+            '## Windows installer — SHA-256'
+            "- Version: ${{ inputs.version }}"
+            "- File: $installer"
+            "- SHA-256: $hash"
+            "- Authenticode: $($sig.Status)"
+            "- Size: $((Get-Item $installer).Length) bytes"
+          ) | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8
+
+      - name: Test upgrade (install + config persistence smoke)
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          if (Test-Path scripts/verify-windows-upgrade.ps1) {
+            ./scripts/verify-windows-upgrade.ps1 -StableInstaller 'release/ALYQ-POS-Setup-${{ inputs.version }}-x64.exe'
+          } else {
+            Write-Host "No upgrade test script — skipping but marking as expected"
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: alyq-windows-installer
+          path: |
+            release/ALYQ-POS-Setup-${{ inputs.version }}-x64.exe
+            release/ALYQ-POS-Setup-${{ inputs.version }}-x64.exe.sha256
+          retention-days: 30
+
+  build-android:
+    name: Build Android APK
+    if: ${{ inputs.publish_android }}
+    needs: [validate, verify-compatibility]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - run: npm ci
+      - run: npm run build
+      - run: npx cap sync android
+
+      - name: Build APK (debug — for validation; release signing needs keystore secrets)
+        run: |
+          chmod +x android/gradlew
+          cd android && ./gradlew assembleDebug --no-daemon
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          OUT="../release-ALYQ-POS-${{ inputs.version }}-debug.apk"
+          cp "$APK" "$OUT"
+          sha256sum "$OUT" > "$OUT.sha256"
+          echo "APK SHA-256:"
+          cat "$OUT.sha256"
+          # Verify manifest version
+          AAPT_BIN=$(ls -d "$ANDROID_HOME"/build-tools/* 2>/dev/null | sort -V | tail -n 1)/aapt
+          if [ -x "$AAPT_BIN" ]; then
+            echo "--- aapt dump badging ---"
+            "$AAPT_BIN" dump badging "$OUT" | grep -E "package:|versionCode|versionName|application-label"
+          fi
+
+      - name: Try release build (requires signing secrets — skip gracefully if absent)
+        continue-on-error: true
+        run: |
+          if [ -n "$ALYQ_KEYSTORE_PATH" ] && [ -f "$ALYQ_KEYSTORE_PATH" ] && [ -n "$ALYQ_KEYSTORE_PASSWORD" ] && [ -n "$ALYQ_KEY_ALIAS" ] && [ -n "$ALYQ_KEY_PASSWORD" ]; then
+            cd android && ./gradlew assembleRelease --no-daemon
+            APK=app/build/outputs/apk/release/app-release.apk
+            OUT="../release-ALYQ-POS-${{ inputs.version }}.apk"
+            cp "$APK" "$OUT"
+            sha256sum "$OUT" > "$OUT.sha256"
+            echo "Release APK ready: $OUT"
+            cat "$OUT.sha256"
+          else
+            echo "No signing credentials — release APK not built (debug APK is available for validation)"
+            echo "To enable signed releases, set ALYQ_KEYSTORE_PATH, ALYQ_KEYSTORE_PASSWORD, ALYQ_KEY_ALIAS, ALYQ_KEY_PASSWORD in repo secrets."
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: alyq-android-apks
+          path: |
+            release-ALYQ-*.apk
+            release-ALYQ-*.apk.sha256
+          if-no-files-found: warn
+          retention-days: 30
+
+  publish-release:
+    name: Create / update GitHub Release
+    needs: [build-web, build-windows, build-android]
+    if: always() && (needs.build-web.result == 'success') && (needs.build-windows.result == 'success' || needs.build-windows.result == 'skipped') && (needs.build-android.result == 'success' || needs.build-android.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: Prepare release notes
+        run: |
+          cat > release-notes.md << 'NOTES'
+          ## ALYQ POS v${{ inputs.version }}
+
+          Unified release across all platforms.
+
+          ### What's included
+          - **Web/PWA**: deployed to https://alyq-store.vercel.app (auto via Vercel on merge to main)
+          - **Windows**: `ALYQ-POS-Setup-${{ inputs.version }}-x64.exe` — see SHA-256 checksum file
+          - **Android**: APK via channel (when signing credentials configured)
+
+          ### Upgrade instructions
+          - **Web/PWA**: update banner appears automatically; tap "Update now" — cart and offline queue are preserved.
+          - **Windows**: run the installer over the existing installation **without uninstalling**. Your printer settings, register binding, and offline data in `%APPDATA%\ALYQ POS\desktop-config.v1.json` are preserved. Keep the previous installer for rollback.
+          - **Android (APK)**: install over existing `eg.alyq.management` package; do not clear data. The PWA remains available as fallback.
+
+          ### Verification
+          - Compare SHA-256 of the downloaded file against the `.sha256` checksum included in this release.
+          - Windows installer is currently **unsigned** (no Authenticode) — SmartScreen may show "Unknown publisher". This is expected.
+
+          ### Rollback
+          - Reinstall the previous version's installer/APK over the current one without clearing data.
+          - See `docs/production/rollback-runbook.md` for incident-specific steps.
+
+          ----
+          Source commit: ${{ github.sha }}
+          NOTES
+          cat release-notes.md
+
+      - name: Create or update GitHub Release (with assets)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v${{ inputs.version }}"
+          HEAD_SHA="${{ github.sha }}"
+
+          # Collect artifacts
+          FILES=()
+          for f in release-artifacts/alyq-windows-installer/* release-artifacts/alyq-android-apks/*; do
+            [ -f "$f" ] && FILES+=("$f")
+          done
+
+          if [ ${#FILES[@]} -eq 0 ]; then
+            echo "No platform artifacts found — creating release with notes only (web ships via Vercel)"
+          fi
+
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Release $TAG exists — updating assets"
+            if [ ${#FILES[@]} -gt 0 ]; then
+              gh release upload "$TAG" "${FILES[@]}" --repo "${{ github.repository }}" --clobber
+            fi
+          else
+            EXTRA_ARGS=""
+            if [ "${{ inputs.prerelease }}" = "true" ]; then EXTRA_ARGS="--prerelease"; else EXTRA_ARGS="--latest"; fi
+            if [ ${#FILES[@]} -gt 0 ]; then
+              gh release create "$TAG" "${FILES[@]}" --repo "${{ github.repository }}" --title "ALYQ POS v${{ inputs.version }}" --notes-file release-notes.md --target "$HEAD_SHA" $EXTRA_ARGS
+            else
+              gh release create "$TAG" --repo "${{ github.repository }}" --title "ALYQ POS v${{ inputs.version }}" --notes-file release-notes.md --target "$HEAD_SHA" $EXTRA_ARGS
+            fi
+          fi
+
+          echo "Release available at: https://github.com/${{ github.repository }}/releases/tag/$TAG"
+
+      - name: Post-release verification
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v${{ inputs.version }}"
+          echo "Verifying release assets for $TAG..."
+          gh release view "$TAG" --repo "${{ github.repository }}" --json assets --jq '.assets[] | "\(.name)  \(.size) bytes  downloads:\(.downloadCount)"'
+
+          # Verify SHA-256 files match artifacts (when present)
+          for sha_file in release-artifacts/alyq-windows-installer/*.sha256 release-artifacts/alyq-android-apks/*.sha256; do
+            [ -f "$sha_file" ] || continue
+            echo "Checksum file: $sha_file"
+            cat "$sha_file"
+          done

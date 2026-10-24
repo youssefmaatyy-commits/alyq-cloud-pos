@@ -13,6 +13,13 @@ normalizeNativeEntryUrl();
 // session restoration, login, or ordinary browser use.
 void registerALYQServiceWorker().catch(() => undefined);
 
+// Web update polling — starts shortly after boot, checks /version.json every 5 min.
+// Never blocks rendering and survives offline (failed fetches are retried).
+import { startWebUpdatePolling } from "@/lib/version/webUpdate";
+void (typeof window !== "undefined" && window.requestIdleCallback
+  ? new Promise<void>((r) => window.requestIdleCallback(() => r()))
+  : new Promise<void>((r) => setTimeout(r, 2000))).then(() => startWebUpdatePolling());
+
 if (import.meta.env.DEV) console.log("=== MAIN.TSX: Starting app initialization ===");
 
 const rootElement = document.getElementById("root");

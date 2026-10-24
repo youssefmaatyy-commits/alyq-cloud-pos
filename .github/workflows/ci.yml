@@ -48,6 +48,17 @@ jobs:
       # missing or extra Arabic translation — no separate i18n check needed.
       - run: npm run typecheck
       - run: npm run build
+      - name: Verify version channel artifacts
+        run: |
+          test -f dist/version.json
+          test -f dist/releases/latest.json
+          node -e "
+            const m=require('./dist/version.json');
+            if(m.schemaVersion!==1) throw new Error('bad schemaVersion');
+            if(!m.current.version) throw new Error('missing version');
+            if(!m.current.backend) throw new Error('missing backend compat');
+            console.log('version.json OK:', m.current.version);
+          "
       - uses: actions/upload-artifact@v4
         with:
           name: dist

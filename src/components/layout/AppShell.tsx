@@ -18,6 +18,7 @@ import { useRealtimeWatch } from "@/lib/supabase/useRealtimeWatch";
 import { useOptionalApprovals } from "@/modules/approvals";
 import { normalizeText } from "@/modules/products/services/productQuery";
 import { brandDisplayName, useBrand } from "@/lib/branding/brand";
+import { VersionBadge } from "@/components/system/VersionBadge";
 import {
   createPushController,
   deactivateCurrentPushRegistration,
@@ -692,6 +693,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </p>
         </div>
       ) : null}
+      <div className="shrink-0 px-1 py-1 text-center">
+        <VersionBadge className="font-mono text-[10px] text-stone-500" />
+      </div>
     </div>
   );
 

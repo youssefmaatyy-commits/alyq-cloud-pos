@@ -5,6 +5,8 @@ import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig, loadEnv } from "vite";
 import { viteSingleFile } from "vite-plugin-singlefile";
+// @ts-expect-error -- generated manifest plugin is plain JS with no d.ts
+import { alyqVersionManifestPlugin } from "./scripts/generate-version-manifest.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -23,7 +25,7 @@ export default defineConfig(({ mode }) => {
       : null;
 
   return {
-    plugins: [react(), tailwindcss(), viteSingleFile()],
+    plugins: [alyqVersionManifestPlugin(), react(), tailwindcss(), viteSingleFile()],
     define: {
       "import.meta.env.WEB_PUSH_VAPID_PUBLIC_KEY": JSON.stringify(webPushPublicKey),
       ...(stagingPreview
