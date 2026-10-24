@@ -131,11 +131,18 @@ function notifyUpdate(info: UpdateInfo): void {
   }
 }
 
+function isTestMode(): boolean {
+  try { return (import.meta.env as Record<string, unknown>).MODE === "test"; } catch { return false; }
+}
+
 /**
  * Start periodic polling. Safe to call multiple times — only one poller runs.
+ * No-ops in test/jsdom mode (MODE === "test") so the E2E demo harness's
+ * zero-network invariant is not broken.
  * Call `stopWebUpdatePolling()` to cancel (e.g. in tests).
  */
 export function startWebUpdatePolling(): void {
+  if (isTestMode()) return;
   if (pollTimer !== null) return;
   const tick = async () => {
     const info = await checkForWebUpdate();
