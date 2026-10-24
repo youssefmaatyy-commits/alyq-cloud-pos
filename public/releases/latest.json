@@ -5,8 +5,8 @@
     "version": "6.1.0",
     "buildNumber": 60100,
     "minSupportedVersion": "6.0.0",
-    "gitSha": "a3544ce06ac61e081d8b69e0f477b1e3d11455b9",
-    "gitShaShort": "a3544ce",
+    "gitSha": "f66481cdd99d95c6e0a179840c2f3da44073136a",
+    "gitShaShort": "f66481c",
     "releasedAt": "2026-10-24T16:00:04.327Z",
     "releaseNotes": {
       "en": "Bug fixes and performance improvements. Printer 58/80mm presets preserved.",
@@ -48,7 +48,7 @@
     {
       "version": "6.1.0",
       "releasedAt": "2026-10-23T00:00:00Z",
-      "gitSha": "9ac222261603c1d444874e089636c9819010c43d"
+      "gitSha": "f66481cdd99d95c6e0a179840c2f3da44073136a"
     }
   ]
 }
