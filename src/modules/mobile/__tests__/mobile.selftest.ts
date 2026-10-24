@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { createRequire } from "node:module";
+import os from "node:os";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { parseMobileDeepLink, authorizeMobileDeepLink, safePushDeepLink } from "../services/deepLinks";
 import { safeNotificationId, webRouteFor } from "../services/notificationCenter";
 import { decodeVapidPublicKey, webPushCapability, webPushPlatform, webPushStateFor } from "../services/webPush";
@@ -174,6 +178,11 @@ test("push dispatch authentication is separate, fail-closed and body-authority-f
 
   const edge = fs.readFileSync("supabase/functions/alyq-push/index.ts", "utf8");
   assert.match(edge, /env\("PUSH_DISPATCH_SECRET"\)/);
+  assert.match(
+    edge,
+    /if \(env\("PUSH_CONFIG_SOURCE"\) === "vault"\) \{\s*const vault = await readVaultValues\(client\);\s*dispatchSecret = vaultText\(vault, "ALYQ_PUSH_DISPATCH_SECRET"\);/,
+  );
+  assert.doesNotMatch(edge, /dispatchSecret\s*\?\?=/);
   assert.match(edge, /isDispatchAuthorized\(authorization, config\.dispatchSecret, config\.serviceRoleKey\)/);
   assert.match(edge, /createClient\(supabaseUrl, serviceRoleKey/);
   assert.match(edge, /client\.rpc\("notification_dispatcher_config"\)/);
@@ -186,6 +195,148 @@ test("push dispatch authentication is separate, fail-closed and body-authority-f
   const logStatements = edge.match(/console\.(?:info|error)\([^\n]+/g)?.join("\n") ?? "";
   assert.doesNotMatch(logStatements, /dispatchSecret|serviceRoleKey|authorization|push_token|privateKey/i);
   assert.doesNotMatch(edge, /VITE_/);
+});
+
+test("PUSH_CONFIG_SOURCE=vault overrides legacy PUSH_DISPATCH_SECRET and rejects oversized probes with 413 before claim", async () => {
+  const localRequire = createRequire(path.join(process.cwd(), "package.json"));
+  const esbuild = localRequire("esbuild") as {
+    build: (options: Record<string, unknown>) => Promise<void>;
+  };
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "alyq-push-vault-test-"));
+  const outfile = path.join(tmpDir, "worker.mjs");
+
+  const rpcCalls: string[] = [];
+  let vaultSecrets: Record<string, string> = {};
+  let envVars: Record<string, string> = {};
+  let capturedHandler: ((req: Request) => Promise<Response>) | null = null;
+
+  (globalThis as Record<string, unknown>).__alyqPushTestHarness = {
+    createClient: () => ({
+      rpc: async (fnName: string) => {
+        rpcCalls.push(fnName);
+        if (fnName === "notification_dispatcher_config") {
+          return { data: { ...vaultSecrets }, error: null };
+        }
+        throw new Error(`Unexpected RPC call during safe auth probe: ${fnName}`);
+      },
+    }),
+    webpush: {
+      generateVAPIDKeys: () => {
+        throw new Error("VAPID generation must not run during safe auth probe");
+      },
+      sendNotification: async () => {
+        throw new Error("Provider send must not run during safe auth probe");
+      },
+    },
+  };
+  (globalThis as Record<string, unknown>).Deno = {
+    env: {
+      get: (name: string) => envVars[name],
+    },
+    serve: (fn: (req: Request) => Promise<Response>) => {
+      capturedHandler = fn;
+    },
+  };
+
+  try {
+    await esbuild.build({
+      entryPoints: [path.join(process.cwd(), "supabase/functions/alyq-push/index.ts")],
+      outfile,
+      bundle: true,
+      format: "esm",
+      platform: "neutral",
+      target: "es2022",
+      plugins: [{
+        name: "mock-edge-npm-imports",
+        setup(build: {
+          onResolve: (opts: { filter: RegExp }, cb: (args: { path: string }) => unknown) => void;
+          onLoad: (opts: { filter: RegExp; namespace: string }, cb: (args: { path: string }) => unknown) => void;
+        }) {
+          build.onResolve({ filter: /^npm:/ }, (args) => ({ path: args.path, namespace: "edge-npm-mock" }));
+          build.onLoad({ filter: /.*/, namespace: "edge-npm-mock" }, (args) => {
+            if (args.path.startsWith("npm:@supabase/supabase-js")) {
+              return { contents: "export const createClient = globalThis.__alyqPushTestHarness.createClient;", loader: "js" };
+            }
+            return { contents: "export default globalThis.__alyqPushTestHarness.webpush;", loader: "js" };
+          });
+        },
+      }],
+    });
+
+    await import(pathToFileURL(outfile).href);
+    assert.ok(capturedHandler, "Deno.serve handler registered");
+    const invoke = capturedHandler as (req: Request) => Promise<Response>;
+    const oversizedBody = JSON.stringify({ pad: "x".repeat(5000) });
+
+    envVars = {
+      SUPABASE_URL: "https://example.supabase.co",
+      SUPABASE_SERVICE_ROLE_KEY: "test-only-service-role-key",
+      PUSH_DISPATCH_SECRET: "test-only-legacy-edge-secret",
+      WEB_PUSH_VAPID_PUBLIC_KEY: "test-only-edge-vapid-public",
+      WEB_PUSH_VAPID_PRIVATE_KEY: "test-only-edge-vapid-private",
+      WEB_PUSH_SUBJECT: "https://alyq.example",
+      PUSH_CONFIG_SOURCE: "vault",
+    };
+    vaultSecrets = {
+      ALYQ_PUSH_DISPATCH_SECRET: "test-only-vault-dispatch-secret",
+    };
+
+    rpcCalls.length = 0;
+    const legacyAttempt = await invoke(new Request("https://example.supabase.co/functions/v1/alyq-push", {
+      method: "POST",
+      headers: {
+        authorization: "Bearer test-only-legacy-edge-secret",
+        "content-type": "application/json",
+      },
+      body: oversizedBody,
+    }));
+    assert.equal(legacyAttempt.status, 403, "legacy PUSH_DISPATCH_SECRET must be rejected when PUSH_CONFIG_SOURCE=vault");
+    assert.deepEqual(await legacyAttempt.json(), { ok: false, code: "forbidden" });
+    assert.deepEqual(rpcCalls, ["notification_dispatcher_config"]);
+
+    rpcCalls.length = 0;
+    const vaultAttempt = await invoke(new Request("https://example.supabase.co/functions/v1/alyq-push", {
+      method: "POST",
+      headers: {
+        authorization: "Bearer test-only-vault-dispatch-secret",
+        "content-type": "application/json",
+      },
+      body: oversizedBody,
+    }));
+    assert.equal(vaultAttempt.status, 413, "authorized Vault bearer with oversized body must reach 413 without claiming");
+    assert.deepEqual(await vaultAttempt.json(), { ok: false, code: "request_too_large" });
+    assert.deepEqual(rpcCalls, ["notification_dispatcher_config"], "must never call notification_claim_push_batch");
+
+    vaultSecrets = {};
+    rpcCalls.length = 0;
+    const missingVaultAttempt = await invoke(new Request("https://example.supabase.co/functions/v1/alyq-push", {
+      method: "POST",
+      headers: {
+        authorization: "Bearer test-only-legacy-edge-secret",
+        "content-type": "application/json",
+      },
+      body: oversizedBody,
+    }));
+    assert.equal(missingVaultAttempt.status, 500, "missing Vault secret must fail closed rather than falling back to legacy secret");
+    assert.deepEqual(await missingVaultAttempt.json(), { ok: false, code: "not_configured" });
+
+    delete envVars.PUSH_CONFIG_SOURCE;
+    rpcCalls.length = 0;
+    const envOnlyAttempt = await invoke(new Request("https://example.supabase.co/functions/v1/alyq-push", {
+      method: "POST",
+      headers: {
+        authorization: "Bearer test-only-legacy-edge-secret",
+        "content-type": "application/json",
+      },
+      body: oversizedBody,
+    }));
+    assert.equal(envOnlyAttempt.status, 413, "legacy Edge secret remains supported when PUSH_CONFIG_SOURCE is unset");
+    assert.deepEqual(rpcCalls, []);
+  } finally {
+    Reflect.deleteProperty(globalThis, "__alyqPushTestHarness");
+    Reflect.deleteProperty(globalThis, "Deno");
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 });
 
 test("0099 dispatcher entry point uses bounded cron input and PostgreSQL-safe URL validation", () => {
