@@ -91,8 +91,11 @@ jobs:
             console.log('SW OK');
           "
           node -e "
-            const mf=require('./public/mobile.webmanifest');
-            if(!mf.name || !mf.start_url || !mf.icons) throw new Error('bad manifest');
+            const fs = require('node:fs');
+            const manifest = JSON.parse(
+              fs.readFileSync('public/mobile.webmanifest', 'utf8')
+            );
+            if (!manifest.name || !manifest.start_url || !manifest.icons) throw new Error('bad manifest');
             console.log('WebManifest OK');
           "
 
