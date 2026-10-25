@@ -75,16 +75,12 @@ jobs:
 
       - name: Verify version artifacts
         run: |
-          test -f dist/version.json
-          test -f dist/releases/latest.json
           test -f dist/alyq-sw.js
           test -f dist/mobile.webmanifest
-          node -e "
-            const d=require('./dist/version.json');
-            if(d.schemaVersion!==1) throw new Error('bad schemaVersion');
-            if(d.current.version!=='${{ inputs.version }}') throw new Error('manifest version mismatch');
-            console.log('Manifest OK:', d.current.version, d.current.gitSha.slice(0,7));
-          "
+          # Fails unless dist manifests are identical, match package.json and
+          # are stamped with exactly this release commit ($GITHUB_SHA), and
+          # the tracked public/ manifests still carry the placeholder SHA.
+          npm run test:version-manifest
 
       - name: Verify PWA artifacts
         run: |
@@ -327,10 +323,14 @@ jobs:
           TAG="v${{ inputs.version }}"
           HEAD_SHA="${{ github.sha }}"
 
-          # Collect artifacts
+          # Collect artifacts. Debug APKs are validation-only (debug-signed,
+          # not installable over the production package) and must never be
+          # attached to a public release — they stay in workflow artifacts.
           FILES=()
           for f in release-artifacts/alyq-windows-installer/* release-artifacts/alyq-android-apks/*; do
-            [ -f "$f" ] && FILES+=("$f")
+            [ -f "$f" ] || continue
+            case "$f" in *-debug.apk|*-debug.apk.sha256) echo "Skipping debug-only artifact: $f"; continue ;; esac
+            FILES+=("$f")
           done
 
           if [ ${#FILES[@]} -eq 0 ]; then

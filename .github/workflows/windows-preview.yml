@@ -2,7 +2,7 @@ name: Windows 6.1.0 candidate validation & storefront screenshots
 
 on:
   push:
-    branches: ["arena/f498e340-alyq-cloud-pos"]
+    branches: ["main"]
     paths-ignore:
       - "docs/redesign-preview-6.1.0.md"
       - "release-evidence/storefront-7-improvements/README.md"
