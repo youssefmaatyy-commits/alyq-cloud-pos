@@ -48,17 +48,11 @@ jobs:
       # missing or extra Arabic translation — no separate i18n check needed.
       - run: npm run typecheck
       - run: npm run build
+      # Manifest regression gate (built half): dist artifacts must be stamped
+      # with exactly the commit being built ($GITHUB_SHA), be identical to
+      # each other, and the build must not have rewritten tracked sources.
       - name: Verify version channel artifacts
-        run: |
-          test -f dist/version.json
-          test -f dist/releases/latest.json
-          node -e "
-            const m=require('./dist/version.json');
-            if(m.schemaVersion!==1) throw new Error('bad schemaVersion');
-            if(!m.current.version) throw new Error('missing version');
-            if(!m.current.backend) throw new Error('missing backend compat');
-            console.log('version.json OK:', m.current.version);
-          "
+        run: npm run test:version-manifest
       - uses: actions/upload-artifact@v4
         with:
           name: dist
